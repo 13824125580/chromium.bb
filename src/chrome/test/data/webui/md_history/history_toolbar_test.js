@@ -3,28 +3,25 @@
 // found in the LICENSE file.
 
 cr.define('md_history.history_toolbar_test', function() {
-  // Array of test history data.
-  var TEST_HISTORY_RESULTS = [
-    {
-      "dateRelativeDay": "Today - Wednesday, December 9, 2015",
-      "url": "https://www.google.com"
-    }
-  ];
-
   function registerTests() {
     suite('history-toolbar', function() {
+      var app;
       var element;
       var toolbar;
+      var TEST_HISTORY_RESULTS;
 
       suiteSetup(function() {
-        element = $('history-list');
-        toolbar = $('toolbar');
+        app = $('history-app');
+        element = app.$['history-list'];
+        toolbar = app.$['toolbar'];
+        TEST_HISTORY_RESULTS =
+            [createHistoryEntry('2016-03-15', 'https://google.com')];
       });
 
-      test('selecting checkbox causes toolbar to change', function(done) {
+      test('selecting checkbox causes toolbar to change', function() {
         element.addNewResults(TEST_HISTORY_RESULTS);
 
-        flush(function() {
+        return flush().then(function() {
           var item = element.$$('history-item');
           MockInteractions.tap(item.$.checkbox);
 
@@ -42,12 +39,23 @@ cr.define('md_history.history_toolbar_test', function() {
           assertEquals(0, toolbar.count);
           // Ensure that the toolbar boolean states that no items are selected.
           assertFalse(toolbar.itemsSelected_);
-
-          done();
         });
       });
 
+      test('search term gathered correctly from toolbar', function(done) {
+        app.queryingDisabled_ = false;
+        registerMessageCallback('queryHistory', this, function (info) {
+          assertEquals(info[0], 'Test');
+          done();
+        });
+
+        toolbar.$$('cr-toolbar').fire('search-changed', 'Test');
+      });
+
       teardown(function() {
+        element.historyData_ = [];
+        element.searchedTerm = '';
+        registerMessageCallback('queryHistory', this, undefined);
         toolbar.count = 0;
       });
     });

@@ -49,8 +49,7 @@ void QuicUnackedPacketMap::AddSentPacket(SerializedPacket* packet,
       packet->has_crypto_handshake == IS_HANDSHAKE;
   TransmissionInfo info(packet->encryption_level, packet->packet_number_length,
                         transmission_type, sent_time, bytes_sent,
-                        packet->is_fec_packet, has_crypto_handshake,
-                        packet->needs_padding);
+                        has_crypto_handshake, packet->num_padding_bytes);
   if (old_packet_number > 0) {
     TransferRetransmissionInfo(old_packet_number, packet_number,
                                transmission_type, &info);
@@ -91,10 +90,18 @@ void QuicUnackedPacketMap::TransferRetransmissionInfo(
     QuicPacketNumber new_packet_number,
     TransmissionType transmission_type,
     TransmissionInfo* info) {
-  if (old_packet_number < least_unacked_ ||
-      old_packet_number > largest_sent_packet_) {
-    QUIC_BUG << "Old TransmissionInfo no longer exists for:"
-             << old_packet_number << " least_unacked:" << least_unacked_
+  if (old_packet_number < least_unacked_) {
+    if (!FLAGS_quic_always_write_queued_retransmissions) {
+      QUIC_BUG << "Old TransmissionInfo no longer exists for:"
+               << old_packet_number << " least_unacked:" << least_unacked_;
+    }
+    // This can happen when a retransmission packet is queued because of write
+    // blocked socket, and the original packet gets acked before the
+    // retransmission gets sent.
+    return;
+  }
+  if (old_packet_number > largest_sent_packet_) {
+    QUIC_BUG << "Old TransmissionInfo never existed for :" << old_packet_number
              << " largest_sent:" << largest_sent_packet_;
     return;
   }
@@ -108,11 +115,11 @@ void QuicUnackedPacketMap::TransferRetransmissionInfo(
     wrapper.ack_listener->OnPacketRetransmitted(wrapper.length);
   }
 
-  // Swap the frames and preserve needs_padding and has_crypto_handshake.
+  // Swap the frames and preserve num_padding_bytes and has_crypto_handshake.
   frames->swap(info->retransmittable_frames);
   info->has_crypto_handshake = transmission_info->has_crypto_handshake;
   transmission_info->has_crypto_handshake = false;
-  info->needs_padding = transmission_info->needs_padding;
+  info->num_padding_bytes = transmission_info->num_padding_bytes;
 
   // Transfer the AckListeners if any are present.
   info->ack_listeners.swap(transmission_info->ack_listeners);
@@ -124,7 +131,7 @@ void QuicUnackedPacketMap::TransferRetransmissionInfo(
   // encryption changes.
   if (transmission_type == ALL_INITIAL_RETRANSMISSION ||
       transmission_type == ALL_UNACKED_RETRANSMISSION) {
-    RemoveAckability(transmission_info);
+    transmission_info->is_unackable = true;
   } else {
     transmission_info->retransmission = new_packet_number;
   }
@@ -138,14 +145,6 @@ bool QuicUnackedPacketMap::HasRetransmittableFrames(
   DCHECK_LT(packet_number, least_unacked_ + unacked_packets_.size());
   return !unacked_packets_[packet_number - least_unacked_]
               .retransmittable_frames.empty();
-}
-
-void QuicUnackedPacketMap::NackPacket(QuicPacketNumber packet_number,
-                                      uint16_t min_nacks) {
-  DCHECK_GE(packet_number, least_unacked_);
-  DCHECK_LT(packet_number, least_unacked_ + unacked_packets_.size());
-  unacked_packets_[packet_number - least_unacked_].nack_count = max(
-      min_nacks, unacked_packets_[packet_number - least_unacked_].nack_count);
 }
 
 void QuicUnackedPacketMap::RemoveRetransmittability(TransmissionInfo* info) {
@@ -163,12 +162,6 @@ void QuicUnackedPacketMap::RemoveRetransmittability(
   DCHECK_LT(packet_number, least_unacked_ + unacked_packets_.size());
   TransmissionInfo* info = &unacked_packets_[packet_number - least_unacked_];
   RemoveRetransmittability(info);
-}
-
-void QuicUnackedPacketMap::RemoveAckability(TransmissionInfo* info) {
-  DCHECK(info->retransmittable_frames.empty());
-  DCHECK_EQ(0u, info->retransmission);
-  info->is_unackable = true;
 }
 
 void QuicUnackedPacketMap::MaybeRemoveRetransmittableFrames(
@@ -258,6 +251,15 @@ void QuicUnackedPacketMap::RemoveFromInFlight(QuicPacketNumber packet_number) {
   DCHECK_LT(packet_number, least_unacked_ + unacked_packets_.size());
   TransmissionInfo* info = &unacked_packets_[packet_number - least_unacked_];
   RemoveFromInFlight(info);
+}
+
+void QuicUnackedPacketMap::RestoreToInFlight(QuicPacketNumber packet_number) {
+  DCHECK_GE(packet_number, least_unacked_);
+  DCHECK_LT(packet_number, least_unacked_ + unacked_packets_.size());
+  TransmissionInfo* info = &unacked_packets_[packet_number - least_unacked_];
+  DCHECK(!info->is_unackable);
+  bytes_in_flight_ += info->bytes_sent;
+  info->in_flight = true;
 }
 
 void QuicUnackedPacketMap::CancelRetransmissionsForStream(

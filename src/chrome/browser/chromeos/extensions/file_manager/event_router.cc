@@ -5,15 +5,17 @@
 #include "chrome/browser/chromeos/extensions/file_manager/event_router.h"
 
 #include <stddef.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
@@ -36,9 +38,9 @@
 #include "chromeos/login/login_state.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
+#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/file_change.h"
-#include "components/drive/file_system_interface.h"
 #include "components/drive/service/drive_service_interface.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
@@ -101,10 +103,10 @@ bool IsRecoveryToolRunning(Profile* profile) {
 void BroadcastEvent(Profile* profile,
                     extensions::events::HistogramValue histogram_value,
                     const std::string& event_name,
-                    scoped_ptr<base::ListValue> event_args) {
-  extensions::EventRouter::Get(profile)
-      ->BroadcastEvent(make_scoped_ptr(new extensions::Event(
-          histogram_value, event_name, std::move(event_args))));
+                    std::unique_ptr<base::ListValue> event_args) {
+  extensions::EventRouter::Get(profile)->BroadcastEvent(
+      base::WrapUnique(new extensions::Event(histogram_value, event_name,
+                                             std::move(event_args))));
 }
 
 // Sends an event named |event_name| with arguments |event_args| to an extension
@@ -114,9 +116,9 @@ void DispatchEventToExtension(
     const std::string& extension_id,
     extensions::events::HistogramValue histogram_value,
     const std::string& event_name,
-    scoped_ptr<base::ListValue> event_args) {
+    std::unique_ptr<base::ListValue> event_args) {
   extensions::EventRouter::Get(profile)->DispatchEventToExtension(
-      extension_id, make_scoped_ptr(new extensions::Event(
+      extension_id, base::WrapUnique(new extensions::Event(
                         histogram_value, event_name, std::move(event_args))));
 }
 
@@ -358,7 +360,7 @@ class JobEventRouterImpl : public JobEventRouter {
       const std::string& extension_id,
       extensions::events::HistogramValue histogram_value,
       const std::string& event_name,
-      scoped_ptr<base::ListValue> event_args) override {
+      std::unique_ptr<base::ListValue> event_args) override {
     ::file_manager::DispatchEventToExtension(profile_, extension_id,
                                              histogram_value, event_name,
                                              std::move(event_args));
@@ -500,7 +502,7 @@ void EventRouter::AddFileWatch(const base::FilePath& local_path,
 
   WatcherMap::iterator iter = file_watchers_.find(watch_path);
   if (iter == file_watchers_.end()) {
-    scoped_ptr<FileWatcher> watcher(new FileWatcher(virtual_path));
+    std::unique_ptr<FileWatcher> watcher(new FileWatcher(virtual_path));
     watcher->AddExtension(extension_id);
 
     if (is_on_drive) {
@@ -852,7 +854,7 @@ void EventRouter::DispatchDirectoryChangeEventWithEntryDefinition(
   // Detailed information is available.
   if (list.get()) {
     event.changed_files.reset(
-        new std::vector<linked_ptr<file_manager_private::FileChange> >);
+        new std::vector<file_manager_private::FileChange>());
 
     if (list->map().empty())
       return;
@@ -860,22 +862,21 @@ void EventRouter::DispatchDirectoryChangeEventWithEntryDefinition(
     for (drive::FileChange::Map::const_iterator it = list->map().begin();
          it != list->map().end();
          it++) {
-      linked_ptr<file_manager_private::FileChange> change_list(
-          new file_manager_private::FileChange);
+      file_manager_private::FileChange change_list;
 
       GURL url = util::ConvertDrivePathToFileSystemUrl(
           profile_, it->first, *extension_id);
-      change_list->url = url.spec();
+      change_list.url = url.spec();
 
       for (drive::FileChange::ChangeList::List::const_iterator change =
                it->second.list().begin();
            change != it->second.list().end();
            change++) {
-        change_list->changes.push_back(
+        change_list.changes.push_back(
             ConvertChangeTypeFromDriveToApi(change->change()));
       }
 
-      event.changed_files->push_back(change_list);
+      event.changed_files->push_back(std::move(change_list));
     }
   }
 

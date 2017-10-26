@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_PAGE_LOAD_METRICS_RENDERER_PAGE_TIMING_METRICS_SENDER_H_
 #define COMPONENTS_PAGE_LOAD_METRICS_RENDERER_PAGE_TIMING_METRICS_SENDER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
+#include "third_party/WebKit/public/platform/WebLoadingBehaviorFlag.h"
 
 namespace base {
 class Timer;
@@ -26,21 +28,28 @@ class PageTimingMetricsSender {
  public:
   PageTimingMetricsSender(IPC::Sender* ipc_sender,
                           int routing_id,
-                          scoped_ptr<base::Timer> timer);
+                          std::unique_ptr<base::Timer> timer,
+                          const PageLoadTiming& initial_timing);
   ~PageTimingMetricsSender();
 
+  void DidObserveLoadingBehavior(blink::WebLoadingBehaviorFlag behavior);
   void Send(const PageLoadTiming& timing);
 
  protected:
   base::Timer* timer() const { return timer_.get(); }
 
  private:
+  void EnsureSendTimer(int delay);
   void SendNow();
 
   IPC::Sender* const ipc_sender_;
   const int routing_id_;
-  scoped_ptr<base::Timer> timer_;
+  std::unique_ptr<base::Timer> timer_;
   PageLoadTiming last_timing_;
+
+  // The the sender keep track of metadata as it comes in, because the sender is
+  // scoped to a single committed load.
+  PageLoadMetadata metadata_;
 
   DISALLOW_COPY_AND_ASSIGN(PageTimingMetricsSender);
 };

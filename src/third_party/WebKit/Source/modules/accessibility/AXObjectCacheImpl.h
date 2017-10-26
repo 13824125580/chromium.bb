@@ -30,13 +30,13 @@
 #define AXObjectCacheImpl_h
 
 #include "core/dom/AXObjectCache.h"
-#include "core/layout/LayoutText.h"
 #include "modules/ModulesExport.h"
 #include "modules/accessibility/AXObject.h"
 #include "platform/Timer.h"
 #include "wtf/Forward.h"
 #include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
+#include <memory>
 
 namespace blink {
 
@@ -65,6 +65,7 @@ public:
     virtual void listboxOptionStateChanged(HTMLOptionElement*);
     virtual void listboxSelectedChildrenChanged(HTMLSelectElement*);
     virtual void listboxActiveIndexChanged(HTMLSelectElement*);
+    virtual void radiobuttonRemovedFromGroup(HTMLInputElement*);
 
     void remove(LayoutObject*) override;
     void remove(Node*) override;
@@ -92,7 +93,7 @@ public:
 
     void setCanvasObjectBounds(Element*, const LayoutRect&) override;
 
-    void inlineTextBoxesUpdated(LayoutObject*) override;
+    void inlineTextBoxesUpdated(LineLayoutItem) override;
 
     // Called when the scroll offset changes.
     void handleScrollPositionChanged(FrameView*) override;
@@ -186,12 +187,12 @@ protected:
 
 private:
 
-    RawPtrWillBeMember<Document> m_document;
+    Member<Document> m_document;
     HeapHashMap<AXID, Member<AXObject>> m_objects;
     // LayoutObject and AbstractInlineTextBox are not on the Oilpan heap so we
     // do not use HeapHashMap for those mappings.
     HashMap<LayoutObject*, AXID> m_layoutObjectMapping;
-    WillBeHeapHashMap<RawPtrWillBeMember<Node>, AXID> m_nodeObjectMapping;
+    HeapHashMap<Member<Node>, AXID> m_nodeObjectMapping;
     HashMap<AbstractInlineTextBox*, AXID> m_inlineTextBoxObjectMapping;
     int m_modificationCount;
 
@@ -227,7 +228,7 @@ private:
     // want to own that ID. This is *unvalidated*, it includes possible duplicates.
     // This is used so that when an element with an ID is added to the tree or changes
     // its ID, we can quickly determine if it affects an aria-owns relationship.
-    HashMap<String, OwnPtr<HashSet<AXID>>> m_idToAriaOwnersMapping;
+    HashMap<String, std::unique_ptr<HashSet<AXID>>> m_idToAriaOwnersMapping;
 
     Timer<AXObjectCacheImpl> m_notificationPostTimer;
     HeapVector<std::pair<Member<AXObject>, AXNotification>> m_notificationsToPost;

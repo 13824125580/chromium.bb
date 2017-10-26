@@ -26,16 +26,16 @@ public:
         fK[3] = k4;
         fEnforcePMColor = enforcePMColor;
     }
-    
+
     void xfer32(SkPMColor[], const SkPMColor[], int count, const SkAlpha[]) const override;
 
     SK_TO_STRING_OVERRIDE()
     SK_DECLARE_PUBLIC_FLATTENABLE_DESERIALIZATION_PROCS(SkArithmeticMode_scalar)
 
 #if SK_SUPPORT_GPU
-    const GrFragmentProcessor* getFragmentProcessorForImageFilter(
-                                                const GrFragmentProcessor* dst) const override;
-    GrXPFactory* asXPFactory() const override;
+    sk_sp<GrFragmentProcessor> makeFragmentProcessorForImageFilter(
+                                                sk_sp<GrFragmentProcessor> dst) const override;
+    sk_sp<GrXPFactory> asXPFactory() const override;
 #endif
 
 private:
@@ -55,13 +55,13 @@ private:
     typedef SkXfermode INHERITED;
 };
 
-SkFlattenable* SkArithmeticMode_scalar::CreateProc(SkReadBuffer& buffer) {
+sk_sp<SkFlattenable> SkArithmeticMode_scalar::CreateProc(SkReadBuffer& buffer) {
     const SkScalar k1 = buffer.readScalar();
     const SkScalar k2 = buffer.readScalar();
     const SkScalar k3 = buffer.readScalar();
     const SkScalar k4 = buffer.readScalar();
     const bool enforcePMColor = buffer.readBool();
-    return SkArithmeticMode::Create(k1, k2, k3, k4, enforcePMColor);
+    return SkArithmeticMode::Make(k1, k2, k3, k4, enforcePMColor);
 }
 
 void SkArithmeticMode_scalar::xfer32(SkPMColor dst[], const SkPMColor src[],
@@ -111,40 +111,38 @@ void SkArithmeticMode_scalar::toString(SkString* str) const {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-SkXfermode* SkArithmeticMode::Create(SkScalar k1, SkScalar k2,
-                                     SkScalar k3, SkScalar k4,
-                                     bool enforcePMColor) {
+sk_sp<SkXfermode> SkArithmeticMode::Make(SkScalar k1, SkScalar k2, SkScalar k3, SkScalar k4,
+                                         bool enforcePMColor) {
     if (SkScalarNearlyZero(k1) && SkScalarNearlyEqual(k2, SK_Scalar1) &&
         SkScalarNearlyZero(k3) && SkScalarNearlyZero(k4)) {
-        return SkXfermode::Create(SkXfermode::kSrc_Mode);
+        return SkXfermode::Make(SkXfermode::kSrc_Mode);
     } else if (SkScalarNearlyZero(k1) && SkScalarNearlyZero(k2) &&
                SkScalarNearlyEqual(k3, SK_Scalar1) && SkScalarNearlyZero(k4)) {
-        return SkXfermode::Create(SkXfermode::kDst_Mode);
+        return SkXfermode::Make(SkXfermode::kDst_Mode);
     }
-    
-    return new SkArithmeticMode_scalar(k1, k2, k3, k4, enforcePMColor);
+    return sk_make_sp<SkArithmeticMode_scalar>(k1, k2, k3, k4, enforcePMColor);
 }
 
 
 //////////////////////////////////////////////////////////////////////////////
 
 #if SK_SUPPORT_GPU
-const GrFragmentProcessor* SkArithmeticMode_scalar::getFragmentProcessorForImageFilter(
-                                                            const GrFragmentProcessor* dst) const {
-    return GrArithmeticFP::Create(SkScalarToFloat(fK[0]),
-                                  SkScalarToFloat(fK[1]),
-                                  SkScalarToFloat(fK[2]),
-                                  SkScalarToFloat(fK[3]),
-                                  fEnforcePMColor,
-                                  dst);
+sk_sp<GrFragmentProcessor> SkArithmeticMode_scalar::makeFragmentProcessorForImageFilter(
+                                                            sk_sp<GrFragmentProcessor> dst) const {
+    return GrArithmeticFP::Make(SkScalarToFloat(fK[0]),
+                                SkScalarToFloat(fK[1]),
+                                SkScalarToFloat(fK[2]),
+                                SkScalarToFloat(fK[3]),
+                                fEnforcePMColor,
+                                std::move(dst));
 }
 
-GrXPFactory* SkArithmeticMode_scalar::asXPFactory() const {
-    return GrArithmeticXPFactory::Create(SkScalarToFloat(fK[0]),
-                                         SkScalarToFloat(fK[1]),
-                                         SkScalarToFloat(fK[2]),
-                                         SkScalarToFloat(fK[3]),
-                                         fEnforcePMColor);
+sk_sp<GrXPFactory> SkArithmeticMode_scalar::asXPFactory() const {
+    return GrArithmeticXPFactory::Make(SkScalarToFloat(fK[0]),
+                                       SkScalarToFloat(fK[1]),
+                                       SkScalarToFloat(fK[2]),
+                                       SkScalarToFloat(fK[3]),
+                                       fEnforcePMColor);
 }
 
 #endif

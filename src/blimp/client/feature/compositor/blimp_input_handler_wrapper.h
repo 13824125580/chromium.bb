@@ -47,6 +47,7 @@ class BlimpInputHandlerWrapper : public ui::InputHandlerProxyClient {
                      const gfx::Vector2dF& latest_overscroll_delta,
                      const gfx::Vector2dF& current_fling_velocity,
                      const gfx::PointF& causal_event_viewport_point) override;
+  void DidStartFlinging() override;
   void DidStopFlinging() override;
   void DidAnimateForInput() override;
 
@@ -59,7 +60,7 @@ class BlimpInputHandlerWrapper : public ui::InputHandlerProxyClient {
   // BlimpInputManager is destroyed.
   base::WeakPtr<BlimpInputManager> input_manager_weak_ptr_;
 
-  scoped_ptr<ui::InputHandlerProxy> input_handler_proxy_;
+  std::unique_ptr<ui::InputHandlerProxy> input_handler_proxy_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpInputHandlerWrapper);
 };

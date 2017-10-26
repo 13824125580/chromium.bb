@@ -25,9 +25,13 @@
 #define LayoutBoxModelObject_h
 
 #include "core/CoreExport.h"
+#include "core/layout/BackgroundBleedAvoidance.h"
+#include "core/layout/ContentChangeType.h"
 #include "core/layout/LayoutObject.h"
-#include "core/style/ShadowData.h"
+#include "core/page/scrolling/StickyPositionScrollingConstraints.h"
 #include "platform/geometry/LayoutRect.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -47,22 +51,17 @@ enum PaintLayerType {
 // Modes for some of the line-related functions.
 enum LinePositionMode { PositionOnContainingLine, PositionOfInteriorLineBoxes };
 enum LineDirectionMode { HorizontalLine, VerticalLine };
-typedef unsigned BorderEdgeFlags;
-
-enum BackgroundBleedAvoidance {
-    BackgroundBleedNone,
-    BackgroundBleedShrinkBackground,
-    BackgroundBleedClipOnly,
-    BackgroundBleedClipLayer,
-};
-
-enum ContentChangeType {
-    ImageChanged,
-    CanvasChanged,
-    CanvasContextChanged
-};
 
 class InlineFlowBox;
+
+struct LayoutBoxModelObjectRareData {
+    WTF_MAKE_NONCOPYABLE(LayoutBoxModelObjectRareData);
+    USING_FAST_MALLOC(LayoutBoxModelObjectRareData);
+public:
+    LayoutBoxModelObjectRareData() {}
+
+    StickyPositionScrollingConstraints m_stickyPositionScrollingConstraints;
+};
 
 // This class is the base class for all CSS objects.
 //
@@ -141,23 +140,29 @@ public:
     LayoutSize relativePositionOffset() const;
     LayoutSize relativePositionLogicalOffset() const { return style()->isHorizontalWritingMode() ? relativePositionOffset() : relativePositionOffset().transposedSize(); }
 
+    // Populates StickyPositionConstraints, setting the sticky box rect, containing block rect and updating
+    // the constraint offsets according to the available space.
+    FloatRect computeStickyConstrainingRect() const;
+    void updateStickyPositionConstraints() const;
+    LayoutSize stickyPositionOffset() const;
+
     LayoutSize offsetForInFlowPosition() const;
 
     // IE extensions. Used to calculate offsetWidth/Height.  Overridden by inlines (LayoutFlow)
     // to return the remaining width on a given line (and the height of a single line).
-    virtual LayoutUnit offsetLeft() const;
-    virtual LayoutUnit offsetTop() const;
+    virtual LayoutUnit offsetLeft(const Element*) const;
+    virtual LayoutUnit offsetTop(const Element*) const;
     virtual LayoutUnit offsetWidth() const = 0;
     virtual LayoutUnit offsetHeight() const = 0;
 
-    int pixelSnappedOffsetLeft() const { return roundToInt(offsetLeft()); }
-    int pixelSnappedOffsetTop() const { return roundToInt(offsetTop()); }
-    virtual int pixelSnappedOffsetWidth() const;
-    virtual int pixelSnappedOffsetHeight() const;
+    int pixelSnappedOffsetLeft(const Element* parent) const { return roundToInt(offsetLeft(parent)); }
+    int pixelSnappedOffsetTop(const Element* parent) const { return roundToInt(offsetTop(parent)); }
+    virtual int pixelSnappedOffsetWidth(const Element*) const;
+    virtual int pixelSnappedOffsetHeight(const Element*) const;
 
     bool hasSelfPaintingLayer() const;
     PaintLayer* layer() const { return m_layer.get(); }
-    PaintLayerScrollableArea* scrollableArea() const;
+    PaintLayerScrollableArea* getScrollableArea() const;
 
     virtual void updateFromStyle();
 
@@ -235,6 +240,7 @@ public:
     LayoutUnit borderAndPaddingLogicalLeft() const { return style()->isHorizontalWritingMode() ? borderLeft() + paddingLeft() : borderTop() + paddingTop(); }
 
     LayoutUnit borderLogicalLeft() const { return LayoutUnit(style()->isHorizontalWritingMode() ? borderLeft() : borderTop()); }
+    LayoutUnit borderLogicalRight() const { return LayoutUnit(style()->isHorizontalWritingMode() ? borderRight() : borderBottom()); }
 
     LayoutUnit paddingLogicalWidth() const { return paddingStart() + paddingEnd(); }
     LayoutUnit paddingLogicalHeight() const { return paddingBefore() + paddingAfter(); }
@@ -268,7 +274,6 @@ public:
     virtual LayoutUnit lineHeight(bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const = 0;
     virtual int baselinePosition(FontBaseline, bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const = 0;
 
-    void mapAbsoluteToLocalPoint(MapCoordinatesFlags, TransformState&) const override;
     const LayoutObject* pushMappingToContainer(const LayoutBoxModelObject* ancestorToStopAt, LayoutGeometryMap&) const override;
 
     void setSelectionState(SelectionState) override;
@@ -282,12 +287,12 @@ public:
     // The query rect is given in local coordinate system.
     virtual bool backgroundIsKnownToBeOpaqueInRect(const LayoutRect&) const { return false; }
 
-    void invalidateTreeIfNeeded(PaintInvalidationState&) override;
+    void invalidateTreeIfNeeded(const PaintInvalidationState&) override;
 
-    // Indicate that the contents of this layoutObject need to be repainted. Only has an effect if compositing is being used,
-    void setBackingNeedsPaintInvalidationInRect(const LayoutRect&, PaintInvalidationReason) const; // r is in the coordinate space of this layout object
-
-    void invalidateDisplayItemClientOnBacking(const DisplayItemClient&, PaintInvalidationReason) const;
+    // Indicate that the contents of this layoutObject need to be repainted.
+    // This only has an effect if compositing is being used.
+    // The rect is in the physical coordinate space of this layout object.
+    void setBackingNeedsPaintInvalidationInRect(const LayoutRect&, PaintInvalidationReason, const LayoutObject&) const;
 
     // http://www.w3.org/TR/css3-background/#body-background
     // <html> root element with no background steals background from its first <body> child.
@@ -297,7 +302,7 @@ public:
 protected:
     void willBeDestroyed() override;
 
-    LayoutPoint adjustedPositionRelativeToOffsetParent(const LayoutPoint&) const;
+    LayoutPoint adjustedPositionRelativeTo(const LayoutPoint&, const Element*) const;
 
     bool calculateHasBoxDecorations() const;
 
@@ -316,6 +321,8 @@ protected:
     // See continuation above for more details.
     void setContinuation(LayoutBoxModelObject*);
 
+    virtual LayoutSize accumulateInFlowPositionOffsets() const { return LayoutSize(); }
+
     LayoutRect localCaretRectForEmptyElement(LayoutUnit width, LayoutUnit textIndentOffset);
 
     bool hasAutoHeightOrContainingBlockWithAutoHeight() const;
@@ -328,6 +335,8 @@ protected:
 
     void styleWillChange(StyleDifference, const ComputedStyle& newStyle) override;
     void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) override;
+
+    void invalidateStickyConstraints();
 
 public:
     // These functions are only used internally to manipulate the layout tree structure via remove/insert/appendChildNode.
@@ -354,18 +363,24 @@ public:
     }
     virtual void moveChildrenTo(LayoutBoxModelObject* toBoxModelObject, LayoutObject* startChild, LayoutObject* endChild, LayoutObject* beforeChild, bool fullRemoveInsert = false);
 
-    enum ScaleByEffectiveZoomOrNot { ScaleByEffectiveZoom, DoNotScaleByEffectiveZoom };
-    LayoutSize calculateImageIntrinsicDimensions(StyleImage*, const LayoutSize& scaledPositioningAreaSize, ScaleByEffectiveZoomOrNot) const;
-
 private:
-    void createLayer(PaintLayerType);
+    void createLayer();
 
     LayoutUnit computedCSSPadding(const Length&) const;
     bool isBoxModelObject() const final { return true; }
 
+    LayoutBoxModelObjectRareData& ensureRareData()
+    {
+        if (!m_rareData)
+            m_rareData = wrapUnique(new LayoutBoxModelObjectRareData());
+        return *m_rareData.get();
+    }
+
     // The PaintLayer associated with this object.
     // |m_layer| can be nullptr depending on the return value of layerTypeRequired().
-    OwnPtr<PaintLayer> m_layer;
+    std::unique_ptr<PaintLayer> m_layer;
+
+    std::unique_ptr<LayoutBoxModelObjectRareData> m_rareData;
 };
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutBoxModelObject, isBoxModelObject());

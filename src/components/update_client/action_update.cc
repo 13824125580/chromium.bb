@@ -11,7 +11,7 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "components/update_client/configurator.h"
@@ -185,13 +185,13 @@ ActionUpdateDiff::~ActionUpdateDiff() {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
-scoped_ptr<Action> ActionUpdateDiff::Create() {
-  return scoped_ptr<Action>(new ActionUpdateDiff);
+std::unique_ptr<Action> ActionUpdateDiff::Create() {
+  return std::unique_ptr<Action>(new ActionUpdateDiff);
 }
 
 void ActionUpdateDiff::TryUpdateFull() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  scoped_ptr<Action> update_action(ActionUpdateFull::Create());
+  std::unique_ptr<Action> update_action(ActionUpdateFull::Create());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&Action::Run, base::Unretained(update_action.get()),
@@ -286,15 +286,15 @@ ActionUpdateFull::~ActionUpdateFull() {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
-scoped_ptr<Action> ActionUpdateFull::Create() {
-  return scoped_ptr<Action>(new ActionUpdateFull);
+std::unique_ptr<Action> ActionUpdateFull::Create() {
+  return std::unique_ptr<Action>(new ActionUpdateFull);
 }
 
 bool ActionUpdateFull::IsBackgroundDownload(const CrxUpdateItem* item) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // On demand component updates are always downloaded in foreground.
-  return !item->on_demand && item->component.allow_background_download &&
+  return !item->on_demand && item->component.allows_background_download &&
          update_context_->config->UseBackgroundDownloader();
 }
 

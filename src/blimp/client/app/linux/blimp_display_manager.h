@@ -5,8 +5,10 @@
 #ifndef BLIMP_CLIENT_APP_LINUX_BLIMP_DISPLAY_MANAGER_H_
 #define BLIMP_CLIENT_APP_LINUX_BLIMP_DISPLAY_MANAGER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "blimp/client/feature/compositor/blimp_compositor_manager.h"
 #include "ui/platform_window/platform_window_delegate.h"
 
 namespace gfx {
@@ -29,7 +31,8 @@ class BlimpDisplayManagerDelegate {
   virtual void OnClosed() = 0;
 };
 
-class BlimpDisplayManager : public ui::PlatformWindowDelegate {
+class BlimpDisplayManager : public ui::PlatformWindowDelegate,
+                            BlimpCompositorManagerClient {
  public:
   BlimpDisplayManager(const gfx::Size& window_size,
                       BlimpDisplayManagerDelegate* delegate,
@@ -51,13 +54,17 @@ class BlimpDisplayManager : public ui::PlatformWindowDelegate {
   void OnActivationChanged(bool active) override;
 
  private:
+  // BlimpCompositorManagerClient implementation.
+  void OnSwapBuffersCompleted() override;
+  void DidCommitAndDrawFrame() override;
+
   float device_pixel_ratio_;
 
   BlimpDisplayManagerDelegate* delegate_;
   TabControlFeature* tab_control_feature_;
 
-  scoped_ptr<BlimpCompositorManager> blimp_compositor_manager_;
-  scoped_ptr<ui::PlatformWindow> platform_window_;
+  std::unique_ptr<BlimpCompositorManager> blimp_compositor_manager_;
+  std::unique_ptr<ui::PlatformWindow> platform_window_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpDisplayManager);
 };

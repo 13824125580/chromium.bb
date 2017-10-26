@@ -7,15 +7,19 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/synchronization/lock.h"
 #include "base/threading/non_thread_safe.h"
 #include "cc/output/context_provider.h"
 #include "components/mus/gles2/command_buffer_local_client.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gl/gl_surface.h"
 
 namespace gpu {
 
+class CommandBufferProxyImpl;
+struct GpuProcessHostedCALayerTreeParamsMac;
 class TransferBuffer;
 
 namespace gles2 {
@@ -24,6 +28,10 @@ class GLES2Implementation;
 }
 
 }  // namespace gpu
+
+namespace ui {
+class LatencyInfo;
+}
 
 namespace mus {
 
@@ -37,9 +45,10 @@ class SurfacesContextProvider : public cc::ContextProvider,
                                 public CommandBufferLocalClient,
                                 public base::NonThreadSafe {
  public:
-  SurfacesContextProvider(SurfacesContextProviderDelegate* delegate,
-                          gfx::AcceleratedWidget widget,
+  SurfacesContextProvider(gfx::AcceleratedWidget widget,
                           const scoped_refptr<GpuState>& state);
+
+  void SetDelegate(SurfacesContextProviderDelegate* delegate);
 
   // cc::ContextProvider implementation.
   bool BindToCurrentThread() override;
@@ -47,12 +56,15 @@ class SurfacesContextProvider : public cc::ContextProvider,
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
   void InvalidateGrContext(uint32_t state) override;
-  Capabilities ContextCapabilities() override;
+  gpu::Capabilities ContextCapabilities() override;
   void DeleteCachedResources() override {}
   void SetLostContextCallback(
       const LostContextCallback& lost_context_callback) override;
-  void SetupLock() override;
   base::Lock* GetLock() override;
+
+  // SurfacesContextProvider API.
+  void SetSwapBuffersCompletionCallback(
+      gl::GLSurface::SwapCompletionCallback callback);
 
  protected:
   friend class base::RefCountedThreadSafe<SurfacesContextProvider>;
@@ -60,23 +72,34 @@ class SurfacesContextProvider : public cc::ContextProvider,
 
  private:
   // CommandBufferLocalClient:
-  void UpdateVSyncParameters(int64_t timebase, int64_t interval) override;
-  void DidLoseContext() override;
+  void UpdateVSyncParameters(const base::TimeTicks& timebase,
+                             const base::TimeDelta& interval) override;
+  void GpuCompletedSwapBuffers(gfx::SwapResult result) override;
+
+  // Callbacks for CommandBufferProxyImpl:
+  void OnGpuSwapBuffersCompleted(
+      const std::vector<ui::LatencyInfo>& latency_info,
+      gfx::SwapResult result,
+      const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac);
+  void OnUpdateVSyncParameters(base::TimeTicks timebase,
+                               base::TimeDelta interval);
+
+  bool use_chrome_gpu_command_buffer_;
 
   // From GLES2Context:
   // Initialized in BindToCurrentThread.
-  scoped_ptr<gpu::gles2::GLES2CmdHelper> gles2_helper_;
-  scoped_ptr<gpu::TransferBuffer> transfer_buffer_;
-  scoped_ptr<gpu::gles2::GLES2Implementation> implementation_;
+  std::unique_ptr<gpu::gles2::GLES2CmdHelper> gles2_helper_;
+  std::unique_ptr<gpu::TransferBuffer> transfer_buffer_;
+  std::unique_ptr<gpu::gles2::GLES2Implementation> implementation_;
 
-  cc::ContextProvider::Capabilities capabilities_;
+  gpu::Capabilities capabilities_;
   LostContextCallback lost_context_callback_;
 
   SurfacesContextProviderDelegate* delegate_;
   gfx::AcceleratedWidget widget_;
   CommandBufferLocal* command_buffer_local_;
-
-  base::Lock context_lock_;
+  std::unique_ptr<gpu::CommandBufferProxyImpl> command_buffer_proxy_impl_;
+  gl::GLSurface::SwapCompletionCallback swap_buffers_completion_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(SurfacesContextProvider);
 };

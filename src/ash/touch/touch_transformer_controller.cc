@@ -11,6 +11,7 @@
 #include "ash/shell.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/chromeos/display_configurator.h"
+#include "ui/display/manager/display_layout.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/events/devices/device_data_manager.h"
 
@@ -24,7 +25,7 @@ DisplayManager* GetDisplayManager() {
 
 ui::TouchscreenDevice FindTouchscreenById(int id) {
   const std::vector<ui::TouchscreenDevice>& touchscreens =
-      ui::DeviceDataManager::GetInstance()->touchscreen_devices();
+      ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices();
   for (const auto& touchscreen : touchscreens) {
     if (touchscreen.id == id)
       return touchscreen;
@@ -84,8 +85,7 @@ gfx::Transform TouchTransformerController::GetTouchTransform(
 
 #if defined(USE_OZONE)
   // Translate the touch so that it falls within the display bounds.
-  ctm.Translate(display.bounds_in_native().x(),
-                display.bounds_in_native().y());
+  ctm.Translate(display.bounds_in_native().x(), display.bounds_in_native().y());
 #endif
 
   // Take care of panel fitting only if supported. Panel fitting is emulated in
@@ -154,12 +154,12 @@ void TouchTransformerController::UpdateTouchTransformer() const {
   device_manager->ClearTouchDeviceAssociations();
 
   // Display IDs and DisplayInfo for mirror or extended mode.
-  int64_t display1_id = gfx::Display::kInvalidDisplayID;
-  int64_t display2_id = gfx::Display::kInvalidDisplayID;
+  int64_t display1_id = display::Display::kInvalidDisplayID;
+  int64_t display2_id = display::Display::kInvalidDisplayID;
   DisplayInfo display1;
   DisplayInfo display2;
   // Display ID and DisplayInfo for single display mode.
-  int64_t single_display_id = gfx::Display::kInvalidDisplayID;
+  int64_t single_display_id = display::Display::kInvalidDisplayID;
   DisplayInfo single_display;
 
   WindowTreeHostManager* window_tree_host_manager =
@@ -170,23 +170,20 @@ void TouchTransformerController::UpdateTouchTransformer() const {
   } else if (display_manager->num_connected_displays() == 1 ||
              display_manager->IsInUnifiedMode()) {
     single_display_id = display_manager->first_display_id();
-    DCHECK(single_display_id != gfx::Display::kInvalidDisplayID);
+    DCHECK(single_display_id != display::Display::kInvalidDisplayID);
     single_display = display_manager->GetDisplayInfo(single_display_id);
     UpdateTouchRadius(single_display);
   } else {
-    DisplayIdList list = display_manager->GetCurrentDisplayIdList();
+    display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
     display1_id = list[0];
     display2_id = list[1];
-    DCHECK(display1_id != gfx::Display::kInvalidDisplayID &&
-           display2_id != gfx::Display::kInvalidDisplayID);
+    DCHECK(display1_id != display::Display::kInvalidDisplayID &&
+           display2_id != display::Display::kInvalidDisplayID);
     display1 = display_manager->GetDisplayInfo(display1_id);
     display2 = display_manager->GetDisplayInfo(display2_id);
     UpdateTouchRadius(display1);
     UpdateTouchRadius(display2);
   }
-
-  gfx::Size fb_size =
-      Shell::GetInstance()->display_configurator()->framebuffer_size();
 
   if (display_manager->IsInMirrorMode()) {
     int64_t primary_display_id =

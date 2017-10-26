@@ -6,14 +6,15 @@
 #define USBInterface_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "device/usb/public/interfaces/device.mojom-blink.h"
 #include "platform/heap/Heap.h"
-#include "public/platform/modules/webusb/WebUSBDeviceInfo.h"
 
 namespace blink {
 
 class ExceptionState;
 class USBAlternateInterface;
 class USBConfiguration;
+class USBDevice;
 
 class USBInterface
     : public GarbageCollected<USBInterface>
@@ -23,17 +24,20 @@ public:
     static USBInterface* create(const USBConfiguration*, size_t interfaceIndex);
     static USBInterface* create(const USBConfiguration*, size_t interfaceNumber, ExceptionState&);
 
-    USBInterface(const USBConfiguration*, size_t interfaceIndex);
+    USBInterface(const USBDevice*, size_t configurationIndex, size_t interfaceIndex);
 
-    const WebUSBDeviceInfo::Interface& info() const;
+    const device::usb::blink::InterfaceInfo& info() const;
 
-    uint8_t interfaceNumber() const;
+    uint8_t interfaceNumber() const { return info().interface_number; }
+    USBAlternateInterface* alternate() const;
     HeapVector<Member<USBAlternateInterface>> alternates() const;
+    bool claimed() const;
 
     DECLARE_TRACE();
 
 private:
-    Member<const USBConfiguration> m_configuration;
+    Member<const USBDevice> m_device;
+    const size_t m_configurationIndex;
     const size_t m_interfaceIndex;
 };
 

@@ -16,7 +16,6 @@ from dashboard import can_bisect
 from dashboard import namespaced_stored_object
 from dashboard import rietveld_service
 from dashboard import start_try_job
-from dashboard import stored_object
 from dashboard import testing_common
 from dashboard.models import bug_data
 from dashboard.models import graph_data
@@ -39,7 +38,7 @@ _EXPECTED_BISECT_CONFIG_DIFF = """config = {
 +  "bisect_mode": "mean",
 +  "bug_id": "12345",
 +  "builder_type": "",
-+  "command": "python tools/perf/run_benchmark -v --browser=release --output-format=buildbot --also-run-disabled-tests dromaeo.jslibstylejquery",
++  "command": "tools/perf/run_benchmark -v --browser=release --output-format=buildbot --upload-results --also-run-disabled-tests dromaeo.jslibstylejquery",
 +  "good_revision": "215806",
 +  "max_time_minutes": "20",
 +  "metric": "jslib/jslib",
@@ -60,7 +59,7 @@ _EXPECTED_BISECT_CONFIG_DIFF_FOR_INTERNAL_TEST = """config = {
 +  "bisect_mode": "mean",
 +  "bug_id": "12345",
 +  "builder_type": "",
-+  "command": "tools/perf/run_benchmark -v --browser=android-chrome --also-run-disabled-tests start_with_url.cold.startup_pages",
++  "command": "tools/perf/run_benchmark -v --browser=android-chrome --upload-results --also-run-disabled-tests start_with_url.cold.startup_pages",
 +  "good_revision": "d82ccc77c8a86ce9893a8035fb55aca666f044c8",
 +  "max_time_minutes": "20",
 +  "metric": "foreground_tab_request_start/foreground_tab_request_start",
@@ -81,7 +80,7 @@ _EXPECTED_BISECT_CONFIG_DIFF_WITH_ARCHIVE = """config = {
 +  "bisect_mode": "mean",
 +  "bug_id": "12345",
 +  "builder_type": "perf",
-+  "command": "tools/perf/run_benchmark -v --browser=release --output-format=buildbot --also-run-disabled-tests dromaeo.jslibstylejquery",
++  "command": "tools/perf/run_benchmark -v --browser=release --output-format=buildbot --upload-results --also-run-disabled-tests dromaeo.jslibstylejquery",
 +  "good_revision": "215806",
 +  "max_time_minutes": "20",
 +  "metric": "jslib/jslib",
@@ -97,7 +96,7 @@ _EXPECTED_PERF_CONFIG_DIFF = """config = {
 -  'repeat_count': '',
 -  'max_time_minutes': '',
 +  "bad_revision": "215828",
-+  "command": "tools/perf/run_benchmark -v --browser=release --output-format=buildbot --also-run-disabled-tests dromaeo.jslibstylejquery",
++  "command": "tools/perf/run_benchmark -v --browser=release --output-format=buildbot --upload-results --also-run-disabled-tests dromaeo.jslibstylejquery",
 +  "good_revision": "215806",
 +  "max_time_minutes": "60",
 +  "repeat_count": "1",
@@ -155,11 +154,9 @@ config = {
 }
 
 On Windows:
-  - If you're calling a python script you will need to add "python" to
-the command:
 
 config = {
-  'command': 'python tools/perf/run_benchmark -v --browser=release kraken',
+  'command': 'tools/perf/run_benchmark -v --browser=release kraken',
   'good_revision': '185319',
   'bad_revision': '185364',
   'metric': 'Total/Total',
@@ -234,11 +231,10 @@ config = {
 }
 
 On Windows:
-  - If you're calling a python script you will need to add "python" to
-the command:
 
 config = {
-  'command': 'python tools/perf/run_benchmark -v --browser=release smoothness.key_mobile_sites',
+  'command': 'tools/perf/run_benchmark -v --browser=release \
+      smoothness.key_mobile_sites',
   'metric': 'mean_frame_time/mean_frame_time',
   'repeat_count': '20',
   'max_time_minutes': '20',
@@ -317,12 +313,6 @@ class StartBisectTest(testing_common.TestCase):
 
   def setUp(self):
     super(StartBisectTest, self).setUp()
-    stored_object.Set(
-        start_try_job._TESTER_DIRECTOR_MAP_KEY,
-        {
-            'linux_perf_tester': 'linux_perf_bisector',
-            'win64_nv_tester': 'linux_perf_bisector',
-        })
     app = webapp2.WSGIApplication(
         [('/start_try_job', start_try_job.StartBisectHandler)])
     self.testapp = webtest.TestApp(app)
@@ -352,6 +342,19 @@ class StartBisectTest(testing_common.TestCase):
             ['win_x64', 'release_x64'],
             ['', 'release'],
         ])
+    namespaced_stored_object.Set(
+        start_try_job._TESTER_DIRECTOR_MAP_KEY,
+        {
+            'ChromiumPerf': {
+                'linux_perf_tester': 'linux_perf_bisector',
+                'win64_nv_tester': 'linux_perf_bisector',
+            }
+        })
+    namespaced_stored_object.Set(
+        start_try_job._MASTER_BUILDBUCKET_MAP_KEY,
+        {
+            'ChromiumPerf': 'master.tryserver.chromium.perf'
+        })
     testing_common.SetSheriffDomains(['chromium.org'])
     # Add fake Rietveld auth info.
     rietveld_config = rietveld_service.RietveldConfig(
@@ -400,9 +403,9 @@ class StartBisectTest(testing_common.TestCase):
                 'Animation_balls': {}
             }
         })
-    tests = graph_data.Test.query().fetch()
+    tests = graph_data.TestMetadata.query().fetch()
     for test in tests:
-      name = test.key.string_id()
+      name = test.test_name
       if name in ('times', 'page_cycler.morejs', 'blink_perf'):
         continue
       test.has_rows = True
@@ -504,6 +507,7 @@ class StartBisectTest(testing_common.TestCase):
         {
             'command': ('tools/perf/run_benchmark -v '
                         '--browser=release --output-format=buildbot '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.moz'),
             'good_revision': '265549',
@@ -535,6 +539,7 @@ class StartBisectTest(testing_common.TestCase):
         {
             'command': ('src/tools/perf/run_benchmark -v '
                         '--browser=release --output-format=chartjson '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.moz'),
             'good_revision': '265549',
@@ -568,6 +573,7 @@ class StartBisectTest(testing_common.TestCase):
         {
             'command': ('tools/perf/run_benchmark -v '
                         '--browser=release --output-format=buildbot '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.moz'),
             'good_revision': '265549',
@@ -595,8 +601,9 @@ class StartBisectTest(testing_common.TestCase):
             'bug_id': '-1',
         },
         {
-            'command': ('python tools/perf/run_benchmark -v '
+            'command': ('tools/perf/run_benchmark -v '
                         '--browser=release --output-format=buildbot '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.morejs'),
             'good_revision': '12345',
@@ -628,6 +635,7 @@ class StartBisectTest(testing_common.TestCase):
         {
             'command': ('tools/perf/run_benchmark -v '
                         '--browser=release --output-format=buildbot '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.moz'),
             'good_revision': '265549',
@@ -664,6 +672,7 @@ class StartBisectTest(testing_common.TestCase):
     self._TestGetConfigCommand(
         ('tools/perf/run_benchmark -v '
          '--browser=android-chromium --output-format=buildbot '
+         '--upload-results '
          '--also-run-disabled-tests '
          'page_cycler.morejs'),
         bisect_bot='android_nexus7_perf_bisect',
@@ -926,8 +935,9 @@ class StartBisectTest(testing_common.TestCase):
             'use_archive': 'true',
         },
         {
-            'command': ('python tools/perf/run_benchmark -v '
+            'command': ('tools/perf/run_benchmark -v '
                         '--browser=release --output-format=buildbot '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.morejs'),
             'good_revision': '12345',
@@ -956,8 +966,9 @@ class StartBisectTest(testing_common.TestCase):
             'use_archive': ''
         },
         {
-            'command': ('python tools/perf/run_benchmark -v '
+            'command': ('tools/perf/run_benchmark -v '
                         '--browser=release_x64 --output-format=buildbot '
+                        '--upload-results '
                         '--also-run-disabled-tests '
                         'page_cycler.moz'),
             'good_revision': '265549',
@@ -975,6 +986,7 @@ class StartBisectTest(testing_common.TestCase):
     self._TestGetConfigCommand(
         ('src/tools/perf/run_benchmark -v '
          '--browser=android-chromium --output-format=chartjson '
+         '--upload-results '
          '--also-run-disabled-tests '
          'page_cycler.morejs'),
         bisect_bot='android_nexus7_perf_bisect',

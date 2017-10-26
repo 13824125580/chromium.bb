@@ -34,7 +34,7 @@
 #include "modules/serviceworkers/ServiceWorkerGlobalScopeClient.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerClientsInfo.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerSkipWaitingCallbacks.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -42,11 +42,10 @@ class WebServiceWorkerContextClient;
 class WebServiceWorkerResponse;
 class WebURL;
 
-class ServiceWorkerGlobalScopeClientImpl final : public NoBaseWillBeGarbageCollectedFinalized<ServiceWorkerGlobalScopeClientImpl>, public ServiceWorkerGlobalScopeClient {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ServiceWorkerGlobalScopeClientImpl);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(ServiceWorkerGlobalScopeClientImpl);
+class ServiceWorkerGlobalScopeClientImpl final : public GarbageCollectedFinalized<ServiceWorkerGlobalScopeClientImpl>, public ServiceWorkerGlobalScopeClient {
+    USING_GARBAGE_COLLECTED_MIXIN(ServiceWorkerGlobalScopeClientImpl);
 public:
-    static PassOwnPtrWillBeRawPtr<ServiceWorkerGlobalScopeClient> create(WebServiceWorkerContextClient&);
+    static ServiceWorkerGlobalScopeClient* create(WebServiceWorkerContextClient&);
     ~ServiceWorkerGlobalScopeClientImpl() override;
 
     void getClient(const WebString&, WebServiceWorkerClientCallbacks*) override;
@@ -59,15 +58,16 @@ public:
 
     void didHandleActivateEvent(int eventID, WebServiceWorkerEventResult) override;
     void didHandleExtendableMessageEvent(int eventID, WebServiceWorkerEventResult) override;
-    void didHandleFetchEvent(int fetchEventID) override;
-    void didHandleFetchEvent(int fetchEventID, const WebServiceWorkerResponse&) override;
+    void respondToFetchEvent(int responseID) override;
+    void respondToFetchEvent(int responseID, const WebServiceWorkerResponse&) override;
+    void didHandleFetchEvent(int eventFinishID, WebServiceWorkerEventResult) override;
     void didHandleInstallEvent(int installEventID, WebServiceWorkerEventResult) override;
     void didHandleNotificationClickEvent(int eventID, WebServiceWorkerEventResult) override;
     void didHandleNotificationCloseEvent(int eventID, WebServiceWorkerEventResult) override;
     void didHandlePushEvent(int pushEventID, WebServiceWorkerEventResult) override;
     void didHandleSyncEvent(int syncEventID, WebServiceWorkerEventResult) override;
-    void postMessageToClient(const WebString& clientUUID, const WebString& message, PassOwnPtr<WebMessagePortChannelArray>) override;
-    void postMessageToCrossOriginClient(const WebCrossOriginServiceWorkerClient&, const WebString& message, PassOwnPtr<WebMessagePortChannelArray>) override;
+    void postMessageToClient(const WebString& clientUUID, const WebString& message, std::unique_ptr<WebMessagePortChannelArray>) override;
+    void postMessageToCrossOriginClient(const WebCrossOriginServiceWorkerClient&, const WebString& message, std::unique_ptr<WebMessagePortChannelArray>) override;
     void skipWaiting(WebServiceWorkerSkipWaitingCallbacks*) override;
     void claim(WebServiceWorkerClientsClaimCallbacks*) override;
     void focus(const WebString& clientUUID, WebServiceWorkerClientCallbacks*) override;

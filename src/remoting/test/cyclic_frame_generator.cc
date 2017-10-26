@@ -24,7 +24,7 @@ const int kBarcodeBits = 10;
 const int kBarcodeBlackThreshold = 85;
 const int kBarcodeWhiteThreshold = 170;
 
-scoped_ptr<webrtc::DesktopFrame> LoadDesktopFrameFromPng(
+std::unique_ptr<webrtc::DesktopFrame> LoadDesktopFrameFromPng(
     const base::FilePath& file_path) {
   std::string file_content;
   if (!base::ReadFileToString(file_path, &file_content))
@@ -33,7 +33,7 @@ scoped_ptr<webrtc::DesktopFrame> LoadDesktopFrameFromPng(
   SkBitmap bitmap;
   gfx::PNGCodec::Decode(reinterpret_cast<const uint8_t*>(file_content.data()),
                         file_content.size(), &bitmap);
-  scoped_ptr<webrtc::DesktopFrame> frame(new webrtc::BasicDesktopFrame(
+  std::unique_ptr<webrtc::DesktopFrame> frame(new webrtc::BasicDesktopFrame(
       webrtc::DesktopSize(bitmap.width(), bitmap.height())));
   bitmap.copyPixelsTo(frame->data(),
                       frame->stride() * frame->size().height(),
@@ -55,12 +55,11 @@ void DrawRect(webrtc::DesktopFrame* frame,
 }
 
 }  // namespace
-CyclicFrameGenerator::FrameInfo::FrameInfo() = default;
 
-CyclicFrameGenerator::FrameInfo::FrameInfo(int frame_id,
-                                           FrameType type,
-                                           base::TimeTicks timestamp)
-    : frame_id(frame_id), type(type), timestamp(timestamp) {}
+CyclicFrameGenerator::ChangeInfo::ChangeInfo() = default;
+CyclicFrameGenerator::ChangeInfo::ChangeInfo(ChangeType type,
+                                             base::TimeTicks timestamp)
+    : type(type), timestamp(timestamp) {}
 
 // static
 scoped_refptr<CyclicFrameGenerator> CyclicFrameGenerator::Create() {
@@ -70,7 +69,7 @@ scoped_refptr<CyclicFrameGenerator> CyclicFrameGenerator::Create() {
   test_data_path = test_data_path.Append(FILE_PATH_LITERAL("test"));
   test_data_path = test_data_path.Append(FILE_PATH_LITERAL("data"));
 
-  std::vector<scoped_ptr<webrtc::DesktopFrame>> frames;
+  std::vector<std::unique_ptr<webrtc::DesktopFrame>> frames;
   frames.push_back(
       LoadDesktopFrameFromPng(test_data_path.AppendASCII("test_frame1.png")));
   frames.push_back(
@@ -79,7 +78,7 @@ scoped_refptr<CyclicFrameGenerator> CyclicFrameGenerator::Create() {
 }
 
 CyclicFrameGenerator::CyclicFrameGenerator(
-    std::vector<scoped_ptr<webrtc::DesktopFrame>> reference_frames)
+    std::vector<std::unique_ptr<webrtc::DesktopFrame>> reference_frames)
     : reference_frames_(std::move(reference_frames)),
       clock_(&default_tick_clock_),
       started_time_(clock_->NowTicks()) {
@@ -98,14 +97,15 @@ void CyclicFrameGenerator::SetTickClock(base::TickClock* tick_clock) {
   started_time_ = clock_->NowTicks();
 }
 
-scoped_ptr<webrtc::DesktopFrame> CyclicFrameGenerator::GenerateFrame(
+std::unique_ptr<webrtc::DesktopFrame> CyclicFrameGenerator::GenerateFrame(
     webrtc::SharedMemoryFactory* shared_memory_factory) {
   base::TimeTicks now = clock_->NowTicks();
+  int frame_id = (now - started_time_) / cursor_blink_period_;
   int reference_frame =
       ((now - started_time_) / frame_cycle_period_) % reference_frames_.size();
-  bool cursor_state = ((now - started_time_) / cursor_blink_period_) % 2;
+  bool cursor_state = frame_id % 2;
 
-  scoped_ptr<webrtc::DesktopFrame> frame(
+  std::unique_ptr<webrtc::DesktopFrame> frame(
       new webrtc::BasicDesktopFrame(screen_size_));
   frame->CopyPixelsFrom(*reference_frames_[reference_frame],
                         webrtc::DesktopVector(),
@@ -122,19 +122,15 @@ scoped_ptr<webrtc::DesktopFrame> CyclicFrameGenerator::GenerateFrame(
     // The whole frame has changed.
     frame->mutable_updated_region()->AddRect(
         webrtc::DesktopRect::MakeSize(screen_size_));
-    last_frame_type_ = FrameType::FULL;
+    last_frame_type_ = ChangeType::FULL;
   } else if (last_cursor_state_ != cursor_state) {
     // Cursor state has changed.
     frame->mutable_updated_region()->AddRect(cursor_rect);
-    last_frame_type_ = FrameType::CURSOR;
+    last_frame_type_ = ChangeType::CURSOR;
   } else {
     // No changes.
-    last_frame_type_ = FrameType::EMPTY;
+    last_frame_type_ = ChangeType::NO_CHANGES;
   }
-
-  // Increment frame_id for non-empty frames.
-  int frame_id = (last_frame_type_ == FrameType::EMPTY) ? last_frame_id_
-                                                        : last_frame_id_ + 1;
 
   // Render barcode.
   if (draw_barcode_) {
@@ -154,12 +150,6 @@ scoped_ptr<webrtc::DesktopFrame> CyclicFrameGenerator::GenerateFrame(
     }
   }
 
-  // Add non-empty frames to |generated_frames_info_|.
-  if (last_frame_type_ != FrameType::EMPTY) {
-    generated_frames_info_[frame_id] =
-        FrameInfo(frame_id, last_frame_type_, clock_->NowTicks());
-  }
-
   last_reference_frame_ = reference_frame;
   last_cursor_state_ = cursor_state;
   last_frame_id_ = frame_id;
@@ -167,7 +157,7 @@ scoped_ptr<webrtc::DesktopFrame> CyclicFrameGenerator::GenerateFrame(
   return frame;
 }
 
-CyclicFrameGenerator::FrameInfo CyclicFrameGenerator::IdentifyFrame(
+CyclicFrameGenerator::ChangeInfoList CyclicFrameGenerator::GetChangeList(
     webrtc::DesktopFrame* frame) {
   CHECK(draw_barcode_);
   int frame_id = 0;
@@ -195,10 +185,20 @@ CyclicFrameGenerator::FrameInfo CyclicFrameGenerator::IdentifyFrame(
       frame_id |= 1;
   }
 
-  if (!generated_frames_info_.count(frame_id))
-    LOG(FATAL) << "Barcode contains unknown frame_id: " << frame_id;
+  CHECK_GE(frame_id, last_identifier_frame_);
 
-  return generated_frames_info_[frame_id];
+  ChangeInfoList result;
+  for (int i = last_identifier_frame_ + 1; i <= frame_id; ++i) {
+    ChangeType type = (i % (frame_cycle_period_ / cursor_blink_period_) == 0)
+                          ? ChangeType::FULL
+                          : ChangeType::CURSOR;
+    base::TimeTicks timestamp =
+        started_time_ + i * base::TimeDelta(cursor_blink_period_);
+    result.push_back(ChangeInfo(type, timestamp));
+  }
+  last_identifier_frame_ = frame_id;
+
+  return result;
 }
 
 }  // namespace test

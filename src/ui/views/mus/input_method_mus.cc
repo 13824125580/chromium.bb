@@ -7,10 +7,10 @@
 #include <utility>
 
 #include "components/mus/public/cpp/window.h"
-#include "mojo/converters/ime/ime_type_converters.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/events/event.h"
-#include "ui/mojo/ime/text_input_state.mojom.h"
+#include "ui/platform_window/mojo/ime_type_converters.h"
+#include "ui/platform_window/mojo/text_input_state.mojom.h"
 
 namespace views {
 
@@ -103,4 +103,4 @@ void InputMethodMUS::UpdateTextInputType() {
     window_->SetTextInputState(std::move(state));
 }
 
-}  // namespace mandoline
+}  // namespace views

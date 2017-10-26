@@ -5,9 +5,11 @@
 #ifndef Body_h
 #define Body_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
+#include "bindings/core/v8/ScriptValue.h"
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/ActiveDOMObject.h"
+#include "core/dom/ContextLifecycleObserver.h"
 #include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
 #include "wtf/text/WTFString.h"
@@ -27,42 +29,37 @@ class ScriptState;
 // Encoding spec. The spec should be fixed shortly to be aligned with this
 // implementation.
 class MODULES_EXPORT Body
-    : public GarbageCollectedFinalized<Body>
+    : public GarbageCollected<Body>
     , public ScriptWrappable
-    , public ActiveDOMObject {
+    , public ActiveScriptWrappable
+    , public ContextLifecycleObserver {
     WTF_MAKE_NONCOPYABLE(Body);
     DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(Body);
+    USING_GARBAGE_COLLECTED_MIXIN(Body);
 public:
     explicit Body(ExecutionContext*);
-    ~Body() override { }
 
     ScriptPromise arrayBuffer(ScriptState*);
     ScriptPromise blob(ScriptState*);
     ScriptPromise formData(ScriptState*);
     ScriptPromise json(ScriptState*);
     ScriptPromise text(ScriptState*);
-    ReadableByteStream* bodyWithUseCounter();
+    ScriptValue bodyWithUseCounter(ScriptState*);
     virtual BodyStreamBuffer* bodyBuffer() = 0;
     virtual const BodyStreamBuffer* bodyBuffer() const = 0;
 
     virtual bool bodyUsed();
     bool isBodyLocked();
 
-    // ActiveDOMObject override.
+    // ActiveScriptWrappable override.
     bool hasPendingActivity() const override;
 
     DEFINE_INLINE_VIRTUAL_TRACE()
     {
-        ActiveDOMObject::trace(visitor);
+        ContextLifecycleObserver::trace(visitor);
     }
 
-    // https://w3c.github.io/webappsec-credential-management/#monkey-patching-fetch-2
-    void setOpaque() { m_opaque = true; }
-    bool opaque() const { return m_opaque; }
-
 private:
-    ReadableByteStream* body();
     virtual String mimeType() const = 0;
 
     // Body consumption algorithms will reject with a TypeError in a number of
@@ -70,8 +67,6 @@ private:
     // an empty ScriptPromise if the consumption may proceed, and a
     // ScriptPromise rejected with a TypeError if it ought to be blocked.
     ScriptPromise rejectInvalidConsumption(ScriptState*);
-
-    bool m_opaque;
 };
 
 } // namespace blink

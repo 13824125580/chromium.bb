@@ -30,12 +30,13 @@
       'sources': [
         'cast_config.cc',
         'cast_config.h',
-        'cast_defines.h',
         'cast_environment.cc',
         'cast_environment.h',
         'common/clock_drift_smoother.cc',
         'common/clock_drift_smoother.h',
         'common/expanded_value_base.h',
+        'common/frame_id.cc',
+        'common/frame_id.h',
         'common/rtp_time.cc',
         'common/rtp_time.h',
         'common/transport_encryption_handler.cc',
@@ -94,7 +95,7 @@
         '<(DEPTH)/media/media.gyp:media',
         '<(DEPTH)/media/media.gyp:shared_memory_support',
         '<(DEPTH)/third_party/opus/opus.gyp:opus',
-        '<(DEPTH)/third_party/libvpx_new/libvpx.gyp:libvpx_new',
+        '<(DEPTH)/third_party/libvpx/libvpx.gyp:libvpx',
         '<(DEPTH)/third_party/libyuv/libyuv.gyp:libyuv',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
       ],
@@ -124,9 +125,12 @@
           'dependencies!': [
             '<(DEPTH)/media/media.gyp:media',
             '<(DEPTH)/third_party/opus/opus.gyp:opus',
-            '<(DEPTH)/third_party/libvpx_new/libvpx.gyp:libvpx_new',
+            '<(DEPTH)/third_party/libvpx/libvpx.gyp:libvpx',
           ],
         }], # OS=="ios"
+        ['OS=="win"', {
+          'dependencies': [ '<(DEPTH)/media/media.gyp:mf_initializer' ],
+        }],
       ], # conditions
     },
     {
@@ -140,9 +144,10 @@
         'cast_common',
         'cast_net',
         '<(DEPTH)/media/media.gyp:media',
+        '<(DEPTH)/media/media.gyp:media_features',
         '<(DEPTH)/media/media.gyp:shared_memory_support',
         '<(DEPTH)/third_party/opus/opus.gyp:opus',
-        '<(DEPTH)/third_party/libvpx_new/libvpx.gyp:libvpx_new',
+        '<(DEPTH)/third_party/libvpx/libvpx.gyp:libvpx',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
       ], # dependencies
       'sources': [
@@ -177,8 +182,8 @@
         'sender/video_sender.h',
         'sender/vp8_encoder.cc',
         'sender/vp8_encoder.h',
-        'sender/vp8_quantizer_parser.h',
         'sender/vp8_quantizer_parser.cc',
+        'sender/vp8_quantizer_parser.h',
       ], # sources
       'conditions': [
         # use a restricted subset of media and no software codecs on iOS
@@ -187,7 +192,7 @@
           'dependencies!': [
             '<(DEPTH)/media/media.gyp:media',
             '<(DEPTH)/third_party/opus/opus.gyp:opus',
-            '<(DEPTH)/third_party/libvpx_new/libvpx.gyp:libvpx_new',
+            '<(DEPTH)/third_party/libvpx/libvpx.gyp:libvpx',
           ],
           'sources!': [
             'sender/external_video_encoder.cc',
@@ -228,17 +233,15 @@
         '<(DEPTH)/net/net.gyp:net',
       ],
       'sources': [
+        'net/cast_transport.h',
         'net/cast_transport_config.cc',
         'net/cast_transport_config.h',
         'net/cast_transport_defines.h',
-        'net/cast_transport_sender.h',
-        'net/cast_transport_sender_impl.cc',
-        'net/cast_transport_sender_impl.h',
+        'net/cast_transport_impl.cc',
+        'net/cast_transport_impl.h',
         'net/pacing/paced_sender.cc',
         'net/pacing/paced_sender.h',
         'net/rtcp/receiver_rtcp_event_subscriber.cc',
-        'net/rtcp/sender_rtcp_session.cc',
-        'net/rtcp/sender_rtcp_session.h',
         'net/rtcp/receiver_rtcp_session.cc',
         'net/rtcp/receiver_rtcp_session.h',
         'net/rtcp/rtcp_builder.cc',
@@ -247,6 +250,8 @@
         'net/rtcp/rtcp_defines.h',
         'net/rtcp/rtcp_utility.cc',
         'net/rtcp/rtcp_utility.h',
+        'net/rtcp/sender_rtcp_session.cc',
+        'net/rtcp/sender_rtcp_session.h',
         'net/rtp/packet_storage.cc',
         'net/rtp/packet_storage.h',
         'net/rtp/rtp_defines.cc',

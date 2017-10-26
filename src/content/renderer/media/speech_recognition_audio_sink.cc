@@ -11,8 +11,8 @@
 #include "base/memory/shared_memory.h"
 #include "base/time/time.h"
 #include "content/renderer/media/media_stream_audio_source.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_fifo.h"
+#include "media/base/audio_parameters.h"
 
 namespace content {
 
@@ -20,7 +20,7 @@ SpeechRecognitionAudioSink::SpeechRecognitionAudioSink(
     const blink::WebMediaStreamTrack& track,
     const media::AudioParameters& params,
     const base::SharedMemoryHandle memory,
-    scoped_ptr<base::SyncSocket> socket,
+    std::unique_ptr<base::SyncSocket> socket,
     const OnStoppedCB& on_stopped_cb)
     : track_(track),
       shared_memory_(memory, false),
@@ -61,11 +61,8 @@ SpeechRecognitionAudioSink::~SpeechRecognitionAudioSink() {
 // static
 bool SpeechRecognitionAudioSink::IsSupportedTrack(
     const blink::WebMediaStreamTrack& track) {
-  if (track.source().type() != blink::WebMediaStreamSource::TypeAudio)
-    return false;
-
   MediaStreamAudioSource* native_source =
-      static_cast<MediaStreamAudioSource*>(track.source().extraData());
+      MediaStreamAudioSource::From(track.source());
   if (!native_source)
     return false;
 
@@ -165,7 +162,7 @@ void SpeechRecognitionAudioSink::OnData(
 }
 
 double SpeechRecognitionAudioSink::ProvideInput(media::AudioBus* audio_bus,
-                                                base::TimeDelta buffer_delay) {
+                                                uint32_t frames_delayed) {
   DCHECK(capture_thread_checker_.CalledOnValidThread());
   if (fifo_->frames() >= audio_bus->frames())
     fifo_->Consume(audio_bus, 0, audio_bus->frames());

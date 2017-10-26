@@ -10,12 +10,13 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/printing/print_view_manager.h"
 #include "content/public/browser/devtools_agent_host.h"
@@ -25,18 +26,9 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/bindings_policy.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/renderer_preferences.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
-
-// blpwtk2: Remove test-only code.
-// #include "content/shell/browser/layout_test/blink_test_controller.h"
-// #include "content/shell/browser/layout_test/layout_test_bluetooth_chooser_factory.h"
-// #include "content/shell/browser/layout_test/layout_test_devtools_frontend.h"
-// #include "content/shell/browser/layout_test/layout_test_javascript_dialog_manager.h"
-
-#include "content/shell/browser/layout_test/notify_done_forwarder.h"
 #include "content/shell/browser/shell_browser_main_parts.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_devtools_frontend.h"
@@ -81,9 +73,7 @@ Shell::Shell(WebContents* web_contents)
       url_edit_view_(NULL),
 #endif
       headless_(false) {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kRunLayoutTest))
+  if (switches::IsRunLayoutTestSwitchPresent())
     headless_ = true;
   windows_.push_back(this);
 
@@ -128,13 +118,13 @@ Shell* Shell::CreateShell(WebContents* web_contents,
   // Note: Do not make RenderFrameHost or RenderViewHost specific state changes
   // here, because they will be forgotten after a cross-process navigation. Use
   // RenderFrameCreated or RenderViewCreated instead.
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kRunLayoutTest)) {
+  if (switches::IsRunLayoutTestSwitchPresent()) {
     web_contents->GetMutableRendererPrefs()->use_custom_colors = false;
     web_contents->GetRenderViewHost()->SyncRendererPrefs();
   }
 
 #if defined(ENABLE_WEBRTC)
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kForceWebRtcIPHandlingPolicy)) {
     web_contents->GetMutableRendererPrefs()->webrtc_ip_handling_policy =
         command_line->GetSwitchValueASCII(
@@ -151,7 +141,7 @@ void Shell::CloseAllWindows() {
   std::vector<Shell*> open_windows(windows_);
   for (size_t i = 0; i < open_windows.size(); ++i)
     open_windows[i]->Close();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   PlatformExit();
 }
 
@@ -259,9 +249,10 @@ void Shell::AddNewContents(WebContents* source,
                            bool user_gesture,
                            bool* was_blocked) {
   CreateShell(new_contents, AdjustWindowSize(initial_rect.size()));
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kRunLayoutTest))
-    NotifyDoneForwarder::CreateForWebContents(new_contents);
+#if 0
+  if (switches::IsRunLayoutTestSwitchPresent())
+    SecondaryTestWindowObserver::CreateForWebContents(new_contents);
+#endif
 }
 
 void Shell::GoBackOrForward(int offset) {
@@ -277,6 +268,11 @@ void Shell::Print() {
 
 void Shell::Reload() {
   web_contents_->GetController().Reload(false);
+  web_contents_->Focus();
+}
+
+void Shell::ReloadBypassingCache() {
+  web_contents_->GetController().ReloadBypassingCache(false);
   web_contents_->Focus();
 }
 
@@ -337,12 +333,9 @@ WebContents* Shell::OpenURLFromTab(WebContents* source,
   load_url_params.should_replace_current_entry =
       params.should_replace_current_entry;
 
-  // Only allows the browser-initiated navigation to use POST.
-  if (params.uses_post && !params.is_renderer_initiated) {
-    load_url_params.load_type =
-        NavigationController::LOAD_TYPE_BROWSER_INITIATED_HTTP_POST;
-    load_url_params.browser_initiated_post_data =
-        params.browser_initiated_post_data;
+  if (params.uses_post) {
+    load_url_params.load_type = NavigationController::LOAD_TYPE_HTTP_POST;
+    load_url_params.post_data = params.post_data;
   }
 
   source->GetController().LoadURLWithParams(load_url_params);
@@ -369,8 +362,7 @@ void Shell::ToggleFullscreenModeForTab(WebContents* web_contents,
 #if defined(OS_ANDROID)
   PlatformToggleFullscreenModeForTab(web_contents, enter_fullscreen);
 #endif
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kRunLayoutTest))
+  if (!switches::IsRunLayoutTestSwitchPresent())
     return;
   if (is_fullscreen_ != enter_fullscreen) {
     is_fullscreen_ = enter_fullscreen;
@@ -422,34 +414,16 @@ void Shell::DidNavigateMainFramePostCommit(WebContents* web_contents) {
 JavaScriptDialogManager* Shell::GetJavaScriptDialogManager(
     WebContents* source) {
   if (!dialog_manager_) {
-    // SHEZ: Remove test-only code.
-#if 0
-    const base::CommandLine& command_line =
-        *base::CommandLine::ForCurrentProcess();
-#endif
+
     dialog_manager_.reset(
-        // SHEZ: Remove test-only code.
-#if 0
-            command_line.HasSwitch(switches::kRunLayoutTest)
-        ? new LayoutTestJavaScriptDialogManager
-        :
-#endif
         new ShellJavaScriptDialogManager);
   }
   return dialog_manager_.get();
 }
 
-scoped_ptr<BluetoothChooser> Shell::RunBluetoothChooser(
+std::unique_ptr<BluetoothChooser> Shell::RunBluetoothChooser(
     RenderFrameHost* frame,
     const BluetoothChooser::EventHandler& event_handler) {
-#if 0
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kRunLayoutTest)) {
-    return BlinkTestController::Get()->RunBluetoothChooser(frame,
-                                                           event_handler);
-  }
-#endif
 
   return nullptr;
 }
@@ -459,18 +433,10 @@ bool Shell::AddMessageToConsole(WebContents* source,
                                 const base::string16& message,
                                 int32_t line_no,
                                 const base::string16& source_id) {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kRunLayoutTest);
+  return switches::IsRunLayoutTestSwitchPresent();
 }
 
 void Shell::RendererUnresponsive(WebContents* source) {
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kRunLayoutTest))
-    return;
-  // SHEZ: Remove test code.
-#if 0
-  BlinkTestController::Get()->RendererUnresponsive();
-#endif
 }
 
 void Shell::ActivateContents(WebContents* contents) {
@@ -497,13 +463,6 @@ gfx::Size Shell::GetShellDefaultSize() {
       kDefaultTestWindowWidthDip, kDefaultTestWindowHeightDip);
   }
   return default_shell_size;
-}
-
-void Shell::RenderViewCreated(RenderViewHost* render_view_host) {
-  // All RenderViewHosts in layout tests should get Mojo bindings.
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kRunLayoutTest))
-    render_view_host->AllowBindings(BINDINGS_POLICY_MOJO);
 }
 
 void Shell::TitleWasSet(NavigationEntry* entry, bool explicit_set) {

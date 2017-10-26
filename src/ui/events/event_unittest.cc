@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/events/event.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/test/histogram_tester.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -18,7 +21,7 @@
 #if defined(USE_X11)
 #include <X11/Xlib.h>
 #include "ui/events/test/events_test_utils_x11.h"
-#include "ui/gfx/x/x11_types.h"
+#include "ui/gfx/x/x11_types.h"  // nogncheck
 #endif
 
 namespace ui {
@@ -87,9 +90,9 @@ TEST(EventTest, RepeatedClick) {
   LocatedEventTestApi test_ev1(&mouse_ev1);
   LocatedEventTestApi test_ev2(&mouse_ev2);
 
-  base::TimeDelta start = base::TimeDelta::FromMilliseconds(0);
-  base::TimeDelta soon = start + base::TimeDelta::FromMilliseconds(1);
-  base::TimeDelta later = start + base::TimeDelta::FromMilliseconds(1000);
+  base::TimeTicks start = base::TimeTicks();
+  base::TimeTicks soon = start + base::TimeDelta::FromMilliseconds(1);
+  base::TimeTicks later = start + base::TimeDelta::FromMilliseconds(1000);
 
   // Same event.
   test_ev1.set_location(gfx::Point(0, 0));
@@ -129,9 +132,9 @@ TEST(EventTest, RepeatedClick) {
 TEST(EventTest, DoubleClickRequiresRelease) {
   const gfx::Point origin1(0, 0);
   const gfx::Point origin2(100, 0);
-  scoped_ptr<MouseEvent> ev;
-  base::TimeDelta start = base::TimeDelta::FromMilliseconds(0);
-  base::TimeDelta soon = start + base::TimeDelta::FromMilliseconds(1);
+  std::unique_ptr<MouseEvent> ev;
+  base::TimeTicks start = base::TimeTicks();
+  base::TimeTicks soon = start + base::TimeDelta::FromMilliseconds(1);
 
   ev.reset(new MouseEvent(ET_MOUSE_PRESSED, origin1, origin1, EventTimeForNow(),
                           0, 0));
@@ -165,9 +168,9 @@ TEST(EventTest, DoubleClickRequiresRelease) {
 // click.
 TEST(EventTest, SingleClickRightLeft) {
   const gfx::Point origin(0, 0);
-  scoped_ptr<MouseEvent> ev;
-  base::TimeDelta start = base::TimeDelta::FromMilliseconds(0);
-  base::TimeDelta soon = start + base::TimeDelta::FromMilliseconds(1);
+  std::unique_ptr<MouseEvent> ev;
+  base::TimeTicks start = base::TimeTicks();
+  base::TimeTicks soon = start + base::TimeDelta::FromMilliseconds(1);
 
   ev.reset(new MouseEvent(ET_MOUSE_PRESSED, origin, origin, EventTimeForNow(),
                           ui::EF_RIGHT_MOUSE_BUTTON,
@@ -353,7 +356,7 @@ TEST(EventTest, NormalizeKeyEventFlags) {
 
 TEST(EventTest, KeyEventCopy) {
   KeyEvent key(ET_KEY_PRESSED, VKEY_A, EF_NONE);
-  scoped_ptr<KeyEvent> copied_key(new KeyEvent(key));
+  std::unique_ptr<KeyEvent> copied_key(new KeyEvent(key));
   EXPECT_EQ(copied_key->type(), key.type());
   EXPECT_EQ(copied_key->key_code(), key.key_code());
 }
@@ -425,8 +428,8 @@ TEST(EventTest, KeyEventCode) {
 
 namespace {
 #if defined(USE_X11)
-void SetKeyEventTimestamp(XEvent* event, long time) {
-  event->xkey.time = time;
+void SetKeyEventTimestamp(XEvent* event, int64_t time) {
+  event->xkey.time = time & UINT32_MAX;
 }
 
 void AdvanceKeyEventTimestamp(XEvent* event) {
@@ -434,8 +437,8 @@ void AdvanceKeyEventTimestamp(XEvent* event) {
 }
 
 #elif defined(OS_WIN)
-void SetKeyEventTimestamp(MSG& msg, long time) {
-  msg.time = time;
+void SetKeyEventTimestamp(MSG& msg, int64_t time) {
+  msg.time = static_cast<long>(time);
 }
 
 void AdvanceKeyEventTimestamp(MSG& msg) {
@@ -451,6 +454,7 @@ TEST(EventTest, AutoRepeat) {
   const uint16_t kNativeCodeB =
       ui::KeycodeConverter::DomCodeToNativeKeycode(DomCode::US_B);
 #if defined(USE_X11)
+
   ScopedXI2Event native_event_a_pressed;
   native_event_a_pressed.InitKeyEvent(ET_KEY_PRESSED, VKEY_A, kNativeCodeA);
   ScopedXI2Event native_event_a_pressed_1500;
@@ -479,8 +483,11 @@ TEST(EventTest, AutoRepeat) {
   MSG native_event_a_released = { NULL, WM_KEYUP, VKEY_A, lParam_a };
   MSG native_event_b_pressed = { NULL, WM_KEYUP, VKEY_B, lParam_b };
 #endif
-  SetKeyEventTimestamp(native_event_a_pressed_1500, 1500);
-  SetKeyEventTimestamp(native_event_a_pressed_3000, 3000);
+  int64_t ticks_base =
+      (base::TimeTicks::Now() - base::TimeTicks()).InMilliseconds() - 5000;
+  SetKeyEventTimestamp(native_event_a_pressed, ticks_base);
+  SetKeyEventTimestamp(native_event_a_pressed_1500, ticks_base + 1500);
+  SetKeyEventTimestamp(native_event_a_pressed_3000, ticks_base + 3000);
 
   {
     KeyEvent key_a1(native_event_a_pressed);
@@ -561,7 +568,7 @@ TEST(EventTest, AutoRepeat) {
 #endif  // USE_X11 || OS_WIN
 
 TEST(EventTest, TouchEventRadiusDefaultsToOtherAxis) {
-  const base::TimeDelta time = base::TimeDelta::FromMilliseconds(0);
+  const base::TimeTicks time = base::TimeTicks();
   const float non_zero_length1 = 30;
   const float non_zero_length2 = 46;
 
@@ -577,7 +584,7 @@ TEST(EventTest, TouchEventRadiusDefaultsToOtherAxis) {
 }
 
 TEST(EventTest, TouchEventRotationAngleFixing) {
-  const base::TimeDelta time = base::TimeDelta::FromMilliseconds(0);
+  const base::TimeTicks time = base::TimeTicks();
   const float radius_x = 20;
   const float radius_y = 10;
 
@@ -725,6 +732,52 @@ TEST(EventTest, PointerDetailsCustomTouch) {
   EXPECT_EQ(touch_event.pointer_details(), touch_event_copy.pointer_details());
 }
 
+TEST(EventTest, PointerEventCanConvertFrom) {
+  const gfx::Point point;
+  const base::TimeTicks time;
+
+  // Common mouse events can be converted.
+  const EventType mouse_allowed[] = {
+      ET_MOUSE_PRESSED,
+      ET_MOUSE_DRAGGED,
+      ET_MOUSE_MOVED,
+      ET_MOUSE_ENTERED,
+      ET_MOUSE_EXITED,
+      ET_MOUSE_RELEASED
+  };
+  for (size_t i = 0; i < arraysize(mouse_allowed); i++) {
+    MouseEvent event(mouse_allowed[i], point, point, time, 0, 0);
+    EXPECT_TRUE(PointerEvent::CanConvertFrom(event));
+  }
+
+  // Common touch events can be converted.
+  const EventType touch_allowed[] = {
+      ET_TOUCH_PRESSED,
+      ET_TOUCH_MOVED,
+      ET_TOUCH_RELEASED,
+      ET_TOUCH_CANCELLED
+  };
+  for (size_t i = 0; i < arraysize(touch_allowed); i++) {
+    TouchEvent event(touch_allowed[i], point, 0, time);
+    EXPECT_TRUE(PointerEvent::CanConvertFrom(event));
+  }
+
+  // Capture changes cannot be converted.
+  EXPECT_FALSE(
+      PointerEvent::CanConvertFrom(
+          MouseEvent(ET_MOUSE_CAPTURE_CHANGED, point, point, time, 0, 0)));
+
+  // Wheel events cannot be converted.
+  EXPECT_FALSE(
+      PointerEvent::CanConvertFrom(
+          MouseWheelEvent(gfx::Vector2d(), point, point, time, 0, 0)));
+
+  // Non-mouse non-touch events cannot be converted.
+  EXPECT_FALSE(
+      PointerEvent::CanConvertFrom(
+          KeyEvent(ET_KEY_PRESSED, VKEY_SPACE, EF_NONE)));
+}
+
 TEST(EventTest, PointerEventType) {
   const ui::EventType kMouseTypeMap[][2] = {
       {ui::ET_MOUSE_PRESSED, ui::ET_POINTER_DOWN},
@@ -743,7 +796,7 @@ TEST(EventTest, PointerEventType) {
 
   for (size_t i = 0; i < arraysize(kMouseTypeMap); i++) {
     ui::MouseEvent mouse_event(kMouseTypeMap[i][0], gfx::Point(0, 0),
-                               gfx::Point(0, 0), base::TimeDelta(), 0, 0);
+                               gfx::Point(0, 0), base::TimeTicks(), 0, 0);
     ui::PointerEvent pointer_event(mouse_event);
     EXPECT_EQ(kMouseTypeMap[i][1], pointer_event.type());
     EXPECT_FALSE(pointer_event.IsMouseEvent());
@@ -753,7 +806,7 @@ TEST(EventTest, PointerEventType) {
 
   for (size_t i = 0; i < arraysize(kTouchTypeMap); i++) {
     ui::TouchEvent touch_event(kTouchTypeMap[i][0], gfx::Point(0, 0), 0,
-                               base::TimeDelta());
+                               base::TimeTicks());
     ui::PointerEvent pointer_event(touch_event);
     EXPECT_EQ(kTouchTypeMap[i][1], pointer_event.type());
     EXPECT_FALSE(pointer_event.IsMouseEvent());
@@ -765,14 +818,14 @@ TEST(EventTest, PointerEventType) {
 TEST(EventTest, PointerEventId) {
   {
     ui::MouseEvent mouse_event(ui::ET_MOUSE_PRESSED, gfx::Point(0, 0),
-                               gfx::Point(0, 0), base::TimeDelta(), 0, 0);
+                               gfx::Point(0, 0), base::TimeTicks(), 0, 0);
     ui::PointerEvent pointer_event(mouse_event);
     EXPECT_EQ(pointer_event.pointer_id(), ui::PointerEvent::kMousePointerId);
   }
 
   for (int touch_id = 0; touch_id < 8; touch_id++) {
     ui::TouchEvent touch_event(ui::ET_TOUCH_PRESSED, gfx::Point(0, 0), touch_id,
-                               base::TimeDelta());
+                               base::TimeTicks());
     ui::PointerEvent pointer_event(touch_event);
     EXPECT_EQ(pointer_event.pointer_id(), touch_id);
   }
@@ -807,7 +860,7 @@ TEST(EventTest, PointerEventClone) {
     ui::PointerEvent ptr_event(
         ui::TouchEvent(ET_TOUCH_PRESSED, gfx::Point(0, 0), 0, 0,
                        ui::EventTimeForNow(), 10.0f, 5.0f, 0.0f, 15.0f));
-    scoped_ptr<ui::Event> clone(ui::Event::Clone(ptr_event));
+    std::unique_ptr<ui::Event> clone(ui::Event::Clone(ptr_event));
     EXPECT_TRUE(clone->IsPointerEvent());
     ui::PointerEvent* clone_as_ptr = clone->AsPointerEvent();
 
@@ -822,7 +875,7 @@ TEST(EventTest, PointerEventClone) {
     ui::PointerEvent ptr_event(
         ui::MouseEvent(ET_MOUSE_PRESSED, gfx::Point(0, 0), gfx::Point(0, 0),
                        ui::EventTimeForNow(), 0, 0));
-    scoped_ptr<ui::Event> clone(ui::Event::Clone(ptr_event));
+    std::unique_ptr<ui::Event> clone(ui::Event::Clone(ptr_event));
     EXPECT_TRUE(clone->IsPointerEvent());
     ui::PointerEvent* clone_as_ptr = clone->AsPointerEvent();
 
@@ -832,6 +885,145 @@ TEST(EventTest, PointerEventClone) {
     EXPECT_EQ(ptr_event.location(), clone_as_ptr->location());
     EXPECT_EQ(ptr_event.root_location(), clone_as_ptr->root_location());
   }
+}
+
+TEST(EventTest, MouseEventLatencyUIComponentExists) {
+  const gfx::Point origin(0, 0);
+  MouseEvent mouseev(ET_MOUSE_PRESSED, origin, origin, EventTimeForNow(), 0, 0);
+  EXPECT_TRUE(mouseev.latency()->FindLatency(
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, nullptr));
+}
+
+TEST(EventTest, MouseWheelEventLatencyUIComponentExists) {
+  const gfx::Point origin(0, 0);
+  MouseWheelEvent mouseWheelev(gfx::Vector2d(), origin, origin,
+                               EventTimeForNow(), 0, 0);
+  EXPECT_TRUE(mouseWheelev.latency()->FindLatency(
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, nullptr));
+}
+
+TEST(EventTest, PointerEventToMouseEvent) {
+  const struct {
+    ui::EventType in_type;
+    ui::EventType out_type;
+    gfx::Point location;
+    gfx::Point root_location;
+    int flags;
+  } kTestData[] = {
+      {ui::ET_POINTER_DOWN, ui::ET_MOUSE_PRESSED, gfx::Point(10, 20),
+       gfx::Point(110, 120), 0},
+      {ui::ET_POINTER_MOVED, ui::ET_MOUSE_MOVED, gfx::Point(20, 10),
+       gfx::Point(1, 2), 0},
+      {ui::ET_POINTER_MOVED, ui::ET_MOUSE_DRAGGED, gfx::Point(20, 10),
+       gfx::Point(1, 2), EF_LEFT_MOUSE_BUTTON},
+      {ui::ET_POINTER_MOVED, ui::ET_MOUSE_DRAGGED, gfx::Point(20, 10),
+       gfx::Point(1, 2), EF_RIGHT_MOUSE_BUTTON},
+      {ui::ET_POINTER_MOVED, ui::ET_MOUSE_DRAGGED, gfx::Point(20, 10),
+       gfx::Point(1, 2), EF_MIDDLE_MOUSE_BUTTON},
+      {ui::ET_POINTER_ENTERED, ui::ET_MOUSE_ENTERED, gfx::Point(), gfx::Point(),
+       EF_MIDDLE_MOUSE_BUTTON | EF_RIGHT_MOUSE_BUTTON},
+      {ui::ET_POINTER_EXITED, ui::ET_MOUSE_EXITED, gfx::Point(5, 1),
+       gfx::Point(1, 5), EF_RIGHT_MOUSE_BUTTON},
+      {ui::ET_POINTER_UP, ui::ET_MOUSE_RELEASED, gfx::Point(1000, 1000),
+       gfx::Point(14, 15), EF_MIDDLE_MOUSE_BUTTON}};
+
+  for (size_t i = 0; i < arraysize(kTestData); i++) {
+    ui::PointerEvent pointer_event(
+        kTestData[i].in_type, kTestData[i].location, kTestData[i].root_location,
+        kTestData[i].flags, 0,
+        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_MOUSE),
+        base::TimeTicks());
+    ui::MouseEvent mouse_event(pointer_event);
+
+    EXPECT_EQ(kTestData[i].out_type, mouse_event.type());
+    EXPECT_EQ(kTestData[i].location, mouse_event.location());
+    EXPECT_EQ(kTestData[i].root_location, mouse_event.root_location());
+    EXPECT_EQ(kTestData[i].flags, mouse_event.flags());
+  }
+}
+
+TEST(EventTest, PointerEventToTouchEventType) {
+  ui::EventType kTouchTypeMap[][2] = {
+      {ui::ET_POINTER_DOWN, ui::ET_TOUCH_PRESSED},
+      {ui::ET_POINTER_MOVED, ui::ET_TOUCH_MOVED},
+      {ui::ET_POINTER_UP, ui::ET_TOUCH_RELEASED},
+      {ui::ET_POINTER_CANCELLED, ui::ET_TOUCH_CANCELLED},
+  };
+
+  for (size_t i = 0; i < arraysize(kTouchTypeMap); i++) {
+    ui::PointerEvent pointer_event(
+        kTouchTypeMap[i][0], gfx::Point(), gfx::Point(), 0, 0,
+        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH),
+        base::TimeTicks());
+    ui::TouchEvent touch_event(pointer_event);
+
+    EXPECT_EQ(kTouchTypeMap[i][1], touch_event.type());
+  }
+}
+
+TEST(EventTest, PointerEventToTouchEventDetails) {
+  ui::PointerEvent pointer_event(
+      ui::TouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(12, 14), 0, 15,
+                     EventTimeForNow(), 11.5, 13.5, 13.0, 0.5));
+  ui::TouchEvent touch_event(pointer_event);
+
+  EXPECT_EQ(pointer_event.location(), touch_event.location());
+  EXPECT_EQ(pointer_event.flags(), touch_event.flags());
+  EXPECT_EQ(pointer_event.pointer_id(), touch_event.touch_id());
+  EXPECT_EQ(pointer_event.pointer_details(), touch_event.pointer_details());
+  EXPECT_EQ(pointer_event.time_stamp(), touch_event.time_stamp());
+}
+
+// Checks that Event.Latency.OS.TOUCH_PRESSED, TOUCH_MOVED,
+// and TOUCH_RELEASED histograms are computed properly.
+#if defined(USE_X11)
+TEST(EventTest, EventLatencyOSTouchHistograms) {
+  base::HistogramTester histogram_tester;
+  ScopedXI2Event scoped_xevent;
+
+  // SetUp for test
+  DeviceDataManagerX11::CreateInstance();
+  std::vector<int> devices;
+  devices.push_back(0);
+  ui::SetUpTouchDevicesForTest(devices);
+
+  // Init touch begin, update, and end events with tracking id 5, touch id 0.
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchBegin, 5, gfx::Point(10, 10), std::vector<Valuator>());
+  TouchEvent touch_begin(scoped_xevent);
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.TOUCH_PRESSED", 1);
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchUpdate, 5, gfx::Point(20, 20), std::vector<Valuator>());
+  TouchEvent touch_update(scoped_xevent);
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.TOUCH_MOVED", 1);
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchEnd, 5, gfx::Point(30, 30), std::vector<Valuator>());
+  TouchEvent touch_end(scoped_xevent);
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.TOUCH_RELEASED", 1);
+}
+#endif
+
+// Checks that Event.Latency.OS.MOUSE_WHEEL histogram is computed properly.
+TEST(EventTest, EventLatencyOSMouseWheelHistogram) {
+#if defined(OS_WIN)
+  base::HistogramTester histogram_tester;
+  MSG event = { nullptr, WM_MOUSEWHEEL, 0, 0 };
+  MouseWheelEvent mouseWheelEvent(event);
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.MOUSE_WHEEL", 1);
+#elif defined(USE_X11)
+  base::HistogramTester histogram_tester;
+  DeviceDataManagerX11::CreateInstance();
+
+  // Initializes a native event and uses it to generate a MouseWheel event.
+  XEvent native_event;
+  memset(&native_event, 0, sizeof(XEvent));
+  XButtonEvent* button_event = &(native_event.xbutton);
+  button_event->type = ButtonPress;
+  button_event->button = 4; // A valid wheel button number between min and max.
+  MouseWheelEvent mouse_ev(&native_event);
+
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.MOUSE_WHEEL", 1);
+#endif
 }
 
 }  // namespace ui

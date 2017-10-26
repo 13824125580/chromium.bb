@@ -88,7 +88,7 @@ static ScopedJavaLocalRef<jstring> FormatUrlForSecurityDisplay(
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
       env, url_formatter::FormatUrlForSecurityDisplay(
-               ConvertJavaStringToGURL(env, url), std::string()));
+               ConvertJavaStringToGURL(env, url)));
 }
 
 static ScopedJavaLocalRef<jstring> FormatUrlForSecurityDisplayOmitScheme(
@@ -96,8 +96,9 @@ static ScopedJavaLocalRef<jstring> FormatUrlForSecurityDisplayOmitScheme(
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
-      env, url_formatter::FormatUrlForSecurityDisplayOmitScheme(
-               ConvertJavaStringToGURL(env, url), std::string()));
+      env, url_formatter::FormatUrlForSecurityDisplay(
+               ConvertJavaStringToGURL(env, url),
+               url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS));
 }
 
 static jboolean IsGoogleHomePageUrl(JNIEnv* env,

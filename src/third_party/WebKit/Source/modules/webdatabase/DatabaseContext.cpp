@@ -100,6 +100,8 @@ DatabaseContext::DatabaseContext(ExecutionContext* context)
     , m_hasOpenDatabases(false)
     , m_hasRequestedTermination(false)
 {
+    DCHECK(isMainThread());
+
     // ActiveDOMObject expects this to be called to set internal flags.
     suspendIfNeeded();
 
@@ -190,17 +192,17 @@ void DatabaseContext::stopDatabases()
 
 bool DatabaseContext::allowDatabaseAccess() const
 {
-    return toDocument(executionContext())->isActive();
+    return toDocument(getExecutionContext())->isActive();
 }
 
-SecurityOrigin* DatabaseContext::securityOrigin() const
+SecurityOrigin* DatabaseContext::getSecurityOrigin() const
 {
-    return executionContext()->securityOrigin();
+    return getExecutionContext()->getSecurityOrigin();
 }
 
 bool DatabaseContext::isContextThread() const
 {
-    return executionContext()->isContextThread();
+    return getExecutionContext()->isContextThread();
 }
 
 } // namespace blink

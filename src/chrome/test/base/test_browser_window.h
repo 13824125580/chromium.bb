@@ -67,10 +67,8 @@ class TestBrowserWindow : public BrowserWindow {
   bool ShouldHideUIForFullscreen() const override;
   bool IsFullscreen() const override;
   bool IsFullscreenBubbleVisible() const override;
-#if defined(OS_WIN)
-  void SetMetroSnapMode(bool enable) override {}
-  bool IsInMetroSnapMode() const override;
-#endif
+  void MaybeShowNewBackShortcutBubble(bool forward) override {}
+  void HideNewBackShortcutBubble() override {}
   LocationBar* GetLocationBar() const override;
   void SetFocusToLocationBar(bool select_all) override {}
   void UpdateReloadStopState(bool is_loading, bool force) override {}
@@ -94,8 +92,6 @@ class TestBrowserWindow : public BrowserWindow {
   bool IsTabStripEditable() const override;
   bool IsToolbarVisible() const override;
   gfx::Rect GetRootWindowResizerRect() const override;
-  void ConfirmAddSearchProvider(TemplateURL* template_url,
-                                Profile* profile) override {}
   void ShowUpdateChromeDialog() override {}
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override {}
   void ShowBookmarkAppBubble(
@@ -110,10 +106,8 @@ class TestBrowserWindow : public BrowserWindow {
                            translate::TranslateErrors::Type error_type,
                            bool is_user_gesture) override {}
 #if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
-  void ShowOneClickSigninBubble(
-      OneClickSigninBubbleType type,
+  void ShowOneClickSigninConfirmation(
       const base::string16& email,
-      const base::string16& error_message,
       const StartSyncCallback& start_sync_callback) override {}
 #endif
   bool IsDownloadShelfVisible() const override;
@@ -127,7 +121,7 @@ class TestBrowserWindow : public BrowserWindow {
   void ShowWebsiteSettings(
       Profile* profile,
       content::WebContents* web_contents,
-      const GURL& url,
+      const GURL& virtual_url,
       const security_state::SecurityStateModel::SecurityInfo& security_info)
       override {}
   void CutCopyPaste(int command_id) override {}
@@ -144,6 +138,11 @@ class TestBrowserWindow : public BrowserWindow {
   void ExecuteExtensionCommand(const extensions::Extension* extension,
                                const extensions::Command& command) override;
   ExclusiveAccessContext* GetExclusiveAccessContext() override;
+  void ShowImeWarningBubble(
+      const extensions::Extension* extension,
+      const base::Callback<void(ImeWarningBubblePermissionStatus status)>&
+          callback) override {}
+  std::string GetWorkspace() const override;
 
  protected:
   void DestroyBrowser() override {}
@@ -197,7 +196,7 @@ class TestBrowserWindowOwner : public chrome::BrowserListObserver {
  private:
   // Overridden from BrowserListObserver:
   void OnBrowserRemoved(Browser* browser) override;
-  scoped_ptr<TestBrowserWindow> window_;
+  std::unique_ptr<TestBrowserWindow> window_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserWindowOwner);
 };
@@ -205,7 +204,7 @@ class TestBrowserWindowOwner : public chrome::BrowserListObserver {
 namespace chrome {
 
 // Helper that handle the lifetime of TestBrowserWindow instances.
-scoped_ptr<Browser> CreateBrowserWithTestWindowForParams(
+std::unique_ptr<Browser> CreateBrowserWithTestWindowForParams(
     Browser::CreateParams* params);
 
 }  // namespace chrome

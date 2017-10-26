@@ -20,12 +20,11 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/worker_pool.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_network_delegate.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_request_options.h"
+#include "components/network_session_configurator/switches.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -95,38 +94,39 @@ void ApplyCmdlineOverridesToNetworkSessionParams(
   }
 }
 
-scoped_ptr<net::URLRequestJobFactory> CreateJobFactory(
+std::unique_ptr<net::URLRequestJobFactory> CreateJobFactory(
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors) {
-  scoped_ptr<AwURLRequestJobFactory> aw_job_factory(new AwURLRequestJobFactory);
+  std::unique_ptr<AwURLRequestJobFactory> aw_job_factory(
+      new AwURLRequestJobFactory);
   // Note that the registered schemes must also be specified in
   // AwContentBrowserClient::IsHandledURL.
   bool set_protocol = aw_job_factory->SetProtocolHandler(
       url::kFileScheme,
-      make_scoped_ptr(new net::FileProtocolHandler(
+      base::WrapUnique(new net::FileProtocolHandler(
           content::BrowserThread::GetBlockingPool()
               ->GetTaskRunnerWithShutdownBehavior(
                   base::SequencedWorkerPool::SKIP_ON_SHUTDOWN))));
   DCHECK(set_protocol);
   set_protocol = aw_job_factory->SetProtocolHandler(
-      url::kDataScheme, make_scoped_ptr(new net::DataProtocolHandler()));
+      url::kDataScheme, base::WrapUnique(new net::DataProtocolHandler()));
   DCHECK(set_protocol);
   set_protocol = aw_job_factory->SetProtocolHandler(
       url::kBlobScheme,
-      make_scoped_ptr((*protocol_handlers)[url::kBlobScheme].release()));
+      base::WrapUnique((*protocol_handlers)[url::kBlobScheme].release()));
   DCHECK(set_protocol);
   set_protocol = aw_job_factory->SetProtocolHandler(
       url::kFileSystemScheme,
-      make_scoped_ptr((*protocol_handlers)[url::kFileSystemScheme].release()));
+      base::WrapUnique((*protocol_handlers)[url::kFileSystemScheme].release()));
   DCHECK(set_protocol);
   set_protocol = aw_job_factory->SetProtocolHandler(
       content::kChromeUIScheme,
-      make_scoped_ptr(
+      base::WrapUnique(
           (*protocol_handlers)[content::kChromeUIScheme].release()));
   DCHECK(set_protocol);
   set_protocol = aw_job_factory->SetProtocolHandler(
       content::kChromeDevToolsScheme,
-      make_scoped_ptr(
+      base::WrapUnique(
           (*protocol_handlers)[content::kChromeDevToolsScheme].release()));
   DCHECK(set_protocol);
   protocol_handlers->clear();
@@ -150,13 +150,14 @@ scoped_ptr<net::URLRequestJobFactory> CreateJobFactory(
 
   // The chain of responsibility will execute the handlers in reverse to the
   // order in which the elements of the chain are created.
-  scoped_ptr<net::URLRequestJobFactory> job_factory(std::move(aw_job_factory));
+  std::unique_ptr<net::URLRequestJobFactory> job_factory(
+      std::move(aw_job_factory));
   for (content::URLRequestInterceptorScopedVector::reverse_iterator i =
            request_interceptors.rbegin();
        i != request_interceptors.rend();
        ++i) {
     job_factory.reset(new net::URLRequestInterceptingJobFactory(
-        std::move(job_factory), make_scoped_ptr(*i)));
+        std::move(job_factory), base::WrapUnique(*i)));
   }
   request_interceptors.weak_clear();
 
@@ -167,7 +168,7 @@ scoped_ptr<net::URLRequestJobFactory> CreateJobFactory(
 
 AwURLRequestContextGetter::AwURLRequestContextGetter(
     const base::FilePath& cache_path,
-    scoped_ptr<net::ProxyConfigService> config_service,
+    std::unique_ptr<net::ProxyConfigService> config_service,
     PrefService* user_pref_service)
     : cache_path_(cache_path),
       net_log_(new net::NetLog()),
@@ -200,23 +201,17 @@ void AwURLRequestContextGetter::InitializeURLRequestContext() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!url_request_context_);
 
-  cookie_store_ = new AwCookieStoreWrapper();
-
   net::URLRequestContextBuilder builder;
-  scoped_ptr<AwNetworkDelegate> aw_network_delegate(new AwNetworkDelegate());
 
   AwBrowserContext* browser_context = AwBrowserContext::GetDefault();
   DCHECK(browser_context);
 
-  builder.set_network_delegate(
-      browser_context->GetDataReductionProxyIOData()->CreateNetworkDelegate(
-          std::move(aw_network_delegate),
-          false /* No UMA is produced to track bypasses. */));
+  builder.set_network_delegate(base::WrapUnique(new AwNetworkDelegate()));
 #if !defined(DISABLE_FTP_SUPPORT)
   builder.set_ftp_enabled(false);  // Android WebView does not support ftp yet.
 #endif
   DCHECK(proxy_config_service_.get());
-  scoped_ptr<net::ChannelIDService> channel_id_service;
+  std::unique_ptr<net::ChannelIDService> channel_id_service;
   if (TokenBindingManager::GetInstance()->is_enabled()) {
     base::FilePath channel_id_path =
         browser_context->GetPath().Append(kChannelIDFilename);
@@ -237,8 +232,9 @@ void AwURLRequestContextGetter::InitializeURLRequestContext() {
   builder.set_proxy_service(net::ProxyService::CreateWithoutProxyResolver(
       std::move(proxy_config_service_), net_log_.get()));
   builder.set_net_log(net_log_.get());
-  builder.SetCookieAndChannelIdStores(cookie_store_,
-                                      std::move(channel_id_service));
+  builder.SetCookieAndChannelIdStores(
+      base::WrapUnique(new AwCookieStoreWrapper()),
+      std::move(channel_id_service));
 
   net::URLRequestContextBuilder::HttpCacheParams cache_params;
   cache_params.type =
@@ -255,8 +251,9 @@ void AwURLRequestContextGetter::InitializeURLRequestContext() {
   builder.set_http_network_session_params(network_session_params);
   builder.SetSpdyAndQuicEnabled(true, false);
 
-  scoped_ptr<net::MappedHostResolver> host_resolver(new net::MappedHostResolver(
-      net::HostResolver::CreateDefaultResolver(nullptr)));
+  std::unique_ptr<net::MappedHostResolver> host_resolver(
+      new net::MappedHostResolver(
+          net::HostResolver::CreateDefaultResolver(nullptr)));
   ApplyCmdlineOverridesToHostResolver(host_resolver.get());
   builder.SetHttpAuthHandlerFactory(
       CreateAuthHandlerFactory(host_resolver.get()));
@@ -266,9 +263,6 @@ void AwURLRequestContextGetter::InitializeURLRequestContext() {
 
   job_factory_ =
       CreateJobFactory(&protocol_handlers_, std::move(request_interceptors_));
-  job_factory_.reset(new net::URLRequestInterceptingJobFactory(
-      std::move(job_factory_),
-      browser_context->GetDataReductionProxyIOData()->CreateInterceptor()));
   url_request_context_->set_job_factory(job_factory_.get());
   url_request_context_->set_http_user_agent_settings(
       http_user_agent_settings_.get());
@@ -298,13 +292,7 @@ net::NetLog* AwURLRequestContextGetter::GetNetLog() {
   return net_log_.get();
 }
 
-void AwURLRequestContextGetter::SetKeyOnIO(const std::string& key) {
-  DCHECK(AwBrowserContext::GetDefault()->GetDataReductionProxyIOData());
-  AwBrowserContext::GetDefault()->GetDataReductionProxyIOData()->
-      request_options()->SetKeyOnIO(key);
-}
-
-scoped_ptr<net::HttpAuthHandlerFactory>
+std::unique_ptr<net::HttpAuthHandlerFactory>
 AwURLRequestContextGetter::CreateAuthHandlerFactory(
     net::HostResolver* resolver) {
   DCHECK(resolver);

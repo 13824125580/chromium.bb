@@ -5,6 +5,7 @@
 #include "components/sync_driver/about_sync_util.h"
 
 #include <string>
+#include <utility>
 
 #include "base/location.h"
 #include "base/strings/string16.h"
@@ -70,12 +71,12 @@ namespace {
 // |parent_list|, not the caller, owns the newly added section.
 base::ListValue* AddSection(base::ListValue* parent_list,
                             const std::string& title) {
-  base::DictionaryValue* section = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> section(new base::DictionaryValue());
   base::ListValue* section_contents = new base::ListValue();
   section->SetString("title", title);
   section->Set("data", section_contents);
   section->SetBoolean("is_sensitive", false);
-  parent_list->Append(section);
+  parent_list->Append(std::move(section));
   return section_contents;
 }
 
@@ -83,12 +84,12 @@ base::ListValue* AddSection(base::ListValue* parent_list,
 // form and posted in a public forum (e.g. unique identifiers).
 base::ListValue* AddSensitiveSection(base::ListValue* parent_list,
                                      const std::string& title) {
-  base::DictionaryValue* section = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> section(new base::DictionaryValue());
   base::ListValue* section_contents = new base::ListValue();
   section->SetString("title", title);
   section->Set("data", section_contents);
   section->SetBoolean("is_sensitive", true);
-  parent_list->Append(section);
+  parent_list->Append(std::move(section));
   return section_contents;
 }
 
@@ -242,11 +243,12 @@ std::string GetConnectionStatus(
 // its contents.  Most of the message consists of simple fields in about:sync
 // which are grouped into sections and populated with the help of the SyncStat
 // classes defined above.
-scoped_ptr<base::DictionaryValue> ConstructAboutInformation(
+std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
     sync_driver::SyncService* service,
     SigninManagerBase* signin,
     version_info::Channel channel) {
-  scoped_ptr<base::DictionaryValue> about_info(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> about_info(
+      new base::DictionaryValue());
 
   // 'details': A list of sections.
   base::ListValue* stats_list = new base::ListValue();

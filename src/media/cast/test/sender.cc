@@ -6,6 +6,8 @@
 // or read from a file.
 
 #include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <utility>
 
@@ -15,8 +17,9 @@
 #include "base/files/file_path.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread.h"
 #include "base/time/default_tick_clock.h"
@@ -32,8 +35,8 @@
 #include "media/cast/logging/proto/raw_events.pb.h"
 #include "media/cast/logging/receiver_time_offset_estimator_impl.h"
 #include "media/cast/logging/stats_event_subscriber.h"
+#include "media/cast/net/cast_transport.h"
 #include "media/cast/net/cast_transport_defines.h"
-#include "media/cast/net/cast_transport_sender.h"
 #include "media/cast/net/udp_transport.h"
 #include "media/cast/test/fake_media_source.h"
 #include "media/cast/test/utility/default_config.h"
@@ -79,9 +82,9 @@ void QuitLoopOnInitializationResult(media::cast::OperationalStatus result) {
 }
 
 net::IPEndPoint CreateUDPAddress(const std::string& ip_str, uint16_t port) {
-  net::IPAddressNumber ip_number;
-  CHECK(net::ParseIPLiteralToNumber(ip_str, &ip_number));
-  return net::IPEndPoint(ip_number, port);
+  net::IPAddress ip_address;
+  CHECK(ip_address.AssignFromIPLiteral(ip_str));
+  return net::IPEndPoint(ip_address, port);
 }
 
 void DumpLoggingData(const media::cast::proto::LogMetadata& log_metadata,
@@ -91,7 +94,7 @@ void DumpLoggingData(const media::cast::proto::LogMetadata& log_metadata,
   VLOG(0) << "Frame map size: " << frame_events.size();
   VLOG(0) << "Packet map size: " << packet_events.size();
 
-  scoped_ptr<char[]> event_log(new char[kMaxSerializedLogBytes]);
+  std::unique_ptr<char[]> event_log(new char[kMaxSerializedLogBytes]);
   int event_log_bytes;
   if (!media::cast::SerializeEvents(log_metadata,
                                     frame_events,
@@ -113,8 +116,10 @@ void DumpLoggingData(const media::cast::proto::LogMetadata& log_metadata,
 
 void WriteLogsToFileAndDestroySubscribers(
     const scoped_refptr<media::cast::CastEnvironment>& cast_environment,
-    scoped_ptr<media::cast::EncodingEventSubscriber> video_event_subscriber,
-    scoped_ptr<media::cast::EncodingEventSubscriber> audio_event_subscriber,
+    std::unique_ptr<media::cast::EncodingEventSubscriber>
+        video_event_subscriber,
+    std::unique_ptr<media::cast::EncodingEventSubscriber>
+        audio_event_subscriber,
     base::ScopedFILE video_log_file,
     base::ScopedFILE audio_log_file) {
   cast_environment->logger()->Unsubscribe(video_event_subscriber.get());
@@ -140,14 +145,15 @@ void WriteLogsToFileAndDestroySubscribers(
 
 void WriteStatsAndDestroySubscribers(
     const scoped_refptr<media::cast::CastEnvironment>& cast_environment,
-    scoped_ptr<media::cast::StatsEventSubscriber> video_stats_subscriber,
-    scoped_ptr<media::cast::StatsEventSubscriber> audio_stats_subscriber,
-    scoped_ptr<media::cast::ReceiverTimeOffsetEstimatorImpl> estimator) {
+    std::unique_ptr<media::cast::StatsEventSubscriber> video_stats_subscriber,
+    std::unique_ptr<media::cast::StatsEventSubscriber> audio_stats_subscriber,
+    std::unique_ptr<media::cast::ReceiverTimeOffsetEstimatorImpl> estimator) {
   cast_environment->logger()->Unsubscribe(video_stats_subscriber.get());
   cast_environment->logger()->Unsubscribe(audio_stats_subscriber.get());
   cast_environment->logger()->Unsubscribe(estimator.get());
 
-  scoped_ptr<base::DictionaryValue> stats = video_stats_subscriber->GetStats();
+  std::unique_ptr<base::DictionaryValue> stats =
+      video_stats_subscriber->GetStats();
   std::string json;
   base::JSONWriter::WriteWithOptions(
       *stats, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json);
@@ -160,7 +166,7 @@ void WriteStatsAndDestroySubscribers(
   VLOG(0) << "Audio stats: " << json;
 }
 
-class TransportClient : public media::cast::CastTransportSender::Client {
+class TransportClient : public media::cast::CastTransport::Client {
  public:
   explicit TransportClient(
       media::cast::LogEventDispatcher* log_event_dispatcher)
@@ -170,13 +176,14 @@ class TransportClient : public media::cast::CastTransportSender::Client {
     VLOG(1) << "Transport status: " << status;
   };
   void OnLoggingEventsReceived(
-      scoped_ptr<std::vector<media::cast::FrameEvent>> frame_events,
-      scoped_ptr<std::vector<media::cast::PacketEvent>> packet_events) final {
+      std::unique_ptr<std::vector<media::cast::FrameEvent>> frame_events,
+      std::unique_ptr<std::vector<media::cast::PacketEvent>> packet_events)
+      final {
     DCHECK(log_event_dispatcher_);
     log_event_dispatcher_->DispatchBatchOfEvents(std::move(frame_events),
                                                  std::move(packet_events));
   };
-  void ProcessRtpPacket(scoped_ptr<media::cast::Packet> packet) final {}
+  void ProcessRtpPacket(std::unique_ptr<media::cast::Packet> packet) final {}
 
  private:
   media::cast::LogEventDispatcher* const
@@ -231,18 +238,15 @@ int main(int argc, char** argv) {
   // Running transport on the main thread.
   scoped_refptr<media::cast::CastEnvironment> cast_environment(
       new media::cast::CastEnvironment(
-          make_scoped_ptr<base::TickClock>(new base::DefaultTickClock()),
-          io_message_loop.task_runner(),
-          audio_thread.task_runner(),
+          base::WrapUnique<base::TickClock>(new base::DefaultTickClock()),
+          io_message_loop.task_runner(), audio_thread.task_runner(),
           video_thread.task_runner()));
 
   // SendProcess initialization.
-  scoped_ptr<media::cast::FakeMediaSource> fake_media_source(
+  std::unique_ptr<media::cast::FakeMediaSource> fake_media_source(
       new media::cast::FakeMediaSource(test_thread.task_runner(),
-                                       cast_environment->Clock(),
-                                       audio_config,
-                                       video_config,
-                                       false));
+                                       cast_environment->Clock(), audio_config,
+                                       video_config, false));
 
   int final_fps = 0;
   if (!base::StringToInt(cmd->GetSwitchValueASCII(kSwitchFps),
@@ -257,19 +261,19 @@ int main(int argc, char** argv) {
   if (cmd->HasSwitch(kSwitchVaryFrameSizes))
     fake_media_source->SetVariableFrameSizeMode(true);
 
-  // CastTransportSender initialization.
-  scoped_ptr<media::cast::CastTransportSender> transport_sender =
-      media::cast::CastTransportSender::Create(
+  // CastTransport initialization.
+  std::unique_ptr<media::cast::CastTransport> transport_sender =
+      media::cast::CastTransport::Create(
           cast_environment->Clock(), base::TimeDelta::FromSeconds(1),
-          make_scoped_ptr(new TransportClient(cast_environment->logger())),
-          make_scoped_ptr(new media::cast::UdpTransport(
+          base::WrapUnique(new TransportClient(cast_environment->logger())),
+          base::WrapUnique(new media::cast::UdpTransport(
               nullptr, io_message_loop.task_runner(), net::IPEndPoint(),
               remote_endpoint, base::Bind(&UpdateCastTransportStatus))),
           io_message_loop.task_runner());
 
   // Set up event subscribers.
-  scoped_ptr<media::cast::EncodingEventSubscriber> video_event_subscriber;
-  scoped_ptr<media::cast::EncodingEventSubscriber> audio_event_subscriber;
+  std::unique_ptr<media::cast::EncodingEventSubscriber> video_event_subscriber;
+  std::unique_ptr<media::cast::EncodingEventSubscriber> audio_event_subscriber;
   std::string video_log_file_name("/tmp/video_events.log.gz");
   std::string audio_log_file_name("/tmp/audio_events.log.gz");
   LOG(INFO) << "Logging audio events to: " << audio_log_file_name;
@@ -282,14 +286,14 @@ int main(int argc, char** argv) {
   cast_environment->logger()->Subscribe(audio_event_subscriber.get());
 
   // Subscribers for stats.
-  scoped_ptr<media::cast::ReceiverTimeOffsetEstimatorImpl> offset_estimator(
-      new media::cast::ReceiverTimeOffsetEstimatorImpl());
+  std::unique_ptr<media::cast::ReceiverTimeOffsetEstimatorImpl>
+      offset_estimator(new media::cast::ReceiverTimeOffsetEstimatorImpl());
   cast_environment->logger()->Subscribe(offset_estimator.get());
-  scoped_ptr<media::cast::StatsEventSubscriber> video_stats_subscriber(
+  std::unique_ptr<media::cast::StatsEventSubscriber> video_stats_subscriber(
       new media::cast::StatsEventSubscriber(media::cast::VIDEO_EVENT,
                                             cast_environment->Clock(),
                                             offset_estimator.get()));
-  scoped_ptr<media::cast::StatsEventSubscriber> audio_stats_subscriber(
+  std::unique_ptr<media::cast::StatsEventSubscriber> audio_stats_subscriber(
       new media::cast::StatsEventSubscriber(media::cast::AUDIO_EVENT,
                                             cast_environment->Clock(),
                                             offset_estimator.get()));
@@ -329,9 +333,9 @@ int main(int argc, char** argv) {
       base::TimeDelta::FromSeconds(logging_duration_seconds));
 
   // CastSender initialization.
-  scoped_ptr<media::cast::CastSender> cast_sender =
+  std::unique_ptr<media::cast::CastSender> cast_sender =
       media::cast::CastSender::Create(cast_environment, transport_sender.get());
-  io_message_loop.PostTask(
+  io_message_loop.task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&media::cast::CastSender::InitializeVideo,
                  base::Unretained(cast_sender.get()),
@@ -340,12 +344,10 @@ int main(int argc, char** argv) {
                  media::cast::CreateDefaultVideoEncodeAcceleratorCallback(),
                  media::cast::CreateDefaultVideoEncodeMemoryCallback()));
   io_message_loop.Run();  // Wait for video initialization.
-  io_message_loop.PostTask(
-      FROM_HERE,
-      base::Bind(&media::cast::CastSender::InitializeAudio,
-                 base::Unretained(cast_sender.get()),
-                 audio_config,
-                 base::Bind(&QuitLoopOnInitializationResult)));
+  io_message_loop.task_runner()->PostTask(
+      FROM_HERE, base::Bind(&media::cast::CastSender::InitializeAudio,
+                            base::Unretained(cast_sender.get()), audio_config,
+                            base::Bind(&QuitLoopOnInitializationResult)));
   io_message_loop.Run();  // Wait for audio initialization.
 
   fake_media_source->Start(cast_sender->audio_frame_input(),

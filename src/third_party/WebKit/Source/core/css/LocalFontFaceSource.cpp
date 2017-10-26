@@ -34,7 +34,7 @@ bool LocalFontFaceSource::isLocalFontAvailable(const FontDescription& fontDescri
 {
     if (m_needToAdjustForBoldItalic) {
         FontDescription adjustedFontDescription = fontDescription;
-        WTF::String adjustedFontName = m_fontName.string();
+        WTF::String adjustedFontName = m_fontName.getString();
         adjustedFontDescriptionForBoldItalic(adjustedFontDescription, adjustedFontName);
         return FontCache::fontCache()->isPlatformFontAvailable(adjustedFontDescription,
                                                                WTF::AtomicString(adjustedFontName));
@@ -48,7 +48,7 @@ PassRefPtr<SimpleFontData> LocalFontFaceSource::createFontData(const FontDescrip
     RefPtr<SimpleFontData> fontData;
     if (m_needToAdjustForBoldItalic) {
         FontDescription adjustedFontDescription = fontDescription;
-        WTF::String adjustedFontName = m_fontName.string();
+        WTF::String adjustedFontName = m_fontName.getString();
         adjustedFontDescriptionForBoldItalic(adjustedFontDescription, adjustedFontName);
         fontData = FontCache::fontCache()->getFontData(adjustedFontDescription,
                                                        WTF::AtomicString(adjustedFontName),
@@ -57,7 +57,7 @@ PassRefPtr<SimpleFontData> LocalFontFaceSource::createFontData(const FontDescrip
     else {
         fontData = FontCache::fontCache()->getFontData(fontDescription, m_fontName, true);
     }
-    m_histograms.record(fontData);
+    m_histograms.record(fontData.get());
     return fontData.release();
 }
 

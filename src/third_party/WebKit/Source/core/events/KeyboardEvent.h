@@ -27,6 +27,7 @@
 #include "core/CoreExport.h"
 #include "core/events/KeyboardEventInit.h"
 #include "core/events/UIEventWithKeyState.h"
+#include <memory>
 
 namespace blink {
 
@@ -43,24 +44,24 @@ public:
         DOM_KEY_LOCATION_NUMPAD     = 0x03
     };
 
-    static PassRefPtrWillBeRawPtr<KeyboardEvent> create()
+    static KeyboardEvent* create()
     {
-        return adoptRefWillBeNoop(new KeyboardEvent);
+        return new KeyboardEvent;
     }
 
-    static PassRefPtrWillBeRawPtr<KeyboardEvent> create(const PlatformKeyboardEvent& platformEvent, AbstractView* view)
+    static KeyboardEvent* create(const PlatformKeyboardEvent& platformEvent, AbstractView* view)
     {
-        return adoptRefWillBeNoop(new KeyboardEvent(platformEvent, view));
+        return new KeyboardEvent(platformEvent, view);
     }
 
-    static PassRefPtrWillBeRawPtr<KeyboardEvent> create(ScriptState*, const AtomicString& type, const KeyboardEventInit&);
+    static KeyboardEvent* create(ScriptState*, const AtomicString& type, const KeyboardEventInit&);
 
-    static PassRefPtrWillBeRawPtr<KeyboardEvent> create(const AtomicString& type, bool canBubble, bool cancelable, AbstractView* view,
+    static KeyboardEvent* create(const AtomicString& type, bool canBubble, bool cancelable, AbstractView* view,
         const String& keyIdentifier, const String& code, const String& key, unsigned location,
         PlatformEvent::Modifiers modifiers, double platformTimeStamp)
     {
-        return adoptRefWillBeNoop(new KeyboardEvent(type, canBubble, cancelable, view, keyIdentifier, code, key, location,
-            modifiers, platformTimeStamp));
+        return new KeyboardEvent(type, canBubble, cancelable, view, keyIdentifier, code, key, location,
+            modifiers, platformTimeStamp);
     }
 
     ~KeyboardEvent() override;
@@ -98,7 +99,7 @@ private:
 
     void initLocationModifiers(unsigned location);
 
-    OwnPtr<PlatformKeyboardEvent> m_keyEvent;
+    std::unique_ptr<PlatformKeyboardEvent> m_keyEvent;
     String m_keyIdentifier;
     String m_code;
     String m_key;

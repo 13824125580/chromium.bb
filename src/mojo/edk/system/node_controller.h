@@ -5,31 +5,37 @@
 #ifndef MOJO_EDK_SYSTEM_NODE_CONTROLLER_H_
 #define MOJO_EDK_SYSTEM_NODE_CONTROLLER_H_
 
+#include <memory>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/task_runner.h"
 #include "mojo/edk/embedder/platform_handle_vector.h"
 #include "mojo/edk/embedder/platform_shared_buffer.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "mojo/edk/system/atomic_flag.h"
 #include "mojo/edk/system/node_channel.h"
-#include "mojo/edk/system/ports/hash_functions.h"
 #include "mojo/edk/system/ports/name.h"
 #include "mojo/edk/system/ports/node.h"
 #include "mojo/edk/system/ports/node_delegate.h"
+
+namespace base {
+class PortProvider;
+}
 
 namespace mojo {
 namespace edk {
 
 class Broker;
 class Core;
+class MachPortRelay;
 class PortsMessage;
 
 // The owner of ports::Node which facilitates core EDK implementation. All
@@ -56,13 +62,24 @@ class NodeController : public ports::NodeDelegate,
     return io_task_runner_;
   }
 
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  // Create the relay used to transfer mach ports between processes.
+  void CreateMachPortRelay(base::PortProvider* port_provider);
+#endif
+
   // Called exactly once, shortly after construction, and before any other
   // methods are called on this object.
   void SetIOTaskRunner(scoped_refptr<base::TaskRunner> io_task_runner);
 
   // Connects this node to a child node. This node will initiate a handshake.
   void ConnectToChild(base::ProcessHandle process_handle,
-                      ScopedPlatformHandle platform_handle);
+                      ScopedPlatformHandle platform_handle,
+                      const std::string& child_token,
+                      const ProcessErrorCallback& process_error_callback);
+
+  // Closes all reserved ports which associated with the child process
+  // |child_token|.
+  void CloseChildPorts(const std::string& child_token);
 
   // Connects this node to a parent node. The parent node will initiate a
   // handshake.
@@ -77,18 +94,21 @@ class NodeController : public ports::NodeDelegate,
   // it ensures the port's observer has also been removed.
   void ClosePort(const ports::PortRef& port);
 
-  // Sends a message on a port to its peer. If message send fails, |message|
-  // is left intact. Otherwise ownership is transferred and it's reset.
+  // Sends a message on a port to its peer.
   int SendMessage(const ports::PortRef& port_ref,
-                  scoped_ptr<PortsMessage>* message);
+                  std::unique_ptr<PortsMessage> message);
 
   // Reserves a local port |port| associated with |token|. A peer holding a copy
   // of |token| can merge one of its own ports into this one.
-  void ReservePort(const std::string& token, const ports::PortRef& port);
+  void ReservePort(const std::string& token, const ports::PortRef& port,
+                   const std::string& child_token);
 
   // Merges a local port |port| into a port reserved by |token| in the parent.
   void MergePortIntoParent(const std::string& token,
                            const ports::PortRef& port);
+
+  // Merges two local ports together.
+  int MergeLocalPorts(const ports::PortRef& port0, const ports::PortRef& port1);
 
   // Creates a new shared buffer for use in the current process.
   scoped_refptr<PlatformSharedBuffer> CreateSharedBuffer(size_t num_bytes);
@@ -102,6 +122,11 @@ class NodeController : public ports::NodeDelegate,
   // transfer.
   void RequestShutdown(const base::Closure& callback);
 
+  // Notifies the NodeController that we received a bad message from the given
+  // node.
+  void NotifyBadMessageFrom(const ports::NodeName& source_node,
+                            const std::string& error);
+
  private:
   friend Core;
 
@@ -109,8 +134,16 @@ class NodeController : public ports::NodeDelegate,
                                      scoped_refptr<NodeChannel>>;
   using OutgoingMessageQueue = std::queue<Channel::MessagePtr>;
 
-  void ConnectToChildOnIOThread(base::ProcessHandle process_handle,
-                                ScopedPlatformHandle platform_handle);
+  struct ReservedPort {
+    ports::PortRef port;
+    const std::string child_token;
+  };
+
+  void ConnectToChildOnIOThread(
+      base::ProcessHandle process_handle,
+      ScopedPlatformHandle platform_handle,
+      ports::NodeName token,
+      const ProcessErrorCallback& process_error_callback);
   void ConnectToParentOnIOThread(ScopedPlatformHandle platform_handle);
 
   scoped_refptr<NodeChannel> GetPeerChannel(const ports::NodeName& name);
@@ -132,6 +165,7 @@ class NodeController : public ports::NodeDelegate,
                     ports::ScopedMessage* message) override;
   void ForwardMessage(const ports::NodeName& node,
                       ports::ScopedMessage message) override;
+  void BroadcastMessage(ports::ScopedMessage message) override;
   void PortStatusChanged(const ports::PortRef& port) override;
 
   // NodeChannel::Delegate:
@@ -150,7 +184,8 @@ class NodeController : public ports::NodeDelegate,
   void OnAcceptBrokerClient(const ports::NodeName& from_node,
                             const ports::NodeName& broker_name,
                             ScopedPlatformHandle broker_channel) override;
-  void OnPortsMessage(Channel::MessagePtr message) override;
+  void OnPortsMessage(const ports::NodeName& from_node,
+                      Channel::MessagePtr message) override;
   void OnRequestPortMerge(const ports::NodeName& from_node,
                           const ports::PortName& connector_port_name,
                           const std::string& token) override;
@@ -159,13 +194,21 @@ class NodeController : public ports::NodeDelegate,
   void OnIntroduce(const ports::NodeName& from_node,
                    const ports::NodeName& name,
                    ScopedPlatformHandle channel_handle) override;
-#if defined(OS_WIN)
+  void OnBroadcast(const ports::NodeName& from_node,
+                   Channel::MessagePtr message) override;
+#if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
   void OnRelayPortsMessage(const ports::NodeName& from_node,
                            base::ProcessHandle from_process,
                            const ports::NodeName& destination,
                            Channel::MessagePtr message) override;
+  void OnPortsMessageFromRelay(const ports::NodeName& from_node,
+                               const ports::NodeName& source_node,
+                               Channel::MessagePtr message) override;
 #endif
   void OnChannelError(const ports::NodeName& from_node) override;
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  MachPortRelay* GetMachPortRelay() override;
+#endif
 
   // Marks this NodeController for destruction when the IO thread shuts down.
   // This is used in case Core is torn down before the IO thread. Must only be
@@ -180,7 +223,7 @@ class NodeController : public ports::NodeDelegate,
   // These are safe to access from any thread as long as the Node is alive.
   Core* const core_;
   const ports::NodeName name_;
-  const scoped_ptr<ports::Node> node_;
+  const std::unique_ptr<ports::Node> node_;
   scoped_refptr<base::TaskRunner> io_task_runner_;
 
   // Guards |peers_| and |pending_peer_messages_|.
@@ -193,11 +236,14 @@ class NodeController : public ports::NodeDelegate,
   std::unordered_map<ports::NodeName, OutgoingMessageQueue>
       pending_peer_messages_;
 
-  // Guards |reserved_ports_|.
+  // Guards |reserved_ports_| and |pending_child_tokens_|.
   base::Lock reserved_ports_lock_;
 
-  // Ports reserved by token.
-  base::hash_map<std::string, ports::PortRef> reserved_ports_;
+  // Ports reserved by token. Key is the port token.
+  base::hash_map<std::string, ReservedPort> reserved_ports_;
+  // TODO(amistry): This _really_ needs to be a bimap. Unfortunately, we don't
+  // have one yet :(
+  std::unordered_map<ports::NodeName, std::string> pending_child_tokens_;
 
   // Guards |pending_port_merges_|.
   base::Lock pending_port_merges_lock_;
@@ -231,6 +277,8 @@ class NodeController : public ports::NodeDelegate,
   // Guards |incoming_messages_|.
   base::Lock messages_lock_;
   std::queue<ports::ScopedMessage> incoming_messages_;
+  // Flag to fast-path checking |incoming_messages_|.
+  AtomicFlag incoming_messages_flag_;
 
   // Guards |shutdown_callback_|.
   base::Lock shutdown_lock_;
@@ -239,6 +287,8 @@ class NodeController : public ports::NodeDelegate,
   // begin polling the Node to see if clean shutdown is possible any time the
   // Node's state is modified by the controller.
   base::Closure shutdown_callback_;
+  // Flag to fast-path checking |shutdown_callback_|.
+  AtomicFlag shutdown_callback_flag_;
 
   // All other fields below must only be accessed on the I/O thread, i.e., the
   // thread on which core_->io_task_runner() runs tasks.
@@ -250,9 +300,15 @@ class NodeController : public ports::NodeDelegate,
   // Must only be accessed from the IO thread.
   bool destroy_on_io_thread_shutdown_ = false;
 
-#if defined(OS_POSIX)
-  // Broker for sync shared buffer creation (posix-only) in children.
-  scoped_ptr<Broker> broker_;
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_NACL_SFI)
+  // Broker for sync shared buffer creation (non-Mac posix-only) in children.
+  std::unique_ptr<Broker> broker_;
+#endif
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  base::Lock mach_port_relay_lock_;
+  // Relay for transferring mach ports to/from children.
+  std::unique_ptr<MachPortRelay> mach_port_relay_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(NodeController);

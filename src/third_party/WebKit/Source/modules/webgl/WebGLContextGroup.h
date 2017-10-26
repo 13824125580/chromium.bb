@@ -32,10 +32,6 @@
 #include "wtf/RefCounted.h"
 
 namespace blink {
-class WebGraphicsContext3D;
-}
-
-namespace blink {
 
 class WebGLSharedObject;
 class WebGLRenderingContextBase;
@@ -53,7 +49,7 @@ public:
     void addObject(WebGLSharedObject*);
     void removeObject(WebGLSharedObject*);
 
-    WebGraphicsContext3D* getAWebGraphicsContext3D();
+    gpu::gles2::GLES2Interface* getAGLInterface();
 
     void loseContextGroup(WebGLRenderingContextBase::LostContextMode, WebGLRenderingContextBase::AutoRecoveryMethod);
 
@@ -70,7 +66,7 @@ private:
     // registration with WebGLContextGroup, and vice versa, the
     // WebGLContextGroup takes care of detaching the group objects if
     // the set of WebGLRenderingContextBase contexts becomes empty.
-    HashSet<RawPtrWillBeUntracedMember<WebGLRenderingContextBase>> m_contexts;
+    HashSet<UntracedMember<WebGLRenderingContextBase>> m_contexts;
     HashSet<UntracedMember<WebGLSharedObject>> m_groupObjects;
 };
 

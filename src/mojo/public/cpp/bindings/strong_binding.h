@@ -5,17 +5,18 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_STRONG_BINDING_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_STRONG_BINDING_H_
 
-#include <assert.h>
 #include <utility>
 
-#include "mojo/public/c/environment/async_waiter.h"
+#include "base/bind.h"
+#include "base/callback.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "mojo/public/cpp/bindings/callback.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/lib/filter_chain.h"
-#include "mojo/public/cpp/bindings/lib/message_header_validator.h"
 #include "mojo/public/cpp/bindings/lib/router.h"
+#include "mojo/public/cpp/bindings/message_header_validator.h"
 #include "mojo/public/cpp/system/core.h"
 
 namespace mojo {
@@ -29,7 +30,7 @@ namespace mojo {
 //   class StronglyBound : public Foo {
 //    public:
 //     explicit StronglyBound(InterfaceRequest<Foo> request)
-//         : binding_(this, request.Pass()) {}
+//         : binding_(this, std::move(request)) {}
 //
 //     // Foo implementation here
 //
@@ -40,8 +41,8 @@ namespace mojo {
 //   class MyFooFactory : public InterfaceFactory<Foo> {
 //    public:
 //     void Create(..., InterfaceRequest<Foo> request) override {
-//       new StronglyBound(request.Pass());  // The binding now owns the
-//                                           // instance of StronglyBound.
+//       new StronglyBound(std::move(request));  // The binding now owns the
+//                                               // instance of StronglyBound.
 //     }
 //   };
 //
@@ -49,59 +50,45 @@ namespace mojo {
 // bound, it may be bound or destroyed on any thread.
 template <typename Interface>
 class StrongBinding {
-  MOJO_MOVE_ONLY_TYPE(StrongBinding)
-
  public:
   explicit StrongBinding(Interface* impl) : binding_(impl) {}
 
-  StrongBinding(
-      Interface* impl,
-      ScopedMessagePipeHandle handle,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter())
+  StrongBinding(Interface* impl, ScopedMessagePipeHandle handle)
       : StrongBinding(impl) {
-    Bind(std::move(handle), waiter);
+    Bind(std::move(handle));
   }
 
-  StrongBinding(
-      Interface* impl,
-      InterfacePtr<Interface>* ptr,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter())
+  StrongBinding(Interface* impl, InterfacePtr<Interface>* ptr)
       : StrongBinding(impl) {
-    Bind(ptr, waiter);
+    Bind(ptr);
   }
 
-  StrongBinding(
-      Interface* impl,
-      InterfaceRequest<Interface> request,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter())
+  StrongBinding(Interface* impl, InterfaceRequest<Interface> request)
       : StrongBinding(impl) {
-    Bind(std::move(request), waiter);
+    Bind(std::move(request));
   }
 
   ~StrongBinding() {}
 
-  void Bind(
-      ScopedMessagePipeHandle handle,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
-    assert(!binding_.is_bound());
-    binding_.Bind(std::move(handle), waiter);
-    binding_.set_connection_error_handler([this]() { OnConnectionError(); });
+  void Bind(ScopedMessagePipeHandle handle) {
+    DCHECK(!binding_.is_bound());
+    binding_.Bind(std::move(handle));
+    binding_.set_connection_error_handler(
+        base::Bind(&StrongBinding::OnConnectionError, base::Unretained(this)));
   }
 
-  void Bind(
-      InterfacePtr<Interface>* ptr,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
-    assert(!binding_.is_bound());
-    binding_.Bind(ptr, waiter);
-    binding_.set_connection_error_handler([this]() { OnConnectionError(); });
+  void Bind(InterfacePtr<Interface>* ptr) {
+    DCHECK(!binding_.is_bound());
+    binding_.Bind(ptr);
+    binding_.set_connection_error_handler(
+        base::Bind(&StrongBinding::OnConnectionError, base::Unretained(this)));
   }
 
-  void Bind(
-      InterfaceRequest<Interface> request,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
-    assert(!binding_.is_bound());
-    binding_.Bind(std::move(request), waiter);
-    binding_.set_connection_error_handler([this]() { OnConnectionError(); });
+  void Bind(InterfaceRequest<Interface> request) {
+    DCHECK(!binding_.is_bound());
+    binding_.Bind(std::move(request));
+    binding_.set_connection_error_handler(
+        base::Bind(&StrongBinding::OnConnectionError, base::Unretained(this)));
   }
 
   bool WaitForIncomingMethodCall() {
@@ -112,8 +99,8 @@ class StrongBinding {
   //
   // This method may only be called after this StrongBinding has been bound to a
   // message pipe.
-  void set_connection_error_handler(const Closure& error_handler) {
-    assert(binding_.is_bound());
+  void set_connection_error_handler(const base::Closure& error_handler) {
+    DCHECK(binding_.is_bound());
     connection_error_handler_ = error_handler;
   }
 
@@ -122,13 +109,16 @@ class StrongBinding {
   internal::Router* internal_router() { return binding_.internal_router(); }
 
   void OnConnectionError() {
-    connection_error_handler_.Run();
+    if (!connection_error_handler_.is_null())
+      connection_error_handler_.Run();
     delete binding_.impl();
   }
 
  private:
-  Closure connection_error_handler_;
+  base::Closure connection_error_handler_;
   Binding<Interface> binding_;
+
+  DISALLOW_COPY_AND_ASSIGN(StrongBinding);
 };
 
 }  // namespace mojo

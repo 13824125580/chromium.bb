@@ -44,6 +44,7 @@
 #include "wtf/HashSet.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -83,7 +84,7 @@ public:
         return m_keyframeGroups->get(property)->keyframes();
     }
 
-    using KeyframeGroupMap = HashMap<PropertyHandle, OwnPtr<PropertySpecificKeyframeGroup>>;
+    using KeyframeGroupMap = HashMap<PropertyHandle, std::unique_ptr<PropertySpecificKeyframeGroup>>;
     const KeyframeGroupMap& getPropertySpecificKeyframeGroups() const
     {
         ensureKeyframeGroups();
@@ -110,9 +111,6 @@ public:
     bool snapshotNeutralCompositorKeyframes(Element&, const ComputedStyle& oldStyle, const ComputedStyle& newStyle);
     bool snapshotAllCompositorKeyframes(Element&, const ComputedStyle* baseStyle);
 
-    template<typename T>
-    inline void forEachInterpolation(const T& callback) { m_interpolationEffect.forEachInterpolation(callback); }
-
     static KeyframeVector normalizedKeyframesForInspector(const KeyframeVector& keyframes) { return normalizedKeyframes(keyframes); }
 
     bool affects(PropertyHandle property) const override
@@ -137,13 +135,13 @@ protected:
 
     // Lazily computes the groups of property-specific keyframes.
     void ensureKeyframeGroups() const;
-    void ensureInterpolationEffectPopulated(Element* = nullptr, const ComputedStyle* baseStyle = nullptr) const;
+    void ensureInterpolationEffectPopulated() const;
 
     KeyframeVector m_keyframes;
     // The spec describes filtering the normalized keyframes at sampling time
     // to get the 'property-specific keyframes'. For efficiency, we cache the
     // property-specific lists.
-    mutable OwnPtr<KeyframeGroupMap> m_keyframeGroups;
+    mutable std::unique_ptr<KeyframeGroupMap> m_keyframeGroups;
     mutable InterpolationEffect m_interpolationEffect;
     mutable int m_lastIteration;
     mutable double m_lastFraction;

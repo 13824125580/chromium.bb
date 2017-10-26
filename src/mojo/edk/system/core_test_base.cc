@@ -10,12 +10,13 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "mojo/edk/embedder/embedder_internal.h"
 #include "mojo/edk/system/configuration.h"
 #include "mojo/edk/system/core.h"
 #include "mojo/edk/system/dispatcher.h"
-#include "mojo/public/cpp/system/macros.h"
+#include "mojo/edk/system/message_for_transit.h"
 
 namespace mojo {
 namespace edk {
@@ -41,27 +42,25 @@ class MockDispatcher : public Dispatcher {
   }
 
   MojoResult WriteMessage(
-      const void* bytes,
-      uint32_t num_bytes,
-      const DispatcherInTransit* dispatchers,
-      uint32_t num_dispatchers,
+      std::unique_ptr<MessageForTransit> message,
       MojoWriteMessageFlags /*flags*/) override {
     info_->IncrementWriteMessageCallCount();
 
-    if (num_bytes > GetConfiguration().max_message_num_bytes)
+    if (message->num_bytes() > GetConfiguration().max_message_num_bytes)
       return MOJO_RESULT_RESOURCE_EXHAUSTED;
 
-    if (dispatchers)
+    if (message->num_handles())
       return MOJO_RESULT_UNIMPLEMENTED;
 
     return MOJO_RESULT_OK;
   }
 
-  MojoResult ReadMessage(void* bytes,
+  MojoResult ReadMessage(std::unique_ptr<MessageForTransit>* message,
                          uint32_t* num_bytes,
                          MojoHandle* handle,
                          uint32_t* num_handles,
-                         MojoReadMessageFlags /*flags*/) override {
+                         MojoReadMessageFlags /*flags*/,
+                         bool ignore_num_bytes) override {
     info_->IncrementReadMessageCallCount();
 
     if (num_handles)
@@ -140,7 +139,7 @@ class MockDispatcher : public Dispatcher {
 
   CoreTestBase::MockHandleInfo* const info_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(MockDispatcher);
+  DISALLOW_COPY_AND_ASSIGN(MockDispatcher);
 };
 
 }  // namespace

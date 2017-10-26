@@ -60,14 +60,14 @@ void URLRequestAdapter::AddHeader(const std::string& name,
 
 void URLRequestAdapter::SetUploadContent(const char* bytes, int bytes_len) {
   std::vector<char> data(bytes, bytes + bytes_len);
-  scoped_ptr<net::UploadElementReader> reader(
+  std::unique_ptr<net::UploadElementReader> reader(
       new net::UploadOwnedBytesElementReader(&data));
   upload_data_stream_ =
       net::ElementsUploadDataStream::CreateWithReader(std::move(reader), 0);
 }
 
 void URLRequestAdapter::SetUploadChannel(JNIEnv* env, int64_t content_length) {
-  scoped_ptr<net::UploadElementReader> reader(
+  std::unique_ptr<net::UploadElementReader> reader(
       new WrappedChannelElementReader(delegate_, content_length));
   upload_data_stream_ =
       net::ElementsUploadDataStream::CreateWithReader(std::move(reader), 0);
@@ -84,7 +84,7 @@ void URLRequestAdapter::EnableChunkedUpload() {
 void URLRequestAdapter::AppendChunk(const char* bytes, int bytes_len,
                                     bool is_last_chunk) {
   VLOG(1) << "AppendChunk, len: " << bytes_len << ", last: " << is_last_chunk;
-  scoped_ptr<char[]> buf(new char[bytes_len]);
+  std::unique_ptr<char[]> buf(new char[bytes_len]);
   memcpy(buf.get(), bytes, bytes_len);
   context_->PostTaskToNetworkThread(
       FROM_HERE,
@@ -126,17 +126,14 @@ void URLRequestAdapter::Start() {
                  base::Unretained(this)));
 }
 
-void URLRequestAdapter::OnAppendChunk(const scoped_ptr<char[]> bytes,
-                                      int bytes_len, bool is_last_chunk) {
+void URLRequestAdapter::OnAppendChunk(const std::unique_ptr<char[]> bytes,
+                                      int bytes_len,
+                                      bool is_last_chunk) {
   DCHECK(OnNetworkThread());
-  // Request could have completed and been destroyed on the network thread
-  // while appendChunk was posting the task from an application thread.
-  if (!url_request_) {
-    VLOG(1) << "Cannot append chunk to destroyed request: "
-            << url_.possibly_invalid_spec().c_str();
-    return;
-  }
-  url_request_->AppendChunkToUpload(bytes.get(), bytes_len, is_last_chunk);
+  // If AppendData returns false, the request has been cancelled or completed
+  // without uploading the entire request body.  Either way, that result will
+  // have been sent to the embedder, so there's nothing else to do here.
+  chunked_upload_writer_->AppendData(bytes.get(), bytes_len, is_last_chunk);
 }
 
 void URLRequestAdapter::OnInitiateConnection() {
@@ -166,7 +163,13 @@ void URLRequestAdapter::OnInitiateConnection() {
   if (upload_data_stream_) {
     url_request_->set_upload(std::move(upload_data_stream_));
   } else if (chunked_upload_) {
-    url_request_->EnableChunkedUpload();
+    std::unique_ptr<net::ChunkedUploadDataStream> chunked_upload_data_stream(
+        new net::ChunkedUploadDataStream(0));
+    // Create a ChunkedUploadDataStream::Writer, which keeps a weak reference to
+    // the UploadDataStream, before passing ownership of the stream to the
+    // URLRequest.
+    chunked_upload_writer_ = chunked_upload_data_stream->CreateWriter();
+    url_request_->set_upload(std::move(chunked_upload_data_stream));
   }
 
   url_request_->SetPriority(priority_);

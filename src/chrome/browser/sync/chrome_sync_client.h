@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_SYNC_CHROME_SYNC_CLIENT_H__
 #define CHROME_BROWSER_SYNC_CHROME_SYNC_CLIENT_H__
 
+#include <vector>
+
 #include "base/macros.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
 #include "chrome/browser/sync/glue/extensions_activity_monitor.h"
@@ -21,6 +23,7 @@ class PasswordStore;
 }
 
 namespace sync_driver {
+class DeviceInfoTracker;
 class SyncApiComponentFactory;
 class SyncService;
 }
@@ -49,7 +52,7 @@ class ChromeSyncClient : public sync_driver::SyncClient {
   sync_sessions::SyncSessionsClient* GetSyncSessionsClient() override;
   base::WeakPtr<syncer::SyncableService> GetSyncableServiceForType(
       syncer::ModelType type) override;
-  base::WeakPtr<syncer_v2::ModelTypeService> GetModelTypeServiceForType(
+  syncer_v2::ModelTypeService* GetModelTypeServiceForType(
       syncer::ModelType type) override;
   scoped_refptr<syncer::ModelSafeWorker> CreateModelWorkerForGroup(
       syncer::ModelSafeGroup group,
@@ -60,7 +63,13 @@ class ChromeSyncClient : public sync_driver::SyncClient {
   void SetBrowsingDataRemoverObserverForTesting(
       BrowsingDataRemover::Observer* observer);
   void SetSyncApiComponentFactoryForTesting(
-      scoped_ptr<sync_driver::SyncApiComponentFactory> component_factory);
+      std::unique_ptr<sync_driver::SyncApiComponentFactory> component_factory);
+
+  // Iterates over all of the profiles that have been loaded so far, and
+  // extracts their tracker if present. If some profiles don't have trackers, no
+  // indication is given in the passed vector.
+  static void GetDeviceInfoTrackers(
+      std::vector<const sync_driver::DeviceInfoTracker*>* trackers);
 
  private:
   // Register data types which are enabled on desktop platforms only.
@@ -80,14 +89,14 @@ class ChromeSyncClient : public sync_driver::SyncClient {
   Profile* const profile_;
 
   // The sync api component factory in use by this client.
-  scoped_ptr<sync_driver::SyncApiComponentFactory> component_factory_;
+  std::unique_ptr<sync_driver::SyncApiComponentFactory> component_factory_;
 
   // Members that must be fetched on the UI thread but accessed on their
   // respective backend threads.
   scoped_refptr<autofill::AutofillWebDataService> web_data_service_;
   scoped_refptr<password_manager::PasswordStore> password_store_;
 
-  scoped_ptr<sync_sessions::SyncSessionsClient> sync_sessions_client_;
+  std::unique_ptr<sync_sessions::SyncSessionsClient> sync_sessions_client_;
 
   // Generates and monitors the ExtensionsActivity object used by sync.
   ExtensionsActivityMonitor extensions_activity_monitor_;

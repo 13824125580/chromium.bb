@@ -4,6 +4,7 @@
 
 #include "chrome/browser/printing/printing_message_filter.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -254,7 +255,7 @@ void PrintingMessageFilter::UpdateFileDescriptor(int render_view_id, int fd) {
 void PrintingMessageFilter::OnUpdatePrintSettings(
     int document_cookie, const base::DictionaryValue& job_settings,
     IPC::Message* reply_msg) {
-  scoped_ptr<base::DictionaryValue> new_settings(job_settings.DeepCopy());
+  std::unique_ptr<base::DictionaryValue> new_settings(job_settings.DeepCopy());
 
   scoped_refptr<PrinterQuery> printer_query;
   printer_query = queue_->PopPrinterQuery(document_cookie);

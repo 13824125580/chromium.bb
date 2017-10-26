@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
@@ -15,7 +16,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "pdf/paint_manager.h"
 #include "pdf/pdf_engine.h"
 #include "pdf/preview_mode_client.h"
@@ -77,6 +77,13 @@ class OutOfProcessInstance : public pp::Instance,
   // pp::Private implementation.
   pp::Var GetLinkAtPosition(const pp::Point& point);
   void GetPrintPresetOptionsFromDocument(PP_PdfPrintPresetOptions_Dev* options);
+  void EnableAccessibility();
+
+  // Start loading accessibility information.
+  void LoadAccessibility();
+
+  // Send accessibility information about the given page index.
+  void SendNextAccessibilityPage(int32_t page_index);
 
   void FlushCallback(int32_t result);
   void DidOpen(int32_t result);
@@ -256,16 +263,16 @@ class OutOfProcessInstance : public pp::Instance,
 
   PrintSettings print_settings_;
 
-  scoped_ptr<PDFEngine> engine_;
+  std::unique_ptr<PDFEngine> engine_;
 
   // The PreviewModeClient used for print preview. Will be passed to
   // |preview_engine_|.
-  scoped_ptr<PreviewModeClient> preview_client_;
+  std::unique_ptr<PreviewModeClient> preview_client_;
 
   // This engine is used to render the individual preview page data. This is
   // used only in print preview mode. This will use |PreviewModeClient|
   // interface which has very limited access to the pp::Instance.
-  scoped_ptr<PDFEngine> preview_engine_;
+  std::unique_ptr<PDFEngine> preview_engine_;
 
   std::string url_;
 
@@ -277,7 +284,7 @@ class OutOfProcessInstance : public pp::Instance,
   pp::CompletionCallbackFactory<OutOfProcessInstance> print_callback_factory_;
 
   // The callback for receiving the password from the page.
-  scoped_ptr<pp::CompletionCallbackWithOutput<pp::Var> > password_callback_;
+  std::unique_ptr<pp::CompletionCallbackWithOutput<pp::Var>> password_callback_;
 
   // True if we haven't painted the plugin viewport yet.
   bool first_paint_;
@@ -309,7 +316,7 @@ class OutOfProcessInstance : public pp::Instance,
   // Used to signal the browser about focus changes to trigger the OSK.
   // TODO(abodenha@chromium.org) Implement full IME support in the plugin.
   // http://crbug.com/132565
-  scoped_ptr<pp::TextInput_Dev> text_input_;
+  std::unique_ptr<pp::TextInput_Dev> text_input_;
 
   // The last document load progress value sent to the web page.
   double last_progress_sent_;
@@ -341,6 +348,14 @@ class OutOfProcessInstance : public pp::Instance,
   // The blank space above the first page of the document reserved for the
   // toolbar.
   int top_toolbar_height_;
+
+  // The current state of accessibility: either off, enabled but waiting
+  // for the document to load, or fully loaded.
+  enum AccessibilityState {
+    ACCESSIBILITY_STATE_OFF,
+    ACCESSIBILITY_STATE_PENDING,  // Enabled but waiting for doc to load.
+    ACCESSIBILITY_STATE_LOADED
+  } accessibility_state_;
 
   DISALLOW_COPY_AND_ASSIGN(OutOfProcessInstance);
 };

@@ -170,6 +170,15 @@ class BLPWTK2_EXPORT WebViewDelegate {
                            int numberOfMatches,
                            int activeMatchOrdinal,
                            bool finalUpdate) {}
+
+    // Begin performance timing for a Chromium operation. The behavior is
+    // undefined unless 'stopTiming' is called to end this timed operation.
+    virtual void startPerformanceTiming() {}
+
+    // End performance timing for a Chromium operation. The behavior is
+    // undefined unless there was a corresponding 'startTiming' call that
+    // preceded this call.
+    virtual void stopPerformanceTiming() {}
 };
 
 }  // close namespace blpwtk2

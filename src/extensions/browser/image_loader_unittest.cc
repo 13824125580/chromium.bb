@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_browser_context.h"
@@ -63,7 +64,7 @@ class ImageLoaderTest : public ExtensionsTest {
 
   void WaitForImageLoad() {
     quit_in_image_loaded_ = true;
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     quit_in_image_loaded_ = false;
   }
 
@@ -86,8 +87,9 @@ class ImageLoaderTest : public ExtensionsTest {
     std::string error;
     JSONFileValueDeserializer deserializer(
         extension_dir.AppendASCII("manifest.json"));
-    scoped_ptr<base::DictionaryValue> valid_value = base::DictionaryValue::From(
-        deserializer.Deserialize(&error_code, &error));
+    std::unique_ptr<base::DictionaryValue> valid_value =
+        base::DictionaryValue::From(
+            deserializer.Deserialize(&error_code, &error));
     EXPECT_EQ(0, error_code) << error;
     if (error_code != 0)
       return NULL;
@@ -116,7 +118,7 @@ class ImageLoaderTest : public ExtensionsTest {
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_thread_;
   content::TestBrowserThread io_thread_;
-  scoped_ptr<NotificationService> notification_service_;
+  std::unique_ptr<NotificationService> notification_service_;
 };
 
 // Tests loading an image works correctly.

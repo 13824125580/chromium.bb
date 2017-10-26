@@ -6,6 +6,7 @@
 
 #include "core/layout/LayoutTestHelper.h"
 #include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutAPIShim.h"
 #include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
 #include "core/paint/PaintLayer.h"
@@ -24,7 +25,7 @@ public:
 
 protected:
     LayoutView& layoutView() { return *m_layoutView; }
-    PaintController& rootPaintController() { return layoutView().layer()->graphicsLayerBacking()->paintController(); }
+    PaintController& rootPaintController() { return layoutView().layer()->graphicsLayerBacking()->getPaintController(); }
 
 private:
     void SetUp() override
@@ -32,7 +33,7 @@ private:
         RenderingTest::SetUp();
         enableCompositing();
 
-        m_layoutView = document().view()->layoutView();
+        m_layoutView = toLayoutView(LayoutAPIShim::layoutObjectFrom(document().view()->layoutViewItem()));
         ASSERT_TRUE(m_layoutView);
     }
 
@@ -51,8 +52,8 @@ void drawRectInClip(GraphicsContext& context, LayoutView& layoutView, PaintPhase
     IntRect rect(1, 1, 9, 9);
     ClipRect clipRect((LayoutRect(rect)));
     LayerClipRecorder LayerClipRecorder(context, *layoutView.compositor()->rootLayer()->layoutObject(), DisplayItem::ClipLayerForeground, clipRect, 0, LayoutPoint(), PaintLayerFlags());
-    if (!LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, layoutView, phase, LayoutPoint())) {
-        LayoutObjectDrawingRecorder drawingRecorder(context, layoutView, phase, bound, LayoutPoint());
+    if (!LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, layoutView, phase)) {
+        LayoutObjectDrawingRecorder drawingRecorder(context, layoutView, phase, bound);
         context.drawRect(rect);
     }
 }
@@ -62,25 +63,25 @@ TEST_F(LayerClipRecorderTest, Single)
     rootPaintController().invalidateAll();
     GraphicsContext context(rootPaintController());
     LayoutRect bound = layoutView().viewRect();
-    EXPECT_EQ((size_t)0, rootPaintController().displayItemList().size());
+    EXPECT_EQ((size_t)0, rootPaintController().getDisplayItemList().size());
 
     drawRectInClip(context, layoutView(), PaintPhaseForeground, bound);
     rootPaintController().commitNewDisplayItems();
-    EXPECT_EQ((size_t)3, rootPaintController().displayItemList().size());
-    EXPECT_TRUE(DisplayItem::isClipType(rootPaintController().displayItemList()[0].type()));
-    EXPECT_TRUE(DisplayItem::isDrawingType(rootPaintController().displayItemList()[1].type()));
-    EXPECT_TRUE(DisplayItem::isEndClipType(rootPaintController().displayItemList()[2].type()));
+    EXPECT_EQ((size_t)3, rootPaintController().getDisplayItemList().size());
+    EXPECT_TRUE(DisplayItem::isClipType(rootPaintController().getDisplayItemList()[0].getType()));
+    EXPECT_TRUE(DisplayItem::isDrawingType(rootPaintController().getDisplayItemList()[1].getType()));
+    EXPECT_TRUE(DisplayItem::isEndClipType(rootPaintController().getDisplayItemList()[2].getType()));
 }
 
 TEST_F(LayerClipRecorderTest, Empty)
 {
     rootPaintController().invalidateAll();
     GraphicsContext context(rootPaintController());
-    EXPECT_EQ((size_t)0, rootPaintController().displayItemList().size());
+    EXPECT_EQ((size_t)0, rootPaintController().getDisplayItemList().size());
 
     drawEmptyClip(context, layoutView(), PaintPhaseForeground);
     rootPaintController().commitNewDisplayItems();
-    EXPECT_EQ((size_t)0, rootPaintController().displayItemList().size());
+    EXPECT_EQ((size_t)0, rootPaintController().getDisplayItemList().size());
 }
 
 } // namespace

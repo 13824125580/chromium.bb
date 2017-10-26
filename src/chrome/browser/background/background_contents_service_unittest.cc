@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/background/background_contents_service.h"
+
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/background/background_contents.h"
-#include "chrome/browser/background/background_contents_service.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -69,7 +70,7 @@ class BackgroundContentsServiceTest : public testing::Test {
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<base::CommandLine> command_line_;
+  std::unique_ptr<base::CommandLine> command_line_;
 };
 
 class MockBackgroundContents : public BackgroundContents {
@@ -221,7 +222,7 @@ class BackgroundContentsServiceNotificationTest
   }
 
  private:
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundContentsServiceNotificationTest);
 };
@@ -253,7 +254,7 @@ TEST_F(BackgroundContentsServiceTest, BackgroundContentsUrlAdded) {
   GURL url("http://a/");
   GURL url2("http://a/");
   {
-    scoped_ptr<MockBackgroundContents> contents(
+    std::unique_ptr<MockBackgroundContents> contents(
         new MockBackgroundContents(&profile));
     EXPECT_EQ(0U, GetPrefs(&profile)->size());
     contents->SendOpenedNotification(&service);
@@ -300,8 +301,8 @@ TEST_F(BackgroundContentsServiceTest, RestartBackgroundContents) {
 
   GURL url("http://a/");
   {
-    scoped_ptr<MockBackgroundContents> contents(new MockBackgroundContents(
-        &profile, "appid"));
+    std::unique_ptr<MockBackgroundContents> contents(
+        new MockBackgroundContents(&profile, "appid"));
     contents->SendOpenedNotification(&service);
     contents->Navigate(url);
     EXPECT_EQ(1U, GetPrefs(&profile)->size());
@@ -313,8 +314,8 @@ TEST_F(BackgroundContentsServiceTest, RestartBackgroundContents) {
   {
     // Reopen the BackgroundContents to the same URL, we should not register the
     // URL again.
-    scoped_ptr<MockBackgroundContents> contents(new MockBackgroundContents(
-        &profile, "appid"));
+    std::unique_ptr<MockBackgroundContents> contents(
+        new MockBackgroundContents(&profile, "appid"));
     contents->SendOpenedNotification(&service);
     contents->Navigate(url);
     EXPECT_EQ(1U, GetPrefs(&profile)->size());
@@ -334,7 +335,7 @@ TEST_F(BackgroundContentsServiceTest, TestApplicationIDLinkage) {
             service.GetAppBackgroundContents(base::ASCIIToUTF16("appid")));
   MockBackgroundContents* contents = new MockBackgroundContents(&profile,
                                                                 "appid");
-  scoped_ptr<MockBackgroundContents> contents2(
+  std::unique_ptr<MockBackgroundContents> contents2(
       new MockBackgroundContents(&profile, "appid2"));
   contents->SendOpenedNotification(&service);
   EXPECT_EQ(contents, service.GetAppBackgroundContents(contents->appid()));
@@ -368,6 +369,28 @@ TEST_F(BackgroundContentsServiceNotificationTest, TestShowBalloon) {
 
   const Notification* notification = CreateCrashNotification(extension);
   EXPECT_FALSE(notification->icon().IsEmpty());
+}
+
+TEST_F(BackgroundContentsServiceNotificationTest, TestShowBalloonShutdown) {
+  scoped_refptr<extensions::Extension> extension =
+      extension_test_util::LoadManifest("image_loading_tracker", "app.json");
+  ASSERT_TRUE(extension.get());
+  ASSERT_TRUE(extension->GetManifestData("icons"));
+
+  std::string notification_id = BackgroundContentsService::
+      GetNotificationDelegateIdForExtensionForTesting(extension->id());
+
+  static_cast<TestingBrowserProcess*>(g_browser_process)->SetShuttingDown(true);
+  BackgroundContentsService::ShowBalloonForTesting(extension.get(), profile());
+  base::RunLoop().RunUntilIdle();
+  static_cast<TestingBrowserProcess*>(g_browser_process)
+      ->SetShuttingDown(false);
+
+  const Notification* notification =
+      g_browser_process->notification_ui_manager()->FindById(notification_id,
+                                                             profile());
+
+  ASSERT_EQ(nullptr, notification);
 }
 
 // Verify if a test notification can show the default extension icon for

@@ -7,8 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/local_discovery/test_service_discovery_client.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/url_request/test_url_fetcher_factory.h"
@@ -94,16 +96,13 @@ const char kPrivetInfoURL[] = "http://1.2.3.4:8888/privet/info";
 class MockLocalPrinterListerDelegate
     : public PrivetLocalPrinterLister::Delegate {
  public:
-  MockLocalPrinterListerDelegate() {
-  }
+  MockLocalPrinterListerDelegate() {}
+  ~MockLocalPrinterListerDelegate() override {}
 
-  virtual ~MockLocalPrinterListerDelegate() {
-  }
-
-  MOCK_METHOD4(LocalPrinterChanged, void(bool added,
-                                         const std::string& name,
-                                         bool has_local_printing,
-                                         const DeviceDescription& description));
+  MOCK_METHOD3(LocalPrinterChanged,
+               void(const std::string& name,
+                    bool has_local_printing,
+                    const DeviceDescription& description));
 
   MOCK_METHOD1(LocalPrinterRemoved, void(const std::string& name));
 
@@ -123,8 +122,7 @@ class PrivetLocalPrinterListerTest : public testing::Test {
         &delegate_));
   }
 
-  ~PrivetLocalPrinterListerTest() {
-  }
+  ~PrivetLocalPrinterListerTest() override {}
 
   bool SuccessfulResponseToURL(const GURL& url,
                                const std::string& response) {
@@ -157,7 +155,7 @@ class PrivetLocalPrinterListerTest : public testing::Test {
   content::TestBrowserThreadBundle test_thread_bundle;
   scoped_refptr<TestServiceDiscoveryClient> test_service_discovery_client_;
   scoped_refptr<net::TestURLRequestContextGetter> url_request_context_;
-  scoped_ptr<PrivetLocalPrinterLister> local_printer_lister_;
+  std::unique_ptr<PrivetLocalPrinterLister> local_printer_lister_;
   net::TestURLFetcherFactory fetcher_factory_;
   StrictMock<MockLocalPrinterListerDelegate> delegate_;
 };
@@ -169,7 +167,7 @@ TEST_F(PrivetLocalPrinterListerTest, PrinterAddedTest) {
 
   SimulateReceive(kAnnouncePacket, sizeof(kAnnouncePacket));
 
-  EXPECT_CALL(delegate_, LocalPrinterChanged(true, kServiceName, true, _));
+  EXPECT_CALL(delegate_, LocalPrinterChanged(kServiceName, true, _));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL(kPrivetInfoURL),
@@ -183,7 +181,7 @@ TEST_F(PrivetLocalPrinterListerTest, NonPrinterAddedTest) {
 
   SimulateReceive(kAnnouncePacket, sizeof(kAnnouncePacket));
 
-  EXPECT_CALL(delegate_, LocalPrinterChanged(true, kServiceName, false, _));
+  EXPECT_CALL(delegate_, LocalPrinterChanged(kServiceName, false, _));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL(kPrivetInfoURL),

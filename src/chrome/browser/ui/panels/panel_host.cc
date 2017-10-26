@@ -4,11 +4,13 @@
 
 #include "chrome/browser/ui/panels/panel_host.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/extensions/window_controller.h"
@@ -20,8 +22,8 @@
 #include "chrome/browser/ui/panels/panel.h"
 #include "chrome/browser/ui/prefs/prefs_tab_helper.h"
 #include "components/favicon/content/content_favicon_driver.h"
-#include "components/ui/zoom/page_zoom.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/page_zoom.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/notification_service.h"
@@ -52,16 +54,17 @@ void PanelHost::Init(const GURL& url,
   if (url.is_empty())
     return;
 
-  content::SiteInstance* instance =
+  scoped_refptr<content::SiteInstance> instance =
       source_site_instance ? source_site_instance->GetRelatedSiteInstance(url)
                            : content::SiteInstance::CreateForURL(profile_, url);
-  content::WebContents::CreateParams create_params(profile_, instance);
+  content::WebContents::CreateParams create_params(profile_,
+                                                   std::move(instance));
   web_contents_.reset(content::WebContents::Create(create_params));
   extensions::SetViewType(web_contents_.get(), extensions::VIEW_TYPE_PANEL);
   web_contents_->SetDelegate(this);
   // web_contents_ may be passed to PageZoom::Zoom(), so it needs
   // a ZoomController.
-  ui_zoom::ZoomController::CreateForWebContents(web_contents_.get());
+  zoom::ZoomController::CreateForWebContents(web_contents_.get());
   content::WebContentsObserver::Observe(web_contents_.get());
 
   // Needed to give the web contents a Tab ID. Extension APIs
@@ -110,8 +113,10 @@ content::WebContents* PanelHost::OpenURLFromTab(
     return NULL;
 
   // Only allow clicks on links.
-  if (params.transition != ui::PAGE_TRANSITION_LINK)
+  if (!ui::PageTransitionCoreTypeIs(params.transition,
+                                    ui::PAGE_TRANSITION_LINK)) {
     return NULL;
+  }
 
   // Force all links to open in a new tab.
   chrome::NavigateParams navigate_params(profile_,
@@ -233,9 +238,9 @@ void PanelHost::Reload() {
   web_contents_->GetController().Reload(true);
 }
 
-void PanelHost::ReloadIgnoringCache() {
-  content::RecordAction(UserMetricsAction("ReloadIgnoringCache"));
-  web_contents_->GetController().ReloadIgnoringCache(true);
+void PanelHost::ReloadBypassingCache() {
+  content::RecordAction(UserMetricsAction("ReloadBypassingCache"));
+  web_contents_->GetController().ReloadBypassingCache(true);
 }
 
 void PanelHost::StopLoading() {
@@ -244,5 +249,5 @@ void PanelHost::StopLoading() {
 }
 
 void PanelHost::Zoom(content::PageZoom zoom) {
-  ui_zoom::PageZoom::Zoom(web_contents_.get(), zoom);
+  zoom::PageZoom::Zoom(web_contents_.get(), zoom);
 }

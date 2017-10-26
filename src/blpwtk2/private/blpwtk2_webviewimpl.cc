@@ -43,10 +43,12 @@
 #include <base/strings/utf_string_conversions.h>
 #include <chrome/browser/printing/print_view_manager.h>
 #include <components/devtools_http_handler/devtools_http_handler.h>
+#include <components/printing/renderer/print_web_view_helper.h>
 #include <content/browser/renderer_host/render_widget_host_view_base.h>
 #include <content/public/browser/host_zoom_map.h>
 #include <content/public/browser/media_capture_devices.h>
 #include <content/public/browser/render_frame_host.h>
+
 #include <content/public/browser/render_process_host.h>
 #include <content/public/browser/render_view_host.h>
 #include <content/public/browser/render_widget_host.h>
@@ -122,6 +124,20 @@ WebViewImpl::WebViewImpl(WebViewDelegate* delegate,
     d_webContents->SetDelegate(this);
     Observe(d_webContents.get());
 
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_WIN)
+    CR_DEFINE_STATIC_LOCAL(const gfx::FontRenderParams, fontRenderParams,
+        (gfx::GetFontRenderParams(gfx::FontRenderParamsQuery(), NULL)));
+
+    content::RendererPreferences *prefs = d_webContents->GetMutableRendererPrefs();
+
+    prefs->should_antialias_text    = fontRenderParams.antialiasing;
+    prefs->use_subpixel_positioning = fontRenderParams.subpixel_positioning;
+    prefs->hinting                  = fontRenderParams.hinting;
+    prefs->use_autohinter           = fontRenderParams.autohinter;
+    prefs->use_bitmaps              = fontRenderParams.use_bitmaps;
+    prefs->subpixel_rendering       = fontRenderParams.subpixel_rendering;
+#endif
+
     printing::PrintViewManager::CreateForWebContents(d_webContents.get());
 
     createWidget(parent);
@@ -160,6 +176,21 @@ WebViewImpl::WebViewImpl(content::WebContents* contents,
     d_webContents.reset(contents);
     d_webContents->SetDelegate(this);
     Observe(d_webContents.get());
+
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_WIN)
+    CR_DEFINE_STATIC_LOCAL(const gfx::FontRenderParams, fontRenderParams,
+        (gfx::GetFontRenderParams(gfx::FontRenderParamsQuery(), NULL)));
+
+    content::RendererPreferences *prefs = d_webContents->GetMutableRendererPrefs();
+
+    prefs->should_antialias_text    = fontRenderParams.antialiasing;
+    prefs->use_subpixel_positioning = fontRenderParams.subpixel_positioning;
+    prefs->hinting                  = fontRenderParams.hinting;
+    prefs->use_autohinter           = fontRenderParams.autohinter;
+    prefs->use_bitmaps              = fontRenderParams.use_bitmaps;
+    prefs->subpixel_rendering       = fontRenderParams.subpixel_rendering;
+#endif
+    
     show();
 }
 
@@ -356,6 +387,33 @@ void WebViewImpl::print()
     printViewManager->PrintNow();
 }
 
+String WebViewImpl::printToPDF(const char *propertyNameOnIframeToPrint)
+{    
+    String returnVal;
+    content::RenderView* rv = content::RenderView::FromRoutingID(d_renderViewRoutingId);
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    v8::HandleScope handleScope(isolate);
+
+    for (auto *frame = rv->GetWebView()->mainFrame();
+         frame;
+         frame = frame->traverseNext(false)) {
+
+        v8::Local<v8::Context> jsContext = frame->mainWorldScriptContext();
+        v8::Local<v8::Object> winObject = jsContext->Global();
+
+        if (winObject->Has(v8::String::NewFromUtf8(isolate, propertyNameOnIframeToPrint))) {
+            std::vector<char> buffer =
+                printing::PrintWebViewHelper::Get(rv)->PrintToPDF(
+                    frame->toWebLocalFrame());
+
+            returnVal.assign(buffer.data(), buffer.size());
+            break;
+        }
+    }
+
+    return returnVal;
+}
+
 void WebViewImpl::drawContentsToBlob(Blob *blob, const DrawParams& params)
 {
     DCHECK(Statics::isSingleThreadMode());
@@ -506,7 +564,7 @@ void WebViewImpl::reload(bool ignoreCache)
     const bool checkForRepost = false;  // TODO: do we want to make this an argument
 
     if (ignoreCache)
-        d_webContents->GetController().ReloadIgnoringCache(checkForRepost);
+        d_webContents->GetController().ReloadBypassingCache(checkForRepost);
     else
         d_webContents->GetController().Reload(checkForRepost);
 }
@@ -666,10 +724,11 @@ void WebViewImpl::onNCHitTestResult(int x, int y, int result)
     // always have the latest info.
     if (d_delegate && d_ncHitTestEnabled) {
         POINT ptNow;
-        ::GetCursorPos(&ptNow);
-        if (ptNow.x != x || ptNow.y != y) {
-            d_ncHitTestPendingAck = true;
-            d_delegate->requestNCHitTest(this);
+        if(::GetCursorPos(&ptNow)) {
+            if (ptNow.x != x || ptNow.y != y) {
+                d_ncHitTestPendingAck = true;
+                d_delegate->requestNCHitTest(this);
+            }
         }
     }
 }
@@ -686,7 +745,7 @@ void WebViewImpl::fileChooserCompleted(const StringRef* paths,
         files[i].display_name = files[i].file_path.BaseName().value();
     }
 
-    d_webContents->GetRenderViewHost()->FilesSelectedInChooser(files, d_lastFileChooserMode);
+    d_webContents->GetRenderViewHost()->GetMainFrame()->FilesSelectedInChooser(files, d_lastFileChooserMode);
 }
 
 void WebViewImpl::performCustomContextMenuAction(int actionId)
@@ -851,11 +910,11 @@ void WebViewImpl::DidNavigateMainFramePostCommit(content::WebContents* source)
         d_delegate->didNavigateMainFramePostCommit(this, source->GetURL().spec());
 }
 
-void WebViewImpl::RunFileChooser(content::WebContents* source,
+void WebViewImpl::RunFileChooser(content::RenderFrameHost* render_frame_host,
                                  const content::FileChooserParams& params)
 {
     DCHECK(Statics::isInBrowserMainThread());
-    DCHECK(source == d_webContents.get());
+    DCHECK(render_frame_host);
 
     if (!d_delegate) {
         return;
@@ -1010,7 +1069,7 @@ void WebViewImpl::RequestMediaAccessPermission(
     const content::MediaStreamDevices& videoDevices =
         content::MediaCaptureDevices::GetInstance()->GetVideoCaptureDevices();
 
-    scoped_ptr<content::MediaStreamUI> ui(new DummyMediaStreamUI());
+    std::unique_ptr<content::MediaStreamUI> ui(new DummyMediaStreamUI());
     content::MediaStreamDevices devices;
     if (request.requested_video_device_id.empty()) {
         if (request.video_type != content::MEDIA_NO_SERVICE && !videoDevices.empty()) {
@@ -1040,7 +1099,7 @@ void WebViewImpl::RequestMediaAccessPermission(
             devices.push_back(*device);
         }
     }
-    callback.Run(devices, content::MEDIA_DEVICE_OK, ui.Pass());
+    callback.Run(devices, content::MEDIA_DEVICE_OK, std::move(ui));
 }
 
 bool WebViewImpl::OnNCHitTest(int* result)

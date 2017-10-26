@@ -10,7 +10,6 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/web_contents.h"
 
@@ -44,9 +43,9 @@ WebContents* ChromeWebContentsHandler::OpenURLFromTab(
     browser = new Browser(Browser::CreateParams(Browser::TYPE_TABBED, profile));
   chrome::NavigateParams nav_params(browser, params.url, params.transition);
   nav_params.referrer = params.referrer;
-  if (source && source->IsCrashed() &&
-      params.disposition == CURRENT_TAB &&
-      params.transition == ui::PAGE_TRANSITION_LINK) {
+  if (source && source->IsCrashed() && params.disposition == CURRENT_TAB &&
+      ui::PageTransitionCoreTypeIs(params.transition,
+                                   ui::PAGE_TRANSITION_LINK)) {
     nav_params.disposition = NEW_FOREGROUND_TAB;
   } else {
     nav_params.disposition = params.disposition;

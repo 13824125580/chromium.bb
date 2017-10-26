@@ -4,18 +4,18 @@
 
 #include "chrome/browser/extensions/test_extension_prefs.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/chrome_app_sorting.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -123,16 +123,14 @@ void TestExtensionPrefs::RecreateExtensionPrefs() {
   factory.set_extension_prefs(
       new ExtensionPrefStore(extension_pref_value_map_.get(), false));
   pref_service_ = factory.CreateSyncable(pref_registry_.get());
-  scoped_ptr<ExtensionPrefs> prefs(ExtensionPrefs::Create(
-      &profile_,
-      pref_service_.get(),
-      temp_dir_.path(),
-      extension_pref_value_map_.get(),
-      extensions_disabled_,
+  std::unique_ptr<ExtensionPrefs> prefs(ExtensionPrefs::Create(
+      &profile_, pref_service_.get(), temp_dir_.path(),
+      extension_pref_value_map_.get(), extensions_disabled_,
       std::vector<ExtensionPrefsObserver*>(),
       // Guarantee that no two extensions get the same installation time
       // stamp and we can reliably assert the installation order in the tests.
-      scoped_ptr<ExtensionPrefs::TimeProvider>(new IncrementalTimeProvider())));
+      std::unique_ptr<ExtensionPrefs::TimeProvider>(
+          new IncrementalTimeProvider())));
   ExtensionPrefsFactory::GetInstance()->SetInstanceForTesting(&profile_,
                                                               std::move(prefs));
   // Hack: After recreating ExtensionPrefs, the AppSorting also needs to be

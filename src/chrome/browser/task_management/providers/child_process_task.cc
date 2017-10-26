@@ -19,10 +19,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/common/process_type.h"
-#include "content/public/common/service_registry.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_set.h"
 #include "grit/theme_resources.h"
+#include "services/shell/public/cpp/interface_provider.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -46,7 +46,6 @@ base::string16 GetLocalizedTitle(const base::string16& title,
   base::string16 result_title = title;
   if (result_title.empty()) {
     switch (process_type) {
-      case content::PROCESS_TYPE_PLUGIN:
       case content::PROCESS_TYPE_PPAPI_PLUGIN:
       case content::PROCESS_TYPE_PPAPI_BROKER:
         result_title = l10n_util::GetStringUTF16(
@@ -70,7 +69,6 @@ base::string16 GetLocalizedTitle(const base::string16& title,
                                         result_title);
     case content::PROCESS_TYPE_GPU:
       return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_GPU_PREFIX);
-    case content::PROCESS_TYPE_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_PLUGIN:
       return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_PLUGIN_PREFIX,
                                         result_title);
@@ -86,9 +84,9 @@ base::string16 GetLocalizedTitle(const base::string16& title,
         // profile or the profile path from the child process host if any.
         auto loaded_profiles = profile_manager->GetLoadedProfiles();
         for (auto* profile : loaded_profiles) {
-          auto& enabled_extensions =
+          const extensions::ExtensionSet& enabled_extensions =
               extensions::ExtensionRegistry::Get(profile)->enabled_extensions();
-          auto extension =
+          const extensions::Extension* extension =
               enabled_extensions.GetExtensionOrAppByURL(GURL(result_title));
           if (extension) {
             result_title = base::UTF8ToUTF16(extension->name());
@@ -117,7 +115,7 @@ base::string16 GetLocalizedTitle(const base::string16& title,
 // BrowserChildProcessHost whose unique ID is |unique_child_process_id|.
 void ConnectResourceReporterOnIOThread(
     int unique_child_process_id,
-    mojo::InterfaceRequest<ResourceUsageReporter> resource_reporter) {
+    mojo::InterfaceRequest<mojom::ResourceUsageReporter> resource_reporter) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
   content::BrowserChildProcessHost* host =
@@ -125,11 +123,9 @@ void ConnectResourceReporterOnIOThread(
   if (!host)
     return;
 
-  content::ServiceRegistry* registry = host->GetServiceRegistry();
-  if (!registry)
-    return;
-
-  registry->ConnectToRemoteService(std::move(resource_reporter));
+  shell::InterfaceProvider* interfaces = host->GetRemoteInterfaces();
+  if (interfaces)
+    interfaces->GetInterface(std::move(resource_reporter));
 }
 
 // Creates the Mojo service wrapper that will be used to sample the V8 memory
@@ -137,8 +133,8 @@ void ConnectResourceReporterOnIOThread(
 // |unique_child_process_id|.
 ProcessResourceUsage* CreateProcessResourcesSampler(
     int unique_child_process_id) {
-  ResourceUsageReporterPtr service;
-  mojo::InterfaceRequest<ResourceUsageReporter> usage_reporter =
+  mojom::ResourceUsageReporterPtr service;
+  mojo::InterfaceRequest<mojom::ResourceUsageReporter> usage_reporter =
       mojo::GetProxy(&service);
 
   content::BrowserThread::PostTask(
@@ -206,7 +202,6 @@ void ChildProcessTask::Refresh(const base::TimeDelta& update_interval,
 Task::Type ChildProcessTask::GetType() const {
   // Convert |content::ProcessType| to |task_management::Task::Type|.
   switch (process_type_) {
-    case content::PROCESS_TYPE_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_BROKER:
       return Task::PLUGIN;

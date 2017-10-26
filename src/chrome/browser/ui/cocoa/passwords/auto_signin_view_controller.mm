@@ -23,13 +23,13 @@
 #include "ui/gfx/font_list.h"
 
 namespace {
-const int kAutoSigninToastTimeoutSeconds = 3;
+constexpr int kAutoSigninToastTimeoutSeconds = 3;
 }  // namespace
 
 @interface AutoSigninViewController () {
   base::scoped_nsobject<CredentialItemButton> credentialView_;
   base::scoped_nsobject<AccountAvatarFetcherManager> avatarManager_;
-  scoped_ptr<base::Timer> timer_;
+  std::unique_ptr<base::Timer> timer_;
 }
 - (instancetype)
 initWithAvatarManager:(AccountAvatarFetcherManager*)avatarManager

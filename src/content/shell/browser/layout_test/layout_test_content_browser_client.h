@@ -36,11 +36,10 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
       const MainFunctionParams& parameters) override;
 
   PlatformNotificationService* GetPlatformNotificationService() override;
-  void GetAdditionalNavigatorConnectServices(
-      const scoped_refptr<NavigatorConnectContext>& context) override;
 
  private:
-  scoped_ptr<LayoutTestNotificationManager> layout_test_notification_manager_;
+  std::unique_ptr<LayoutTestNotificationManager>
+      layout_test_notification_manager_;
 };
 
 }  // content

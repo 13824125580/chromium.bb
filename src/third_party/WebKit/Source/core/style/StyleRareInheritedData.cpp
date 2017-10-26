@@ -40,12 +40,8 @@ struct SameSizeAsStyleRareInheritedData : public RefCounted<SameSizeAsStyleRareI
     Color colors[5];
     void* ownPtrs[1];
     AtomicString atomicStrings[3];
-#if ENABLE(OILPAN)
     void* refPtrs[1];
     Persistent<void*> persistentHandles[2];
-#else
-    void* refPtrs[3];
-#endif
     Length lengths[1];
     float secondFloat;
     unsigned m_bitfields[2];
@@ -57,6 +53,7 @@ struct SameSizeAsStyleRareInheritedData : public RefCounted<SameSizeAsStyleRareI
     StyleColor caretColor;
     TabSize tabSize;
     void* variables[1];
+    TextSizeAdjust textSizeAdjust;
 };
 
 static_assert(sizeof(StyleRareInheritedData) <= sizeof(SameSizeAsStyleRareInheritedData), "StyleRareInheritedData should stay small");
@@ -68,7 +65,6 @@ StyleRareInheritedData::StyleRareInheritedData()
     , m_effectiveZoom(ComputedStyle::initialZoom())
     , widows(ComputedStyle::initialWidows())
     , orphans(ComputedStyle::initialOrphans())
-    , m_hasAutoOrphans(true)
     , m_textStrokeColorIsCurrentColor(true)
     , m_textFillColorIsCurrentColor(true)
     , m_textEmphasisColorIsCurrentColor(true)
@@ -107,6 +103,7 @@ StyleRareInheritedData::StyleRareInheritedData()
     , tapHighlightColor(ComputedStyle::initialTapHighlightColor())
     , caretColor(ComputedStyle::initialCaretColor())
     , m_tabSize(ComputedStyle::initialTabSize())
+    , m_textSizeAdjust(ComputedStyle::initialTextSizeAdjust())
 {
 }
 
@@ -127,7 +124,6 @@ StyleRareInheritedData::StyleRareInheritedData(const StyleRareInheritedData& o)
     , m_effectiveZoom(o.m_effectiveZoom)
     , widows(o.widows)
     , orphans(o.orphans)
-    , m_hasAutoOrphans(o.m_hasAutoOrphans)
     , m_textStrokeColorIsCurrentColor(o.m_textStrokeColorIsCurrentColor)
     , m_textFillColorIsCurrentColor(o.m_textFillColorIsCurrentColor)
     , m_textEmphasisColorIsCurrentColor(o.m_textEmphasisColorIsCurrentColor)
@@ -170,6 +166,7 @@ StyleRareInheritedData::StyleRareInheritedData(const StyleRareInheritedData& o)
     , appliedTextDecorations(o.appliedTextDecorations)
     , m_tabSize(o.m_tabSize)
     , variables(o.variables)
+    , m_textSizeAdjust(o.m_textSizeAdjust)
 {
 }
 
@@ -194,7 +191,6 @@ bool StyleRareInheritedData::operator==(const StyleRareInheritedData& o) const
         && m_effectiveZoom == o.m_effectiveZoom
         && widows == o.widows
         && orphans == o.orphans
-        && m_hasAutoOrphans == o.m_hasAutoOrphans
         && m_textStrokeColorIsCurrentColor == o.m_textStrokeColorIsCurrentColor
         && m_textFillColorIsCurrentColor == o.m_textFillColorIsCurrentColor
         && m_textEmphasisColorIsCurrentColor == o.m_textEmphasisColorIsCurrentColor
@@ -237,7 +233,8 @@ bool StyleRareInheritedData::operator==(const StyleRareInheritedData& o) const
         && caretColor == o.caretColor
         && dataEquivalent(listStyleImage.get(), o.listStyleImage.get())
         && dataEquivalent(appliedTextDecorations, o.appliedTextDecorations)
-        && dataEquivalent(variables, o.variables);
+        && dataEquivalent(variables, o.variables)
+        && m_textSizeAdjust == o.m_textSizeAdjust;
 }
 
 bool StyleRareInheritedData::shadowDataEquivalent(const StyleRareInheritedData& o) const

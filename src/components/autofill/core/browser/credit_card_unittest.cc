@@ -8,11 +8,13 @@
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/validation.h"
+#include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "grit/components_scaled_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -163,6 +165,79 @@ TEST(CreditCardTest, AssignmentOperator) {
   // Assignment to self should not change the profile value.
   a = a;
   EXPECT_TRUE(a == b);
+}
+
+TEST(CreditCardTest, SetExpirationYearFromString) {
+  static const struct {
+    std::string expiration_year;
+    int expected_year;
+  } kTestCases[] = {
+      // Valid values.
+      {"2040", 2040},
+      {"45", 2045},
+      {"045", 2045},
+      {"9", 2009},
+
+      // Unrecognized year values.
+      {"052045", 0},
+      {"123", 0},
+      {"y2045", 0},
+  };
+
+  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+    CreditCard card(base::GenerateGUID(), "some origin");
+    card.SetExpirationYearFromString(
+        ASCIIToUTF16(kTestCases[i].expiration_year));
+
+    EXPECT_EQ(kTestCases[i].expected_year, card.expiration_year())
+        << kTestCases[i].expiration_year << " " << kTestCases[i].expected_year;
+  }
+}
+
+TEST(CreditCardTest, SetExpirationDateFromString) {
+  static const struct {
+    std::string expiration_date;
+    int expected_month;
+    int expected_year;
+  } kTestCases[] = {{"10", 0, 0},       // Too small.
+                    {"1020451", 0, 0},  // Too long.
+
+                    // No separators.
+                    {"105", 0, 0},  // Too ambiguous.
+                    {"0545", 5, 2045},
+                    {"52045", 0, 0},  // Too ambiguous.
+                    {"052045", 5, 2045},
+
+                    // "/" separator.
+                    {"05/45", 5, 2045},
+                    {"5/2045", 5, 2045},
+                    {"05/2045", 5, 2045},
+
+                    // "-" separator.
+                    {"05-45", 5, 2045},
+                    {"5-2045", 5, 2045},
+                    {"05-2045", 5, 2045},
+
+                    // "|" separator.
+                    {"05|45", 5, 2045},
+                    {"5|2045", 5, 2045},
+                    {"05|2045", 5, 2045},
+
+                    // Invalid values.
+                    {"13/2016", 0, 2016},
+                    {"16/13", 0, 2013},
+                    {"May-2015", 0, 0},
+                    {"05-/2045", 0, 0},
+                    {"05_2045", 0, 0}};
+
+  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+    CreditCard card(base::GenerateGUID(), "some origin");
+    card.SetExpirationDateFromString(
+        ASCIIToUTF16(kTestCases[i].expiration_date));
+
+    EXPECT_EQ(kTestCases[i].expected_month, card.expiration_month());
+    EXPECT_EQ(kTestCases[i].expected_year, card.expiration_year());
+  }
 }
 
 TEST(CreditCardTest, Copy) {
@@ -336,56 +411,106 @@ TEST(CreditCardTest, UpdateFromImportedCard) {
   CreditCard b = a;
   b.set_guid(base::GenerateGUID());
   b.set_origin("https://www.example.org");
-  b.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("J. Dillinger"));
+  b.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("J. Dillinger"));
   b.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("08"));
   b.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2019"));
 
+  // |a| should be updated with the information from |b|.
   EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
   EXPECT_EQ("https://www.example.org", a.origin());
-  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME));
+  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME_FULL));
   EXPECT_EQ(ASCIIToUTF16("08"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(ASCIIToUTF16("2019"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 
   // Try again, but with no name set for |b|.
+  // |a| should be updated with |b|'s expiration date and keep its original
+  // name.
   a = original_card;
-  b.SetRawInfo(CREDIT_CARD_NAME, base::string16());
+  b.SetRawInfo(CREDIT_CARD_NAME_FULL, base::string16());
 
   EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
   EXPECT_EQ("https://www.example.org", a.origin());
-  EXPECT_EQ(ASCIIToUTF16("John Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME));
+  EXPECT_EQ(ASCIIToUTF16("John Dillinger"),
+            a.GetRawInfo(CREDIT_CARD_NAME_FULL));
   EXPECT_EQ(ASCIIToUTF16("08"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(ASCIIToUTF16("2019"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 
   // Try again, but with only the original card having a verified origin.
   // |a| should be unchanged.
   a = original_card;
-  a.set_origin("Chrome settings");
-  b.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("J. Dillinger"));
+  a.set_origin(kSettingsOrigin);
+  b.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("J. Dillinger"));
 
   EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
-  EXPECT_EQ("Chrome settings", a.origin());
-  EXPECT_EQ(ASCIIToUTF16("John Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME));
+  EXPECT_EQ(kSettingsOrigin, a.origin());
+  EXPECT_EQ(ASCIIToUTF16("John Dillinger"),
+            a.GetRawInfo(CREDIT_CARD_NAME_FULL));
   EXPECT_EQ(ASCIIToUTF16("09"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(ASCIIToUTF16("2017"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 
-  // Try again, but with only the new card having a verified origin.
+  // Try again, but with using an expired verified original card.
+  // |a| should not be updated because the name on the cards are not identical.
   a = original_card;
-  b.set_origin("Chrome settings");
+  a.set_origin("Chrome settings");
+  a.SetExpirationYear(2010);
 
   EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
   EXPECT_EQ("Chrome settings", a.origin());
-  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME));
+  EXPECT_EQ(ASCIIToUTF16("John Dillinger"),
+            a.GetRawInfo(CREDIT_CARD_NAME_FULL));
+  EXPECT_EQ(ASCIIToUTF16("09"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
+  EXPECT_EQ(ASCIIToUTF16("2010"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
+
+  // Try again, but with using identical name on the cards.
+  // |a|'s expiration date should be updated.
+  a = original_card;
+  a.set_origin("Chrome settings");
+  a.SetExpirationYear(2010);
+  a.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("J. Dillinger"));
+
+  EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
+  EXPECT_EQ("Chrome settings", a.origin());
+  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME_FULL));
+  EXPECT_EQ(ASCIIToUTF16("08"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
+  EXPECT_EQ(ASCIIToUTF16("2019"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
+
+  // Try again, but with |b| being expired.
+  // |a|'s expiration date should not be updated.
+  a = original_card;
+  a.set_origin("Chrome settings");
+  a.SetExpirationYear(2010);
+  a.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("J. Dillinger"));
+  b.SetExpirationYear(2009);
+
+  EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
+  EXPECT_EQ("Chrome settings", a.origin());
+  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME_FULL));
+  EXPECT_EQ(ASCIIToUTF16("09"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
+  EXPECT_EQ(ASCIIToUTF16("2010"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
+
+  // Put back |b|'s initial expiration date.
+  b.SetExpirationYear(2019);
+
+  // Try again, but with only the new card having a verified origin.
+  // |a| should be updated.
+  a = original_card;
+  b.set_origin(kSettingsOrigin);
+
+  EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
+  EXPECT_EQ(kSettingsOrigin, a.origin());
+  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME_FULL));
   EXPECT_EQ(ASCIIToUTF16("08"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(ASCIIToUTF16("2019"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 
   // Try again, with both cards having a verified origin.
+  // |a| should be updated.
   a = original_card;
   a.set_origin("Chrome Autofill dialog");
-  b.set_origin("Chrome settings");
+  b.set_origin(kSettingsOrigin);
 
   EXPECT_TRUE(a.UpdateFromImportedCard(b, "en-US"));
-  EXPECT_EQ("Chrome settings", a.origin());
-  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME));
+  EXPECT_EQ(kSettingsOrigin, a.origin());
+  EXPECT_EQ(ASCIIToUTF16("J. Dillinger"), a.GetRawInfo(CREDIT_CARD_NAME_FULL));
   EXPECT_EQ(ASCIIToUTF16("08"), a.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(ASCIIToUTF16("2019"), a.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 
@@ -396,27 +521,6 @@ TEST(CreditCardTest, UpdateFromImportedCard) {
 
   EXPECT_FALSE(a.UpdateFromImportedCard(b, "en-US"));
   EXPECT_EQ(original_card, a);
-}
-
-TEST(CreditCardTest, IsComplete) {
-  CreditCard card(base::GenerateGUID(), "https://www.example.com/");
-  EXPECT_FALSE(card.IsComplete());
-  card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Wally T. Walrus"));
-  EXPECT_FALSE(card.IsComplete());
-  card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("01"));
-  EXPECT_FALSE(card.IsComplete());
-  card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2014"));
-
-  for (size_t i = 0; i < arraysize(kValidNumbers); ++i) {
-    SCOPED_TRACE(kValidNumbers[i]);
-    card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16(kValidNumbers[i]));
-    EXPECT_TRUE(card.IsComplete());
-  }
-  for (size_t i = 0; i < arraysize(kInvalidNumbers); ++i) {
-    SCOPED_TRACE(kInvalidNumbers[i]);
-    card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16(kInvalidNumbers[i]));
-    EXPECT_FALSE(card.IsComplete());
-  }
 }
 
 TEST(CreditCardTest, IsValid) {
@@ -434,24 +538,20 @@ TEST(CreditCardTest, IsValid) {
 
   // Invalid because card number is not complete
   card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
-  card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("9999"));
+  card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2999"));
   card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("41111"));
   EXPECT_FALSE(card.IsValid());
 
-  // Valid
-  card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
-  card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("9999"));
-  card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("4111111111111111"));
-  EXPECT_TRUE(card.IsValid());
-}
-
-TEST(CreditCardTest, InvalidMastercardNumber) {
-  CreditCard card(base::GenerateGUID(), "https://www.example.com/");
-
-  test::SetCreditCardInfo(&card, "Baby Face Nelson",
-                          "5200000000000004", "01", "2010");
-  EXPECT_EQ(kMasterCard, card.type());
-  EXPECT_FALSE(card.IsComplete());
+  for (size_t i = 0; i < arraysize(kValidNumbers); ++i) {
+    SCOPED_TRACE(kValidNumbers[i]);
+    card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16(kValidNumbers[i]));
+    EXPECT_TRUE(card.IsValid());
+  }
+  for (size_t i = 0; i < arraysize(kInvalidNumbers); ++i) {
+    SCOPED_TRACE(kInvalidNumbers[i]);
+    card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16(kInvalidNumbers[i]));
+    EXPECT_FALSE(card.IsValid());
+  }
 }
 
 // Verify that we preserve exactly what the user typed for credit card numbers.
@@ -700,11 +800,109 @@ TEST(CreditCardTest, LastFourDigits) {
 TEST(CreditCardTest, CanBuildFromCardNumberAndExpirationDate) {
   base::string16 card_number = base::ASCIIToUTF16("test");
   int month = 1;
-  int year = 3000;
+  int year = 2999;
   CreditCard card(card_number, month, year);
   EXPECT_EQ(card_number, card.number());
   EXPECT_EQ(month, card.expiration_month());
   EXPECT_EQ(year, card.expiration_year());
+}
+
+// Verifies that a credit card should be updated.
+TEST(CreditCardTest, ShouldUpdateExpiration) {
+  base::Time now = base::Time::Now();
+
+  base::Time::Exploded last_year;
+  (now - base::TimeDelta::FromDays(365)).LocalExplode(&last_year);
+
+  base::Time::Exploded last_month;
+  (now - base::TimeDelta::FromDays(31)).LocalExplode(&last_month);
+
+  base::Time::Exploded current;
+  now.LocalExplode(&current);
+
+  base::Time::Exploded next_month;
+  (now + base::TimeDelta::FromDays(31)).LocalExplode(&next_month);
+
+  base::Time::Exploded next_year;
+  (now + base::TimeDelta::FromDays(365)).LocalExplode(&next_year);
+
+  static const struct {
+    bool should_update_expiration;
+    int month;
+    int year;
+    CreditCard::RecordType record_type;
+    CreditCard::ServerStatus server_status;
+  } kTestCases[] = {
+
+      // Cards that expired last year should always be updated.
+      {true, last_year.month, last_year.year, CreditCard::LOCAL_CARD},
+      {true, last_year.month, last_year.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::OK},
+      {true, last_year.month, last_year.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::OK},
+      {true, last_year.month, last_year.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::EXPIRED},
+      {true, last_year.month, last_year.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::EXPIRED},
+
+      // Cards that expired last month should always be updated.
+      {true, last_month.month, last_month.year, CreditCard::LOCAL_CARD},
+      {true, last_month.month, last_month.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::OK},
+      {true, last_month.month, last_month.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::OK},
+      {true, last_month.month, last_month.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::EXPIRED},
+      {true, last_month.month, last_month.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::EXPIRED},
+
+      // Cards that expire this month should be updated only if the server
+      // status is EXPIRED.
+      {false, current.month, current.year, CreditCard::LOCAL_CARD},
+      {false, current.month, current.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::OK},
+      {false, current.month, current.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::OK},
+      {true, current.month, current.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::EXPIRED},
+      {true, current.month, current.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::EXPIRED},
+
+      // Cards that expire next month should be updated only if the server
+      // status is EXPIRED.
+      {false, next_month.month, next_month.year, CreditCard::LOCAL_CARD},
+      {false, next_month.month, next_month.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::OK},
+      {false, next_month.month, next_month.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::OK},
+      {true, next_month.month, next_month.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::EXPIRED},
+      {true, next_month.month, next_month.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::EXPIRED},
+
+      // Cards that expire next year should be updated only if the server status
+      // is EXPIRED.
+      {false, next_year.month, next_year.year, CreditCard::LOCAL_CARD},
+      {false, next_year.month, next_year.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::OK},
+      {false, next_year.month, next_year.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::OK},
+      {true, next_year.month, next_year.year, CreditCard::MASKED_SERVER_CARD,
+       CreditCard::EXPIRED},
+      {true, next_year.month, next_year.year, CreditCard::FULL_SERVER_CARD,
+       CreditCard::EXPIRED},
+  };
+
+  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+    CreditCard card(base::ASCIIToUTF16("1234"), kTestCases[i].month,
+                    kTestCases[i].year);
+    card.set_record_type(kTestCases[i].record_type);
+    if (card.record_type() != CreditCard::LOCAL_CARD)
+      card.SetServerStatus(kTestCases[i].server_status);
+
+    EXPECT_EQ(kTestCases[i].should_update_expiration,
+              card.ShouldUpdateExpiration(now));
+  }
 }
 
 }  // namespace autofill

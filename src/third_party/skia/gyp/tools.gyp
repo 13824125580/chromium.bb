@@ -22,7 +22,6 @@
         'get_images_from_skps',
         'gpuveto',
         'imgblur',
-        'imgconv',
         'imgslice',
         'lua_app',
         'lua_pictures',
@@ -31,11 +30,15 @@
         'skhello',
         'skpinfo',
         'skpmaker',
-        'test_image_decoder',
         'test_public_includes',
+        'using_skia_and_harfbuzz',
+        'visualize_color_gamut',
         'whitelist_typefaces',
       ],
       'conditions': [
+        ['skia_mesa and skia_os in ["linux", "mac"]',
+          { 'dependencies': [ 'fiddle_build_test' ] }
+        ],
         ['skia_shared_lib',
           {
             'dependencies': [
@@ -266,15 +269,20 @@
       ],
     },
     {
-        'target_name': 'get_images_from_skps',
-        'type': 'executable',
-        'sources': [
-            '../tools/get_images_from_skps.cpp',
-         ],
-         'dependencies': [
-            'flags.gyp:flags',
-            'skia_lib.gyp:skia_lib',
-         ],
+      'target_name': 'get_images_from_skps',
+      'type': 'executable',
+      'sources': [
+        '../tools/get_images_from_skps.cpp',
+      ],
+      'include_dirs': [
+        '../src/core',
+        '../include/private',
+      ],
+      'dependencies': [
+        'flags.gyp:flags',
+        'jsoncpp.gyp:jsoncpp',
+        'skia_lib.gyp:skia_lib',
+      ],
     },
     {
       'target_name': 'gpuveto',
@@ -346,6 +354,9 @@
         '../tools/picture_utils.cpp',
         '../tools/picture_utils.h',
       ],
+      'include_dirs': [
+          '../src/core/',
+      ],
       'dependencies': [
         'skia_lib.gyp:skia_lib',
       ],
@@ -363,27 +374,6 @@
       ],
       'dependencies': [
         'flags.gyp:flags',
-        'skia_lib.gyp:skia_lib',
-      ],
-    },
-    {
-      'target_name': 'imgconv',
-      'type': 'executable',
-      'sources': [
-        '../tools/imgconv.cpp',
-      ],
-      'dependencies': [
-        'flags.gyp:flags',
-        'skia_lib.gyp:skia_lib',
-      ],
-    },
-    {
-      'target_name': 'test_image_decoder',
-      'type': 'executable',
-      'sources': [
-        '../tools/test_image_decoder.cpp',
-      ],
-      'dependencies': [
         'skia_lib.gyp:skia_lib',
       ],
     },
@@ -415,9 +405,39 @@
       'direct_dependent_settings': {
         'include_dirs': [
           '../include/private',
-          '../tools', 
+          '../tools',
         ],
       },
+    },
+    {
+      'target_name': 'using_skia_and_harfbuzz',
+      'type': 'executable',
+      'sources': [ '../tools/using_skia_and_harfbuzz.cpp' ],
+      'dependencies': [
+        'skia_lib.gyp:skia_lib',
+        'pdf.gyp:pdf',
+        'harfbuzz.gyp:harfbuzz',
+      ],
+      'cflags': [ '-w', ],
+      'msvs_settings': { 'VCCLCompilerTool': { 'WarningLevel': '0', }, },
+      'xcode_settings': { 'WARNING_CFLAGS': [ '-w', ], },
+    },
+    {
+      'target_name': 'visualize_color_gamut',
+      'type': 'executable',
+      'sources': [
+        '../tools/visualize_color_gamut.cpp',
+      ],
+      'include_dirs': [
+        '../src/core',
+        '../include/private',
+        '../tools',
+      ],
+      'dependencies': [
+        'flags.gyp:flags',
+        'resources',
+        'skia_lib.gyp:skia_lib',
+      ],
     },
     {
       'target_name': 'whitelist_typefaces',
@@ -476,7 +496,6 @@
           '<(skia_include_path)/utils/win',
           '<(skia_include_path)/utils/SkDebugUtils.h',
           '<(skia_include_path)/utils/SkJSONCPP.h',
-          '<(skia_include_path)/views/animated',
           '<(skia_include_path)/views/SkOSWindow_Android.h',
           '<(skia_include_path)/views/SkOSWindow_iOS.h',
           '<(skia_include_path)/views/SkOSWindow_Mac.h',
@@ -485,6 +504,9 @@
           '<(skia_include_path)/views/SkOSWindow_Win.h',
           '<(skia_include_path)/views/SkWindow.h',
           '<(skia_include_path)/gpu/vk',
+        ],
+        'output_file' : [
+          '<(INTERMEDIATE_DIR)/test_public_includes.cpp',
         ],
       },
       'include_dirs': [
@@ -500,15 +522,16 @@
           'inputs': [
             '../tools/generate_includes_cpp.py',
             '<@(includes_to_test)',
-            # This causes the gyp generator on mac to fail
-            #'<@(paths_to_ignore)',
           ],
           'outputs': [
-            '<(INTERMEDIATE_DIR)/test_public_includes.cpp',
+            '<@(output_file)',
+            # Force the script to always run so that we pick up when files have
+            # been deleted.
+            'filename_that_does_not_exists_but_forces_rebuild.txt',
           ],
           'action': ['python', '../tools/generate_includes_cpp.py',
                                '--ignore', '<(paths_to_ignore)',
-                               '<@(_outputs)', '<@(includes_to_test)'],
+                               '<@(output_file)', '<@(includes_to_test)'],
         },
       ],
     },
@@ -600,6 +623,27 @@
               'skia_lib.gyp:skia_lib',
               'resources',
             ],
+          },
+        ],
+      },
+    ],
+    ['skia_mesa and skia_os in ["linux", "mac"]',
+      {
+        'targets': [
+          {
+            'target_name': 'fiddle_build_test',
+            'type': 'executable',
+            'sources': [
+              '../tools/fiddle/draw.cpp',
+              '../tools/fiddle/fiddle_main.cpp',
+              '../tools/fiddle/fiddle_main.h',
+            ],
+            'dependencies': [
+              'skia_lib.gyp:skia_lib',
+              'pdf.gyp:pdf',
+              'gputest.gyp:osmesa',
+            ],
+            'defines': [ 'FIDDLE_BUILD_TEST' ],
           },
         ],
       },

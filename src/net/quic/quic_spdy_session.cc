@@ -4,8 +4,13 @@
 
 #include "net/quic/quic_spdy_session.h"
 
+#include <utility>
+
 #include "net/quic/quic_bug_tracker.h"
 #include "net/quic/quic_headers_stream.h"
+
+using base::StringPiece;
+using std::string;
 
 namespace net {
 
@@ -13,7 +18,16 @@ QuicSpdySession::QuicSpdySession(QuicConnection* connection,
                                  const QuicConfig& config)
     : QuicSession(connection, config) {}
 
-QuicSpdySession::~QuicSpdySession() {}
+QuicSpdySession::~QuicSpdySession() {
+  // Set the streams' session pointers in closed and dynamic stream lists
+  // to null to avoid subsequent use of this session.
+  for (auto* stream : *closed_streams()) {
+    static_cast<QuicSpdyStream*>(stream)->ClearSession();
+  }
+  for (auto const& kv : dynamic_streams()) {
+    static_cast<QuicSpdyStream*>(kv.second)->ClearSession();
+  }
+}
 
 void QuicSpdySession::Initialize() {
   QuicSession::Initialize();
@@ -61,13 +75,25 @@ void QuicSpdySession::OnStreamHeadersComplete(QuicStreamId stream_id,
   stream->OnStreamHeadersComplete(fin, frame_len);
 }
 
+void QuicSpdySession::OnStreamHeaderList(QuicStreamId stream_id,
+                                         bool fin,
+                                         size_t frame_len,
+                                         const QuicHeaderList& header_list) {
+  QuicSpdyStream* stream = GetSpdyDataStream(stream_id);
+  if (!stream) {
+    // It's quite possible to receive headers after a stream has been reset.
+    return;
+  }
+  stream->OnStreamHeaderList(fin, frame_len, header_list);
+}
+
 size_t QuicSpdySession::WriteHeaders(
     QuicStreamId id,
-    const SpdyHeaderBlock& headers,
+    SpdyHeaderBlock headers,
     bool fin,
     SpdyPriority priority,
     QuicAckListenerInterface* ack_notifier_delegate) {
-  return headers_stream_->WriteHeaders(id, headers, fin, priority,
+  return headers_stream_->WriteHeaders(id, std::move(headers), fin, priority,
                                        ack_notifier_delegate);
 }
 
@@ -96,17 +122,37 @@ QuicSpdyStream* QuicSpdySession::GetSpdyDataStream(
 
 void QuicSpdySession::OnPromiseHeaders(QuicStreamId stream_id,
                                        StringPiece headers_data) {
-  QUIC_BUG << "OnPromiseHeaders should be overriden in client code.";
-  connection()->CloseConnection(QUIC_INTERNAL_ERROR,
-                                ConnectionCloseSource::FROM_SELF);
+  string error = "OnPromiseHeaders should be overriden in client code.";
+  QUIC_BUG << error;
+  connection()->CloseConnection(QUIC_INTERNAL_ERROR, error,
+                                ConnectionCloseBehavior::SILENT_CLOSE);
 }
 
 void QuicSpdySession::OnPromiseHeadersComplete(QuicStreamId stream_id,
                                                QuicStreamId promised_stream_id,
                                                size_t frame_len) {
-  QUIC_BUG << "OnPromiseHeadersComplete shoule be overriden in client code.";
-  connection()->CloseConnection(QUIC_INTERNAL_ERROR,
-                                ConnectionCloseSource::FROM_SELF);
+  string error = "OnPromiseHeadersComplete should be overriden in client code.";
+  QUIC_BUG << error;
+  connection()->CloseConnection(QUIC_INTERNAL_ERROR, error,
+                                ConnectionCloseBehavior::SILENT_CLOSE);
+}
+
+void QuicSpdySession::OnPromiseHeaderList(QuicStreamId stream_id,
+                                          QuicStreamId promised_stream_id,
+                                          size_t frame_len,
+                                          const QuicHeaderList& header_list) {
+  string error = "OnPromiseHeaderList should be overriden in client code.";
+  QUIC_BUG << error;
+  connection()->CloseConnection(QUIC_INTERNAL_ERROR, error,
+                                ConnectionCloseBehavior::SILENT_CLOSE);
+}
+
+void QuicSpdySession::OnConfigNegotiated() {
+  QuicSession::OnConfigNegotiated();
+  if (FLAGS_quic_disable_hpack_dynamic_table &&
+      config()->HasClientSentConnectionOption(kDHDT, perspective())) {
+    headers_stream_->DisableHpackDynamicTable();
+  }
 }
 
 }  // namespace net

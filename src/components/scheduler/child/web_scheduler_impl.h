@@ -5,8 +5,9 @@
 #ifndef CONTENT_CHILD_SCHEDULER_BASE_WEB_SCHEDULER_IMPL_H_
 #define CONTENT_CHILD_SCHEDULER_BASE_WEB_SCHEDULER_IMPL_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "components/scheduler/scheduler_export.h"
 #include "third_party/WebKit/public/platform/WebScheduler.h"
@@ -39,23 +40,25 @@ class SCHEDULER_EXPORT WebSchedulerImpl : public blink::WebScheduler {
                                blink::WebThread::IdleTask* task) override;
   blink::WebTaskRunner* loadingTaskRunner() override;
   blink::WebTaskRunner* timerTaskRunner() override;
-  blink::WebPassOwnPtr<blink::WebViewScheduler> createWebViewScheduler(
+  std::unique_ptr<blink::WebViewScheduler> createWebViewScheduler(
       blink::WebView*) override;
   void suspendTimerQueue() override {}
   void resumeTimerQueue() override {}
-  void addPendingNavigation() override {}
-  void removePendingNavigation() override {}
+  void addPendingNavigation(
+      blink::WebScheduler::NavigatingFrameType type) override {}
+  void removePendingNavigation(
+      blink::WebScheduler::NavigatingFrameType type) override {}
   void onNavigationStarted() override {}
 
  private:
-  static void runIdleTask(scoped_ptr<blink::WebThread::IdleTask> task,
+  static void runIdleTask(std::unique_ptr<blink::WebThread::IdleTask> task,
                           base::TimeTicks deadline);
 
   ChildScheduler* child_scheduler_;  // NOT OWNED
   scoped_refptr<SingleThreadIdleTaskRunner> idle_task_runner_;
   scoped_refptr<TaskQueue> timer_task_runner_;
-  scoped_ptr<WebTaskRunnerImpl> loading_web_task_runner_;
-  scoped_ptr<WebTaskRunnerImpl> timer_web_task_runner_;
+  std::unique_ptr<WebTaskRunnerImpl> loading_web_task_runner_;
+  std::unique_ptr<WebTaskRunnerImpl> timer_web_task_runner_;
 };
 
 }  // namespace scheduler

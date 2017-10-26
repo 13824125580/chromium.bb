@@ -56,16 +56,10 @@ CORE_EXPORT v8::Local<v8::Value> toV8(DOMWindow*, v8::Local<v8::Object> creation
 CORE_EXPORT v8::Local<v8::Value> toV8(EventTarget*, v8::Local<v8::Object> creationContext, v8::Isolate*);
 v8::Local<v8::Value> toV8(WorkerOrWorkletGlobalScope*, v8::Local<v8::Object> creationContext, v8::Isolate*);
 
-// PassRefPtr, RawPtr and RefPtr
+// PassRefPtr and RefPtr
 
 template<typename T>
 inline v8::Local<v8::Value> toV8(PassRefPtr<T> impl, v8::Local<v8::Object> creationContext, v8::Isolate* isolate)
-{
-    return toV8(impl.get(), creationContext, isolate);
-}
-
-template<typename T>
-inline v8::Local<v8::Value> toV8(RawPtr<T> impl, v8::Local<v8::Object> creationContext, v8::Isolate* isolate)
 {
     return toV8(impl.get(), creationContext, isolate);
 }
@@ -195,7 +189,7 @@ inline v8::Local<v8::Value> toV8(const ScriptValue& value, v8::Local<v8::Object>
 
 inline v8::Local<v8::Value> toV8(const Dictionary& value, v8::Local<v8::Object> creationContext, v8::Isolate*)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_NOTREACHED();
     return v8::Local<v8::Value>();
 }
 
@@ -204,14 +198,18 @@ inline v8::Local<v8::Value> toV8(const Dictionary& value, v8::Local<v8::Object> 
 template<typename Sequence>
 inline v8::Local<v8::Value> toV8SequenceInternal(const Sequence& sequence, v8::Local<v8::Object> creationContext, v8::Isolate* isolate)
 {
-    v8::Local<v8::Array> array = v8::Array::New(isolate, sequence.size());
+    v8::Local<v8::Array> array;
+    {
+        v8::Context::Scope contextScope(creationContext->CreationContext());
+        array = v8::Array::New(isolate, sequence.size());
+    }
     uint32_t index = 0;
     typename Sequence::const_iterator end = sequence.end();
     for (typename Sequence::const_iterator iter = sequence.begin(); iter != end; ++iter) {
-        v8::Local<v8::Value> value = toV8(*iter, creationContext, isolate);
+        v8::Local<v8::Value> value = toV8(*iter, array, isolate);
         if (value.IsEmpty())
             value = v8::Undefined(isolate);
-        if (!v8CallBoolean(array->Set(isolate->GetCurrentContext(), v8::Integer::New(isolate, index++), value)))
+        if (!v8CallBoolean(array->CreateDataProperty(isolate->GetCurrentContext(), index++, value)))
             return v8::Local<v8::Value>();
     }
     return array;
@@ -232,12 +230,16 @@ inline v8::Local<v8::Value> toV8(const HeapVector<T, inlineCapacity>& value, v8:
 template<typename T>
 inline v8::Local<v8::Value> toV8(const Vector<std::pair<String, T>>& value, v8::Local<v8::Object> creationContext, v8::Isolate* isolate)
 {
-    v8::Local<v8::Object> object = v8::Object::New(isolate);
+    v8::Local<v8::Object> object;
+    {
+        v8::Context::Scope contextScope(creationContext->CreationContext());
+        object = v8::Object::New(isolate);
+    }
     for (unsigned i = 0; i < value.size(); ++i) {
-        v8::Local<v8::Value> v8Value = toV8(value[i].second, creationContext, isolate);
+        v8::Local<v8::Value> v8Value = toV8(value[i].second, object, isolate);
         if (v8Value.IsEmpty())
             v8Value = v8::Undefined(isolate);
-        if (!v8CallBoolean(object->Set(isolate->GetCurrentContext(), v8String(isolate, value[i].first), v8Value)))
+        if (!v8CallBoolean(object->CreateDataProperty(isolate->GetCurrentContext(), v8String(isolate, value[i].first), v8Value)))
             return v8::Local<v8::Value>();
     }
     return object;

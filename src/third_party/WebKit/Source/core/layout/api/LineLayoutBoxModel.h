@@ -23,13 +23,14 @@ public:
     explicit LineLayoutBoxModel(const LineLayoutItem& item)
         : LineLayoutItem(item)
     {
-        ASSERT(!item || item.isBoxModelObject());
+        ASSERT_WITH_SECURITY_IMPLICATION(!item || item.isBoxModelObject());
     }
 
     explicit LineLayoutBoxModel(std::nullptr_t) : LineLayoutItem(nullptr) { }
 
     LineLayoutBoxModel() { }
 
+    // TODO(dgrogan) Remove. Implement API methods that proxy to the PaintLayer.
     PaintLayer* layer() const
     {
         return toBoxModel()->layer();

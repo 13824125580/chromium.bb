@@ -8,7 +8,6 @@
 #include "core/fetch/CachedMetadataHandler.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
 
 namespace blink {
@@ -18,9 +17,9 @@ class CachedMetadata;
 
 class ServiceWorkerScriptCachedMetadataHandler : public CachedMetadataHandler {
 public:
-    static PassOwnPtrWillBeRawPtr<ServiceWorkerScriptCachedMetadataHandler> create(WorkerGlobalScope* workerGlobalScope, const KURL& scriptURL, const Vector<char>* metaData)
+    static ServiceWorkerScriptCachedMetadataHandler* create(WorkerGlobalScope* workerGlobalScope, const KURL& scriptURL, const Vector<char>* metaData)
     {
-        return adoptPtrWillBeNoop(new ServiceWorkerScriptCachedMetadataHandler(workerGlobalScope, scriptURL, metaData));
+        return new ServiceWorkerScriptCachedMetadataHandler(workerGlobalScope, scriptURL, metaData);
     }
     ~ServiceWorkerScriptCachedMetadataHandler() override;
     DECLARE_VIRTUAL_TRACE();
@@ -32,7 +31,7 @@ public:
 private:
     ServiceWorkerScriptCachedMetadataHandler(WorkerGlobalScope*, const KURL& scriptURL, const Vector<char>* metaData);
 
-    RawPtrWillBeMember<WorkerGlobalScope> m_workerGlobalScope;
+    Member<WorkerGlobalScope> m_workerGlobalScope;
     KURL m_scriptURL;
     RefPtr<CachedMetadata> m_cachedMetadata;
 };

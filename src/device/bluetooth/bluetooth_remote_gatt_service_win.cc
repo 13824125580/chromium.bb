@@ -4,7 +4,10 @@
 
 #include "device/bluetooth/bluetooth_remote_gatt_service_win.h"
 
+#include <memory>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "device/bluetooth/bluetooth_adapter_win.h"
 #include "device/bluetooth/bluetooth_device_win.h"
 #include "device/bluetooth/bluetooth_remote_gatt_characteristic_win.h"
@@ -50,6 +53,8 @@ BluetoothRemoteGattServiceWin::BluetoothRemoteGattServiceWin(
 BluetoothRemoteGattServiceWin::~BluetoothRemoteGattServiceWin() {
   DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
 
+  ClearIncludedCharacteristics();
+
   adapter_->NotifyGattServiceRemoved(this);
 }
 
@@ -61,10 +66,6 @@ BluetoothUUID BluetoothRemoteGattServiceWin::GetUUID() const {
   return const_cast<BluetoothUUID&>(service_uuid_);
 }
 
-bool BluetoothRemoteGattServiceWin::IsLocal() const {
-  return false;
-}
-
 bool BluetoothRemoteGattServiceWin::IsPrimary() const {
   return is_primary_;
 }
@@ -73,54 +74,29 @@ BluetoothDevice* BluetoothRemoteGattServiceWin::GetDevice() const {
   return device_;
 }
 
-std::vector<BluetoothGattCharacteristic*>
+std::vector<BluetoothRemoteGattCharacteristic*>
 BluetoothRemoteGattServiceWin::GetCharacteristics() const {
-  std::vector<BluetoothGattCharacteristic*> has_characteristics;
+  std::vector<BluetoothRemoteGattCharacteristic*> has_characteristics;
   for (const auto& c : included_characteristics_)
     has_characteristics.push_back(c.second.get());
   return has_characteristics;
 }
 
-std::vector<BluetoothGattService*>
+std::vector<BluetoothRemoteGattService*>
 BluetoothRemoteGattServiceWin::GetIncludedServices() const {
   NOTIMPLEMENTED();
   // TODO(crbug.com/590008): Needs implementation.
-  return std::vector<BluetoothGattService*>();
+  return std::vector<BluetoothRemoteGattService*>();
 }
 
-BluetoothGattCharacteristic* BluetoothRemoteGattServiceWin::GetCharacteristic(
+BluetoothRemoteGattCharacteristic*
+BluetoothRemoteGattServiceWin::GetCharacteristic(
     const std::string& identifier) const {
   GattCharacteristicsMap::const_iterator it =
       included_characteristics_.find(identifier);
   if (it != included_characteristics_.end())
     return it->second.get();
   return nullptr;
-}
-
-bool BluetoothRemoteGattServiceWin::AddCharacteristic(
-    device::BluetoothGattCharacteristic* characteristic) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-bool BluetoothRemoteGattServiceWin::AddIncludedService(
-    device::BluetoothGattService* service) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-void BluetoothRemoteGattServiceWin::Register(
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
-  NOTIMPLEMENTED();
-  error_callback.Run();
-}
-
-void BluetoothRemoteGattServiceWin::Unregister(
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
-  NOTIMPLEMENTED();
-  error_callback.Run();
 }
 
 void BluetoothRemoteGattServiceWin::GattCharacteristicDiscoveryComplete(
@@ -145,7 +121,7 @@ void BluetoothRemoteGattServiceWin::Update() {
 }
 
 void BluetoothRemoteGattServiceWin::OnGetIncludedCharacteristics(
-    scoped_ptr<BTH_LE_GATT_CHARACTERISTIC> characteristics,
+    std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC> characteristics,
     uint16_t num,
     HRESULT hr) {
   DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
@@ -193,7 +169,7 @@ void BluetoothRemoteGattServiceWin::UpdateIncludedCharacteristics(
       BluetoothRemoteGattCharacteristicWin* characteristic_object =
           new BluetoothRemoteGattCharacteristicWin(this, info, ui_task_runner_);
       included_characteristics_[characteristic_object->GetIdentifier()] =
-          make_scoped_ptr(characteristic_object);
+          base::WrapUnique(characteristic_object);
     }
   }
 
@@ -245,11 +221,16 @@ bool BluetoothRemoteGattServiceWin::DoesCharacteristicExist(
 void BluetoothRemoteGattServiceWin::RemoveIncludedCharacteristic(
     std::string identifier) {
   discovery_completed_included_charateristics_.erase(identifier);
+  included_characteristics_[identifier].reset();
   included_characteristics_.erase(identifier);
 }
 
 void BluetoothRemoteGattServiceWin::ClearIncludedCharacteristics() {
   discovery_completed_included_charateristics_.clear();
+  // Explicitly reset to null to ensure that calling GetCharacteristic() on the
+  // removed characteristic in GattDescriptorRemoved() returns null.
+  for (auto& entry : included_characteristics_)
+    entry.second.reset();
   included_characteristics_.clear();
 }
 

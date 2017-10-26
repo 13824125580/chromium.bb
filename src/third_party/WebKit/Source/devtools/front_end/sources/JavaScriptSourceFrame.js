@@ -491,7 +491,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
      */
     _isIdentifier: function(tokenType)
     {
-        return tokenType.startsWith("js-variable") || tokenType.startsWith("js-property") || tokenType == "js-def";
+        return tokenType.startsWith("js-variable") || tokenType.startsWith("js-property") || tokenType === "js-def";
     },
 
     _getPopoverAnchor: function(element, event)
@@ -560,7 +560,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
         var endHighlight = anchorBox.highlight.endColumn;
         var line = this.textEditor.line(lineNumber);
         if (!anchorBox.forSelection) {
-            while (startHighlight > 1 && line.charAt(startHighlight - 1) === '.') {
+            while (startHighlight > 1 && line.charAt(startHighlight - 1) === ".") {
                 var token = this.textEditor.tokenAtTextPosition(lineNumber, startHighlight - 2);
                 if (!token || !token.type) {
                     this._popoverHelper.hidePopover();
@@ -570,8 +570,18 @@ WebInspector.JavaScriptSourceFrame.prototype = {
             }
         }
         var evaluationText = line.substring(startHighlight, endHighlight + 1);
-        var selectedCallFrame = debuggerModel.selectedCallFrame();
-        selectedCallFrame.evaluate(evaluationText, objectGroupName, false, true, false, false, showObjectPopover.bind(this));
+        var selectedCallFrame = /** @type {!WebInspector.DebuggerModel.CallFrame}*/ (debuggerModel.selectedCallFrame());
+
+        WebInspector.SourceMapNamesResolver.resolveExpression(selectedCallFrame, evaluationText, this.uiSourceCode(), lineNumber, startHighlight, endHighlight).then(onResolve.bind(this));
+
+        /**
+         * @param {?string=} text
+         * @this {WebInspector.JavaScriptSourceFrame}
+         */
+        function onResolve(text)
+        {
+            selectedCallFrame.evaluate(text || evaluationText, objectGroupName, false, true, false, false, showObjectPopover.bind(this));
+        }
 
         /**
          * @param {?RuntimeAgent.RemoteObject} result
@@ -581,7 +591,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
         function showObjectPopover(result, wasThrown)
         {
             var target = WebInspector.context.flavor(WebInspector.Target);
-            if (selectedCallFrame.target() != target || !debuggerModel.isPaused() || !result) {
+            if (selectedCallFrame.target() !== target || !debuggerModel.isPaused() || !result) {
                 this._popoverHelper.hidePopover();
                 return;
             }
@@ -633,7 +643,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
 
     _onKeyDown: function(event)
     {
-        if (event.keyIdentifier === "U+001B") { // Escape key
+        if (event.key === "Escape") {
             if (this._popoverHelper.isPopoverVisible()) {
                 this._popoverHelper.hidePopover();
                 event.consume();
@@ -719,7 +729,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
         var localScope = callFrame.localScope();
         var functionLocation = callFrame.functionLocation();
         if (localScope && functionLocation)
-            localScope.object().getAllProperties(false, this._prepareScopeVariables.bind(this, callFrame));
+            WebInspector.SourceMapNamesResolver.resolveScopeInObject(localScope).getAllProperties(false, this._prepareScopeVariables.bind(this, callFrame));
 
         if (this._clearValueWidgetsTimer) {
             clearTimeout(this._clearValueWidgetsTimer);
@@ -739,7 +749,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
             return;
         }
 
-        var functionUILocation = WebInspector.debuggerWorkspaceBinding.rawLocationToUILocation(/**@type {!WebInspector.DebuggerModel.Location} */ (callFrame.functionLocation()));
+        var functionUILocation = WebInspector.debuggerWorkspaceBinding.rawLocationToUILocation(/** @type {!WebInspector.DebuggerModel.Location} */ (callFrame.functionLocation()));
         var executionUILocation = WebInspector.debuggerWorkspaceBinding.rawLocationToUILocation(callFrame.location());
         if (functionUILocation.uiSourceCode !== this.uiSourceCode() || executionUILocation.uiSourceCode !== this.uiSourceCode()) {
             this._clearValueWidgets();
@@ -755,7 +765,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
             for (var line of this._valueWidgets.keys())
                 toLine = Math.max(toLine, line + 1);
         }
-        if (fromLine >= toLine || toLine - fromLine > 500) {
+        if (fromLine >= toLine || toLine - fromLine > 500 || fromLine < 0 || toLine >= this.textEditor.linesCount) {
             this._clearValueWidgets();
             return;
         }
@@ -1054,7 +1064,7 @@ WebInspector.JavaScriptSourceFrame.prototype = {
         var lineNumber = eventData.lineNumber;
         var eventObject = eventData.event;
 
-        if (eventObject.button != 0 || eventObject.altKey || eventObject.ctrlKey || eventObject.metaKey)
+        if (eventObject.button !== 0 || eventObject.altKey || eventObject.ctrlKey || eventObject.metaKey)
             return;
 
         this._toggleBreakpoint(lineNumber, eventObject.shiftKey);

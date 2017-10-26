@@ -54,11 +54,6 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/point.h"
 
-// For fine-grained suppression on flaky tests.
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
-
 using base::ASCIIToUTF16;
 using base::UTF16ToUTF8;
 using base::Time;
@@ -458,11 +453,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_BrowserAccelerators) {
 #endif
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_PopupAccelerators) {
-#if defined(OS_WIN)
-  // Flaky on XP bot. http://crbug.com/499155
-  if (base::win::GetVersion() <= base::win::VERSION_XP)
-    return;
-#endif
   // Create a popup.
   Browser* popup = CreateBrowserForPopup(browser()->profile());
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(popup));
@@ -879,6 +869,28 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   EXPECT_EQ(old_text.size(), end);
 }
 
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordByTypingQuestionMark) {
+  OmniboxView* omnibox_view = NULL;
+  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
+
+  base::string16 search_keyword(ASCIIToUTF16(kSearchKeyword));
+
+  // If the user gets into keyword mode by typing '?', they should be put into
+  // keyword mode for their default search provider.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_OEM_2, ui::EF_SHIFT_DOWN));
+  ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
+  ASSERT_TRUE(omnibox_view->model()->is_keyword_selected());
+  ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
+  ASSERT_EQ(base::string16(), omnibox_view->GetText());
+
+  // If the user press backspace, they should be left with '?' in the omnibox.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
+  EXPECT_EQ(base::ASCIIToUTF16("?"), omnibox_view->GetText());
+  EXPECT_EQ(base::string16(), omnibox_view->model()->keyword());
+  EXPECT_FALSE(omnibox_view->model()->is_keyword_hint());
+  EXPECT_FALSE(omnibox_view->model()->is_keyword_selected());
+}
+
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
@@ -896,12 +908,19 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
   ASSERT_TRUE(omnibox_view->GetText().empty());
+  size_t start, end;
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(0U, start);
+  EXPECT_EQ(0U, end);
 
   // Revert to keyword hint mode.
   omnibox_view->model()->ClearKeyword();
   ASSERT_TRUE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
   ASSERT_EQ(search_keyword + base::char16(' '), omnibox_view->GetText());
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(search_keyword.length() + 1, start);
+  EXPECT_EQ(search_keyword.length() + 1, end);
 
   // Keyword should also be accepted by typing an ideographic space.
   omnibox_view->OnBeforePossibleChange();
@@ -949,7 +968,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
   ASSERT_EQ(ASCIIToUTF16("a "), omnibox_view->GetText());
-  size_t start, end;
   omnibox_view->GetSelectionBounds(&start, &end);
   EXPECT_EQ(0U, start);
   EXPECT_EQ(0U, end);
@@ -1400,9 +1418,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(kSearchKeyword, UTF16ToUTF8(omnibox_view->model()->keyword()));
 
-  // Input something as search text.
-  ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSearchTextKeys));
-
   // Create a new tab.
   chrome::NewTab(browser());
 
@@ -1410,7 +1425,21 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   browser()->tab_strip_model()->ActivateTabAt(0, true);
 
   // Make sure we're still in keyword mode.
+  ASSERT_TRUE(omnibox_view->model()->is_keyword_selected());
   ASSERT_EQ(kSearchKeyword, UTF16ToUTF8(omnibox_view->model()->keyword()));
+  ASSERT_EQ(omnibox_view->GetText(), base::string16());
+
+  // Input something as search text.
+  ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSearchTextKeys));
+
+  // Switch to the second tab and back to the first.
+  browser()->tab_strip_model()->ActivateTabAt(1, true);
+  browser()->tab_strip_model()->ActivateTabAt(0, true);
+
+  // Make sure we're still in keyword mode.
+  ASSERT_TRUE(omnibox_view->model()->is_keyword_selected());
+  ASSERT_EQ(kSearchKeyword, UTF16ToUTF8(omnibox_view->model()->keyword()));
+  ASSERT_EQ(omnibox_view->GetText(), base::ASCIIToUTF16(kSearchText));
 }
 
 // http://crbug.com/133355
@@ -1616,7 +1645,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyURLToClipboard) {
   // Set permanent text thus making sure that omnibox treats 'google.com'
   // as URL (not as ordinary user input).
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   test_toolbar_model->set_text(ASCIIToUTF16("http://www.google.com/"));
   browser()->swap_toolbar_models(&toolbar_model);
   OmniboxView* omnibox_view = NULL;
@@ -1662,7 +1691,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutURLToClipboard) {
   // Set permanent text thus making sure that omnibox treats 'google.com'
   // as URL (not as ordinary user input).
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   test_toolbar_model->set_text(ASCIIToUTF16("http://www.google.com/"));
   browser()->swap_toolbar_models(&toolbar_model);
   OmniboxView* omnibox_view = NULL;
@@ -1840,7 +1869,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   browser()->swap_toolbar_models(&toolbar_model);
 
   base::string16 url_a(ASCIIToUTF16("http://www.a.com/"));
@@ -1901,7 +1930,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, SelectAllStaysAfterUpdate) {
   OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   browser()->swap_toolbar_models(&toolbar_model);
 
   base::string16 url_a(ASCIIToUTF16("http://www.a.com/"));

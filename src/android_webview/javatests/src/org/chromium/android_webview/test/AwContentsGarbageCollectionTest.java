@@ -13,6 +13,7 @@ import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.android_webview.AwContents;
+import org.chromium.android_webview.AwGLFunctor;
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.test.util.Criteria;
@@ -105,6 +106,7 @@ public class AwContentsGarbageCollectionTest extends AwTestBase {
     }
 
     @DisableHardwareAccelerationForTest
+    @SuppressFBWarnings("UC_USELESS_OBJECT")
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testHoldKeyboardResultReceiver() throws Throwable {
@@ -236,8 +238,10 @@ public class AwContentsGarbageCollectionTest extends AwTestBase {
                     return runTestOnUiThreadAndGetResult(new Callable<Boolean>() {
                         @Override
                         public Boolean call() {
-                            int count = AwContents.getNativeInstanceCount();
-                            return count <= MAX_IDLE_INSTANCES;
+                            int count_aw_contents = AwContents.getNativeInstanceCount();
+                            int count_aw_functor = AwGLFunctor.getNativeInstanceCount();
+                            return count_aw_contents <= MAX_IDLE_INSTANCES
+                                    && count_aw_functor <= MAX_IDLE_INSTANCES;
                         }
                     });
                 } catch (Exception e) {
@@ -253,7 +257,8 @@ public class AwContentsGarbageCollectionTest extends AwTestBase {
         final long timeoutBetweenGcMs = scaleTimeout(1000);
         for (int i = 0; i < 15; ++i) {
             try {
-                CriteriaHelper.pollForCriteria(criteria, timeoutBetweenGcMs, CHECK_INTERVAL);
+                CriteriaHelper.pollInstrumentationThread(
+                        criteria, timeoutBetweenGcMs, CHECK_INTERVAL);
                 break;
             } catch (AssertionError e) {
                 Runtime.getRuntime().gc();

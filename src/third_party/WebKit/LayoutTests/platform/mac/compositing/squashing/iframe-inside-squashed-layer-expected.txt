@@ -1,15 +1,19 @@
 {
+  "name": "Content Root Layer",
   "bounds": [785, 1016],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [785, 1016],
       "contentsOpaque": true,
       "drawsContent": true,
       "children": [
         {
+          "name": "Squashing Containment Layer",
           "shouldFlattenTransform": false,
           "children": [
             {
+              "name": "LayoutBlockFlow DIV id='foo'",
               "position": [8, 8],
               "bounds": [200, 1000],
               "contentsOpaque": true,
@@ -17,31 +21,46 @@
               "backgroundColor": "#D3D3D3"
             },
             {
+              "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV)",
               "position": [8, 0],
               "bounds": [300, 654],
               "drawsContent": true,
-              "repaintRects": [
-                [285, 500, 15, 150],
-                [8, 508, 284, 18],
-                [8, 508, 269, 142],
-                [0, 500, 300, 150],
-                [0, 500, 300, 34],
-                [0, 500, 285, 150],
-                [0, 500, 285, 150],
-                [0, 500, 285, 150]
-              ],
-              "paintInvalidationClients": [
-                "RootInlineBox",
-                "InlineTextBox 'test1'",
-                "RootInlineBox",
-                "InlineTextBox 'test1'",
-                "LayoutView #document",
-                "LayoutView #document",
-                "LayoutBlockFlow HTML",
-                "LayoutBlockFlow BODY",
-                "RootInlineBox",
-                "LayoutView #document",
-                "VerticalScrollbar"
+              "paintInvalidations": [
+                {
+                  "object": "LayoutView #document",
+                  "rect": [0, 500, 300, 150],
+                  "reason": "style change"
+                },
+                {
+                  "object": "LayoutBlockFlow HTML",
+                  "rect": [0, 500, 300, 34],
+                  "reason": "forced by layout"
+                },
+                {
+                  "object": "LayoutBlockFlow HTML",
+                  "rect": [0, 500, 285, 150],
+                  "reason": "forced by layout"
+                },
+                {
+                  "object": "LayoutBlockFlow BODY",
+                  "rect": [8, 508, 284, 18],
+                  "reason": "forced by layout"
+                },
+                {
+                  "object": "LayoutBlockFlow BODY",
+                  "rect": [8, 508, 269, 142],
+                  "reason": "forced by layout"
+                },
+                {
+                  "object": "LayoutText #text",
+                  "rect": [8, 508, 31, 18],
+                  "reason": "forced by layout"
+                },
+                {
+                  "object": "LayoutView #document",
+                  "rect": [285, 500, 15, 150],
+                  "reason": "scroll"
+                }
               ]
             }
           ]

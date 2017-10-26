@@ -91,8 +91,6 @@ std::string MediaLog::PipelineStatusToString(PipelineStatus status) {
   switch (status) {
     case PIPELINE_OK:
       return "pipeline: ok";
-    case PIPELINE_ERROR_URL_NOT_FOUND:
-      return "pipeline: url not found";
     case PIPELINE_ERROR_NETWORK:
       return "pipeline: network error";
     case PIPELINE_ERROR_DECODE:
@@ -105,8 +103,6 @@ std::string MediaLog::PipelineStatusToString(PipelineStatus status) {
       return "pipeline: could not render";
     case PIPELINE_ERROR_READ:
       return "pipeline: read error";
-    case PIPELINE_ERROR_OPERATION_PENDING:
-      return "pipeline: operation pending";
     case PIPELINE_ERROR_INVALID_STATE:
       return "pipeline: invalid state";
     case DEMUXER_ERROR_COULD_NOT_OPEN:
@@ -117,6 +113,16 @@ std::string MediaLog::PipelineStatusToString(PipelineStatus status) {
       return "demuxer: no supported streams";
     case DECODER_ERROR_NOT_SUPPORTED:
       return "decoder: not supported";
+    case CHUNK_DEMUXER_ERROR_APPEND_FAILED:
+      return "chunk demuxer: append failed";
+    case CHUNK_DEMUXER_ERROR_EOS_STATUS_DECODE_ERROR:
+      return "chunk demuxer: application requested decode error on eos";
+    case CHUNK_DEMUXER_ERROR_EOS_STATUS_NETWORK_ERROR:
+      return "chunk demuxer: application requested network error on eos";
+    case AUDIO_RENDERER_ERROR:
+      return "audio renderer: output device reported an error";
+    case AUDIO_RENDERER_ERROR_SPLICE_FAILED:
+      return "audio renderer: post-decode audio splicing failed";
   }
   NOTREACHED();
   return NULL;
@@ -142,39 +148,47 @@ MediaLog::MediaLog() : id_(g_media_log_count.GetNext()) {}
 
 MediaLog::~MediaLog() {}
 
-void MediaLog::AddEvent(scoped_ptr<MediaLogEvent> event) {}
+void MediaLog::AddEvent(std::unique_ptr<MediaLogEvent> event) {}
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateEvent(MediaLogEvent::Type type) {
-  scoped_ptr<MediaLogEvent> event(new MediaLogEvent);
+std::string MediaLog::GetLastErrorMessage() {
+  return "";
+}
+
+void MediaLog::RecordRapporWithSecurityOrigin(const std::string& metric) {
+  NOTIMPLEMENTED() << "Default MediaLog doesn't support rappor reporting.";
+}
+
+std::unique_ptr<MediaLogEvent> MediaLog::CreateEvent(MediaLogEvent::Type type) {
+  std::unique_ptr<MediaLogEvent> event(new MediaLogEvent);
   event->id = id_;
   event->type = type;
   event->time = base::TimeTicks::Now();
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateBooleanEvent(
+std::unique_ptr<MediaLogEvent> MediaLog::CreateBooleanEvent(
     MediaLogEvent::Type type,
     const std::string& property,
     bool value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(type));
+  std::unique_ptr<MediaLogEvent> event(CreateEvent(type));
   event->params.SetBoolean(property, value);
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateStringEvent(
+std::unique_ptr<MediaLogEvent> MediaLog::CreateStringEvent(
     MediaLogEvent::Type type,
     const std::string& property,
     const std::string& value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(type));
+  std::unique_ptr<MediaLogEvent> event(CreateEvent(type));
   event->params.SetString(property, value);
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateTimeEvent(
+std::unique_ptr<MediaLogEvent> MediaLog::CreateTimeEvent(
     MediaLogEvent::Type type,
     const std::string& property,
     base::TimeDelta value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(type));
+  std::unique_ptr<MediaLogEvent> event(CreateEvent(type));
   if (value.is_max())
     event->params.SetString(property, "unknown");
   else
@@ -182,47 +196,51 @@ scoped_ptr<MediaLogEvent> MediaLog::CreateTimeEvent(
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateLoadEvent(const std::string& url) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::LOAD));
+std::unique_ptr<MediaLogEvent> MediaLog::CreateLoadEvent(
+    const std::string& url) {
+  std::unique_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::LOAD));
   event->params.SetString("url", url);
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateSeekEvent(float seconds) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::SEEK));
+std::unique_ptr<MediaLogEvent> MediaLog::CreateSeekEvent(float seconds) {
+  std::unique_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::SEEK));
   event->params.SetDouble("seek_target", seconds);
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreatePipelineStateChangedEvent(
+std::unique_ptr<MediaLogEvent> MediaLog::CreatePipelineStateChangedEvent(
     PipelineImpl::State state) {
-  scoped_ptr<MediaLogEvent> event(
+  std::unique_ptr<MediaLogEvent> event(
       CreateEvent(MediaLogEvent::PIPELINE_STATE_CHANGED));
   event->params.SetString("pipeline_state",
                           PipelineImpl::GetStateString(state));
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreatePipelineErrorEvent(
+std::unique_ptr<MediaLogEvent> MediaLog::CreatePipelineErrorEvent(
     PipelineStatus error) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::PIPELINE_ERROR));
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogEvent::PIPELINE_ERROR));
   event->params.SetInteger("pipeline_error", error);
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateVideoSizeSetEvent(
-    size_t width, size_t height) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::VIDEO_SIZE_SET));
+std::unique_ptr<MediaLogEvent> MediaLog::CreateVideoSizeSetEvent(
+    size_t width,
+    size_t height) {
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogEvent::VIDEO_SIZE_SET));
   event->params.SetInteger("width", width);
   event->params.SetInteger("height", height);
   return event;
 }
 
-scoped_ptr<MediaLogEvent> MediaLog::CreateBufferedExtentsChangedEvent(
+std::unique_ptr<MediaLogEvent> MediaLog::CreateBufferedExtentsChangedEvent(
     int64_t start,
     int64_t current,
     int64_t end) {
-  scoped_ptr<MediaLogEvent> event(
+  std::unique_ptr<MediaLogEvent> event(
       CreateEvent(MediaLogEvent::BUFFERED_EXTENTS_CHANGED));
   // These values are headed to JS where there is no int64_t so we use a double
   // and accept loss of precision above 2^53 bytes (8 Exabytes).
@@ -233,46 +251,33 @@ scoped_ptr<MediaLogEvent> MediaLog::CreateBufferedExtentsChangedEvent(
 }
 
 void MediaLog::AddLogEvent(MediaLogLevel level, const std::string& message) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogLevelToEventType(level)));
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogLevelToEventType(level)));
   event->params.SetString(MediaLogLevelToString(level), message);
   AddEvent(std::move(event));
 }
 
 void MediaLog::SetStringProperty(
     const std::string& key, const std::string& value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
   event->params.SetString(key, value);
-  AddEvent(std::move(event));
-}
-
-void MediaLog::SetIntegerProperty(
-    const std::string& key, int value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
-  event->params.SetInteger(key, value);
   AddEvent(std::move(event));
 }
 
 void MediaLog::SetDoubleProperty(
     const std::string& key, double value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
   event->params.SetDouble(key, value);
   AddEvent(std::move(event));
 }
 
 void MediaLog::SetBooleanProperty(
     const std::string& key, bool value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
   event->params.SetBoolean(key, value);
-  AddEvent(std::move(event));
-}
-
-void MediaLog::SetTimeProperty(
-    const std::string& key, base::TimeDelta value) {
-  scoped_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::PROPERTY_CHANGE));
-  if (value.is_max())
-    event->params.SetString(key, "unknown");
-  else
-    event->params.SetDouble(key, value.InSecondsF());
   AddEvent(std::move(event));
 }
 

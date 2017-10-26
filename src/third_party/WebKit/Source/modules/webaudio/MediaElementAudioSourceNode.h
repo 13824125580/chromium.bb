@@ -28,9 +28,9 @@
 #include "modules/webaudio/AudioSourceNode.h"
 #include "platform/audio/AudioSourceProviderClient.h"
 #include "platform/audio/MultiChannelResampler.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/ThreadingPrimitives.h"
+#include <memory>
 
 namespace blink {
 
@@ -72,16 +72,16 @@ private:
     // This Persistent doesn't make a reference cycle. The reference from
     // HTMLMediaElement to AudioSourceProvideClient, which
     // MediaElementAudioSourceNode implements, is weak.
-    RefPtrWillBePersistent<HTMLMediaElement> m_mediaElement;
+    Persistent<HTMLMediaElement> m_mediaElement;
     Mutex m_processLock;
 
     unsigned m_sourceNumberOfChannels;
     double m_sourceSampleRate;
 
-    OwnPtr<MultiChannelResampler> m_multiChannelResampler;
+    std::unique_ptr<MultiChannelResampler> m_multiChannelResampler;
 
     // |m_passesCurrentSrcCORSAccessCheck| holds the value of
-    // context()->securityOrigin() && context()->securityOrigin()->canRequest(mediaElement()->currentSrc()),
+    // context()->getSecurityOrigin() && context()->getSecurityOrigin()->canRequest(mediaElement()->currentSrc()),
     // updated in the ctor and onCurrentSrcChanged() on the main thread and
     // used in passesCORSAccessCheck() on the audio thread,
     // protected by |m_processLock|.
@@ -100,7 +100,7 @@ class MediaElementAudioSourceNode final : public AudioSourceNode, public AudioSo
     DEFINE_WRAPPERTYPEINFO();
     USING_GARBAGE_COLLECTED_MIXIN(MediaElementAudioSourceNode);
 public:
-    static MediaElementAudioSourceNode* create(AbstractAudioContext&, HTMLMediaElement&);
+    static MediaElementAudioSourceNode* create(AbstractAudioContext&, HTMLMediaElement&, ExceptionState&);
     DECLARE_VIRTUAL_TRACE();
     MediaElementAudioSourceHandler& mediaElementAudioSourceHandler() const;
 

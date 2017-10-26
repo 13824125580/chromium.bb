@@ -75,17 +75,14 @@ void DOMPluginArray::refresh(bool reload)
         return;
     Page::refreshPlugins();
     if (reload)
-        m_frame->reload(FrameLoadTypeReload, ClientRedirect);
+        m_frame->reload(FrameLoadTypeReload, ClientRedirectPolicy::ClientRedirect);
 }
 
 PluginData* DOMPluginArray::pluginData() const
 {
     if (!m_frame)
         return nullptr;
-    Page* page = m_frame->page();
-    if (!page)
-        return nullptr;
-    return page->pluginData();
+    return m_frame->pluginData();
 }
 
 } // namespace blink

@@ -15,8 +15,10 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_change_tracker.h"
 #include "chrome/browser/sync_file_system/local/sync_file_system_backend.h"
@@ -70,7 +72,7 @@ class LocalFileSyncContextTest : public testing::Test {
     ASSERT_TRUE(dir_.CreateUniqueTempDir());
     in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
 
-    ui_task_runner_ = base::MessageLoop::current()->task_runner();
+    ui_task_runner_ = base::ThreadTaskRunnerHandle::Get();
     io_task_runner_ = BrowserThread::GetMessageLoopProxyForThread(
         BrowserThread::IO);
     file_task_runner_ = BrowserThread::GetMessageLoopProxyForThread(
@@ -105,7 +107,7 @@ class LocalFileSyncContextTest : public testing::Test {
                                 storage::ScopedFile* snapshot) {
     StartPrepareForSync(file_system_context, url, sync_mode,
                         metadata, changes, snapshot);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     return status_;
   }
 
@@ -160,8 +162,8 @@ class LocalFileSyncContextTest : public testing::Test {
         file_system_context, change, local_path, url,
         base::Bind(&LocalFileSyncContextTest::DidApplyRemoteChange,
                    base::Unretained(this),
-                   make_scoped_refptr(file_system_context), url));
-    base::MessageLoop::current()->Run();
+                   base::RetainedRef(file_system_context), url));
+    base::RunLoop().Run();
     return status_;
   }
 
@@ -196,7 +198,7 @@ class LocalFileSyncContextTest : public testing::Test {
 
   base::File::Error WaitUntilModifyFileIsDone() {
     while (!async_modify_finished_)
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
     return file_error_;
   }
 
@@ -325,7 +327,7 @@ class LocalFileSyncContextTest : public testing::Test {
       // Write should succeed.
       EXPECT_EQ(base::File::FILE_OK, WaitUntilModifyFileIsDone());
     } else {
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
       EXPECT_FALSE(async_modify_finished_);
     }
 
@@ -348,7 +350,7 @@ class LocalFileSyncContextTest : public testing::Test {
   }
 
   base::ScopedTempDir dir_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
 
   // These need to remain until the very end.
   content::TestBrowserThreadBundle thread_bundle_;
@@ -582,7 +584,7 @@ TEST_F(LocalFileSyncContextTest, DISABLED_PrepareSyncWhileWriting) {
 
   // The PrepareForSync must have been started; wait until DidPrepareForSync
   // is done.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   ASSERT_FALSE(has_inflight_prepare_for_sync_);
 
   // Now PrepareForSync should have run and returned OK.

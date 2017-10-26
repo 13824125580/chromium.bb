@@ -4,6 +4,8 @@
 
 #include "net/quic/crypto/crypto_handshake_message.h"
 
+#include <memory>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "net/quic/crypto/crypto_framer.h"
@@ -59,32 +61,6 @@ const QuicData& CryptoHandshakeMessage::GetSerialized() const {
 
 void CryptoHandshakeMessage::MarkDirty() {
   serialized_.reset();
-}
-
-void CryptoHandshakeMessage::SetTaglist(QuicTag tag, ...) {
-  // Warning, if sizeof(QuicTag) > sizeof(int) then this function will break
-  // because the terminating 0 will only be promoted to int.
-  static_assert(sizeof(QuicTag) <= sizeof(int),
-                "crypto tag may not be larger than int or varargs will break");
-
-  vector<QuicTag> tags;
-  va_list ap;
-
-  va_start(ap, tag);
-  for (;;) {
-    QuicTag list_item = va_arg(ap, QuicTag);
-    if (list_item == 0) {
-      break;
-    }
-    tags.push_back(list_item);
-  }
-
-  // Because of the way that we keep tags in memory, we can copy the contents
-  // of the vector and get the correct bytes in wire format. See
-  // crypto_protocol.h. This assumes that the system is little-endian.
-  SetVector(tag, tags);
-
-  va_end(ap);
 }
 
 void CryptoHandshakeMessage::SetStringPiece(QuicTag tag, StringPiece value) {
@@ -304,7 +280,7 @@ string CryptoHandshakeMessage::DebugStringInternal(size_t indent) const {
       case kSCFG:
         // nested messages.
         if (!it->second.empty()) {
-          scoped_ptr<CryptoHandshakeMessage> msg(
+          std::unique_ptr<CryptoHandshakeMessage> msg(
               CryptoFramer::ParseMessage(it->second));
           if (msg.get()) {
             ret += "\n";
@@ -329,7 +305,7 @@ string CryptoHandshakeMessage::DebugStringInternal(size_t indent) const {
     if (!done) {
       // If there's no specific format for this tag, or the value is invalid,
       // then just use hex.
-      ret += "0x" + base::HexEncode(it->second.data(), it->second.size());
+      ret += "0x" + QuicUtils::HexEncode(it->second);
     }
     ret += "\n";
   }

@@ -6,17 +6,19 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/loader/redirect_to_file_resource_handler.h"
 #include "content/browser/loader/resource_loader_delegate.h"
@@ -38,14 +40,15 @@
 #include "net/base/mock_file_stream.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
-#include "net/base/test_data_directory.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/cert/x509_certificate.h"
+#include "net/nqe/network_quality_estimator.h"
 #include "net/ssl/client_cert_store.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_private_key.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/test_data_directory.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_filter.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -111,11 +114,10 @@ class LoaderDestroyingCertStore : public net::ClientCertStore {
   // Creates a client certificate store which, when looked up, posts a task to
   // reset |loader| and then call the callback. The caller is responsible for
   // ensuring the pointers remain valid until the process is complete.
-  LoaderDestroyingCertStore(scoped_ptr<ResourceLoader>* loader,
+  LoaderDestroyingCertStore(std::unique_ptr<ResourceLoader>* loader,
                             const base::Closure& on_loader_deleted_callback)
       : loader_(loader),
-        on_loader_deleted_callback_(on_loader_deleted_callback) {
-  }
+        on_loader_deleted_callback_(on_loader_deleted_callback) {}
 
   // net::ClientCertStore:
   void GetClientCerts(const net::SSLCertRequestInfo& cert_request_info,
@@ -133,7 +135,7 @@ class LoaderDestroyingCertStore : public net::ClientCertStore {
   // This needs to be static because |loader| owns the
   // LoaderDestroyingCertStore (ClientCertStores are actually handles, and not
   // global cert stores).
-  static void DoCallback(scoped_ptr<ResourceLoader>* loader,
+  static void DoCallback(std::unique_ptr<ResourceLoader>* loader,
                          const base::Closure& cert_selected_callback,
                          const base::Closure& on_loader_deleted_callback) {
     loader->reset();
@@ -141,7 +143,7 @@ class LoaderDestroyingCertStore : public net::ClientCertStore {
     on_loader_deleted_callback.Run();
   }
 
-  scoped_ptr<ResourceLoader>* loader_;
+  std::unique_ptr<ResourceLoader>* loader_;
   base::Closure on_loader_deleted_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(LoaderDestroyingCertStore);
@@ -167,7 +169,8 @@ class MockClientCertURLRequestJob : public net::URLRequestTestJob {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&MockClientCertURLRequestJob::NotifyCertificateRequested,
-                   weak_factory_.GetWeakPtr(), cert_request_info));
+                   weak_factory_.GetWeakPtr(),
+                   base::RetainedRef(cert_request_info)));
   }
 
   void ContinueWithCertificate(net::X509Certificate* cert,
@@ -279,7 +282,9 @@ class ResourceHandlerStub : public ResourceHandler {
         received_eof_(false),
         received_response_completed_(false),
         received_request_redirected_(false),
-        total_bytes_downloaded_(0) {}
+        total_bytes_downloaded_(0),
+        observed_effective_connection_type_(
+            net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {}
 
   // If true, defers the resource load in OnWillStart.
   void set_defer_request_on_will_start(bool defer_request_on_will_start) {
@@ -312,6 +317,11 @@ class ResourceHandlerStub : public ResourceHandler {
   const net::URLRequestStatus& status() const { return status_; }
   int total_bytes_downloaded() const { return total_bytes_downloaded_; }
 
+  net::NetworkQualityEstimator::EffectiveConnectionType
+  observed_effective_connection_type() const {
+    return observed_effective_connection_type_;
+  }
+
   void Resume() {
     controller()->Resume();
   }
@@ -327,6 +337,8 @@ class ResourceHandlerStub : public ResourceHandler {
   bool OnResponseStarted(ResourceResponse* response, bool* defer) override {
     EXPECT_FALSE(response_.get());
     response_ = response;
+    observed_effective_connection_type_ =
+        response->head.effective_connection_type;
     return true;
   }
 
@@ -426,7 +438,9 @@ class ResourceHandlerStub : public ResourceHandler {
   int total_bytes_downloaded_;
   base::RunLoop deferred_run_loop_;
   base::RunLoop response_completed_run_loop_;
-  scoped_ptr<base::RunLoop> wait_for_progress_run_loop_;
+  std::unique_ptr<base::RunLoop> wait_for_progress_run_loop_;
+  net::NetworkQualityEstimator::EffectiveConnectionType
+      observed_effective_connection_type_;
 };
 
 // Test browser client that captures calls to SelectClientCertificates and
@@ -446,7 +460,7 @@ class SelectCertificateBrowserClient : public TestContentBrowserClient {
   void SelectClientCertificate(
       WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
-      scoped_ptr<ClientCertificateDelegate> delegate) override {
+      std::unique_ptr<ClientCertificateDelegate> delegate) override {
     EXPECT_FALSE(delegate_.get());
 
     ++call_count_;
@@ -468,28 +482,11 @@ class SelectCertificateBrowserClient : public TestContentBrowserClient {
  private:
   net::CertificateList passed_certs_;
   int call_count_;
-  scoped_ptr<ClientCertificateDelegate> delegate_;
+  std::unique_ptr<ClientCertificateDelegate> delegate_;
 
   base::RunLoop select_certificate_run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(SelectCertificateBrowserClient);
-};
-
-class ResourceContextStub : public MockResourceContext {
- public:
-  explicit ResourceContextStub(net::URLRequestContext* test_request_context)
-      : MockResourceContext(test_request_context) {}
-
-  scoped_ptr<net::ClientCertStore> CreateClientCertStore() override {
-    return std::move(dummy_cert_store_);
-  }
-
-  void SetClientCertStore(scoped_ptr<net::ClientCertStore> store) {
-    dummy_cert_store_ = std::move(store);
-  }
-
- private:
-  scoped_ptr<net::ClientCertStore> dummy_cert_store_;
 };
 
 // Wraps a ChunkedUploadDataStream to behave as non-chunked to enable upload
@@ -531,58 +528,95 @@ void CreateTemporaryError(
     const CreateTemporaryFileStreamCallback& callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(callback, error, base::Passed(scoped_ptr<net::FileStream>()),
-                 scoped_refptr<ShareableFileReference>()));
+      base::Bind(callback, error,
+                 base::Passed(std::unique_ptr<net::FileStream>()), nullptr));
 }
 
 }  // namespace
+
+class TestNetworkQualityEstimator : public net::NetworkQualityEstimator {
+ public:
+  TestNetworkQualityEstimator()
+      : net::NetworkQualityEstimator(nullptr,
+                                     std::map<std::string, std::string>()),
+        type_(net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {
+  }
+  ~TestNetworkQualityEstimator() override {}
+
+  net::NetworkQualityEstimator::EffectiveConnectionType
+  GetEffectiveConnectionType() const override {
+    return type_;
+  }
+
+  void set_effective_connection_type(
+      net::NetworkQualityEstimator::EffectiveConnectionType type) {
+    type_ = type;
+  }
+
+ private:
+  net::NetworkQualityEstimator::EffectiveConnectionType type_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestNetworkQualityEstimator);
+};
 
 class ResourceLoaderTest : public testing::Test,
                            public ResourceLoaderDelegate {
  protected:
   ResourceLoaderTest()
-    : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-      resource_context_(&test_url_request_context_),
-      raw_ptr_resource_handler_(NULL),
-      raw_ptr_to_request_(NULL) {
+      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+        test_url_request_context_(true),
+        resource_context_(&test_url_request_context_),
+        raw_ptr_resource_handler_(NULL),
+        raw_ptr_to_request_(NULL) {
     test_url_request_context_.set_job_factory(&job_factory_);
+    test_url_request_context_.set_network_quality_estimator(
+        &network_quality_estimator_);
+    test_url_request_context_.Init();
   }
 
   GURL test_url() const { return net::URLRequestTestJob::test_url_1(); }
+
+  TestNetworkQualityEstimator* network_quality_estimator() {
+    return &network_quality_estimator_;
+  }
 
   std::string test_data() const {
     return net::URLRequestTestJob::test_data_1();
   }
 
-  virtual scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+  virtual std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>
   CreateProtocolHandler() {
     return net::URLRequestTestJob::CreateProtocolHandler();
   }
 
-  virtual scoped_ptr<ResourceHandler> WrapResourceHandler(
-      scoped_ptr<ResourceHandlerStub> leaf_handler,
+  virtual std::unique_ptr<ResourceHandler> WrapResourceHandler(
+      std::unique_ptr<ResourceHandlerStub> leaf_handler,
       net::URLRequest* request) {
     return std::move(leaf_handler);
   }
 
   // Replaces loader_ with a new one for |request|.
-  void SetUpResourceLoader(scoped_ptr<net::URLRequest> request) {
+  void SetUpResourceLoader(std::unique_ptr<net::URLRequest> request,
+                           bool is_main_frame) {
     raw_ptr_to_request_ = request.get();
+
+    ResourceType resource_type =
+        is_main_frame ? RESOURCE_TYPE_MAIN_FRAME : RESOURCE_TYPE_SUB_FRAME;
 
     RenderFrameHost* rfh = web_contents_->GetMainFrame();
     ResourceRequestInfo::AllocateForTesting(
-        request.get(), RESOURCE_TYPE_MAIN_FRAME, &resource_context_,
+        request.get(), resource_type, &resource_context_,
         rfh->GetProcess()->GetID(), rfh->GetRenderViewHost()->GetRoutingID(),
-        rfh->GetRoutingID(), true /* is_main_frame */,
-        false /* parent_is_main_frame */, true /* allow_download */,
-        false /* is_async */, false /* is_using_lofi_ */);
-    scoped_ptr<ResourceHandlerStub> resource_handler(
+        rfh->GetRoutingID(), is_main_frame, false /* parent_is_main_frame */,
+        true /* allow_download */, false /* is_async */,
+        false /* is_using_lofi_ */);
+    std::unique_ptr<ResourceHandlerStub> resource_handler(
         new ResourceHandlerStub(request.get()));
     raw_ptr_resource_handler_ = resource_handler.get();
     loader_.reset(new ResourceLoader(
         std::move(request),
         WrapResourceHandler(std::move(resource_handler), raw_ptr_to_request_),
-        this));
+        CertStore::GetInstance(), this));
   }
 
   void SetUp() override {
@@ -594,12 +628,10 @@ class ResourceLoaderTest : public testing::Test,
     web_contents_.reset(
         TestWebContents::Create(browser_context_.get(), site_instance.get()));
 
-    scoped_ptr<net::URLRequest> request(
+    std::unique_ptr<net::URLRequest> request(
         resource_context_.GetRequestContext()->CreateRequest(
-            test_url(),
-            net::DEFAULT_PRIORITY,
-            nullptr /* delegate */));
-    SetUpResourceLoader(std::move(request));
+            test_url(), net::DEFAULT_PRIORITY, nullptr /* delegate */));
+    SetUpResourceLoader(std::move(request), true);
   }
 
   void TearDown() override {
@@ -608,6 +640,10 @@ class ResourceLoaderTest : public testing::Test,
     // tasks complete.
     web_contents_.reset();
     base::RunLoop().RunUntilIdle();
+  }
+
+  void SetClientCertStore(std::unique_ptr<net::ClientCertStore> store) {
+    dummy_cert_store_ = std::move(store);
   }
 
   // ResourceLoaderDelegate:
@@ -625,27 +661,33 @@ class ResourceLoaderTest : public testing::Test,
                           const GURL& new_url) override {}
   void DidReceiveResponse(ResourceLoader* loader) override {}
   void DidFinishLoading(ResourceLoader* loader) override {}
+  std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
+      ResourceLoader* loader) override {
+    return std::move(dummy_cert_store_);
+  }
 
   TestBrowserThreadBundle thread_bundle_;
   RenderViewHostTestEnabler rvh_test_enabler_;
 
   net::URLRequestJobFactoryImpl job_factory_;
+  TestNetworkQualityEstimator network_quality_estimator_;
   net::TestURLRequestContext test_url_request_context_;
-  ResourceContextStub resource_context_;
-  scoped_ptr<TestBrowserContext> browser_context_;
-  scoped_ptr<TestWebContents> web_contents_;
+  MockResourceContext resource_context_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestWebContents> web_contents_;
+  std::unique_ptr<net::ClientCertStore> dummy_cert_store_;
 
   // The ResourceLoader owns the URLRequest and the ResourceHandler.
   ResourceHandlerStub* raw_ptr_resource_handler_;
   net::URLRequest* raw_ptr_to_request_;
-  scoped_ptr<ResourceLoader> loader_;
+  std::unique_ptr<ResourceLoader> loader_;
 };
 
 class ClientCertResourceLoaderTest : public ResourceLoaderTest {
  protected:
-  scoped_ptr<net::URLRequestJobFactory::ProtocolHandler> CreateProtocolHandler()
-      override {
-    return make_scoped_ptr(new MockClientCertJobProtocolHandler);
+  std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>
+  CreateProtocolHandler() override {
+    return base::WrapUnique(new MockClientCertJobProtocolHandler);
   }
 };
 
@@ -672,11 +714,11 @@ class HTTPSSecurityInfoResourceLoaderTest : public ResourceLoaderTest {
     net::URLRequestFilter::GetInstance()->ClearHandlers();
     net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
         "https", "example.test",
-        scoped_ptr<net::URLRequestInterceptor>(
+        std::unique_ptr<net::URLRequestInterceptor>(
             new MockHTTPSJobURLRequestInterceptor(false /* redirect */)));
     net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
         "https", "example-redirect.test",
-        scoped_ptr<net::URLRequestInterceptor>(
+        std::unique_ptr<net::URLRequestInterceptor>(
             new MockHTTPSJobURLRequestInterceptor(true /* redirect */)));
   }
 
@@ -690,11 +732,10 @@ TEST_F(ClientCertResourceLoaderTest, WithStoreLookup) {
   // Set up the test client cert store.
   int store_request_count;
   std::vector<std::string> store_requested_authorities;
-  net::CertificateList dummy_certs(1, scoped_refptr<net::X509Certificate>(
-      new net::X509Certificate("test", "test", base::Time(), base::Time())));
-  scoped_ptr<ClientCertStoreStub> test_store(new ClientCertStoreStub(
+  net::CertificateList dummy_certs(1, GetTestCert());
+  std::unique_ptr<ClientCertStoreStub> test_store(new ClientCertStoreStub(
       dummy_certs, &store_request_count, &store_requested_authorities));
-  resource_context_.SetClientCertStore(std::move(test_store));
+  SetClientCertStore(std::move(test_store));
 
   // Plug in test content browser client.
   SelectCertificateBrowserClient test_client;
@@ -804,8 +845,7 @@ TEST_F(ClientCertResourceLoaderTest, StoreAsyncCancel) {
   LoaderDestroyingCertStore* test_store =
       new LoaderDestroyingCertStore(&loader_,
                                     loader_destroyed_run_loop.QuitClosure());
-  resource_context_.SetClientCertStore(
-      make_scoped_ptr(test_store));
+  SetClientCertStore(base::WrapUnique(test_store));
 
   loader_->StartRequest();
   loader_destroyed_run_loop.Run();
@@ -880,8 +920,8 @@ class ResourceLoaderRedirectToFileTest : public ResourceLoaderTest {
     return redirect_to_file_resource_handler_;
   }
 
-  scoped_ptr<ResourceHandler> WrapResourceHandler(
-      scoped_ptr<ResourceHandlerStub> leaf_handler,
+  std::unique_ptr<ResourceHandler> WrapResourceHandler(
+      std::unique_ptr<ResourceHandlerStub> leaf_handler,
       net::URLRequest* request) override {
     leaf_handler->set_expect_reads(false);
 
@@ -893,7 +933,7 @@ class ResourceLoaderRedirectToFileTest : public ResourceLoaderTest {
     CHECK(file.IsValid());
 
     // Create mock file streams and a ShareableFileReference.
-    scoped_ptr<net::testing::MockFileStream> file_stream(
+    std::unique_ptr<net::testing::MockFileStream> file_stream(
         new net::testing::MockFileStream(std::move(file),
                                          base::ThreadTaskRunnerHandle::Get()));
     file_stream_ = file_stream.get();
@@ -904,7 +944,7 @@ class ResourceLoaderRedirectToFileTest : public ResourceLoaderTest {
             BrowserThread::FILE).get());
 
     // Inject them into the handler.
-    scoped_ptr<RedirectToFileResourceHandler> handler(
+    std::unique_ptr<RedirectToFileResourceHandler> handler(
         new RedirectToFileResourceHandler(std::move(leaf_handler), request));
     redirect_to_file_resource_handler_ = handler.get();
     handler->SetCreateTemporaryFileStreamFunctionForTesting(
@@ -915,12 +955,12 @@ class ResourceLoaderRedirectToFileTest : public ResourceLoaderTest {
   }
 
  private:
-  void PostCallback(
-      scoped_ptr<net::FileStream> file_stream,
-      const CreateTemporaryFileStreamCallback& callback) {
+  void PostCallback(std::unique_ptr<net::FileStream> file_stream,
+                    const CreateTemporaryFileStreamCallback& callback) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, base::File::FILE_OK,
-                              base::Passed(&file_stream), deletable_file_));
+        FROM_HERE,
+        base::Bind(callback, base::File::FILE_OK, base::Passed(&file_stream),
+                   base::RetainedRef(deletable_file_)));
   }
 
   base::FilePath temp_path_;
@@ -1079,10 +1119,10 @@ TEST_F(ResourceLoaderRedirectToFileTest, DownstreamDeferStart) {
 // to it.
 TEST_F(HTTPSSecurityInfoResourceLoaderTest, SecurityInfoOnHTTPSResource) {
   // Start the request and wait for it to finish.
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       resource_context_.GetRequestContext()->CreateRequest(
           test_https_url(), net::DEFAULT_PRIORITY, nullptr /* delegate */));
-  SetUpResourceLoader(std::move(request));
+  SetUpResourceLoader(std::move(request), true);
 
   // Send the request and wait until it completes.
   loader_->StartRequest();
@@ -1117,11 +1157,11 @@ TEST_F(HTTPSSecurityInfoResourceLoaderTest, SecurityInfoOnHTTPSResource) {
 TEST_F(HTTPSSecurityInfoResourceLoaderTest,
        SecurityInfoOnHTTPSRedirectResource) {
   // Start the request and wait for it to finish.
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       resource_context_.GetRequestContext()->CreateRequest(
           test_https_redirect_url(), net::DEFAULT_PRIORITY,
           nullptr /* delegate */));
-  SetUpResourceLoader(std::move(request));
+  SetUpResourceLoader(std::move(request), true);
 
   // Send the request and wait until it completes.
   loader_->StartRequest();
@@ -1151,6 +1191,53 @@ TEST_F(HTTPSSecurityInfoResourceLoaderTest,
   EXPECT_EQ(kTestCertError, deserialized.cert_status);
   EXPECT_EQ(kTestConnectionStatus, deserialized.connection_status);
   EXPECT_EQ(kTestSecurityBits, deserialized.security_bits);
+}
+
+class EffectiveConnectionTypeResourceLoaderTest : public ResourceLoaderTest {
+ public:
+  void VerifyEffectiveConnectionType(
+      bool is_main_frame,
+      net::NetworkQualityEstimator::EffectiveConnectionType set_type,
+      net::NetworkQualityEstimator::EffectiveConnectionType expected_type) {
+    network_quality_estimator()->set_effective_connection_type(set_type);
+
+    // Start the request and wait for it to finish.
+    std::unique_ptr<net::URLRequest> request(
+        resource_context_.GetRequestContext()->CreateRequest(
+            test_url(), net::DEFAULT_PRIORITY, nullptr /* delegate */));
+    SetUpResourceLoader(std::move(request), is_main_frame);
+
+    // Send the request and wait until it completes.
+    loader_->StartRequest();
+    raw_ptr_resource_handler_->WaitForResponseComplete();
+    ASSERT_EQ(net::URLRequestStatus::SUCCESS,
+              raw_ptr_to_request_->status().status());
+
+    EXPECT_EQ(expected_type,
+              raw_ptr_resource_handler_->observed_effective_connection_type());
+  }
+};
+
+// Tests that the effective connection type is set on main frame requests.
+TEST_F(EffectiveConnectionTypeResourceLoaderTest, Slow2G) {
+  VerifyEffectiveConnectionType(
+      true, net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_SLOW_2G,
+      net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_SLOW_2G);
+}
+
+// Tests that the effective connection type is set on main frame requests.
+TEST_F(EffectiveConnectionTypeResourceLoaderTest, 3G) {
+  VerifyEffectiveConnectionType(
+      true, net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_3G,
+      net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_3G);
+}
+
+// Tests that the effective connection type is not set on non-main frame
+// requests.
+TEST_F(EffectiveConnectionTypeResourceLoaderTest, NotAMainFrame) {
+  VerifyEffectiveConnectionType(
+      false, net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_3G,
+      net::NetworkQualityEstimator::EFFECTIVE_CONNECTION_TYPE_UNKNOWN);
 }
 
 }  // namespace content

@@ -8,6 +8,7 @@
 #include "platform/network/HTTPHeaderMap.h"
 #include "public/platform/WebHTTPHeaderVisitor.h"
 #include "wtf/HashMap.h"
+#include "wtf/RefCounted.h"
 
 namespace blink {
 
@@ -17,6 +18,7 @@ public:
         : status(0)
         , responseType(WebServiceWorkerResponseTypeDefault)
         , error(WebServiceWorkerResponseErrorUnknown)
+        , responseTime(0)
     {
     }
     WebURL url;
@@ -27,6 +29,9 @@ public:
     RefPtr<BlobDataHandle> blobDataHandle;
     WebURL streamURL;
     WebServiceWorkerResponseError error;
+    int64_t responseTime;
+    WebString cacheStorageCacheName;
+    WebVector<WebString> corsExposedHeaderNames;
 };
 
 WebServiceWorkerResponse::WebServiceWorkerResponse()
@@ -135,21 +140,6 @@ uint64_t WebServiceWorkerResponse::blobSize() const
     return m_private->blobDataHandle->size();
 }
 
-const HTTPHeaderMap& WebServiceWorkerResponse::headers() const
-{
-    return m_private->headers;
-}
-
-void WebServiceWorkerResponse::setBlobDataHandle(PassRefPtr<BlobDataHandle> blobDataHandle)
-{
-    m_private->blobDataHandle = blobDataHandle;
-}
-
-PassRefPtr<BlobDataHandle> WebServiceWorkerResponse::blobDataHandle() const
-{
-    return m_private->blobDataHandle;
-}
-
 void WebServiceWorkerResponse::setStreamURL(const WebURL& url)
 {
     m_private->streamURL = url;
@@ -168,6 +158,51 @@ void WebServiceWorkerResponse::setError(WebServiceWorkerResponseError error)
 WebServiceWorkerResponseError WebServiceWorkerResponse::error() const
 {
     return m_private->error;
+}
+
+void WebServiceWorkerResponse::setResponseTime(int64_t time)
+{
+    m_private->responseTime = time;
+}
+
+int64_t WebServiceWorkerResponse::responseTime() const
+{
+    return m_private->responseTime;
+}
+
+void WebServiceWorkerResponse::setCacheStorageCacheName(const WebString& cacheStorageCacheName)
+{
+    m_private->cacheStorageCacheName = cacheStorageCacheName;
+}
+
+WebString WebServiceWorkerResponse::cacheStorageCacheName() const
+{
+    return m_private->cacheStorageCacheName;
+}
+
+void WebServiceWorkerResponse::setCorsExposedHeaderNames(const WebVector<WebString>& headerNames)
+{
+    m_private->corsExposedHeaderNames = headerNames;
+}
+
+WebVector<WebString> WebServiceWorkerResponse::corsExposedHeaderNames() const
+{
+    return m_private->corsExposedHeaderNames;
+}
+
+const HTTPHeaderMap& WebServiceWorkerResponse::headers() const
+{
+    return m_private->headers;
+}
+
+void WebServiceWorkerResponse::setBlobDataHandle(PassRefPtr<BlobDataHandle> blobDataHandle)
+{
+    m_private->blobDataHandle = blobDataHandle;
+}
+
+PassRefPtr<BlobDataHandle> WebServiceWorkerResponse::blobDataHandle() const
+{
+    return m_private->blobDataHandle;
 }
 
 } // namespace blink

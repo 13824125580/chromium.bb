@@ -34,8 +34,8 @@
 
 #if defined(OS_WIN)
 #include "base/win/registry.h"
-#include "base/win/windows_version.h"
 #include "remoting/host/pairing_registry_delegate_win.h"
+#include "remoting/host/win/elevation_helpers.h"
 #endif  // defined(OS_WIN)
 
 #if defined(OS_LINUX)
@@ -51,28 +51,6 @@ const char kParentWindowSwitchName[] = "parent-window";
 }  // namespace
 
 namespace remoting {
-
-#if defined(OS_WIN)
-bool IsProcessElevated() {
-  // Conceptually, all processes running on a pre-VISTA version of Windows can
-  // be considered "elevated".
-  if (base::win::GetVersion() < base::win::VERSION_VISTA)
-    return true;
-
-  HANDLE process_token;
-  OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &process_token);
-
-  base::win::ScopedHandle scoped_process_token(process_token);
-
-  // Unlike TOKEN_ELEVATION_TYPE which returns TokenElevationTypeDefault when
-  // UAC is turned off, TOKEN_ELEVATION will tell you the process is elevated.
-  DWORD size;
-  TOKEN_ELEVATION elevation;
-  GetTokenInformation(process_token, TokenElevation,
-                      &elevation, sizeof(elevation), &size);
-  return elevation.TokenIsElevated != 0;
-}
-#endif  // defined(OS_WIN)
 
 int StartMe2MeNativeMessagingHost() {
 #if defined(OS_MACOSX)
@@ -90,15 +68,17 @@ int StartMe2MeNativeMessagingHost() {
 #endif  // defined(OS_LINUX)
 
   // Required to find the ICU data file, used by some file_util routines.
-  base::i18n::InitializeICU();
+  const void *icu_data;
+  base::i18n::InitializeICU(&icu_data);
 
 #if defined(REMOTING_ENABLE_BREAKPAD)
   // Initialize Breakpad as early as possible. On Mac the command-line needs to
   // be initialized first, so that the preference for crash-reporting can be
   // looked up in the config file.
-  if (IsUsageStatsAllowed()) {
-    InitializeCrashReporting();
-  }
+  // TODO(nicholss): Commenting out Breakpad. See crbug.com/637884
+  // if (IsUsageStatsAllowed()) {
+  //   InitializeCrashReporting();
+  // }
 #endif  // defined(REMOTING_ENABLE_BREAKPAD)
 
   // Mac OS X requires that the main thread be a UI message loop in order to
@@ -202,7 +182,7 @@ int StartMe2MeNativeMessagingHost() {
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter(
       new URLRequestContextGetter(io_thread.task_runner(),
                                   file_thread.task_runner()));
-  scoped_ptr<OAuthClient> oauth_client(
+  std::unique_ptr<OAuthClient> oauth_client(
       new GaiaOAuthClient(url_request_context_getter));
 
   net::URLFetcher::SetIgnoreCertificateRequests(true);
@@ -244,7 +224,7 @@ int StartMe2MeNativeMessagingHost() {
   }
 
   // Initialize the pairing registry delegate and set the root keys.
-  scoped_ptr<PairingRegistryDelegateWin> delegate(
+  std::unique_ptr<PairingRegistryDelegateWin> delegate(
       new PairingRegistryDelegateWin());
   if (!delegate->SetRootKeys(privileged.Take(), unprivileged.Take()))
     return kInitializationFailed;
@@ -257,11 +237,11 @@ int StartMe2MeNativeMessagingHost() {
 #endif  // !defined(OS_WIN)
 
   // Set up the native messaging channel.
-  scoped_ptr<extensions::NativeMessagingChannel> channel(
+  std::unique_ptr<extensions::NativeMessagingChannel> channel(
       new PipeMessagingChannel(std::move(read_file), std::move(write_file)));
 
   // Create the native messaging host.
-  scoped_ptr<Me2MeNativeMessagingHost> host(new Me2MeNativeMessagingHost(
+  std::unique_ptr<Me2MeNativeMessagingHost> host(new Me2MeNativeMessagingHost(
       needs_elevation, static_cast<intptr_t>(native_view_handle),
       std::move(channel), daemon_controller, pairing_registry,
       std::move(oauth_client)));

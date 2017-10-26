@@ -49,7 +49,7 @@ class JsWidget : public blink::WebPlugin {
     // blink::WebPlugin overrides
     bool initialize(blink::WebPluginContainer*) override;
     void destroy() override;
-    NPObject* scriptableObject() override { return nullptr; }
+    blink::WebPluginContainer* container() const override;
     void paint(blink::WebCanvas*, const blink::WebRect&) override {}
     void updateGeometry(
         const blink::WebRect& windowRect, const blink::WebRect& clipRect,
@@ -57,18 +57,20 @@ class JsWidget : public blink::WebPlugin {
         bool isVisible) override;
     void updateFocus(bool, blink::WebFocusType) override {}
     void updateVisibility(bool isVisible) override;
-    bool acceptsInputEvents() override { return false; }
     blink::WebInputEventResult handleInputEvent(const blink::WebInputEvent&, blink::WebCursorInfo&) override { return blink::WebInputEventResult::NotHandled; }
     void didReceiveResponse(const blink::WebURLResponse&) override {}
     void didReceiveData(const char* data, int dataLength) override {}
     void didFinishLoading() override {}
     void didFailLoading(const blink::WebURLError&) override {}
     void updateAllLifecyclePhases() override {}
+    void addedToParent() override;
+    void removedFromParent() override;
 
   private:
-    blink::WebPluginContainer* d_container;
-    blink::WebElement d_webElement;
+    blink::WebPluginContainer* d_container;    
     blink::WebLocalFrame* d_frame;
+    bool d_hasParent;
+    bool d_pendingVisible; // Whether to make visible when added to a parent
 
     DISALLOW_COPY_AND_ASSIGN(JsWidget);
 };

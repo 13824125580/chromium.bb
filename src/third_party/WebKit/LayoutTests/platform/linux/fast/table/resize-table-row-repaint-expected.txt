@@ -1,26 +1,56 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [3, 192, 59, 19],
-        [3, 142, 59, 19],
-        [2, 102, 102, 200],
-        [2, 102, 102, 100],
-        [0, 202, 106, 100]
-      ],
-      "paintInvalidationClients": [
-        "RootInlineBox",
-        "InlineTextBox 'MIDDLE'",
-        "LayoutTableRow TR id='row'",
-        "LayoutTableCell TD",
-        "RootInlineBox",
-        "LayoutText #text",
-        "InlineTextBox 'MIDDLE'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutTableRow TR id='row'",
+          "rect": [0, 202, 106, 100],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutTableCell TD",
+          "rect": [2, 102, 102, 200],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [3, 192, 59, 19],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [3, 142, 59, 19],
+          "reason": "forced by layout"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutTableRow TR id='row'",
+      "reason": "incremental"
+    },
+    {
+      "object": "LayoutTableCell TD",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'MIDDLE'",
+      "reason": "forced by layout"
     }
   ]
 }

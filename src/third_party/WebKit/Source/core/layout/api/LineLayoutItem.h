@@ -10,6 +10,7 @@
 
 #include "platform/LayoutUnit.h"
 #include "wtf/Allocator.h"
+#include "wtf/HashTableDeletedValueType.h"
 
 namespace blink {
 
@@ -24,11 +25,18 @@ class LineLayoutAPIShim;
 
 enum HitTestFilter;
 
+static LayoutObject* const kHashTableDeletedValue = reinterpret_cast<LayoutObject*>(-1);
+
 class LineLayoutItem {
     DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 public:
     explicit LineLayoutItem(LayoutObject* layoutObject)
         : m_layoutObject(layoutObject)
+    {
+    }
+
+    explicit LineLayoutItem(WTF::HashTableDeletedValueType)
+        : m_layoutObject(kHashTableDeletedValue)
     {
     }
 
@@ -39,20 +47,22 @@ public:
 
     LineLayoutItem() : m_layoutObject(0) { }
 
-    // TODO(pilgrim): Remove this. It's only here to make things compile before
-    // switching all of core/layout/line to using the API.
-    // https://crbug.com/499321
-    operator LayoutObject*() const { return m_layoutObject; }
-
-    // TODO(dgrogan): Remove this when we replace the operator above with UnspecifiedBoolType.
-    bool isNull() const
-    {
-        return !m_layoutObject;
-    }
+    typedef LayoutObject* LineLayoutItem::*UnspecifiedBoolType;
+    operator UnspecifiedBoolType() const { return m_layoutObject ? &LineLayoutItem::m_layoutObject : nullptr; }
 
     bool isEqual(const LayoutObject* layoutObject) const
     {
         return m_layoutObject == layoutObject;
+    }
+
+    bool operator==(const LineLayoutItem& other) const
+    {
+        return m_layoutObject == other.m_layoutObject;
+    }
+
+    bool operator!=(const LineLayoutItem& other) const
+    {
+        return !(*this == other);
     }
 
     String debugName() const
@@ -125,6 +135,8 @@ public:
         return LineLayoutItem(m_layoutObject->slowLastChild());
     }
 
+    // TODO(dgrogan/eae): Collapse these 4 methods to 1. Settle on pointer or
+    // ref. Give firstLine a default value.
     const ComputedStyle* style() const
     {
         return m_layoutObject->style();
@@ -150,6 +162,8 @@ public:
         return m_layoutObject->document();
     }
 
+    // TODO(dgrogan): This is the only caller: move the logic from LayoutObject
+    // to here.
     bool preservesNewline() const
     {
         return m_layoutObject->preservesNewline();
@@ -160,9 +174,9 @@ public:
         return m_layoutObject->length();
     }
 
-    void dirtyLinesFromChangedChild(LineLayoutItem item) const
+    void dirtyLinesFromChangedChild(LineLayoutItem item, MarkingBehavior markingBehaviour = MarkContainerChain) const
     {
-        m_layoutObject->dirtyLinesFromChangedChild(item.layoutObject());
+        m_layoutObject->dirtyLinesFromChangedChild(item.layoutObject(), markingBehaviour);
     }
 
     bool ancestorLineBoxDirty() const
@@ -170,6 +184,7 @@ public:
         return m_layoutObject->ancestorLineBoxDirty();
     }
 
+    // TODO(dgrogan/eae): Remove this method and replace every call with an ||.
     bool isFloatingOrOutOfFlowPositioned() const
     {
         return m_layoutObject->isFloatingOrOutOfFlowPositioned();
@@ -230,6 +245,8 @@ public:
         return m_layoutObject->isInlineElementContinuation();
     }
 
+    // TODO(dgrogan/eae): Replace isType with an enum in the API? As it stands
+    // we mix isProperty and isType, which is confusing.
     bool isLayoutBlock() const
     {
         return m_layoutObject->isLayoutBlock();
@@ -253,6 +270,11 @@ public:
     bool isAtomicInlineLevel() const
     {
         return m_layoutObject->isAtomicInlineLevel();
+    }
+
+    bool isRubyText() const
+    {
+        return m_layoutObject->isRubyText();
     }
 
     bool isRubyRun() const
@@ -305,6 +327,8 @@ public:
         return m_layoutObject->selfNeedsLayout();
     }
 
+    // TODO(dgrogan/eae): Why does layoutObject need to know if its ancestor
+    // line box is dirty at all?
     void setAncestorLineBoxDirty() const
     {
         m_layoutObject->setAncestorLineBoxDirty();
@@ -340,11 +364,13 @@ public:
         return m_layoutObject->getSelectionState();
     }
 
+    // TODO(dgrogan/eae): Can we move this to style?
     Color selectionBackgroundColor() const
     {
         return m_layoutObject->selectionBackgroundColor();
     }
 
+    // TODO(dgrogan/eae): Needed for Color::current. Can we move this somewhere?
     Color resolveColor(const ComputedStyle& styleToUse, int colorProperty)
     {
         return m_layoutObject->resolveColor(styleToUse, colorProperty);
@@ -355,6 +381,8 @@ public:
         return m_layoutObject->isInFlowPositioned();
     }
 
+    // TODO(dgrogan/eae): Can we change this to GlobalToLocal and vice versa
+    // instead of having 4 methods? See localToAbsoluteQuad below.
     PositionWithAffinity positionForPoint(const LayoutPoint& point)
     {
         return m_layoutObject->positionForPoint(point);
@@ -370,19 +398,9 @@ public:
         return LineLayoutItem(m_layoutObject->previousInPreOrder(stayWithin));
     }
 
-    FloatQuad localToAbsoluteQuad(const FloatQuad& quad, MapCoordinatesFlags mode = 0, bool* wasFixed = nullptr) const
+    FloatQuad localToAbsoluteQuad(const FloatQuad& quad, MapCoordinatesFlags mode = 0) const
     {
-        return m_layoutObject->localToAbsoluteQuad(quad, mode, wasFixed);
-    }
-
-    int previousOffset(int current) const
-    {
-        return m_layoutObject->previousOffset(current);
-    }
-
-    int nextOffset(int current) const
-    {
-        return m_layoutObject->nextOffset(current);
+        return m_layoutObject->localToAbsoluteQuad(quad, mode);
     }
 
     FloatPoint localToAbsolute(const FloatPoint& localPoint = FloatPoint(), MapCoordinatesFlags flags = 0) const
@@ -394,6 +412,43 @@ public:
     {
         return m_layoutObject->hasOverflowClip();
     }
+
+    // TODO(dgrogan/eae): Can we instead add a TearDown method to the API
+    // instead of exposing this and other shutdown code to line layout?
+    bool documentBeingDestroyed() const
+    {
+        return m_layoutObject->documentBeingDestroyed();
+    }
+
+    LayoutRect visualRect() const
+    {
+        return m_layoutObject->visualRect();
+    }
+
+    bool isHashTableDeletedValue() const
+    {
+        return m_layoutObject == kHashTableDeletedValue;
+    }
+
+    void setShouldDoFullPaintInvalidation()
+    {
+        m_layoutObject->setShouldDoFullPaintInvalidation();
+    }
+
+    void slowSetPaintingLayerNeedsRepaint()
+    {
+        m_layoutObject->slowSetPaintingLayerNeedsRepaint();
+    }
+
+    struct LineLayoutItemHash {
+        STATIC_ONLY(LineLayoutItemHash);
+        static unsigned hash(const LineLayoutItem& key) { return WTF::PtrHash<LayoutObject>::hash(key.m_layoutObject); }
+        static bool equal(const LineLayoutItem& a, const LineLayoutItem& b)
+        {
+            return WTF::PtrHash<LayoutObject>::equal(a.m_layoutObject, b.m_layoutObject);
+        }
+        static const bool safeToCompareToEmptyOrDeleted = true;
+    };
 
 #ifndef NDEBUG
 
@@ -409,20 +464,49 @@ public:
         return m_layoutObject;
     }
 
+    void showTreeForThis() const
+    {
+        m_layoutObject->showTreeForThis();
+    }
+
+    String decoratedName() const
+    {
+        return m_layoutObject->decoratedName();
+    }
+
 #endif
 
-protected:
+// wtk2: InlineBox.h needs to call this
+//protected:
+public:
     LayoutObject* layoutObject() { return m_layoutObject; }
     const LayoutObject* layoutObject() const { return m_layoutObject; }
 
 private:
     LayoutObject* m_layoutObject;
 
+    friend class LayoutBlockFlow;
     friend class LineLayoutAPIShim;
     friend class LineLayoutBlockFlow;
+    friend class LineLayoutBox;
     friend class LineLayoutRubyRun;
 };
 
 } // namespace blink
+
+namespace WTF {
+
+template <>
+struct DefaultHash<blink::LineLayoutItem> {
+    using Hash = blink::LineLayoutItem::LineLayoutItemHash;
+};
+
+template <>
+struct HashTraits<blink::LineLayoutItem> : SimpleClassHashTraits<blink::LineLayoutItem> {
+    STATIC_ONLY(HashTraits);
+};
+
+} // namespace WTF
+
 
 #endif // LineLayoutItem_h

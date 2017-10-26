@@ -26,9 +26,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import StringIO
 import optparse
-import sys
+import os
 import time
 import unittest
 
@@ -40,7 +39,7 @@ from webkitpy.layout_tests.port import android
 from webkitpy.layout_tests.port import port_testcase
 from webkitpy.layout_tests.port import driver
 from webkitpy.layout_tests.port import driver_unittest
-from webkitpy.tool.mocktool import MockOptions
+from webkitpy.tool.mock_tool import MockOptions
 
 # Type of tombstone test which the mocked Android Debug Bridge should execute.
 VALID_TOMBSTONE_TEST_TYPE = 0
@@ -50,8 +49,11 @@ INVALID_ENTRY_TOMBSTONE_TEST_TYPE = 3
 INVALID_ENTRIES_TOMBSTONE_TEST_TYPE = 4
 
 # Any "adb" commands will be interpret by this class instead of executing actual
-# commansd on the file system, which we don't want to do.
+# commands on the file system, which we don't want to do.
+
+
 class MockAndroidDebugBridge:
+
     def __init__(self, device_count):
         self._device_count = device_count
         self._last_command = None
@@ -112,6 +114,7 @@ class MockAndroidDebugBridge:
 
 
 class AndroidCommandsTest(unittest.TestCase):
+
     def setUp(self):
         android.AndroidCommands._adb_command_path = None
         android.AndroidCommands._adb_command_path_options = ['adb']
@@ -145,7 +148,8 @@ class AndroidCommandsTest(unittest.TestCase):
         self.assertEquals('adb -s 123456789ABCDEF0 shell ls -d /some_directory', self._mock_executive.last_command())
 
         android_commands.push('foo', 'bar')
-        self.assertEquals('adb -s 123456789ABCDEF0 push foo bar', self._mock_executive.last_command())
+        self.assertEquals('adb -s 123456789ABCDEF0 push %s bar' % os.path.realpath('foo'),
+                          self._mock_executive.last_command())
 
         android_commands.pull('bar', 'foo')
         self.assertEquals('adb -s 123456789ABCDEF0 pull bar foo', self._mock_executive.last_command())
@@ -163,8 +167,8 @@ class AndroidPortTest(port_testcase.PortTestCase):
 
     def test_check_build(self):
         host = MockSystemHost()
-        host.filesystem.exists = lambda p: True
         port = self.make_port(host=host, options=MockOptions(child_processes=1))
+        host.filesystem.exists = lambda p: True
         port.check_build(needs_http=True, printer=port_testcase.FakePrinter())
 
     def test_check_sys_deps(self):
@@ -198,6 +202,7 @@ class AndroidPortTest(port_testcase.PortTestCase):
 
 
 class ChromiumAndroidDriverTest(unittest.TestCase):
+
     def setUp(self):
         self._mock_adb = MockAndroidDebugBridge(1)
         self._mock_executive = MockExecutive2(run_command_fn=self._mock_adb.run_command)
@@ -205,7 +210,7 @@ class ChromiumAndroidDriverTest(unittest.TestCase):
         android_commands = android.AndroidCommands(self._mock_executive, '123456789ABCDEF0', debug_logging=False)
         self._port = android.AndroidPort(MockSystemHost(executive=self._mock_executive), 'android')
         self._driver = android.ChromiumAndroidDriver(self._port, worker_number=0,
-            pixel_tests=True, driver_details=android.ContentShellDriverDetails(), android_devices=self._port._devices)
+                                                     pixel_tests=True, driver_details=android.ContentShellDriverDetails(), android_devices=self._port._devices)
 
     # The cmd_line() method in the Android port is used for starting a shell, not the test runner.
     def test_cmd_line(self):
@@ -221,15 +226,16 @@ class ChromiumAndroidDriverTest(unittest.TestCase):
 
 class ChromiumAndroidDriverTwoDriversTest(unittest.TestCase):
     # Test two drivers getting the right serial numbers, and that we disregard per-test arguments.
+
     def test_two_drivers(self):
         mock_adb = MockAndroidDebugBridge(2)
         mock_executive = MockExecutive2(run_command_fn=mock_adb.run_command)
 
         port = android.AndroidPort(MockSystemHost(executive=mock_executive), 'android')
         driver0 = android.ChromiumAndroidDriver(port, worker_number=0, pixel_tests=True,
-            driver_details=android.ContentShellDriverDetails(), android_devices=port._devices)
+                                                driver_details=android.ContentShellDriverDetails(), android_devices=port._devices)
         driver1 = android.ChromiumAndroidDriver(port, worker_number=1, pixel_tests=True,
-            driver_details=android.ContentShellDriverDetails(), android_devices=port._devices)
+                                                driver_details=android.ContentShellDriverDetails(), android_devices=port._devices)
 
         self.assertEqual(['adb', '-s', '123456789ABCDEF0', 'shell'], driver0.cmd_line(True, []))
         self.assertEqual(['adb', '-s', '123456789ABCDEF1', 'shell'], driver1.cmd_line(True, ['anything']))
@@ -237,14 +243,15 @@ class ChromiumAndroidDriverTwoDriversTest(unittest.TestCase):
 
 class ChromiumAndroidTwoPortsTest(unittest.TestCase):
     # Test that the driver's command line indeed goes through to the driver.
+
     def test_options_with_two_ports(self):
         mock_adb = MockAndroidDebugBridge(2)
         mock_executive = MockExecutive2(run_command_fn=mock_adb.run_command)
 
         port0 = android.AndroidPort(MockSystemHost(executive=mock_executive),
-            'android', options=MockOptions(additional_driver_flag=['--foo=bar']))
+                                    'android', options=MockOptions(additional_driver_flag=['--foo=bar']))
         port1 = android.AndroidPort(MockSystemHost(executive=mock_executive),
-            'android', options=MockOptions(driver_name='content_shell'))
+                                    'android', options=MockOptions(driver_name='content_shell'))
 
         self.assertEqual(1, port0.driver_cmd_line().count('--foo=bar'))
         self.assertEqual(0, port1.driver_cmd_line().count('--create-stdin-fifo'))
@@ -259,7 +266,7 @@ class ChromiumAndroidDriverTombstoneTest(unittest.TestCase):
 
         self._port = android.AndroidPort(MockSystemHost(executive=self._mock_executive), 'android')
         self._driver = android.ChromiumAndroidDriver(self._port, worker_number=0,
-            pixel_tests=True, driver_details=android.ContentShellDriverDetails(), android_devices=self._port._devices)
+                                                     pixel_tests=True, driver_details=android.ContentShellDriverDetails(), android_devices=self._port._devices)
 
         self._errors = []
         self._driver._log_error = lambda msg: self._errors.append(msg)

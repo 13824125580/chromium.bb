@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/safe_browsing_db/remote_database_manager.h"
+
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
-#include "components/safe_browsing_db/remote_database_manager.h"
 #include "components/safe_browsing_db/safe_browsing_api_handler.h"
 #include "components/variations/variations_associated_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -18,7 +20,7 @@ namespace {
 
 class TestSafeBrowsingApiHandler : public SafeBrowsingApiHandler {
  public:
-  void StartURLCheck(const URLCheckCallback& callback,
+  void StartURLCheck(const URLCheckCallbackMeta& callback,
                      const GURL& url,
                      const std::vector<SBThreatType>& threat_types) override {}
 };
@@ -56,7 +58,7 @@ class RemoteDatabaseManagerTest : public testing::Test {
                                                      group_name, params));
   }
 
-  scoped_ptr<base::FieldTrialList> field_trials_;
+  std::unique_ptr<base::FieldTrialList> field_trials_;
   TestSafeBrowsingApiHandler api_handler_;
   scoped_refptr<RemoteSafeBrowsingDatabaseManager> db_;
 };

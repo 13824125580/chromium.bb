@@ -161,11 +161,11 @@ void ScriptProcessorHandler::process(size_t framesToProcess)
             // We're late in handling the previous request. The main thread must be very busy.
             // The best we can do is clear out the buffer ourself here.
             outputBuffer->zero();
-        } else if (context()->executionContext()) {
+        } else if (context()->getExecutionContext()) {
             // Fire the event on the main thread with the appropriate buffer
             // index.
-            context()->executionContext()->postTask(BLINK_FROM_HERE,
-                createCrossThreadTask(&ScriptProcessorHandler::fireProcessEvent, this, m_doubleBufferIndex));
+            context()->getExecutionContext()->postTask(BLINK_FROM_HERE,
+                createCrossThreadTask(&ScriptProcessorHandler::fireProcessEvent, PassRefPtr<ScriptProcessorHandler>(this), m_doubleBufferIndex));
         }
 
         swapBuffers();
@@ -187,7 +187,7 @@ void ScriptProcessorHandler::fireProcessEvent(unsigned doubleBufferIndex)
         return;
 
     // Avoid firing the event if the document has already gone away.
-    if (node() && context() && context()->executionContext()) {
+    if (node() && context() && context()->getExecutionContext()) {
         // This synchronizes with process().
         MutexLocker processLocker(m_processEventLock);
 
@@ -238,6 +238,7 @@ void ScriptProcessorHandler::setChannelCountMode(const String& mode, ExceptionSt
 
 ScriptProcessorNode::ScriptProcessorNode(AbstractAudioContext& context, float sampleRate, size_t bufferSize, unsigned numberOfInputChannels, unsigned numberOfOutputChannels)
     : AudioNode(context)
+    , ActiveScriptWrappable(this)
 {
     setHandler(ScriptProcessorHandler::create(*this, sampleRate, bufferSize, numberOfInputChannels, numberOfOutputChannels));
 }
@@ -258,8 +259,79 @@ static size_t chooseBufferSize()
     return bufferSize;
 }
 
-ScriptProcessorNode* ScriptProcessorNode::create(AbstractAudioContext& context, float sampleRate, size_t bufferSize, unsigned numberOfInputChannels, unsigned numberOfOutputChannels)
+ScriptProcessorNode* ScriptProcessorNode::create(
+    AbstractAudioContext& context,
+    ExceptionState& exceptionState)
 {
+    DCHECK(isMainThread());
+
+    // Default buffer size is 0 (let WebAudio choose) with 2 inputs and 2
+    // outputs.
+    return create(context, 0, 2, 2, exceptionState);
+}
+
+ScriptProcessorNode* ScriptProcessorNode::create(
+    AbstractAudioContext& context,
+    size_t bufferSize,
+    ExceptionState& exceptionState)
+{
+    DCHECK(isMainThread());
+
+    // Default is 2 inputs and 2 outputs.
+    return create(context, bufferSize, 2, 2, exceptionState);
+}
+
+ScriptProcessorNode* ScriptProcessorNode::create(
+    AbstractAudioContext& context,
+    size_t bufferSize,
+    unsigned numberOfInputChannels,
+    ExceptionState& exceptionState)
+{
+    DCHECK(isMainThread());
+
+    // Default is 2 outputs.
+    return create(context, bufferSize, numberOfInputChannels, 2, exceptionState);
+}
+
+ScriptProcessorNode* ScriptProcessorNode::create(
+    AbstractAudioContext& context,
+    size_t bufferSize,
+    unsigned numberOfInputChannels,
+    unsigned numberOfOutputChannels,
+    ExceptionState& exceptionState)
+{
+    DCHECK(isMainThread());
+
+    if (context.isContextClosed()) {
+        context.throwExceptionForClosedState(exceptionState);
+        return nullptr;
+    }
+
+    if (numberOfInputChannels == 0 && numberOfOutputChannels == 0) {
+        exceptionState.throwDOMException(
+            IndexSizeError,
+            "number of input channels and output channels cannot both be zero.");
+        return nullptr;
+    }
+
+    if (numberOfInputChannels > AbstractAudioContext::maxNumberOfChannels()) {
+        exceptionState.throwDOMException(
+            IndexSizeError,
+            "number of input channels (" + String::number(numberOfInputChannels)
+            + ") exceeds maximum ("
+            + String::number(AbstractAudioContext::maxNumberOfChannels()) + ").");
+        return nullptr;
+    }
+
+    if (numberOfOutputChannels > AbstractAudioContext::maxNumberOfChannels()) {
+        exceptionState.throwDOMException(
+            IndexSizeError,
+            "number of output channels (" + String::number(numberOfInputChannels)
+            + ") exceeds maximum ("
+            + String::number(AbstractAudioContext::maxNumberOfChannels()) + ").");
+        return nullptr;
+    }
+
     // Check for valid buffer size.
     switch (bufferSize) {
     case 0:
@@ -274,24 +346,41 @@ ScriptProcessorNode* ScriptProcessorNode::create(AbstractAudioContext& context, 
     case 16384:
         break;
     default:
+        exceptionState.throwDOMException(
+            IndexSizeError,
+            "buffer size (" + String::number(bufferSize)
+            + ") must be 0 or a power of two between 256 and 16384.");
         return nullptr;
     }
 
-    if (!numberOfInputChannels && !numberOfOutputChannels)
+    ScriptProcessorNode* node =  new ScriptProcessorNode(context, context.sampleRate(), bufferSize, numberOfInputChannels, numberOfOutputChannels);
+
+    if (!node)
         return nullptr;
 
-    if (numberOfInputChannels > AbstractAudioContext::maxNumberOfChannels())
-        return nullptr;
+    // context keeps reference until we stop making javascript rendering callbacks
+    context.notifySourceNodeStartedProcessing(node);
 
-    if (numberOfOutputChannels > AbstractAudioContext::maxNumberOfChannels())
-        return nullptr;
-
-    return new ScriptProcessorNode(context, sampleRate, bufferSize, numberOfInputChannels, numberOfOutputChannels);
+    return node;
 }
 
 size_t ScriptProcessorNode::bufferSize() const
 {
     return static_cast<ScriptProcessorHandler&>(handler()).bufferSize();
+}
+
+bool ScriptProcessorNode::hasPendingActivity() const
+{
+    // To prevent the node from leaking after the context is closed.
+    if (context()->isContextClosed())
+        return false;
+
+    // If |onaudioprocess| event handler is defined, the node should not be
+    // GCed even if it is out of scope.
+    if (hasEventListeners(EventTypeNames::audioprocess))
+        return true;
+
+    return false;
 }
 
 } // namespace blink

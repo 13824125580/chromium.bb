@@ -17,7 +17,6 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import devil_chromium
-from devil import devil_env
 from devil.android import battery_utils
 from devil.android import device_blacklist
 from devil.android import device_errors
@@ -135,7 +134,7 @@ def DeviceStatus(devices, blacklist):
     serial = device.adb.GetDeviceSerial()
     adb_status = (
         adb_devices[serial][1] if serial in adb_devices
-        else 'unknown')
+        else 'missing')
     usb_status = bool(serial in usb_devices)
 
     device_status = {
@@ -144,8 +143,8 @@ def DeviceStatus(devices, blacklist):
       'usb_status': usb_status,
     }
 
-    if adb_status == 'device':
-      if not _IsBlacklisted(serial, blacklist):
+    if not _IsBlacklisted(serial, blacklist):
+      if adb_status == 'device':
         try:
           build_product = device.build_product
           build_id = device.build_id
@@ -184,8 +183,9 @@ def DeviceStatus(devices, blacklist):
           if blacklist:
             blacklist.Extend([serial], reason='status_check_timeout')
 
-    elif blacklist:
-      blacklist.Extend([serial], reason=adb_status)
+      elif blacklist:
+        blacklist.Extend([serial],
+                         reason=adb_status if usb_status else 'offline')
 
     device_status['blacklisted'] = _IsBlacklisted(serial, blacklist)
 
@@ -212,7 +212,7 @@ def RecoverDevices(devices, blacklist):
   should_restart_usb = set(
       status['serial'] for status in statuses
       if (not status['usb_status']
-          or status['adb_status'] in ('offline', 'unknown')))
+          or status['adb_status'] in ('offline', 'missing')))
   should_restart_adb = should_restart_usb.union(set(
       status['serial'] for status in statuses
       if status['adb_status'] == 'unauthorized'))
@@ -238,10 +238,14 @@ def RecoverDevices(devices, blacklist):
   for serial in should_restart_usb:
     try:
       reset_usb.reset_android_usb(serial)
-    except (IOError, device_errors.DeviceUnreachableError):
+    except IOError:
       logging.exception('Unable to reset USB for %s.', serial)
       if blacklist:
         blacklist.Extend([serial], reason='usb_failure')
+    except device_errors.DeviceUnreachableError:
+      logging.exception('Unable to reset USB for %s.', serial)
+      if blacklist:
+        blacklist.Extend([serial], reason='offline')
 
   def blacklisting_recovery(device):
     if _IsBlacklisted(device.adb.GetDeviceSerial(), blacklist):
@@ -305,7 +309,7 @@ def main():
                            'This script now always tries to reset USB.')
   parser.add_argument('--json-output',
                       help='Output JSON information into a specified file.')
-  parser.add_argument('--adb-path',
+  parser.add_argument('--adb-path', type=os.path.abspath,
                       help='Absolute path to the adb binary to use.')
   parser.add_argument('--blacklist-file', help='Device blacklist JSON file.')
   parser.add_argument('--known-devices-file', action='append', default=[],
@@ -318,23 +322,11 @@ def main():
 
   run_tests_helper.SetLogLevel(args.verbose)
 
-  devil_custom_deps = None
-  if args.adb_path:
-    devil_custom_deps = {
-      'adb': {
-        devil_env.GetPlatform(): [args.adb_path],
-      },
-    }
-
-  devil_chromium.Initialize(custom_deps=devil_custom_deps)
+  devil_chromium.Initialize(adb_path=args.adb_path)
 
   blacklist = (device_blacklist.Blacklist(args.blacklist_file)
                if args.blacklist_file
                else None)
-
-  last_devices_path = os.path.join(
-      args.out_dir, device_list.LAST_DEVICES_FILENAME)
-  args.known_devices_files.append(last_devices_path)
 
   expected_devices = set()
   try:
@@ -395,10 +387,14 @@ def main():
                 temperature=float(status['battery']['temperature']) / 10,
                 level=status['battery']['level']
             ))
-          else:
-            f.write('{serial} {adb_status}'.format(
+          elif status.get('usb_status', False):
+            f.write('{serial} {adb_status}\n'.format(
                 serial=status['serial'],
                 adb_status=status['adb_status']
+            ))
+          else:
+            f.write('{serial} offline\n'.format(
+                serial=status['serial']
             ))
         except Exception: # pylint: disable=broad-except
           pass
@@ -413,6 +409,8 @@ def main():
                       and not _IsBlacklisted(status['serial'], blacklist))]
 
   # If all devices failed, or if there are no devices, it's an infra error.
+  if not live_devices:
+    logging.error('No available devices.')
   return 0 if live_devices else exit_codes.INFRA
 
 

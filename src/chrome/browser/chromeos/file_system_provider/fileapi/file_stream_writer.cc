@@ -6,7 +6,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/chromeos/file_system_provider/abort_callback.h"
 #include "chrome/browser/chromeos/file_system_provider/fileapi/provider_async_file_util.h"
@@ -132,7 +132,7 @@ class FileStreamWriter::OperationRunner
 
   AbortCallback abort_callback_;
   base::WeakPtr<ProvidedFileSystemInterface> file_system_;
-  scoped_ptr<ScopedFileOpener> file_opener_;
+  std::unique_ptr<ScopedFileOpener> file_opener_;
   int file_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(OperationRunner);

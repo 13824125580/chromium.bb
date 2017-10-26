@@ -1,30 +1,68 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [138, 11, 117, 13],
-        [138, 11, 40, 13],
-        [138, 11, 37, 13],
-        [11, 11, 117, 13],
-        [11, 11, 40, 13],
-        [11, 11, 37, 13]
-      ],
-      "paintInvalidationClients": [
-        "InlineTextBox ''",
-        "RootInlineBox",
-        "InlineTextBox ''",
-        "RootInlineBox",
-        "LayoutBlockFlow DIV id='inner-editor'",
-        "LayoutText #text",
-        "InlineTextBox 'PASSED'",
-        "LayoutBlockFlow DIV id='inner-editor'",
-        "LayoutText #text",
-        "InlineTextBox 'PASSED'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV id='inner-editor'",
+          "rect": [138, 11, 117, 13],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='inner-editor'",
+          "rect": [11, 11, 117, 13],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [138, 11, 40, 13],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [11, 11, 40, 13],
+          "reason": "full"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow DIV id='inner-editor'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "full"
+    },
+    {
+      "object": "InlineTextBox 'PASSED'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='inner-editor'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "full"
+    },
+    {
+      "object": "InlineTextBox 'PASSED'",
+      "reason": "full"
     }
   ]
 }

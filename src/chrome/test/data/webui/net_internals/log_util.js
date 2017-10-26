@@ -168,7 +168,6 @@ function checkViewsAfterLogLoaded() {
     import: true,
     proxy: true,
     events: true,
-    waterfall: true,
     timeline: true,
     dns: true,
     sockets: true,
@@ -183,7 +182,7 @@ function checkViewsAfterLogLoaded() {
     bandwidth: true,
     chromeos: false
   };
-  NetInternalsTest.checkTabHandleVisibility(tabVisibilityState, false);
+  NetInternalsTest.checkTabLinkVisibility(tabVisibilityState, false);
 }
 
 /**
@@ -198,7 +197,6 @@ function checkViewsAfterNetLogFileLoaded() {
     import: true,
     proxy: false,
     events: true,
-    waterfall: true,
     timeline: true,
     dns: false,
     sockets: false,
@@ -213,7 +211,7 @@ function checkViewsAfterNetLogFileLoaded() {
     bandwidth: false,
     chromeos: false
   };
-  NetInternalsTest.checkTabHandleVisibility(tabVisibilityState, false);
+  NetInternalsTest.checkTabLinkVisibility(tabVisibilityState, false);
 }
 
 function checkPrivacyStripping(expectedValue) {

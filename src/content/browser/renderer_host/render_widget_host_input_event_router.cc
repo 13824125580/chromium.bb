@@ -11,7 +11,58 @@
 #include "content/common/frame_messages.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
 
+namespace {
+
+void TransformEventTouchPositions(blink::WebTouchEvent* event,
+                                  const gfx::Vector2d& delta) {
+  for (unsigned i = 0; i < event->touchesLength; ++i) {
+     event->touches[i].position.x += delta.x();
+     event->touches[i].position.y += delta.y();
+  }
+}
+
+}  // anonymous namespace
+
 namespace content {
+
+void RenderWidgetHostInputEventRouter::OnRenderWidgetHostViewBaseDestroyed(
+    RenderWidgetHostViewBase* view) {
+  view->RemoveObserver(this);
+
+  // Remove this view from the owner_map.
+  for (auto entry : owner_map_) {
+    if (entry.second == view) {
+      owner_map_.erase(entry.first);
+      // There will only be one instance of a particular view in the map.
+      break;
+    }
+  }
+
+  if (view == touch_target_.target) {
+    touch_target_.target = nullptr;
+    active_touches_ = 0;
+  }
+
+  // If the target that's being destroyed is in the gesture target queue, we
+  // replace it with nullptr so that we maintain the 1:1 correspondence between
+  // queue entries and the touch sequences that underly them.
+  for (size_t i = 0; i < touchscreen_gesture_target_queue_.size(); ++i) {
+    if (touchscreen_gesture_target_queue_[i].target == view)
+      touchscreen_gesture_target_queue_[i].target = nullptr;
+  }
+
+  if (view == touchscreen_gesture_target_.target)
+    touchscreen_gesture_target_.target = nullptr;
+
+  if (view == touchpad_gesture_target_.target)
+    touchpad_gesture_target_.target = nullptr;
+}
+
+void RenderWidgetHostInputEventRouter::ClearAllObserverRegistrations() {
+  for (auto entry : owner_map_)
+    entry.second->RemoveObserver(this);
+  owner_map_.clear();
+}
 
 RenderWidgetHostInputEventRouter::HittestDelegate::HittestDelegate(
     const std::unordered_map<cc::SurfaceId, HittestData, cc::SurfaceIdHash>&
@@ -40,7 +91,9 @@ RenderWidgetHostInputEventRouter::RenderWidgetHostInputEventRouter()
     : active_touches_(0) {}
 
 RenderWidgetHostInputEventRouter::~RenderWidgetHostInputEventRouter() {
-  owner_map_.clear();
+  // We may be destroyed before some of the owners in the map, so we must
+  // remove ourself from their observer lists.
+  ClearAllObserverRegistrations();
 }
 
 RenderWidgetHostViewBase* RenderWidgetHostInputEventRouter::FindEventTarget(
@@ -71,12 +124,8 @@ RenderWidgetHostViewBase* RenderWidgetHostInputEventRouter::FindEventTarget(
   // parent frame has not sent a new compositor frame since that happened.
   if (iter == owner_map_.end())
     return root_view;
-  RenderWidgetHostViewBase* target = iter->second.get();
-  // If we find the weak pointer is now null, it means the map entry is stale
-  // and should be removed to free space.
-  if (!target)
-    owner_map_.erase(iter);
-  return target;
+
+  return iter->second;
 }
 
 void RenderWidgetHostInputEventRouter::RouteMouseEvent(
@@ -90,8 +139,10 @@ void RenderWidgetHostInputEventRouter::RouteMouseEvent(
 
   event->x = transformed_point.x();
   event->y = transformed_point.y();
-
-  target->ProcessMouseEvent(*event);
+  // TODO(wjmaclean): Initialize latency info correctly for OOPIFs.
+  // https://crbug.com/613628
+  ui::LatencyInfo latency_info;
+  target->ProcessMouseEvent(*event, latency_info);
 }
 
 void RenderWidgetHostInputEventRouter::RouteMouseWheelEvent(
@@ -105,8 +156,27 @@ void RenderWidgetHostInputEventRouter::RouteMouseWheelEvent(
 
   event->x = transformed_point.x();
   event->y = transformed_point.y();
+  // TODO(wjmaclean): Initialize latency info correctly for OOPIFs.
+  // https://crbug.com/613628
+  ui::LatencyInfo latency_info;
+  target->ProcessMouseWheelEvent(*event, latency_info);
+}
 
-  target->ProcessMouseWheelEvent(*event);
+void RenderWidgetHostInputEventRouter::RouteGestureEvent(
+    RenderWidgetHostViewBase* root_view,
+    blink::WebGestureEvent* event,
+    const ui::LatencyInfo& latency) {
+  switch (event->sourceDevice) {
+    case blink::WebGestureDeviceUninitialized:
+      NOTREACHED() << "Uninitialized device type is not allowed";
+      break;
+    case blink::WebGestureDeviceTouchpad:
+      RouteTouchpadGestureEvent(root_view, event, latency);
+      break;
+    case blink::WebGestureDeviceTouchscreen:
+      RouteTouchscreenGestureEvent(root_view, event, latency);
+      break;
+  };
 }
 
 void RenderWidgetHostInputEventRouter::RouteTouchEvent(
@@ -118,36 +188,48 @@ void RenderWidgetHostInputEventRouter::RouteTouchEvent(
       if (!active_touches_) {
         // Since this is the first touch, it defines the target for the rest
         // of this sequence.
-        DCHECK(!current_touch_target_);
+        DCHECK(!touch_target_.target);
         gfx::Point transformed_point;
         gfx::Point original_point(event->touches[0].position.x,
                                   event->touches[0].position.y);
-        RenderWidgetHostViewBase* target =
+        touch_target_.target =
             FindEventTarget(root_view, original_point, &transformed_point);
-        if (!target)
-          return;
 
-        // Store the weak-ptr to the target, since it could disappear in the
-        // middle of a touch sequence.
-        current_touch_target_ = target->GetWeakPtr();
+        // TODO(wjmaclean): Instead of just computing a delta, we should extract
+        // the complete transform. We assume it doesn't change for the duration
+        // of the touch sequence, though this could be wrong; a better approach
+        // might be to always transform each point to the |touch_target_.target|
+        // for the duration of the sequence.
+        touch_target_.delta = transformed_point - original_point;
+        touchscreen_gesture_target_queue_.push_back(touch_target_);
+
+        if (!touch_target_.target)
+          return;
       }
       ++active_touches_;
-      if (current_touch_target_)
-        current_touch_target_->ProcessTouchEvent(*event, latency);
+      if (touch_target_.target) {
+        TransformEventTouchPositions(event, touch_target_.delta);
+        touch_target_.target->ProcessTouchEvent(*event, latency);
+      }
       break;
     }
     case blink::WebInputEvent::TouchMove:
-      if (current_touch_target_)
-        current_touch_target_->ProcessTouchEvent(*event, latency);
+      if (touch_target_.target) {
+        TransformEventTouchPositions(event, touch_target_.delta);
+        touch_target_.target->ProcessTouchEvent(*event, latency);
+      }
       break;
     case blink::WebInputEvent::TouchEnd:
     case blink::WebInputEvent::TouchCancel:
+      if (!touch_target_.target)
+        break;
+
       DCHECK(active_touches_);
-      if (current_touch_target_)
-        current_touch_target_->ProcessTouchEvent(*event, latency);
+      TransformEventTouchPositions(event, touch_target_.delta);
+      touch_target_.target->ProcessTouchEvent(*event, latency);
       --active_touches_;
       if (!active_touches_)
-        current_touch_target_ = WeakTarget();
+        touch_target_.target = nullptr;
       break;
     default:
       NOTREACHED();
@@ -158,15 +240,22 @@ void RenderWidgetHostInputEventRouter::AddSurfaceIdNamespaceOwner(
     uint32_t id,
     RenderWidgetHostViewBase* owner) {
   DCHECK(owner_map_.find(id) == owner_map_.end());
-  owner_map_.insert(std::make_pair(id, owner->GetWeakPtr()));
+  // We want to be notified if the owner is destroyed so we can remove it from
+  // our map.
+  owner->AddObserver(this);
+  owner_map_.insert(std::make_pair(id, owner));
 }
 
 void RenderWidgetHostInputEventRouter::RemoveSurfaceIdNamespaceOwner(
     uint32_t id) {
-  owner_map_.erase(id);
+  auto it_to_remove = owner_map_.find(id);
+  if (it_to_remove != owner_map_.end()) {
+    it_to_remove->second->RemoveObserver(this);
+    owner_map_.erase(it_to_remove);
+  }
 
   for (auto it = hittest_data_.begin(); it != hittest_data_.end();) {
-    if (cc::SurfaceIdAllocator::NamespaceForId(it->first) == id)
+    if (it->first.id_namespace() == id)
       it = hittest_data_.erase(it);
     else
       ++it;
@@ -175,13 +264,75 @@ void RenderWidgetHostInputEventRouter::RemoveSurfaceIdNamespaceOwner(
 
 void RenderWidgetHostInputEventRouter::OnHittestData(
     const FrameHostMsg_HittestData_Params& params) {
-  if (owner_map_.find(cc::SurfaceIdAllocator::NamespaceForId(
-          params.surface_id)) == owner_map_.end()) {
+  if (owner_map_.find(params.surface_id.id_namespace()) == owner_map_.end()) {
     return;
   }
   HittestData data;
   data.ignored_for_hittest = params.ignored_for_hittest;
   hittest_data_[params.surface_id] = data;
+}
+
+void RenderWidgetHostInputEventRouter::RouteTouchscreenGestureEvent(
+    RenderWidgetHostViewBase* root_view,
+    blink::WebGestureEvent* event,
+    const ui::LatencyInfo& latency) {
+  DCHECK_EQ(blink::WebGestureDeviceTouchscreen, event->sourceDevice);
+
+  // We use GestureTapDown to detect the start of a gesture sequence since there
+  // is no WebGestureEvent equivalent for ET_GESTURE_BEGIN. Note that this
+  // means the GestureFlingCancel that always comes between ET_GESTURE_BEGIN and
+  // GestureTapDown is sent to the previous target, in case it is still in a
+  // fling.
+  if (event->type == blink::WebInputEvent::GestureTapDown) {
+    if (touchscreen_gesture_target_queue_.empty()) {
+      LOG(ERROR) << "Gesture sequence start detected with no target available.";
+      // Ignore this gesture sequence as no target is available.
+      // TODO(wjmaclean): this only happens on Windows, and should not happen.
+      // https://crbug.com/595422
+      touchscreen_gesture_target_.target = nullptr;
+      return;
+    }
+
+    touchscreen_gesture_target_ = touchscreen_gesture_target_queue_.front();
+    touchscreen_gesture_target_queue_.pop_front();
+  }
+
+  if (!touchscreen_gesture_target_.target)
+    return;
+
+  // TODO(mohsen): Add tests to check event location.
+  event->x += touchscreen_gesture_target_.delta.x();
+  event->y += touchscreen_gesture_target_.delta.y();
+  touchscreen_gesture_target_.target->ProcessGestureEvent(*event, latency);
+}
+
+void RenderWidgetHostInputEventRouter::RouteTouchpadGestureEvent(
+    RenderWidgetHostViewBase* root_view,
+    blink::WebGestureEvent* event,
+    const ui::LatencyInfo& latency) {
+  DCHECK_EQ(blink::WebGestureDeviceTouchpad, event->sourceDevice);
+
+  if (event->type == blink::WebInputEvent::GesturePinchBegin ||
+      event->type == blink::WebInputEvent::GestureFlingStart) {
+    gfx::Point transformed_point;
+    gfx::Point original_point(event->x, event->y);
+    touchpad_gesture_target_.target =
+        FindEventTarget(root_view, original_point, &transformed_point);
+    // TODO(mohsen): Instead of just computing a delta, we should extract the
+    // complete transform. We assume it doesn't change for the duration of the
+    // touchpad gesture sequence, though this could be wrong; a better approach
+    // might be to always transform each point to the
+    // |touchpad_gesture_target_.target| for the duration of the sequence.
+    touchpad_gesture_target_.delta = transformed_point - original_point;
+  }
+
+  if (!touchpad_gesture_target_.target)
+    return;
+
+  // TODO(mohsen): Add tests to check event location.
+  event->x += touchpad_gesture_target_.delta.x();
+  event->y += touchpad_gesture_target_.delta.y();
+  touchpad_gesture_target_.target->ProcessGestureEvent(*event, latency);
 }
 
 }  // namespace content

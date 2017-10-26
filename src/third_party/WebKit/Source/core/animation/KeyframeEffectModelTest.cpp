@@ -43,7 +43,7 @@ const double duration = 1.0;
 
 PassRefPtr<AnimatableValue> unknownAnimatableValue(double n)
 {
-    return AnimatableUnknown::create(CSSPrimitiveValue::create(n, CSSPrimitiveValue::UnitType::Unknown).get());
+    return AnimatableUnknown::create(CSSPrimitiveValue::create(n, CSSPrimitiveValue::UnitType::Unknown));
 }
 
 PassRefPtr<AnimatableValue> pixelAnimatableValue(double n)
@@ -78,9 +78,9 @@ void expectDoubleValue(double expectedValue, PassRefPtr<Interpolation> interpola
 
     double actualValue;
     if (value->isLength())
-        actualValue = toAnimatableLength(value.get())->length(1, ValueRangeAll).value();
+        actualValue = toAnimatableLength(value.get())->getLength(1, ValueRangeAll).value();
     else
-        actualValue = toCSSPrimitiveValue(toAnimatableUnknown(value.get())->toCSSValue().get())->getDoubleValue();
+        actualValue = toCSSPrimitiveValue(toAnimatableUnknown(value.get())->toCSSValue())->getDoubleValue();
 
     EXPECT_FLOAT_EQ(static_cast<float>(expectedValue), actualValue);
 }
@@ -144,7 +144,7 @@ TEST(AnimationKeyframeEffectModel, CompositeEaseIn)
 {
     AnimatableValueKeyframeVector keyframes = keyframesAtZeroAndOne(pixelAnimatableValue(3.0), pixelAnimatableValue(5.0));
     keyframes[0]->setComposite(EffectModel::CompositeReplace);
-    keyframes[0]->setEasing(CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseIn));
+    keyframes[0]->setEasing(CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseType::EASE_IN));
     keyframes[1]->setComposite(EffectModel::CompositeReplace);
     AnimatableValueKeyframeEffectModel* effect = AnimatableValueKeyframeEffectModel::create(keyframes);
     Vector<RefPtr<Interpolation>> values;

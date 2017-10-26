@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/crx_file/id_util.h"
 #include "components/guest_view/browser/guest_view_event.h"
@@ -107,9 +108,9 @@ void ExtensionOptionsGuest::CreateWebContents(
   // Create a WebContents using the extension URL. The options page's
   // WebContents should live in the same process as its parent extension's
   // WebContents, so we can use |extension_url| for creating the SiteInstance.
-  content::SiteInstance* options_site_instance =
-      content::SiteInstance::CreateForURL(browser_context(), extension_url);
-  WebContents::CreateParams params(browser_context(), options_site_instance);
+  WebContents::CreateParams params(
+      browser_context(),
+      content::SiteInstance::CreateForURL(browser_context(), extension_url));
   params.guest_delegate = this;
   WebContents* wc = WebContents::Create(params);
   SetViewType(wc, VIEW_TYPE_EXTENSION_GUEST);
@@ -126,8 +127,8 @@ void ExtensionOptionsGuest::DidInitialize(
 }
 
 void ExtensionOptionsGuest::GuestViewDidStopLoading() {
-  scoped_ptr<base::DictionaryValue> args(new base::DictionaryValue());
-  DispatchEventToView(make_scoped_ptr(new GuestViewEvent(
+  std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
+  DispatchEventToView(base::WrapUnique(new GuestViewEvent(
       extension_options_internal::OnLoad::kEventName, std::move(args))));
 }
 
@@ -148,7 +149,7 @@ void ExtensionOptionsGuest::OnPreferredSizeChanged(const gfx::Size& pref_size) {
   // Convert the size from physical pixels to logical pixels.
   options.width = PhysicalPixelsToLogicalPixels(pref_size.width());
   options.height = PhysicalPixelsToLogicalPixels(pref_size.height());
-  DispatchEventToView(make_scoped_ptr(new GuestViewEvent(
+  DispatchEventToView(base::WrapUnique(new GuestViewEvent(
       extension_options_internal::OnPreferredSizeChanged::kEventName,
       options.ToValue())));
 }
@@ -180,9 +181,9 @@ WebContents* ExtensionOptionsGuest::OpenURLFromTab(
 }
 
 void ExtensionOptionsGuest::CloseContents(WebContents* source) {
-  DispatchEventToView(make_scoped_ptr(
+  DispatchEventToView(base::WrapUnique(
       new GuestViewEvent(extension_options_internal::OnClose::kEventName,
-                         make_scoped_ptr(new base::DictionaryValue()))));
+                         base::WrapUnique(new base::DictionaryValue()))));
 }
 
 bool ExtensionOptionsGuest::HandleContextMenu(
@@ -225,10 +226,10 @@ void ExtensionOptionsGuest::DidNavigateMainFrame(
     const content::LoadCommittedDetails& details,
     const content::FrameNavigateParams& params) {
   if (attached()) {
-    auto guest_zoom_controller =
-        ui_zoom::ZoomController::FromWebContents(web_contents());
+    auto* guest_zoom_controller =
+        zoom::ZoomController::FromWebContents(web_contents());
     guest_zoom_controller->SetZoomMode(
-        ui_zoom::ZoomController::ZOOM_MODE_ISOLATED);
+        zoom::ZoomController::ZOOM_MODE_ISOLATED);
     SetGuestZoomLevelToMatchEmbedder();
 
     if (!url::IsSameOriginWith(params.url, options_page_)) {

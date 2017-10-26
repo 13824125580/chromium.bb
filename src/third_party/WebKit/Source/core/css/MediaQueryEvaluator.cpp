@@ -47,7 +47,6 @@
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
 #include "core/inspector/InspectorInstrumentation.h"
-#include "core/layout/LayoutView.h"
 #include "core/style/ComputedStyle.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/geometry/FloatRect.h"
@@ -131,9 +130,9 @@ bool MediaQueryEvaluator::eval(const MediaQuery* query, MediaQueryResultList* vi
     for (; i < expressions.size(); ++i) {
         bool exprResult = eval(expressions.at(i).get());
         if (viewportDependentMediaQueryResults && expressions.at(i)->isViewportDependent())
-            viewportDependentMediaQueryResults->append(adoptRefWillBeNoop(new MediaQueryResult(*expressions.at(i), exprResult)));
+            viewportDependentMediaQueryResults->append(new MediaQueryResult(*expressions.at(i), exprResult));
         if (deviceDependentMediaQueryResults && expressions.at(i)->isDeviceDependent())
-            deviceDependentMediaQueryResults->append(adoptRefWillBeNoop(new MediaQueryResult(*expressions.at(i), exprResult)));
+            deviceDependentMediaQueryResults->append(new MediaQueryResult(*expressions.at(i), exprResult));
         if (!exprResult)
             break;
     }
@@ -147,7 +146,7 @@ bool MediaQueryEvaluator::eval(const MediaQuerySet* querySet, MediaQueryResultLi
     if (!querySet)
         return true;
 
-    const WillBeHeapVector<OwnPtrWillBeMember<MediaQuery>>& queries = querySet->queryVector();
+    const HeapVector<Member<MediaQuery>>& queries = querySet->queryVector();
     if (!queries.size())
         return true; // Empty query list evaluates to true.
 
@@ -169,6 +168,20 @@ bool compareValue(T a, T b, MediaFeaturePrefix op)
         return a <= b;
     case NoPrefix:
         return a == b;
+    }
+    return false;
+}
+
+bool compareDoubleValue(double a, double b, MediaFeaturePrefix op)
+{
+    const double precision = std::numeric_limits<double>::epsilon();
+    switch (op) {
+    case MinPrefix:
+        return a >= (b - precision);
+    case MaxPrefix:
+        return a <= (b + precision);
+    case NoPrefix:
+        return std::abs(a - b) <= precision;
     }
     return false;
 }
@@ -374,7 +387,7 @@ static bool computeLength(const MediaQueryExpValue& value, const MediaValues& me
 static bool computeLengthAndCompare(const MediaQueryExpValue& value, MediaFeaturePrefix op, const MediaValues& mediaValues, double compareToValue)
 {
     double length;
-    return computeLength(value, mediaValues, length) && compareValue(compareToValue, length, op);
+    return computeLength(value, mediaValues, length) && compareDoubleValue(compareToValue, length, op);
 }
 
 static bool deviceHeightMediaFeatureEval(const MediaQueryExpValue& value, MediaFeaturePrefix op, const MediaValues& mediaValues)

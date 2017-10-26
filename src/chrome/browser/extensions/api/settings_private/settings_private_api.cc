@@ -4,6 +4,9 @@
 
 #include "chrome/browser/extensions/api/settings_private/settings_private_api.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/settings_private/settings_private_delegate.h"
 #include "chrome/browser/extensions/api/settings_private/settings_private_delegate_factory.h"
@@ -28,7 +31,7 @@ SettingsPrivateSetPrefFunction::~SettingsPrivateSetPrefFunction() {
 }
 
 ExtensionFunction::ResponseAction SettingsPrivateSetPrefFunction::Run() {
-  scoped_ptr<api::settings_private::SetPref::Params> parameters =
+  std::unique_ptr<api::settings_private::SetPref::Params> parameters =
       api::settings_private::SetPref::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
@@ -41,10 +44,12 @@ ExtensionFunction::ResponseAction SettingsPrivateSetPrefFunction::Run() {
       delegate->SetPref(parameters->name, parameters->value.get());
   switch (result) {
     case PrefsUtil::SUCCESS:
-      return RespondNow(OneArgument(new base::FundamentalValue(true)));
+      return RespondNow(
+          OneArgument(base::MakeUnique<base::FundamentalValue>(true)));
     case PrefsUtil::PREF_NOT_MODIFIABLE:
       // Not an error, but return false to indicate setting the pref failed.
-      return RespondNow(OneArgument(new base::FundamentalValue(false)));
+      return RespondNow(
+          OneArgument(base::MakeUnique<base::FundamentalValue>(false)));
     case PrefsUtil::PREF_NOT_FOUND:
       return RespondNow(Error("Pref not found: *", parameters->name));
     case PrefsUtil::PREF_TYPE_MISMATCH:
@@ -55,7 +60,8 @@ ExtensionFunction::ResponseAction SettingsPrivateSetPrefFunction::Run() {
                               parameters->name));
   }
   NOTREACHED();
-  return RespondNow(OneArgument(new base::FundamentalValue(false)));
+  return RespondNow(
+      OneArgument(base::MakeUnique<base::FundamentalValue>(false)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -72,7 +78,7 @@ ExtensionFunction::ResponseAction SettingsPrivateGetAllPrefsFunction::Run() {
   if (delegate == nullptr)
     return RespondNow(Error(kDelegateIsNull));
   else
-    return RespondNow(OneArgument(delegate->GetAllPrefs().release()));
+    return RespondNow(OneArgument(delegate->GetAllPrefs()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -83,7 +89,7 @@ SettingsPrivateGetPrefFunction::~SettingsPrivateGetPrefFunction() {
 }
 
 ExtensionFunction::ResponseAction SettingsPrivateGetPrefFunction::Run() {
-  scoped_ptr<api::settings_private::GetPref::Params> parameters =
+  std::unique_ptr<api::settings_private::GetPref::Params> parameters =
       api::settings_private::GetPref::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
@@ -92,11 +98,11 @@ ExtensionFunction::ResponseAction SettingsPrivateGetPrefFunction::Run() {
   if (delegate == nullptr)
     return RespondNow(Error(kDelegateIsNull));
 
-  scoped_ptr<base::Value> value = delegate->GetPref(parameters->name);
+  std::unique_ptr<base::Value> value = delegate->GetPref(parameters->name);
   if (value->IsType(base::Value::TYPE_NULL))
     return RespondNow(Error("Pref * does not exist", parameters->name));
   else
-    return RespondNow(OneArgument(value.release()));
+    return RespondNow(OneArgument(std::move(value)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -115,7 +121,7 @@ ExtensionFunction::ResponseAction
   if (delegate == nullptr)
     return RespondNow(Error(kDelegateIsNull));
   else
-    return RespondNow(OneArgument(delegate->GetDefaultZoomPercent().release()));
+    return RespondNow(OneArgument(delegate->GetDefaultZoomPercent()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -128,8 +134,9 @@ SettingsPrivateSetDefaultZoomPercentFunction::
 
 ExtensionFunction::ResponseAction
     SettingsPrivateSetDefaultZoomPercentFunction::Run() {
-  scoped_ptr<api::settings_private::SetDefaultZoomPercent::Params> parameters =
-      api::settings_private::SetDefaultZoomPercent::Params::Create(*args_);
+  std::unique_ptr<api::settings_private::SetDefaultZoomPercent::Params>
+      parameters =
+          api::settings_private::SetDefaultZoomPercent::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   SettingsPrivateDelegate* delegate =
@@ -138,7 +145,8 @@ ExtensionFunction::ResponseAction
     return RespondNow(Error(kDelegateIsNull));
 
   delegate->SetDefaultZoomPercent(parameters->percent);
-  return RespondNow(OneArgument(new base::FundamentalValue(true)));
+  return RespondNow(
+      OneArgument(base::MakeUnique<base::FundamentalValue>(true)));
 }
 
 }  // namespace extensions

@@ -16,6 +16,7 @@ from chromite.cbuildbot import config_lib
 from chromite.cbuildbot import constants
 from chromite.cbuildbot import failures_lib
 from chromite.cbuildbot import manifest_version
+from chromite.cbuildbot import prebuilts
 from chromite.cbuildbot import results_lib
 from chromite.cbuildbot.stages import completion_stages
 from chromite.cbuildbot.stages import generic_stages_unittest
@@ -24,6 +25,7 @@ from chromite.cbuildbot.stages import sync_stages
 from chromite.lib import alerts
 from chromite.lib import cidb
 from chromite.lib import clactions
+from chromite.lib import patch as cros_patch
 from chromite.lib import patch_unittest
 
 
@@ -124,15 +126,17 @@ class MasterSlaveSyncCompletionStageMockConfigTest(
 
   def _GetTestConfig(self):
     test_config = config_lib.SiteConfig()
-    test_config.AddConfigWithoutTemplate(
+    test_config.Add(
         'master',
+        config_lib.BuildConfig(),
         boards=[],
         build_type=self.build_type,
         master=True,
         manifest_version=True,
     )
-    test_config.AddConfigWithoutTemplate(
+    test_config.Add(
         'test1',
+        config_lib.BuildConfig(),
         boards=['x86-generic'],
         manifest_version=True,
         build_type=constants.PFQ_TYPE,
@@ -143,8 +147,9 @@ class MasterSlaveSyncCompletionStageMockConfigTest(
         internal=False,
         master=False,
     )
-    test_config.AddConfigWithoutTemplate(
+    test_config.Add(
         'test2',
+        config_lib.BuildConfig(),
         boards=['x86-generic'],
         manifest_version=False,
         build_type=constants.PFQ_TYPE,
@@ -155,8 +160,9 @@ class MasterSlaveSyncCompletionStageMockConfigTest(
         internal=False,
         master=False,
     )
-    test_config.AddConfigWithoutTemplate(
+    test_config.Add(
         'test3',
+        config_lib.BuildConfig(),
         boards=['x86-generic'],
         manifest_version=True,
         build_type=constants.PFQ_TYPE,
@@ -167,8 +173,9 @@ class MasterSlaveSyncCompletionStageMockConfigTest(
         internal=True,
         master=False,
     )
-    test_config.AddConfigWithoutTemplate(
+    test_config.Add(
         'test4',
+        config_lib.BuildConfig(),
         boards=['x86-generic'],
         manifest_version=True,
         build_type=constants.PFQ_TYPE,
@@ -179,8 +186,9 @@ class MasterSlaveSyncCompletionStageMockConfigTest(
         internal=True,
         master=False,
     )
-    test_config.AddConfigWithoutTemplate(
+    test_config.Add(
         'test5',
+        config_lib.BuildConfig(),
         boards=['x86-generic'],
         manifest_version=True,
         build_type=constants.PFQ_TYPE,
@@ -332,7 +340,7 @@ class BaseCommitQueueCompletionStageTest(
 
     self.alert_email_mock = self.PatchObject(alerts, 'SendEmail')
     self.PatchObject(cbuildbot_run._BuilderRunBase,
-                     'InProduction', return_value=True)
+                     'InEmailReportingEnvironment', return_value=True)
     self.PatchObject(completion_stages.MasterSlaveSyncCompletionStage,
                      'HandleFailure')
     self.PatchObject(completion_stages.CommitQueueCompletionStage,
@@ -341,8 +349,6 @@ class BaseCommitQueueCompletionStageTest(
                      '_GetSlaveMappingAndCLActions',
                      return_value=(dict(), []))
     self.PatchObject(clactions, 'GetRelevantChangesForBuilds')
-    self.PatchObject(completion_stages.CommitQueueCompletionStage,
-                     '_RecordIrrelevantChanges')
 
   # pylint: disable=W0221
   def ConstructStage(self, tree_was_open=True):
@@ -353,7 +359,7 @@ class BaseCommitQueueCompletionStageTest(
     """
     sync_stage = sync_stages.CommitQueueSyncStage(self._run)
     sync_stage.pool = mock.MagicMock()
-    sync_stage.pool.changes = self.changes
+    sync_stage.pool.applied = self.changes
     sync_stage.pool.tree_was_open = tree_was_open
 
     sync_stage.pool.handle_failure_mock = self.PatchObject(
@@ -611,17 +617,128 @@ class MasterCommitQueueCompletionStageTest(BaseCommitQueueCompletionStageTest):
                      handle_timeout=False, sane_tot=False, alert=True,
                      stage=stage)
 
+  def testGetIrrelevantChanges(self):
+    """Tests the logic of GetIrrelevantChanges()."""
+    change_dict_1 = {
+        cros_patch.ATTR_PROJECT_URL: 'https://host/chromite/tacos',
+        cros_patch.ATTR_PROJECT: 'chromite/tacos',
+        cros_patch.ATTR_REF: 'refs/changes/11/12345/4',
+        cros_patch.ATTR_BRANCH: 'master',
+        cros_patch.ATTR_REMOTE: 'cros-internal',
+        cros_patch.ATTR_COMMIT: '7181e4b5e182b6f7d68461b04253de095bad74f9',
+        cros_patch.ATTR_CHANGE_ID: 'I47ea30385af60ae4cc2acc5d1a283a46423bc6e1',
+        cros_patch.ATTR_GERRIT_NUMBER: '12345',
+        cros_patch.ATTR_PATCH_NUMBER: '4',
+        cros_patch.ATTR_OWNER_EMAIL: 'foo@chromium.org',
+        cros_patch.ATTR_FAIL_COUNT: 1,
+        cros_patch.ATTR_PASS_COUNT: 1,
+        cros_patch.ATTR_TOTAL_FAIL_COUNT: 3}
+    change_dict_2 = {
+        cros_patch.ATTR_PROJECT_URL: 'https://host/chromite/foo',
+        cros_patch.ATTR_PROJECT: 'chromite/foo',
+        cros_patch.ATTR_REF: 'refs/changes/11/12344/3',
+        cros_patch.ATTR_BRANCH: 'master',
+        cros_patch.ATTR_REMOTE: 'cros-internal',
+        cros_patch.ATTR_COMMIT: 'cf23df2207d99a74fbe169e3eba035e633b65d94',
+        cros_patch.ATTR_CHANGE_ID: 'Iab9bf08b9b9bd4f72721cfc36e843ed302aca11a',
+        cros_patch.ATTR_GERRIT_NUMBER: '12344',
+        cros_patch.ATTR_PATCH_NUMBER: '3',
+        cros_patch.ATTR_OWNER_EMAIL: 'foo@chromium.org',
+        cros_patch.ATTR_FAIL_COUNT: 0,
+        cros_patch.ATTR_PASS_COUNT: 0,
+        cros_patch.ATTR_TOTAL_FAIL_COUNT: 1}
+    change_1 = cros_patch.GerritFetchOnlyPatch.FromAttrDict(change_dict_1)
+    change_2 = cros_patch.GerritFetchOnlyPatch.FromAttrDict(change_dict_2)
+
+    board_metadata_1 = {
+        'board-1': {'info':'foo', 'irrelevant_changes': [change_dict_1,
+                                                         change_dict_2]},
+        'board-2': {'info':'foo', 'irrelevant_changes': [change_dict_1]}
+    }
+    board_metadata_2 = {
+        'board-1': {'info':'foo', 'irrelevant_changes': [change_dict_1]},
+        'board-2': {'info':'foo', 'irrelevant_changes': [change_dict_2]}
+    }
+    board_metadata_3 = {
+        'board-1': {'info':'foo', 'irrelevant_changes': [change_dict_1,
+                                                         change_dict_2]},
+        'board-2': {'info':'foo', 'irrelevant_changes': []}
+    }
+    board_metadata_4 = {
+        'board-1': {'info':'foo', 'irrelevant_changes': [change_dict_1,
+                                                         change_dict_2]},
+        'board-2': {'info':'foo'}
+    }
+    board_metadata_5 = {}
+    board_metadata_6 = {
+        'board-1': {'info':'foo', 'irrelevant_changes': [change_dict_1,
+                                                         change_dict_2]},
+    }
+    stage = self.ConstructStage()
+    self.assertEqual(stage.GetIrrelevantChanges(board_metadata_1), {change_1})
+    self.assertEqual(stage.GetIrrelevantChanges(board_metadata_2), set())
+    self.assertEqual(stage.GetIrrelevantChanges(board_metadata_3), set())
+    self.assertEqual(stage.GetIrrelevantChanges(board_metadata_4), set())
+    self.assertEqual(stage.GetIrrelevantChanges(board_metadata_5), set())
+    self.assertEqual(stage.GetIrrelevantChanges(board_metadata_6), {change_1,
+                                                                    change_2})
+
+  def testGetSubsysResultForSlaves(self):
+    """Tests for the GetSubsysResultForSlaves."""
+    def get_dict(build_config, message_type, message_subtype, message_value):
+      return {'build_config': build_config,
+              'message_type': message_type,
+              'message_subtype': message_subtype,
+              'message_value': message_value}
+
+    slave_msgs = [get_dict('config_1', constants.SUBSYSTEMS,
+                           constants.SUBSYSTEM_PASS, 'a'),
+                  get_dict('config_1', constants.SUBSYSTEMS,
+                           constants.SUBSYSTEM_PASS, 'b'),
+                  get_dict('config_1', constants.SUBSYSTEMS,
+                           constants.SUBSYSTEM_FAIL, 'c'),
+                  get_dict('config_2', constants.SUBSYSTEMS,
+                           constants.SUBSYSTEM_UNUSED, None),
+                  get_dict('config_3', constants.SUBSYSTEMS,
+                           constants.SUBSYSTEM_PASS, 'a'),
+                  get_dict('config_3', constants.SUBSYSTEMS,
+                           constants.SUBSYSTEM_PASS, 'e'),]
+    # Setup DB and provide list of slave build messages.
+    mock_cidb = mock.MagicMock()
+    cidb.CIDBConnectionFactory.SetupMockCidb(mock_cidb)
+    self.PatchObject(mock_cidb, 'GetSlaveBuildMessages',
+                     return_value=slave_msgs)
+
+    expect_result = {
+        'config_1': {'pass_subsystems':set(['a', 'b']),
+                     'fail_subsystems':set(['c'])},
+        'config_2': {},
+        'config_3': {'pass_subsystems':set(['a', 'e'])}}
+    stage = self.ConstructStage()
+    self.assertEqual(stage.GetSubsysResultForSlaves(), expect_result)
 
 class PublishUprevChangesStageTest(
     generic_stages_unittest.AbstractStageTestCase):
   """Tests for the PublishUprevChanges stage."""
+  BOT_ID = 'master-chromium-pfq'
+
+  def _Prepare(self, bot_id=None, **kwargs):
+    super(PublishUprevChangesStageTest, self)._Prepare(bot_id, **kwargs)
+
+    self._run.config['manifest_version'] = True
+    self._run.config['build_type'] = self.build_type
+    self._run.config['master'] = True
 
   def setUp(self):
     self.PatchObject(completion_stages.PublishUprevChangesStage,
                      '_GetPortageEnvVar')
     self.PatchObject(completion_stages.PublishUprevChangesStage,
                      '_ExtractOverlays', return_value=[['foo'], ['bar']])
+    self.PatchObject(prebuilts.BinhostConfWriter, 'Perform')
     self.push_mock = self.PatchObject(commands, 'UprevPush')
+    self.build_type = constants.PFQ_TYPE
+
+    self._Prepare()
 
   def ConstructStage(self):
     return completion_stages.PublishUprevChangesStage(self._run, success=True)
@@ -634,4 +751,65 @@ class PublishUprevChangesStageTest(
                   extra_cmd_args=['--chrome_rev', constants.CHROME_REV_TOT])
     self._run.options.prebuilts = True
     self.RunStage()
-    self.push_mock.assert_called_once_with(self.build_root, ['bar'], False)
+    self.push_mock.assert_called_once_with(self.build_root, ['bar'], False,
+                                           staging_branch=None)
+
+  def testCheckSlaveUploadPrebuiltsTest(self):
+    """Tests for CheckSlaveUploadPrebuiltsTest."""
+    stage = self.ConstructStage()
+    stage._build_stage_id = 'test_build_stage_id'
+
+    build_id = 'test_master_build_id'
+    mock_cidb = mock.MagicMock()
+    cidb.CIDBConnectionFactory.SetupMockCidb(mock_cidb)
+
+    stage_name = 'UploadPrebuilts'
+
+    slave_a = 'slave_a'
+    slave_b = 'slave_b'
+    slave_c = 'slave_c'
+
+    slave_configs_a = [{'name': slave_a},
+                       {'name': slave_b}]
+    slave_stages_a = [{'name': stage_name,
+                       'build_config': slave_a,
+                       'status': constants.BUILDER_STATUS_PASSED},
+                      {'name': stage_name,
+                       'build_config': slave_b,
+                       'status': constants.BUILDER_STATUS_PASSED}]
+
+    self.PatchObject(completion_stages.PublishUprevChangesStage,
+                     '_GetSlaveConfigs', return_value=slave_configs_a)
+    self.PatchObject(mock_cidb, 'GetSlaveStages',
+                     return_value=slave_stages_a)
+
+    # All important slaves are covered
+    self.assertTrue(stage.CheckSlaveUploadPrebuiltsTest(
+        mock_cidb, build_id))
+
+    slave_stages_b = [{'name': stage_name,
+                       'build_config': slave_a,
+                       'status': constants.BUILDER_STATUS_FAILED},
+                      {'name': stage_name,
+                       'build_config': slave_b,
+                       'status': constants.BUILDER_STATUS_PASSED}]
+    self.PatchObject(completion_stages.PublishUprevChangesStage,
+                     '_GetSlaveConfigs', return_value=slave_configs_a)
+    self.PatchObject(mock_cidb, 'GetSlaveStages',
+                     return_value=slave_stages_b)
+
+    # Slave_a didn't pass the stage
+    self.assertFalse(stage.CheckSlaveUploadPrebuiltsTest(
+        mock_cidb, build_id))
+
+    slave_configs_b = [{'name': slave_a},
+                       {'name': slave_b},
+                       {'name': slave_c}]
+    self.PatchObject(completion_stages.PublishUprevChangesStage,
+                     '_GetSlaveConfigs', return_value=slave_configs_b)
+    self.PatchObject(mock_cidb, 'GetSlaveStages',
+                     return_value=slave_stages_a)
+
+    # No stage information for slave_c
+    self.assertFalse(stage.CheckSlaveUploadPrebuiltsTest(
+        mock_cidb, build_id))

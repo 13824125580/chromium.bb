@@ -4,13 +4,20 @@
 
 #include "chrome/browser/ui/views/chrome_views_delegate.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/location.h"
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/browser_window_state.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -20,8 +27,9 @@
 #include "grit/chrome_unscaled_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
@@ -32,7 +40,7 @@
 #include "base/profiler/scoped_tracker.h"
 #include "base/task_runner_util.h"
 #include "base/win/windows_version.h"
-#include "chrome/browser/app_icon_win.h"
+#include "chrome/browser/win/app_icon.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/win/shell.h"
 #endif
@@ -54,10 +62,10 @@
 
 #if defined(USE_ASH)
 #include "ash/accelerators/accelerator_controller.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/shell.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "chrome/browser/ui/ash/ash_init.h"
-#include "chrome/browser/ui/ash/ash_util.h"
 #endif
 
 // Helpers --------------------------------------------------------------------
@@ -182,6 +190,7 @@ ChromeViewsDelegate::ChromeViewsDelegate() {
 }
 
 ChromeViewsDelegate::~ChromeViewsDelegate() {
+  DCHECK_EQ(0u, ref_count_);
 }
 
 void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
@@ -192,7 +201,7 @@ void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
   if (!prefs)
     return;
 
-  scoped_ptr<DictionaryPrefUpdate> pref_update =
+  std::unique_ptr<DictionaryPrefUpdate> pref_update =
       chrome::GetWindowPlacementDictionaryReadWrite(window_name, prefs);
   base::DictionaryValue* window_preferences = pref_update->Get();
   window_preferences->SetInteger("left", bounds.x());
@@ -202,7 +211,7 @@ void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
   window_preferences->SetBoolean("maximized",
                                  show_state == ui::SHOW_STATE_MAXIMIZED);
   window_preferences->SetBoolean("docked", show_state == ui::SHOW_STATE_DOCKED);
-  gfx::Rect work_area(gfx::Screen::GetScreen()
+  gfx::Rect work_area(display::Screen::GetScreen()
                           ->GetDisplayNearestWindow(window->GetNativeView())
                           .work_area());
   window_preferences->SetInteger("work_area_left", work_area.x());
@@ -243,7 +252,8 @@ bool ChromeViewsDelegate::GetSavedWindowPlacement(
   // On Ash environment, a window won't span across displays.  Adjust
   // the bounds to fit the work area.
   gfx::NativeView window = widget->GetNativeView();
-  gfx::Display display = gfx::Screen::GetScreen()->GetDisplayMatching(*bounds);
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayMatching(*bounds);
   bounds->AdjustToFit(display.work_area());
   ash::wm::GetWindowState(window)->set_minimum_visibility(true);
 #endif
@@ -262,8 +272,8 @@ views::ViewsDelegate::ProcessMenuAcceleratorResult
 ChromeViewsDelegate::ProcessAcceleratorWhileMenuShowing(
     const ui::Accelerator& accelerator) {
 #if defined(USE_ASH)
-  // Handle ash accelerators only when a menu is opened on an ash desktop.
-  if (chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH)
+  // Early return because mash chrome does not have access to ash::Shell
+  if (chrome::IsRunningInMash())
     return views::ViewsDelegate::ProcessMenuAcceleratorResult::LEAVE_MENU_OPEN;
 
   ash::AcceleratorController* accelerator_controller =
@@ -273,9 +283,8 @@ ChromeViewsDelegate::ProcessAcceleratorWhileMenuShowing(
       accelerator);
   if (accelerator_controller->ShouldCloseMenuAndRepostAccelerator(
           accelerator)) {
-    base::MessageLoopForUI::current()->PostTask(
-        FROM_HERE,
-        base::Bind(ProcessAcceleratorNow, accelerator));
+    base::MessageLoopForUI::current()->task_runner()->PostTask(
+        FROM_HERE, base::Bind(ProcessAcceleratorNow, accelerator));
     return views::ViewsDelegate::ProcessMenuAcceleratorResult::CLOSE_MENU;
   }
 
@@ -305,17 +314,25 @@ gfx::ImageSkia* ChromeViewsDelegate::GetDefaultWindowIcon() const {
 #if defined(USE_ASH)
 views::NonClientFrameView* ChromeViewsDelegate::CreateDefaultNonClientFrameView(
     views::Widget* widget) {
-  return chrome::IsNativeViewInAsh(widget->GetNativeView()) ?
-      ash::Shell::GetInstance()->CreateDefaultNonClientFrameView(widget) : NULL;
+  return ash::Shell::GetInstance()->CreateDefaultNonClientFrameView(widget);
 }
 #endif
 
 void ChromeViewsDelegate::AddRef() {
-  g_browser_process->AddRefModule();
+  if (ref_count_ == 0u) {
+    keep_alive_.reset(
+        new ScopedKeepAlive(KeepAliveOrigin::CHROME_VIEWS_DELEGATE,
+                            KeepAliveRestartOption::DISABLED));
+  }
+
+  ++ref_count_;
 }
 
 void ChromeViewsDelegate::ReleaseRef() {
-  g_browser_process->ReleaseModule();
+  DCHECK_NE(0u, ref_count_);
+
+  if (--ref_count_ == 0u)
+    keep_alive_.reset();
 }
 
 void ChromeViewsDelegate::OnBeforeWidgetInit(
@@ -375,8 +392,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
     // windows for most things (they get blended via WS_EX_COMPOSITED, which
     // allows for animation effects, but also exceeding the bounds of the parent
     // window).
-    if (chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH &&
-        params->parent &&
+    if (params->parent &&
         params->type != views::Widget::InitParams::TYPE_CONTROL &&
         params->type != views::Widget::InitParams::TYPE_WINDOW) {
       // When we set this to false, we get a DesktopNativeWidgetAura from the
@@ -392,7 +408,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   }
 #endif  // USE_AURA
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(USE_ASH)
   // When we are doing straight chromeos builds, we still need to handle the
   // toplevel window case.
   // There may be a few remaining widgets in Chrome OS that are not top level,
@@ -410,23 +426,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   // existence of a global WindowTreeClient, if this window is toplevel, it's
   // possible that there is no contextual state that we can use.
   if (params->parent == NULL && params->context == NULL && !params->child) {
-    // We need to make a decision about where to place this window based on the
-    // desktop type.
-    switch (chrome::GetActiveDesktop()) {
-      case chrome::HOST_DESKTOP_TYPE_NATIVE:
-        // If we're native, we should give this window its own toplevel desktop
-        // widget.
-        params->native_widget = new views::DesktopNativeWidgetAura(delegate);
-        break;
-#if defined(USE_ASH)
-      case chrome::HOST_DESKTOP_TYPE_ASH:
-        // If we're in ash, give this window the context of the main monitor.
-        params->context = ash::Shell::GetPrimaryRootWindow();
-        break;
-#endif
-      default:
-        NOTREACHED();
-    }
+    params->native_widget = new views::DesktopNativeWidgetAura(delegate);
   } else if (use_non_toplevel_window) {
     views::NativeWidgetAura* native_widget =
         new views::NativeWidgetAura(delegate);

@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -79,17 +80,17 @@ class WindowController {
   // Populates a dictionary for the Window object. Override this to set
   // implementation specific properties (call the base implementation first to
   // set common properties).
-  virtual base::DictionaryValue* CreateWindowValue() const;
+  std::unique_ptr<base::DictionaryValue> CreateWindowValue() const;
 
   // Populates a dictionary for the Window object, including a list of tabs.
-  virtual base::DictionaryValue* CreateWindowValueWithTabs(
+  virtual std::unique_ptr<base::DictionaryValue> CreateWindowValueWithTabs(
       const extensions::Extension* extension) const = 0;
 
-  virtual scoped_ptr<api::tabs::Tab> CreateTabObject(
+  virtual std::unique_ptr<api::tabs::Tab> CreateTabObject(
       const extensions::Extension* extension,
       int tab_index) const = 0;
 
-  // DEPRECATED: Use scoped_ptr<api::tabs::Tab> CreateTabObject(...)
+  // DEPRECATED: Use std::unique_ptr<api::tabs::Tab> CreateTabObject(...)
   virtual base::DictionaryValue* CreateTabValue(
       const extensions::Extension* extension, int tab_index) const = 0;
 

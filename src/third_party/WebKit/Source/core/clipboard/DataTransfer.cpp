@@ -43,6 +43,7 @@
 #include "platform/MIMETypeRegistry.h"
 #include "platform/clipboard/ClipboardMimeTypes.h"
 #include "platform/clipboard/ClipboardUtilities.h"
+#include <memory>
 
 namespace blink {
 
@@ -189,9 +190,7 @@ Vector<String> DataTransfer::types() const
     if (!canReadTypes())
         return types;
 
-    ListHashSet<String> typesSet = m_dataObject->types();
-    types.appendRange(typesSet.begin(), typesSet.end());
-    return types;
+    return m_dataObject->types();
 }
 
 FileList* DataTransfer::files() const
@@ -219,7 +218,7 @@ void DataTransfer::setDragImage(Element* image, int x, int y)
         return;
 
     IntPoint location(x, y);
-    if (isHTMLImageElement(*image) && !image->inDocument())
+    if (isHTMLImageElement(*image) && !image->inShadowIncludingDocument())
         setDragImageResource(toHTMLImageElement(*image).cachedImage(), location);
     else
         setDragImageElement(image, location);
@@ -245,7 +244,7 @@ void DataTransfer::setDragImageElement(Node* node, const IntPoint& loc)
     setDragImage(0, node, loc);
 }
 
-PassOwnPtr<DragImage> DataTransfer::createDragImage(IntPoint& loc, LocalFrame* frame) const
+std::unique_ptr<DragImage> DataTransfer::createDragImage(IntPoint& loc, LocalFrame* frame) const
 {
     if (m_dragImageElement) {
         loc = m_dragLoc;
@@ -254,7 +253,7 @@ PassOwnPtr<DragImage> DataTransfer::createDragImage(IntPoint& loc, LocalFrame* f
     }
     if (m_dragImage) {
         loc = m_dragLoc;
-        return DragImage::create(m_dragImage->image());
+        return DragImage::create(m_dragImage->getImage());
     }
     return nullptr;
 }
@@ -278,14 +277,14 @@ static void writeImageToDataObject(DataObject* dataObject, Element* element, con
 {
     // Shove image data into a DataObject for use as a file
     ImageResource* cachedImage = getImageResource(element);
-    if (!cachedImage || !cachedImage->image() || !cachedImage->isLoaded())
+    if (!cachedImage || !cachedImage->getImage() || !cachedImage->isLoaded())
         return;
 
-    SharedBuffer* imageBuffer = cachedImage->image()->data();
+    SharedBuffer* imageBuffer = cachedImage->getImage()->data();
     if (!imageBuffer || !imageBuffer->size())
         return;
 
-    String imageExtension = cachedImage->image()->filenameExtension();
+    String imageExtension = cachedImage->getImage()->filenameExtension();
     ASSERT(!imageExtension.isEmpty());
 
     // Determine the filename for the file contents of the image.
@@ -333,7 +332,7 @@ void DataTransfer::declareAndWriteDragImage(Element* element, const KURL& url, c
     m_dataObject->setData(mimeTypeTextHTML, createMarkup(element, IncludeNode, ResolveAllURLs));
 }
 
-void DataTransfer::writeURL(const KURL& url, const String& title)
+void DataTransfer::writeURL(Node* node, const KURL& url, const String& title)
 {
     if (!m_dataObject)
         return;
@@ -342,10 +341,10 @@ void DataTransfer::writeURL(const KURL& url, const String& title)
     m_dataObject->setURLAndTitle(url, title);
 
     // The URL can also be used as plain text.
-    m_dataObject->setData(mimeTypeTextPlain, url.string());
+    m_dataObject->setData(mimeTypeTextPlain, url.getString());
 
     // The URL can also be used as an HTML fragment.
-    m_dataObject->setHTMLAndBaseURL(urlToMarkup(url, title), url);
+    m_dataObject->setHTMLAndBaseURL(createMarkup(node, IncludeNode, ResolveAllURLs), url);
 }
 
 void DataTransfer::writeSelection(const FrameSelection& selection)
@@ -408,13 +407,13 @@ DragOperation DataTransfer::destinationOperation() const
 
 void DataTransfer::setSourceOperation(DragOperation op)
 {
-    ASSERT_ARG(op, op != DragOperationPrivate);
+    DCHECK_NE(op, DragOperationPrivate);
     m_effectAllowed = convertDragOperationToEffectAllowed(op);
 }
 
 void DataTransfer::setDestinationOperation(DragOperation op)
 {
-    ASSERT_ARG(op, op == DragOperationCopy || op == DragOperationNone || op == DragOperationLink || op == DragOperationGeneric || op == DragOperationMove || op == (DragOperation)(DragOperationGeneric | DragOperationMove));
+    DCHECK(op == DragOperationCopy || op == DragOperationNone || op == DragOperationLink || op == DragOperationGeneric || op == DragOperationMove || op == static_cast<DragOperation>(DragOperationGeneric | DragOperationMove));
     m_dropEffect = convertDragOperationToEffectAllowed(op);
 }
 
@@ -514,9 +513,7 @@ DEFINE_TRACE(DataTransfer)
 {
     visitor->trace(m_dataObject);
     visitor->trace(m_dragImage);
-#if ENABLE(OILPAN)
     visitor->trace(m_dragImageElement);
-#endif
 }
 
 } // namespace blink

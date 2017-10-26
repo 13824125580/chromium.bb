@@ -9,8 +9,10 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -369,7 +371,7 @@ class BookmarkBarViewEventTestBase : public ViewEventTestBase {
   virtual bool CreateBigMenu() { return false; }
 
   BookmarkModel* model_;
-  scoped_ptr<BookmarkBarView> bb_view_;
+  std::unique_ptr<BookmarkBarView> bb_view_;
   TestingPageNavigator navigator_;
 
  private:
@@ -406,11 +408,11 @@ class BookmarkBarViewEventTestBase : public ViewEventTestBase {
     model_->AddURL(of2, 1, ASCIIToUTF16("of2b"), GURL(test_base + "of2b"));
   }
 
-  scoped_ptr<ChromeContentClient> content_client_;
-  scoped_ptr<ChromeContentBrowserClient> browser_content_client_;
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<Browser> browser_;
-  scoped_ptr<ScopedTestingLocalState> local_state_;
+  std::unique_ptr<ChromeContentClient> content_client_;
+  std::unique_ptr<ChromeContentBrowserClient> browser_content_client_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<Browser> browser_;
+  std::unique_ptr<ScopedTestingLocalState> local_state_;
 };
 
 // Clicks on first menu, makes sure button is depressed. Moves mouse to first
@@ -614,7 +616,7 @@ class BookmarkContextMenuNotificationObserver
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
-    base::MessageLoop::current()->task_runner()->PostTask(FROM_HERE, task_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, task_);
   }
 
   // Sets the task that is posted when the context menu is shown.
@@ -1049,7 +1051,7 @@ class BookmarkBarViewTest9 : public BookmarkBarViewEventTestBase {
   }
 
   void Step3() {
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, base::Bind(&BookmarkBarViewTest9::Step4, this),
         base::TimeDelta::FromMilliseconds(200));
   }
@@ -1065,7 +1067,7 @@ class BookmarkBarViewTest9 : public BookmarkBarViewEventTestBase {
     // On linux, Cancelling menu will call Quit on the message loop,
     // which can interfere with Done. We need to run Done in the
     // next execution loop.
-    base::MessageLoop::current()->task_runner()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&ViewEventTestBase::Done, this));
   }
 
@@ -1092,7 +1094,7 @@ class BookmarkBarViewTest10 : public BookmarkBarViewEventTestBase {
     ui_test_utils::MoveMouseToCenterAndPress(button, ui_controls::LEFT,
         ui_controls::DOWN | ui_controls::UP,
         CreateEventTask(this, &BookmarkBarViewTest10::Step2));
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
@@ -1339,7 +1341,7 @@ class BookmarkBarViewTest12 : public BookmarkBarViewEventTestBase {
     ASSERT_TRUE(child_menu != NULL);
 
     // Click and wait until the dialog box appears.
-    scoped_ptr<DialogWaiter> dialog_waiter(new DialogWaiter());
+    std::unique_ptr<DialogWaiter> dialog_waiter(new DialogWaiter());
     ui_test_utils::MoveMouseToCenterAndPress(
         child_menu,
         ui_controls::LEFT,
@@ -1348,7 +1350,7 @@ class BookmarkBarViewTest12 : public BookmarkBarViewEventTestBase {
             &BookmarkBarViewTest12::Step4, this, base::Passed(&dialog_waiter)));
   }
 
-  void Step4(scoped_ptr<DialogWaiter> waiter) {
+  void Step4(std::unique_ptr<DialogWaiter> waiter) {
     views::Widget* dialog = waiter->WaitForDialog();
     waiter.reset();
 
@@ -1360,7 +1362,7 @@ class BookmarkBarViewTest12 : public BookmarkBarViewEventTestBase {
     tab_waiter.WaitForTab();
 
     // For some reason return isn't processed correctly unless we delay.
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, base::Bind(&BookmarkBarViewTest12::Step5, this,
                               base::Unretained(dialog)),
         base::TimeDelta::FromSeconds(1));
@@ -1622,7 +1624,7 @@ class BookmarkBarViewTest16 : public BookmarkBarViewEventTestBase {
     window_->Close();
     window_ = NULL;
 
-    base::MessageLoop::current()->task_runner()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, CreateEventTask(this, &BookmarkBarViewTest16::Done));
   }
 };
@@ -2281,7 +2283,7 @@ class BookmarkBarViewTest25 : public BookmarkBarViewEventTestBase {
     ui_test_utils::MoveMouseToCenterAndPress(
         button, ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
         CreateEventTask(this, &BookmarkBarViewTest25::Step2));
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
@@ -2324,7 +2326,7 @@ class BookmarkBarViewTest26 : public BookmarkBarViewEventTestBase {
     ui_test_utils::MoveMouseToCenterAndPress(
         button, ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
         CreateEventTask(this, &BookmarkBarViewTest26::Step2));
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
@@ -2341,7 +2343,7 @@ class BookmarkBarViewTest26 : public BookmarkBarViewEventTestBase {
         GetWidget()->GetNativeView()->GetHost()->GetAcceleratedWidget(),
         WM_CANCELMODE, 0, 0);
 
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&BookmarkBarViewTest26::Step3, this));
   }
 

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
@@ -15,7 +16,6 @@
 #include "base/command_line.h"
 #include "base/containers/hash_tables.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,7 +26,7 @@
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
-#include "gpu/command_buffer/service/gpu_switches.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/program_cache.h"
 #include "gpu/command_buffer/service/shader_manager.h"
 #include "third_party/re2/src/re2/re2.h"
@@ -251,6 +251,9 @@ Program::UniformInfo::UniformInfo(const std::string& client_name,
   texture_units.clear();
   texture_units.resize(num_texture_units, 0);
 }
+
+Program::UniformInfo::UniformInfo(const UniformInfo& other) = default;
+
 Program::UniformInfo::~UniformInfo() {}
 
 bool ProgramManager::HasBuiltInPrefix(const std::string& name) {
@@ -317,7 +320,7 @@ void Program::UpdateLogInfo() {
     set_log_info(NULL);
     return;
   }
-  scoped_ptr<char[]> temp(new char[max_len]);
+  std::unique_ptr<char[]> temp(new char[max_len]);
   GLint len = 0;
   glGetProgramInfoLog(service_id_, max_len, &len, temp.get());
   DCHECK(max_len == 0 || len < max_len);
@@ -461,7 +464,7 @@ void Program::Update() {
   glGetProgramiv(service_id_, GL_ACTIVE_ATTRIBUTES, &num_attribs);
   glGetProgramiv(service_id_, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &max_len);
   // TODO(gman): Should we check for error?
-  scoped_ptr<char[]> name_buffer(new char[max_len]);
+  std::unique_ptr<char[]> name_buffer(new char[max_len]);
   for (GLint ii = 0; ii < num_attribs; ++ii) {
     GLsizei length = 0;
     GLsizei size = 0;
@@ -489,12 +492,12 @@ void Program::Update() {
   }
   for (size_t ii = 0; ii < attrib_infos_.size(); ++ii) {
     const VertexAttrib& info = attrib_infos_[ii];
-    attrib_location_to_index_map_[info.location] = ii;
+    if (info.location >= 0 && info.location <= max_location) {
+      attrib_location_to_index_map_[info.location] = ii;
+    }
   }
 
-#if !defined(NDEBUG)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableGPUServiceLoggingGPU)) {
+  if (manager_->gpu_preferences_.enable_gpu_service_logging_gpu) {
     DVLOG(1) << "----: attribs for service_id: " << service_id();
     for (size_t ii = 0; ii < attrib_infos_.size(); ++ii) {
       const VertexAttrib& info = attrib_infos_[ii];
@@ -504,12 +507,10 @@ void Program::Update() {
                << ", name = " << info.name;
     }
   }
-#endif
+
   UpdateUniforms();
 
-#if !defined(NDEBUG)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableGPUServiceLoggingGPU)) {
+  if (manager_->gpu_preferences_.enable_gpu_service_logging_gpu) {
     DVLOG(1) << "----: uniforms for service_id: " << service_id();
     size_t ii = 0;
     for (const UniformInfo& info : uniform_infos_) {
@@ -519,7 +520,6 @@ void Program::Update() {
                << ", name = " << info.name;
     }
   }
-#endif
 
   UpdateFragmentInputs();
   UpdateProgramOutputs();
@@ -551,7 +551,7 @@ void Program::UpdateUniforms() {
   glGetProgramiv(service_id_, GL_ACTIVE_UNIFORM_MAX_LENGTH,
                  &name_buffer_length);
   DCHECK(name_buffer_length > 0);
-  scoped_ptr<char[]> name_buffer(new char[name_buffer_length]);
+  std::unique_ptr<char[]> name_buffer(new char[name_buffer_length]);
 
   size_t unused_client_location_cursor = 0;
 
@@ -588,8 +588,46 @@ void Program::UpdateUniforms() {
         is_array = info->arraySize > 0;
         type = info->type;
         size = std::max(1u, info->arraySize);
+      } else {
+        const InterfaceBlockMap& interface_block_map =
+            shader->interface_block_map();
+        for (const auto& key_value : interface_block_map) {
+          const sh::InterfaceBlock& block = key_value.second;
+          bool find = false;
+          if (block.instanceName.empty()) {
+            for (const auto& value : block.fields) {
+              if (value.findInfoByMappedName(service_name, &info,
+                      &client_name)) {
+                find = true;
+                break;
+              }
+            }
+          } else {
+            size_t pos = service_name.find_first_of('.');
+            std::string top_variable_name = service_name.substr(0, pos);
+            if (block.mappedName == top_variable_name) {
+              DCHECK(pos != std::string::npos);
+              for (const auto& field : block.fields) {
+                if (field.findInfoByMappedName(service_name.substr(
+                    pos + 1), &info, &client_name)) {
+                  find = true;
+                  client_name = block.name + "." + client_name;
+                  break;
+                }
+              }
+            }
+          }
+          if (find) {
+            DCHECK(!client_name.empty());
+            is_array = info->arraySize > 0;
+            type = info->type;
+            size = std::max(1u, info->arraySize);
+            break;
+          }
+        }
       }
     }
+
     if (client_name.empty()) {
       // This happens only in cases where we do not have ANGLE or run unit tests
       // (or ANGLE has a severe bug).
@@ -687,7 +725,7 @@ void Program::UpdateFragmentInputs() {
                           &max_len);
   DCHECK(max_len > 0);
 
-  scoped_ptr<char[]> name_buffer(new char[max_len]);
+  std::unique_ptr<char[]> name_buffer(new char[max_len]);
 
   Shader* fragment_shader =
       attached_shaders_[ShaderTypeToIndex(GL_FRAGMENT_SHADER)].get();
@@ -792,7 +830,7 @@ void Program::UpdateFragmentInputs() {
 }
 
 void Program::UpdateProgramOutputs() {
-  if (!feature_info().gl_version_info().IsES3Capable() ||
+  if (!feature_info().gl_version_info().is_es3_capable ||
       feature_info().disable_shader_translator())
     return;
 
@@ -1075,7 +1113,7 @@ bool Program::Link(ShaderManager* manager,
     ExecuteProgramOutputBindCalls();
 
     before_time = TimeTicks::Now();
-    if (cache && gfx::g_driver_gl.ext.b_GL_ARB_get_program_binary) {
+    if (cache && gl::g_driver_gl.ext.b_GL_ARB_get_program_binary) {
       glProgramParameteri(service_id(),
                           PROGRAM_BINARY_RETRIEVABLE_HINT,
                           GL_TRUE);
@@ -1086,7 +1124,6 @@ bool Program::Link(ShaderManager* manager,
   GLint success = 0;
   glGetProgramiv(service_id(), GL_LINK_STATUS, &success);
   if (success == GL_TRUE) {
-    GatherInterfaceBlockInfo();
     Update();
     if (link) {
       // ANGLE updates the translated shader sources on link.
@@ -1332,68 +1369,6 @@ void Program::GetVertexAttribData(
   *original_name = name;
 }
 
-template <typename VarT>
-void Program::GetUniformBlockMembers(
-    Shader* shader, const std::vector<VarT>& fields,
-    const std::string& prefix) {
-  for (const VarT& field : fields) {
-    const std::string& full_name =
-        (prefix.empty() ? field.name : prefix + "." + field.name);
-    const std::string& mapped_name = *(shader->GetMappedName(field.name));
-
-    if (field.isStruct()) {
-      for (unsigned int array_element = 0; array_element < field.elementCount();
-           ++array_element) {
-        std::string array_string = base::StringPrintf("[%d]", array_element);
-        const std::string uniform_element_name =
-            full_name + (field.isArray() ? array_string: "");
-        GetUniformBlockMembers(shader, field.fields, uniform_element_name);
-      }
-    } else {
-      sh::Uniform info;
-      info.name = full_name;
-      info.mappedName = mapped_name;
-      info.type = field.type;
-      info.arraySize = field.arraySize;
-      info.precision = field.precision;
-      shader->AddUniformToUniformMap(info);
-    }
-  }
-}
-
-void Program::GetUniformBlockFromInterfaceBlock(
-    Shader* shader, const sh::InterfaceBlock& interface_block) {
-  GLuint program_id = service_id();
-
-  // Don't define this block at all if it's not active in the implementation
-  const std::string* mapped_name = shader->GetMappedName(interface_block.name);
-  GLuint block_index = glGetUniformBlockIndex(program_id, mapped_name->c_str());
-  if (block_index == GL_INVALID_INDEX)
-    return;
-
-  GetUniformBlockMembers(shader, interface_block.fields, "");
-}
-
-void Program::GatherInterfaceBlockInfo() {
-  base::hash_set<std::string> visited_list;
-  for (auto shader : attached_shaders_) {
-    const InterfaceBlockMap& interface_block_map =
-        shader->interface_block_map();
-    for (const auto& key_value : interface_block_map) {
-      const sh::InterfaceBlock& block = key_value.second;
-      // Only 'packed' blocks are allowed to be considered inactive.
-      if (!block.staticUse && block.layout == sh::BLOCKLAYOUT_PACKED)
-        continue;
-
-      if (visited_list.find(block.name) != visited_list.end())
-        continue;
-
-      GetUniformBlockFromInterfaceBlock(shader.get(), block);
-      visited_list.insert(block.name);
-    }
-  }
-}
-
 const Program::UniformInfo*
     Program::GetUniformInfo(
         GLint index) const {
@@ -1485,18 +1460,19 @@ bool Program::AttachShader(
   return true;
 }
 
-bool Program::DetachShader(
+bool Program::IsShaderAttached(Shader* shader) {
+  return attached_shaders_[ShaderTypeToIndex(shader->shader_type())].get() ==
+         shader;
+}
+
+void Program::DetachShader(
     ShaderManager* shader_manager,
     Shader* shader) {
   DCHECK(shader_manager);
   DCHECK(shader);
-  if (attached_shaders_[ShaderTypeToIndex(shader->shader_type())].get() !=
-      shader) {
-    return false;
-  }
+  DCHECK(IsShaderAttached(shader));
   attached_shaders_[ShaderTypeToIndex(shader->shader_type())] = NULL;
   shader_manager->UnuseShader(shader);
-  return true;
 }
 
 void Program::DetachShaders(ShaderManager* shader_manager) {
@@ -1811,7 +1787,7 @@ bool Program::CheckVaryingsPacking(
 
   if (combined_map.size() == 0)
     return true;
-  scoped_ptr<ShVariableInfo[]> variables(
+  std::unique_ptr<ShVariableInfo[]> variables(
       new ShVariableInfo[combined_map.size()]);
   size_t index = 0;
   for (const auto& key_value : combined_map) {
@@ -1971,9 +1947,17 @@ bool Program::GetUniformBlocks(CommonDecoder::Bucket* bucket) const {
     DCHECK_EQ(param, length + 1);
     names[ii] = std::string(&buffer[0], length);
     // TODO(zmo): optimize the name mapping lookup.
-    const std::string* original_name = GetOriginalNameFromHashedName(names[ii]);
+    size_t pos = names[ii].find_first_of('[');
+    const std::string* original_name;
+    std::string array_index_str = "";
+    if (pos != std::string::npos) {
+      original_name = GetOriginalNameFromHashedName(names[ii].substr(0, pos));
+      array_index_str = names[ii].substr(pos);
+    } else {
+      original_name = GetOriginalNameFromHashedName(names[ii]);
+    }
     if (original_name)
-      names[ii] = *original_name;
+      names[ii] = *original_name + array_index_str;
     blocks[ii].name_length = names[ii].size() + 1;
     size += blocks[ii].name_length;
 
@@ -2264,15 +2248,18 @@ Program::~Program() {
   }
 }
 
-ProgramManager::ProgramManager(ProgramCache* program_cache,
-                               uint32_t max_varying_vectors,
-                               uint32_t max_dual_source_draw_buffers,
-                               FeatureInfo* feature_info)
+ProgramManager::ProgramManager(
+    ProgramCache* program_cache,
+    uint32_t max_varying_vectors,
+    uint32_t max_dual_source_draw_buffers,
+    const GpuPreferences& gpu_preferences,
+    FeatureInfo* feature_info)
     : program_count_(0),
       have_context_(true),
       program_cache_(program_cache),
       max_varying_vectors_(max_varying_vectors),
       max_dual_source_draw_buffers_(max_dual_source_draw_buffers),
+      gpu_preferences_(gpu_preferences),
       feature_info_(feature_info) {}
 
 ProgramManager::~ProgramManager() {

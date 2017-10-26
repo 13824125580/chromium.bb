@@ -44,6 +44,7 @@ component("webview") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -69,3 +70,5 @@ source_set("test_support") {
     "//ui/views:test_support",
   ]
 }
+}
+

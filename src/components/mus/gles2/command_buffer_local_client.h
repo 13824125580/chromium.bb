@@ -7,12 +7,20 @@
 
 #include <stdint.h>
 
+#include "ui/gfx/swap_result.h"
+
+namespace base {
+class TimeDelta;
+class TimeTicks;
+}
+
 namespace mus {
 
 class CommandBufferLocalClient {
  public:
-  virtual void UpdateVSyncParameters(int64_t timebase, int64_t interval) = 0;
-  virtual void DidLoseContext() = 0;
+  virtual void UpdateVSyncParameters(const base::TimeTicks& timebase,
+                                     const base::TimeDelta& interval) = 0;
+  virtual void GpuCompletedSwapBuffers(gfx::SwapResult result) = 0;
 
  protected:
   virtual ~CommandBufferLocalClient() {}

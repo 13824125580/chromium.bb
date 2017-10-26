@@ -31,21 +31,18 @@
 #ifndef WorkerInspectorController_h
 #define WorkerInspectorController_h
 
-#include "core/inspector/InspectorBaseAgent.h"
-#include "core/inspector/InspectorRuntimeAgent.h"
+#include "core/inspector/InspectorSession.h"
 #include "core/inspector/InspectorTaskRunner.h"
 #include "wtf/Allocator.h"
 #include "wtf/Forward.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
 
 class InstrumentingAgents;
-class WorkerDebuggerAgent;
+class V8Debugger;
 class WorkerGlobalScope;
-class WorkerRuntimeAgent;
 class WorkerThreadDebugger;
 
 namespace protocol {
@@ -54,49 +51,32 @@ class Frontend;
 class FrontendChannel;
 }
 
-class WorkerInspectorController final : public RefCountedWillBeGarbageCollectedFinalized<WorkerInspectorController>, public InspectorRuntimeAgent::Client {
+class WorkerInspectorController final : public GarbageCollectedFinalized<WorkerInspectorController>, public InspectorSession::Client {
     WTF_MAKE_NONCOPYABLE(WorkerInspectorController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(WorkerInspectorController);
 public:
-    explicit WorkerInspectorController(WorkerGlobalScope*);
+    static WorkerInspectorController* create(WorkerGlobalScope*);
     ~WorkerInspectorController();
     DECLARE_TRACE();
 
-    void registerModuleAgent(PassOwnPtrWillBeRawPtr<InspectorAgent>);
+    InstrumentingAgents* instrumentingAgents() const { return m_instrumentingAgents.get(); }
+
     void connectFrontend();
     void disconnectFrontend();
-    void restoreInspectorStateFromCookie(const String& inspectorCookie);
     void dispatchMessageFromFrontend(const String&);
     void dispose();
-    void interruptAndDispatchInspectorCommands();
-
-    void workerContextInitialized(bool pauseOnStart);
 
 private:
-    friend InstrumentingAgents* instrumentationForWorkerGlobalScope(WorkerGlobalScope*);
+    WorkerInspectorController(WorkerGlobalScope*, WorkerThreadDebugger*);
 
-    // InspectorRuntimeAgent::Client implementation.
-    void pauseOnStart();
+    // InspectorSession::Client implementation.
+    void sendProtocolMessage(int sessionId, int callId, const String& response, const String& state) override;
     void resumeStartup() override;
-    bool isRunRequired() override;
+    void consoleEnabled() override;
 
-    class PageInspectorProxy;
-    friend WTF::OwnedPtrDeleter<PageInspectorProxy>;
-
-    protocol::FrontendChannel* frontendChannel() const;
-
-    RawPtrWillBeMember<WorkerGlobalScope> m_workerGlobalScope;
-    RefPtrWillBeMember<InstrumentingAgents> m_instrumentingAgents;
-    WorkerThreadDebugger* m_workerThreadDebugger;
-    InspectorAgentRegistry m_agents;
-    OwnPtrWillBeMember<PageInspectorProxy> m_pageInspectorProxy;
-    OwnPtr<protocol::Frontend> m_frontend;
-    RefPtr<protocol::Dispatcher> m_backendDispatcher;
-    RawPtrWillBeMember<WorkerDebuggerAgent> m_workerDebuggerAgent;
-    RawPtrWillBeMember<WorkerRuntimeAgent> m_workerRuntimeAgent;
-    OwnPtr<InspectorTaskRunner> m_inspectorTaskRunner;
-    OwnPtr<InspectorTaskRunner::IgnoreInterruptsScope> m_beforeInitlizedScope;
-    bool m_paused;
+    WorkerThreadDebugger* m_debugger;
+    Member<WorkerGlobalScope> m_workerGlobalScope;
+    Member<InstrumentingAgents> m_instrumentingAgents;
+    Member<InspectorSession> m_session;
 };
 
 } // namespace blink

@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_SYNCABLE_PREFS_PREF_SERVICE_SYNCABLE_FACTORY_H_
 #define COMPONENTS_SYNCABLE_PREFS_PREF_SERVICE_SYNCABLE_FACTORY_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "components/prefs/pref_service_factory.h"
 
@@ -34,18 +36,17 @@ class PrefServiceSyncableFactory : public PrefServiceFactory {
   PrefServiceSyncableFactory();
   ~PrefServiceSyncableFactory() override;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // Set up policy pref stores using the given policy service and connector.
+  // These will assert when policy is not used.
   void SetManagedPolicies(policy::PolicyService* service,
                           policy::BrowserPolicyConnector* connector);
   void SetRecommendedPolicies(policy::PolicyService* service,
                               policy::BrowserPolicyConnector* connector);
-#endif
 
   void SetPrefModelAssociatorClient(
       PrefModelAssociatorClient* pref_model_associator_client);
 
-  scoped_ptr<PrefServiceSyncable> CreateSyncable(
+  std::unique_ptr<PrefServiceSyncable> CreateSyncable(
       user_prefs::PrefRegistrySyncable* registry);
 
  private:

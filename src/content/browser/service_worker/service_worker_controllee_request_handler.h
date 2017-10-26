@@ -28,7 +28,7 @@ class URLRequest;
 
 namespace content {
 
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 class ServiceWorkerRegistration;
 class ServiceWorkerVersion;
 
@@ -48,7 +48,7 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body);
   ~ServiceWorkerControlleeRequestHandler() override;
 
   // Called via custom URLRequestJobFactory.
@@ -56,8 +56,6 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
       net::URLRequest* request,
       net::NetworkDelegate* network_delegate,
       ResourceContext* resource_context) override;
-
-  void GetExtraResponseInfo(ResourceResponseInfo* response_info) const override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerControlleeRequestHandlerTest,
@@ -89,18 +87,7 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
 
   // Called just before the request is restarted. Makes sure the next request
   // goes over the network.
-  void OnPrepareToRestart(base::TimeTicks service_worker_start_time,
-                          base::TimeTicks service_worker_ready_time) override;
-
-  // Called when the request's start phase completes. Caches response info for
-  // GetExtraResponseInfo.
-  void OnStartCompleted(
-      bool was_fetched_via_service_worker,
-      bool was_fallback_required,
-      const GURL& original_url_via_service_worker,
-      blink::WebServiceWorkerResponseType response_type_via_service_worker,
-      base::TimeTicks worker_start_time,
-      base::TimeTicks service_worker_ready_time) override;
+  void OnPrepareToRestart() override;
 
   ServiceWorkerVersion* GetServiceWorkerVersion(
       ServiceWorkerMetrics::URLRequestJobResult* result) override;
@@ -112,14 +99,15 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   // that job, except for timing information.
   void ClearJob();
 
-  bool is_main_resource_load_;
+  const bool is_main_resource_load_;
+  const bool is_main_frame_load_;
   base::WeakPtr<ServiceWorkerURLRequestJob> job_;
   FetchRequestMode request_mode_;
   FetchCredentialsMode credentials_mode_;
   FetchRedirectMode redirect_mode_;
   RequestContextType request_context_type_;
   RequestContextFrameType frame_type_;
-  scoped_refptr<ResourceRequestBody> body_;
+  scoped_refptr<ResourceRequestBodyImpl> body_;
   ResourceContext* resource_context_;
   GURL stripped_url_;
   bool force_update_started_;
@@ -128,14 +116,6 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   // delivered from the network, bypassing the ServiceWorker. Cleared after the
   // next intercept opportunity, for main frame requests.
   bool use_network_;
-
-  // Cached metadata for GetExtraResponseInfo.
-  bool was_fetched_via_service_worker_;
-  bool was_fallback_required_;
-  GURL original_url_via_service_worker_;
-  blink::WebServiceWorkerResponseType response_type_via_service_worker_;
-  base::TimeTicks service_worker_start_time_;
-  base::TimeTicks service_worker_ready_time_;
 
   base::WeakPtrFactory<ServiceWorkerControlleeRequestHandler> weak_factory_;
 

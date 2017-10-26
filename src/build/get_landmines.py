@@ -52,11 +52,9 @@ def print_landmines():
     print "Switched win x64 trybots from VS2010 to VS2012."
   if (platform() == 'win' and builder() == 'ninja' and
       gyp_msvs_version().startswith('2013')):
-    print "Switched win from VS2010 to VS2013."
-    print "Update to VS2013 Update 2."
-    print "Update to VS2013 Update 4."
+    print "Switch to VS2013"
   if (platform() == 'win' and gyp_msvs_version().startswith('2015')):
-    print 'Switch to VS2015'
+    print 'Switch to VS2015 Update 2'
   print 'Need to clobber everything due to an IDL change in r154579 (blink)'
   print 'Need to clobber everything due to gen file moves in r175513 (Blink)'
   if (platform() != 'ios'):
@@ -79,6 +77,8 @@ def print_landmines():
     print 'Clobber to support new location/infra for chrome_sync_shell_apk'
   if platform() == 'mac':
     print 'Clobber to get rid of evil libsqlite3.dylib (crbug.com/526208)'
+  if platform() == 'mac':
+    print 'Clobber to remove libsystem.dylib. See crbug.com/620075'
 
 
 def main():

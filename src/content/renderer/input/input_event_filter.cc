@@ -4,13 +4,15 @@
 
 #include "content/renderer/input/input_event_filter.h"
 
+#include <tuple>
 #include <utility>
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "content/common/input/did_overscroll_params.h"
 #include "content/common/input/web_input_event_traits.h"
@@ -19,7 +21,6 @@
 #include "content/public/common/content_switches.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
-#include "ui/events/blink/synchronous_input_handler_proxy.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 using blink::WebInputEvent;
@@ -59,16 +60,22 @@ void InputEventFilter::SetBoundHandler(const Handler& handler) {
   handler_ = handler;
 }
 
-void InputEventFilter::DidAddInputHandler(
-    int routing_id,
-    ui::SynchronousInputHandlerProxy*
-        synchronous_input_handler_proxy) {
-  base::AutoLock locked(routes_lock_);
-  routes_.insert(routing_id);
-  route_queues_[routing_id].reset(new NonBlockingEventQueue(routing_id, this));
+void InputEventFilter::SetIsFlingingInMainThreadEventQueue(int routing_id,
+                                                           bool is_flinging) {
+  RouteQueueMap::iterator iter = route_queues_.find(routing_id);
+  if (iter == route_queues_.end() || !iter->second)
+    return;
+
+  iter->second->set_is_flinging(is_flinging);
 }
 
-void InputEventFilter::DidRemoveInputHandler(int routing_id) {
+void InputEventFilter::RegisterRoutingID(int routing_id) {
+  base::AutoLock locked(routes_lock_);
+  routes_.insert(routing_id);
+  route_queues_[routing_id].reset(new MainThreadEventQueue(routing_id, this));
+}
+
+void InputEventFilter::UnregisterRoutingID(int routing_id) {
   base::AutoLock locked(routes_lock_);
   routes_.erase(routing_id);
   route_queues_.erase(routing_id);
@@ -81,23 +88,28 @@ void InputEventFilter::DidOverscroll(int routing_id,
     return;
   }
 
-  SendMessage(scoped_ptr<IPC::Message>(
+  SendMessage(std::unique_ptr<IPC::Message>(
       new InputHostMsg_DidOverscroll(routing_id, params)));
 }
 
-void InputEventFilter::DidStopFlinging(int routing_id) {
-  SendMessage(make_scoped_ptr(new InputHostMsg_DidStopFlinging(routing_id)));
+void InputEventFilter::DidStartFlinging(int routing_id) {
+  SetIsFlingingInMainThreadEventQueue(routing_id, true);
 }
 
-void InputEventFilter::NonBlockingInputEventHandled(
-    int routing_id,
-    blink::WebInputEvent::Type type) {
+void InputEventFilter::DidStopFlinging(int routing_id) {
+  SetIsFlingingInMainThreadEventQueue(routing_id, false);
+  SendMessage(base::WrapUnique(new InputHostMsg_DidStopFlinging(routing_id)));
+}
+
+void InputEventFilter::NotifyInputEventHandled(int routing_id,
+                                               blink::WebInputEvent::Type type,
+                                               InputEventAckState ack_result) {
   DCHECK(target_task_runner_->BelongsToCurrentThread());
   RouteQueueMap::iterator iter = route_queues_.find(routing_id);
   if (iter == route_queues_.end() || !iter->second)
     return;
 
-  iter->second->EventHandled(type);
+  iter->second->EventHandled(type, ack_result);
 }
 
 void InputEventFilter::OnFilterAdded(IPC::Sender* sender) {
@@ -163,38 +175,31 @@ void InputEventFilter::ForwardToHandler(const IPC::Message& message) {
   InputMsg_HandleInputEvent::Param params;
   if (!InputMsg_HandleInputEvent::Read(&message, &params))
     return;
-  const WebInputEvent* event = base::get<0>(params);
-  ui::LatencyInfo latency_info = base::get<1>(params);
-  InputEventDispatchType dispatch_type = base::get<2>(params);
+  const WebInputEvent* event = std::get<0>(params);
+  ui::LatencyInfo latency_info = std::get<1>(params);
+  InputEventDispatchType dispatch_type = std::get<2>(params);
   DCHECK(event);
-  DCHECK_EQ(DISPATCH_TYPE_NORMAL, dispatch_type);
+  DCHECK(dispatch_type == DISPATCH_TYPE_BLOCKING ||
+         dispatch_type == DISPATCH_TYPE_NON_BLOCKING);
 
-  bool send_ack = WebInputEventTraits::WillReceiveAckFromRenderer(*event);
+  bool send_ack = dispatch_type == DISPATCH_TYPE_BLOCKING;
 
   // Intercept |DidOverscroll| notifications, bundling any triggered overscroll
   // response with the input event ack.
-  scoped_ptr<DidOverscrollParams> overscroll_params;
-  base::AutoReset<scoped_ptr<DidOverscrollParams>*>
+  std::unique_ptr<DidOverscrollParams> overscroll_params;
+  base::AutoReset<std::unique_ptr<DidOverscrollParams>*>
       auto_reset_current_overscroll_params(
           &current_overscroll_params_, send_ack ? &overscroll_params : NULL);
 
   InputEventAckState ack_state = handler_.Run(routing_id, event, &latency_info);
 
-  if (ack_state == INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING) {
+  if (ack_state == INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING ||
+      ack_state == INPUT_EVENT_ACK_STATE_NOT_CONSUMED) {
     DCHECK(!overscroll_params);
     RouteQueueMap::iterator iter = route_queues_.find(routing_id);
     if (iter != route_queues_.end())
-      iter->second->HandleEvent(event, latency_info);
-  } else if (ack_state == INPUT_EVENT_ACK_STATE_NOT_CONSUMED) {
-    DCHECK(!overscroll_params);
-    TRACE_EVENT_INSTANT0(
-        "input", "InputEventFilter::ForwardToHandler::ForwardToMainListener",
-        TRACE_EVENT_SCOPE_THREAD);
-    IPC::Message new_msg =
-        InputMsg_HandleInputEvent(routing_id, event, latency_info,
-                                  InputEventDispatchType::DISPATCH_TYPE_NORMAL);
-    main_task_runner_->PostTask(FROM_HERE, base::Bind(main_listener_, new_msg));
-    send_ack = false;
+      send_ack &= iter->second->HandleEvent(event, latency_info, dispatch_type,
+                                            ack_state);
   }
 
   if (!send_ack)
@@ -203,11 +208,11 @@ void InputEventFilter::ForwardToHandler(const IPC::Message& message) {
   InputEventAck ack(event->type, ack_state, latency_info,
                     std::move(overscroll_params),
                     WebInputEventTraits::GetUniqueTouchEventId(*event));
-  SendMessage(scoped_ptr<IPC::Message>(
+  SendMessage(std::unique_ptr<IPC::Message>(
       new InputHostMsg_HandleInputEvent_ACK(routing_id, ack)));
 }
 
-void InputEventFilter::SendMessage(scoped_ptr<IPC::Message> message) {
+void InputEventFilter::SendMessage(std::unique_ptr<IPC::Message> message) {
   DCHECK(target_task_runner_->BelongsToCurrentThread());
 
   io_task_runner_->PostTask(
@@ -215,7 +220,8 @@ void InputEventFilter::SendMessage(scoped_ptr<IPC::Message> message) {
                             base::Passed(&message)));
 }
 
-void InputEventFilter::SendMessageOnIOThread(scoped_ptr<IPC::Message> message) {
+void InputEventFilter::SendMessageOnIOThread(
+    std::unique_ptr<IPC::Message> message) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
   if (!sender_)
@@ -224,15 +230,26 @@ void InputEventFilter::SendMessageOnIOThread(scoped_ptr<IPC::Message> message) {
   sender_->Send(message.release());
 }
 
-void InputEventFilter::SendNonBlockingEvent(int routing_id,
-                                            const blink::WebInputEvent* event,
-                                            const ui::LatencyInfo& latency) {
-  TRACE_EVENT_INSTANT0("input", "InputEventFilter::SendNonBlockingEvent",
-                       TRACE_EVENT_SCOPE_THREAD);
-  IPC::Message new_msg = InputMsg_HandleInputEvent(
-      routing_id, event, latency,
-      InputEventDispatchType::DISPATCH_TYPE_NON_BLOCKING);
+void InputEventFilter::SendEventToMainThread(
+    int routing_id,
+    const blink::WebInputEvent* event,
+    const ui::LatencyInfo& latency_info,
+    InputEventDispatchType dispatch_type) {
+  TRACE_EVENT_INSTANT0(
+      "input", "InputEventFilter::ForwardToHandler::SendEventToMainThread",
+      TRACE_EVENT_SCOPE_THREAD);
+  IPC::Message new_msg =
+      InputMsg_HandleInputEvent(routing_id, event, latency_info, dispatch_type);
   main_task_runner_->PostTask(FROM_HERE, base::Bind(main_listener_, new_msg));
+}
+
+void InputEventFilter::SendInputEventAck(int routing_id,
+                                         blink::WebInputEvent::Type type,
+                                         InputEventAckState ack_result,
+                                         uint32_t touch_event_id) {
+  InputEventAck ack(type, ack_result, touch_event_id);
+  SendMessage(std::unique_ptr<IPC::Message>(
+      new InputHostMsg_HandleInputEvent_ACK(routing_id, ack)));
 }
 
 }  // namespace content

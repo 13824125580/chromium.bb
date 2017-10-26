@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/threading/platform_thread.h"
 #include "net/socket/client_socket_factory.h"
@@ -28,6 +29,8 @@
 #include "remoting/host/it2me_desktop_environment.h"
 #include "remoting/host/policy_watcher.h"
 #include "remoting/host/register_support_host_request.h"
+#include "remoting/host/service_urls.h"
+#include "remoting/protocol/auth_util.h"
 #include "remoting/protocol/chromium_port_allocator_factory.h"
 #include "remoting/protocol/ice_transport.h"
 #include "remoting/protocol/it2me_host_authenticator_factory.h"
@@ -47,9 +50,9 @@ const int kMaxLoginAttempts = 5;
 }  // namespace
 
 It2MeHost::It2MeHost(
-    scoped_ptr<ChromotingHostContext> host_context,
-    scoped_ptr<PolicyWatcher> policy_watcher,
-    scoped_ptr<It2MeConfirmationDialogFactory> confirmation_dialog_factory,
+    std::unique_ptr<ChromotingHostContext> host_context,
+    std::unique_ptr<PolicyWatcher> policy_watcher,
+    std::unique_ptr<It2MeConfirmationDialogFactory> confirmation_dialog_factory,
     base::WeakPtr<It2MeHost::Observer> observer,
     const XmppSignalStrategy::XmppServerConfig& xmpp_server_config,
     const std::string& directory_bot_jid)
@@ -93,11 +96,17 @@ void It2MeHost::Connect() {
 void It2MeHost::Disconnect() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   host_context_->network_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Shutdown, this));
+      FROM_HERE, base::Bind(&It2MeHost::DisconnectOnNetworkThread, this));
 }
 
-void It2MeHost::Shutdown() {
+void It2MeHost::DisconnectOnNetworkThread() {
   DCHECK(host_context_->network_task_runner()->BelongsToCurrentThread());
+
+  // Disconnect() may be called even when after the host been already stopped.
+  // Ignore repeated calls.
+  if (state_ == kDisconnected) {
+    return;
+  }
 
   confirmation_dialog_proxy_.reset();
 
@@ -137,7 +146,7 @@ void It2MeHost::ShowConfirmationPrompt() {
 
   SetState(kStarting, "");
 
-  scoped_ptr<It2MeConfirmationDialog> confirmation_dialog =
+  std::unique_ptr<It2MeConfirmationDialog> confirmation_dialog =
       confirmation_dialog_factory_->Create();
 
   // TODO(dcaiafa): Remove after dialog implementations for all platforms exist.
@@ -161,7 +170,7 @@ void It2MeHost::OnConfirmationResult(It2MeConfirmationDialog::Result result) {
       break;
 
     case It2MeConfirmationDialog::Result::CANCEL:
-      Shutdown();
+      DisconnectOnNetworkThread();
       break;
 
     default:
@@ -207,17 +216,15 @@ void It2MeHost::FinishConnect() {
   host_key_pair_ = RsaKeyPair::Generate();
 
   // Create XMPP connection.
-  scoped_ptr<SignalStrategy> signal_strategy(
-      new XmppSignalStrategy(net::ClientSocketFactory::GetDefaultFactory(),
-                             host_context_->url_request_context_getter(),
-                             xmpp_server_config_));
+  std::unique_ptr<SignalStrategy> signal_strategy(new XmppSignalStrategy(
+      net::ClientSocketFactory::GetDefaultFactory(),
+      host_context_->url_request_context_getter(), xmpp_server_config_));
 
   // Request registration of the host for support.
-  scoped_ptr<RegisterSupportHostRequest> register_request(
+  std::unique_ptr<RegisterSupportHostRequest> register_request(
       new RegisterSupportHostRequest(
           signal_strategy.get(), host_key_pair_, directory_bot_jid_,
-          base::Bind(&It2MeHost::OnReceivedSupportID,
-                     base::Unretained(this))));
+          base::Bind(&It2MeHost::OnReceivedSupportID, base::Unretained(this))));
 
   // Beyond this point nothing can fail, so save the config and request.
   signal_strategy_ = std::move(signal_strategy);
@@ -239,15 +246,17 @@ void It2MeHost::FinishConnect() {
   scoped_refptr<protocol::TransportContext> transport_context =
       new protocol::TransportContext(
           signal_strategy_.get(),
-          make_scoped_ptr(new protocol::ChromiumPortAllocatorFactory()),
-          make_scoped_ptr(new ChromiumUrlRequestFactory(
+          base::WrapUnique(new protocol::ChromiumPortAllocatorFactory()),
+          base::WrapUnique(new ChromiumUrlRequestFactory(
               host_context_->url_request_context_getter())),
           network_settings, protocol::TransportRole::SERVER);
+  transport_context->set_ice_config_url(
+      ServiceUrls::GetInstance()->ice_config_url());
 
-  scoped_ptr<protocol::SessionManager> session_manager(
+  std::unique_ptr<protocol::SessionManager> session_manager(
       new protocol::JingleSessionManager(signal_strategy_.get()));
 
-  scoped_ptr<protocol::CandidateSessionConfig> protocol_config =
+  std::unique_ptr<protocol::CandidateSessionConfig> protocol_config =
       protocol::CandidateSessionConfig::CreateDefault();
   // Disable audio by default.
   // TODO(sergeyu): Add UI to enable it.
@@ -281,7 +290,7 @@ void It2MeHost::OnAccessDenied(const std::string& jid) {
 
   ++failed_login_attempts_;
   if (failed_login_attempts_ == kMaxLoginAttempts) {
-    Shutdown();
+    DisconnectOnNetworkThread();
   }
 }
 
@@ -310,10 +319,11 @@ void It2MeHost::OnClientConnected(const std::string& jid) {
 void It2MeHost::OnClientDisconnected(const std::string& jid) {
   DCHECK(host_context_->network_task_runner()->BelongsToCurrentThread());
 
-  Shutdown();
+  DisconnectOnNetworkThread();
 }
 
-void It2MeHost::OnPolicyUpdate(scoped_ptr<base::DictionaryValue> policies) {
+void It2MeHost::OnPolicyUpdate(
+    std::unique_ptr<base::DictionaryValue> policies) {
   // The policy watcher runs on the |ui_task_runner|.
   if (!host_context_->network_task_runner()->BelongsToCurrentThread()) {
     host_context_->network_task_runner()->PostTask(
@@ -357,7 +367,7 @@ void It2MeHost::UpdateNatPolicy(bool nat_traversal_enabled) {
   // When transitioning from enabled to disabled, force disconnect any
   // existing session.
   if (nat_traversal_enabled_ && !nat_traversal_enabled && IsConnected()) {
-    Shutdown();
+    DisconnectOnNetworkThread();
   }
 
   nat_traversal_enabled_ = nat_traversal_enabled;
@@ -375,7 +385,7 @@ void It2MeHost::UpdateHostDomainPolicy(const std::string& host_domain) {
 
   // When setting a host domain policy, force disconnect any existing session.
   if (!host_domain.empty() && IsConnected()) {
-    Shutdown();
+    DisconnectOnNetworkThread();
   }
 
   required_host_domain_ = host_domain;
@@ -388,7 +398,7 @@ void It2MeHost::UpdateClientDomainPolicy(const std::string& client_domain) {
 
   // When setting a client  domain policy, disconnect any existing session.
   if (!client_domain.empty() && IsConnected()) {
-    Shutdown();
+    DisconnectOnNetworkThread();
   }
 
   required_client_domain_ = client_domain;
@@ -458,25 +468,27 @@ void It2MeHost::OnReceivedSupportID(
 
   if (!error_message.empty()) {
     SetState(kError, error_message);
-    Shutdown();
+    DisconnectOnNetworkThread();
     return;
   }
 
   std::string host_secret = GenerateSupportHostSecret();
   std::string access_code = support_id + host_secret;
+  std::string access_code_hash =
+      protocol::GetSharedSecretHash(support_id, access_code);
 
   std::string local_certificate = host_key_pair_->GenerateCertificate();
   if (local_certificate.empty()) {
     std::string error_message = "Failed to generate host certificate.";
     LOG(ERROR) << error_message;
     SetState(kError, error_message);
-    Shutdown();
+    DisconnectOnNetworkThread();
     return;
   }
 
-  scoped_ptr<protocol::AuthenticatorFactory> factory(
+  std::unique_ptr<protocol::AuthenticatorFactory> factory(
       new protocol::It2MeHostAuthenticatorFactory(
-          local_certificate, host_key_pair_, access_code,
+          local_certificate, host_key_pair_, access_code_hash,
           required_client_domain_));
   host_->SetAuthenticatorFactory(std::move(factory));
 
@@ -501,15 +513,15 @@ void It2MeHostFactory::set_policy_service(
 }
 
 scoped_refptr<It2MeHost> It2MeHostFactory::CreateIt2MeHost(
-    scoped_ptr<ChromotingHostContext> context,
+    std::unique_ptr<ChromotingHostContext> context,
     base::WeakPtr<It2MeHost::Observer> observer,
     const XmppSignalStrategy::XmppServerConfig& xmpp_server_config,
     const std::string& directory_bot_jid) {
   DCHECK(context->ui_task_runner()->BelongsToCurrentThread());
 
-  scoped_ptr<It2MeConfirmationDialogFactory> confirmation_dialog_factory(
+  std::unique_ptr<It2MeConfirmationDialogFactory> confirmation_dialog_factory(
       new It2MeConfirmationDialogFactory());
-  scoped_ptr<PolicyWatcher> policy_watcher =
+  std::unique_ptr<PolicyWatcher> policy_watcher =
       PolicyWatcher::Create(policy_service_, context->file_task_runner());
   return new It2MeHost(std::move(context), std::move(policy_watcher),
                        std::move(confirmation_dialog_factory), observer,

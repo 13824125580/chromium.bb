@@ -11,7 +11,6 @@ source_set("webusb") {
 
   public_deps = [
     "//base",
-    "//components/webusb/public/interfaces",
     "//device/usb",
   ]
   deps = [
@@ -31,7 +30,7 @@ source_set("unit_tests") {
     "//device/core",
     "//device/core:mocks",
     "//device/usb",
-    "//device/usb:mocks",
+    "//device/usb:test_support",
     "//testing/gmock",
     "//testing/gtest",
     "//url",

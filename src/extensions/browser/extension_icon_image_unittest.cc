@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread.h"
@@ -82,7 +83,7 @@ class ExtensionIconImageTest : public ExtensionsTest,
 
   void WaitForImageLoad() {
     quit_in_image_loaded_ = true;
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     quit_in_image_loaded_ = false;
   }
 
@@ -105,8 +106,9 @@ class ExtensionIconImageTest : public ExtensionsTest,
     std::string error;
     JSONFileValueDeserializer deserializer(
         test_file.AppendASCII("manifest.json"));
-    scoped_ptr<base::DictionaryValue> valid_value = base::DictionaryValue::From(
-        deserializer.Deserialize(&error_code, &error));
+    std::unique_ptr<base::DictionaryValue> valid_value =
+        base::DictionaryValue::From(
+            deserializer.Deserialize(&error_code, &error));
     EXPECT_EQ(0, error_code) << error;
     if (error_code != 0)
       return NULL;
@@ -143,7 +145,7 @@ class ExtensionIconImageTest : public ExtensionsTest,
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_thread_;
   content::TestBrowserThread io_thread_;
-  scoped_ptr<content::NotificationService> notification_service_;
+  std::unique_ptr<content::NotificationService> notification_service_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionIconImageTest);
 };
@@ -472,13 +474,9 @@ TEST_F(ExtensionIconImageTest, IconImageDestruction) {
       TestImageLoader::LoadAndGetExtensionBitmap(extension.get(), "16.png", 16);
   ASSERT_FALSE(bitmap_16.empty());
 
-  scoped_ptr<IconImage> image(
-      new IconImage(browser_context(),
-                    extension.get(),
-                    IconsInfo::GetIcons(extension.get()),
-                    16,
-                    default_icon,
-                    this));
+  std::unique_ptr<IconImage> image(new IconImage(
+      browser_context(), extension.get(), IconsInfo::GetIcons(extension.get()),
+      16, default_icon, this));
 
   // Load an image representation.
   gfx::ImageSkiaRep representation =
@@ -518,13 +516,9 @@ TEST_F(ExtensionIconImageTest, ImageCachesNewRepresentations) {
       CreateExtension("extension_icon_image", Manifest::INVALID_LOCATION));
   ASSERT_TRUE(extension.get() != NULL);
   gfx::ImageSkia default_icon = GetDefaultIcon();
-  scoped_ptr<IconImage> icon_image(
-      new IconImage(browser_context(),
-                    extension.get(),
-                    IconsInfo::GetIcons(extension.get()),
-                    16,
-                    default_icon,
-                    this));
+  std::unique_ptr<IconImage> icon_image(new IconImage(
+      browser_context(), extension.get(), IconsInfo::GetIcons(extension.get()),
+      16, default_icon, this));
 
   // Load an image representation.
   gfx::ImageSkiaRep representation =

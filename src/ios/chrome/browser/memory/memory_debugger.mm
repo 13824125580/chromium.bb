@@ -6,9 +6,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/ios/ios_util.h"
 #import "base/mac/scoped_nsobject.h"
-#import "base/memory/scoped_ptr.h"
 #import "ios/chrome/browser/memory/memory_metrics.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
@@ -42,7 +43,7 @@ const CGFloat kPadding = 10;
   base::scoped_nsobject<UITextField> _continuousMemoryWarningField;
 
   // A place to store the artifical memory bloat.
-  scoped_ptr<uint8_t> _bloat;
+  std::unique_ptr<uint8_t> _bloat;
 
   // Distance the view was pushed up to accomodate the keyboard.
   CGFloat _keyboardOffset;

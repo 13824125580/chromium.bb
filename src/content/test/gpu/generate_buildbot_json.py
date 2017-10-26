@@ -73,26 +73,6 @@ WATERFALL = {
       'swarming': True,
       'os_type': 'mac',
     },
-    'Mac Retina Release': {
-      'swarming_dimensions': {
-        'gpu': '10de:0fe9',
-        'hidpi': '1',
-        'os': 'Mac'
-      },
-      'build_config': 'Release',
-      'swarming': True,
-      'os_type': 'mac',
-    },
-    'Mac Retina Debug': {
-      'swarming_dimensions': {
-        'gpu': '10de:0fe9',
-        'hidpi': '1',
-        'os': 'Mac'
-      },
-      'build_config': 'Debug',
-      'swarming': True,
-      'os_type': 'mac',
-    },
     'Mac 10.10 Retina Release (AMD)': {
       'swarming_dimensions': {
         'gpu': '1002:6821',
@@ -144,6 +124,7 @@ FYI_WATERFALL = {
     'GPU Mac Builder (dbg)',
     'GPU Linux Builder',
     'GPU Linux Builder (dbg)',
+    'Linux ChromiumOS Builder',
    ],
 
   'testers': {
@@ -207,6 +188,39 @@ FYI_WATERFALL = {
         'os': 'Windows-2008ServerR2-SP1'
       },
       'build_config': 'Release',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'win',
+    },
+    'Win7 Release (NVIDIA GeForce 730)': {
+      'swarming_dimensions': {
+        'gpu': '10de:0f02',
+        'os': 'Windows-2008ServerR2-SP1'
+      },
+      'build_config': 'Release',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'win',
+    },
+    'Win7 Release (New Intel)': {
+      'swarming_dimensions': {
+        'gpu': '8086:0412',
+        'os': 'Windows-2008ServerR2-SP1'
+      },
+      'build_config': 'Release',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'win',
+    },
+    'Win7 Debug (New Intel)': {
+      'swarming_dimensions': {
+        'gpu': '8086:0412',
+        'os': 'Windows-2008ServerR2-SP1'
+      },
+      'build_config': 'Debug',
       # This bot is a one-off and doesn't have similar slaves in the
       # swarming pool.
       'swarming': False,
@@ -341,6 +355,17 @@ FYI_WATERFALL = {
       'swarming': False,
       'os_type': 'linux',
     },
+    'Linux Release (NVIDIA GeForce 730)': {
+      'swarming_dimensions': {
+        'gpu': '10de:0f02',
+        'os': 'Linux'
+      },
+      'build_config': 'Release',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'linux',
+    },
     'Linux Debug (NVIDIA)': {
       'swarming_dimensions': {
         'gpu': '10de:104a',
@@ -349,6 +374,103 @@ FYI_WATERFALL = {
       'build_config': 'Debug',
       'swarming': True,
       'os_type': 'linux',
+    },
+    'Linux Release (New Intel)': {
+      'swarming_dimensions': {
+        'gpu': '8086:0412',
+        'os': 'Linux'
+      },
+      'build_config': 'Release',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'linux',
+    },
+    'Linux Debug (New Intel)': {
+      'swarming_dimensions': {
+        'gpu': '8086:0412',
+        'os': 'Linux'
+      },
+      'build_config': 'Debug',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'linux',
+    },
+    'Android Release (Nexus 5)': {
+      'swarming_dimensions': {
+        # There are no PCI IDs on Android.
+        # This is a hack to get the script working.
+        'gpu': '0000:0000',
+        'os': 'Android'
+      },
+      'build_config': 'android-chromium',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'android',
+    },
+    'Android Release (Nexus 5X)': {
+      'swarming_dimensions': {
+        'device_type': 'bullhead',
+        'device_os': 'M',
+        'os': 'Android'
+      },
+      'build_config': 'android-chromium',
+      'swarming': True,
+      'os_type': 'android',
+    },
+    'Android Release (Nexus 6)': {
+      'swarming_dimensions': {
+        # There are no PCI IDs on Android.
+        # This is a hack to get the script working.
+        'gpu': '0000:0000',
+        'os': 'Android'
+      },
+      'build_config': 'android-chromium',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'android',
+    },
+    'Android Release (Nexus 6P)': {
+      'swarming_dimensions': {
+        # There are no PCI IDs on Android.
+        # This is a hack to get the script working.
+        'gpu': '0000:0000',
+        'os': 'Android'
+      },
+      'build_config': 'android-chromium',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'android',
+    },
+    'Android Release (Nexus 9)': {
+      'swarming_dimensions': {
+        # There are no PCI IDs on Android.
+        # This is a hack to get the script working.
+        'gpu': '0000:0000',
+        'os': 'Android'
+      },
+      'build_config': 'android-chromium',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'android',
+    },
+    'Android Release (Pixel C)': {
+      'swarming_dimensions': {
+        # There are no PCI IDs on Android.
+        # This is a hack to get the script working.
+        'gpu': '0000:0000',
+        'os': 'Android'
+      },
+      'build_config': 'android-chromium',
+      # This bot is a one-off and doesn't have similar slaves in the
+      # swarming pool.
+      'swarming': False,
+      'os_type': 'android',
     },
 
     # The following "optional" testers don't actually exist on the
@@ -416,6 +538,27 @@ FYI_WATERFALL = {
 }
 
 COMMON_GTESTS = {
+  'angle_deqp_egl_tests': {
+    'tester_configs': [
+      {
+        'fyi_only': True,
+        # Run this on the optional tryservers.
+        'run_on_optional': True,
+        # Run only on the Win7 Release NVIDIA 32- and 64-bit bots
+        # (and trybots) for the time being, at least until more capacity is
+        # added.
+        # TODO(jmadill): Run on the Linux Release NVIDIA bots.
+        'build_configs': ['Release', 'Release_x64'],
+        'swarming_dimension_sets': [
+          {
+            'gpu': '10de:104a',
+            'os': 'Windows-2008ServerR2-SP1'
+          }
+        ],
+      },
+    ],
+  },
+
   'angle_deqp_gles2_tests': {
     'tester_configs': [
       {
@@ -438,7 +581,9 @@ COMMON_GTESTS = {
         ],
       },
     ],
-    'swarming_shards': 4
+    'swarming': {
+      'shards': 4,
+    }
   },
 
   'angle_deqp_gles3_tests': {
@@ -463,7 +608,9 @@ COMMON_GTESTS = {
         ],
       }
     ],
-    'swarming_shards': 12
+    'swarming': {
+      'shards': 12,
+    }
   },
 
   # Until we have more capacity, run angle_end2end_tests only on the
@@ -478,7 +625,14 @@ COMMON_GTESTS = {
     ],
     'args': ['--use-gpu-in-tests']
   },
-  'angle_unittests': {'args': ['--use-gpu-in-tests']},
+  'angle_unittests': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      }
+    ],
+    'desktop_args': ['--use-gpu-in-tests']
+  },
   # Until the media-only tests are extracted from content_unittests,
   # and audio_unittests and content_unittests can be run on the commit
   # queue with --require-audio-hardware-for-testing, run them only on
@@ -495,20 +649,35 @@ COMMON_GTESTS = {
     ],
     'args': ['--use-gpu-in-tests']
   },
-  'content_gl_tests': {'args': ['--use-gpu-in-tests']},
   # TODO(kbr): content_unittests is killing the Linux GPU swarming
   # bots. crbug.com/582094 . It's not useful now anyway until audio
   # hardware is deployed on the swarming bots, so stop running it
   # everywhere.
   # 'content_unittests': {},
-  'gl_tests': {'args': ['--use-gpu-in-tests']},
-  'gl_unittests': {'args': ['--use-gpu-in-tests']},
+  'gl_tests': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      }
+    ],
+    'desktop_args': ['--use-gpu-in-tests']
+  },
+  'gl_unittests': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      }
+    ],
+    'desktop_args': ['--use-gpu-in-tests']
+  },
   # The gles2_conform_tests are closed-source and deliberately only run
-  # on the FYI waterfall.
+  # on the FYI waterfall and the optional tryservers.
   'gles2_conform_test': {
     'tester_configs': [
       {
         'fyi_only': True,
+        # Run this on the optional tryservers.
+        'run_on_optional': True,
       }
     ],
     'args': ['--use-gpu-in-tests']
@@ -517,7 +686,9 @@ COMMON_GTESTS = {
     'tester_configs': [
       {
         'fyi_only': True,
-        'os_types': ['win']
+        'os_types': ['win'],
+        # Run this on the optional tryservers.
+        'run_on_optional': True,
       }
     ],
     'args': [
@@ -530,7 +701,9 @@ COMMON_GTESTS = {
     'tester_configs': [
       {
         'fyi_only': True,
-        'os_types': ['win']
+        'os_types': ['win'],
+        # Run this on the optional tryservers.
+        'run_on_optional': True,
       }
     ],
     'args': [
@@ -570,12 +743,58 @@ NON_SWARMED_GTESTS = {
 }
 
 TELEMETRY_TESTS = {
-  'context_lost': {},
-  'gpu_process_launch_tests': {'target_name': 'gpu_process'},
-  'gpu_rasterization': {},
-  'hardware_accelerated_feature': {},
-  'maps_pixel_test': {'target_name': 'maps'},
-  'memory_test': {},
+  'context_lost': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ]
+  },
+  'gpu_process_launch_tests': {
+      'target_name': 'gpu_process',
+      'tester_configs': [
+        {
+          'allow_on_android': True,
+        }
+      ],
+  },
+  'gpu_rasterization': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
+  'hardware_accelerated_feature': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
+  'maps_pixel_test': {
+    'target_name': 'maps',
+    'args': [
+      '--os-type',
+      '${os_type}',
+      '--build-revision',
+      '${got_revision}',
+      '--test-machine-name',
+      '${buildername}',
+    ],
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
+  'memory_test': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
   'pixel_test': {
     'target_name': 'pixel',
     'args': [
@@ -593,17 +812,46 @@ TELEMETRY_TESTS = {
     ],
     'precommit_args': [
       '--download-refimg-from-cloud-storage',
-    ]
+    ],
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
   },
-  'screenshot_sync': {},
-  'trace_test': {},
-  'webgl_conformance': {},
+  'screenshot_sync': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
+  'trace_test': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
+}
+
+# These tests use Telemetry's new, simpler, browser_test_runner.
+# Eventually all of the Telemetry based tests above will be ported to
+# this harness, and the old harness will be deleted.
+TELEMETRY_GPU_INTEGRATION_TESTS = {
+  'webgl_conformance': {
+    'tester_configs': [
+      {
+        'allow_on_android': True,
+      },
+    ],
+  },
   'webgl_conformance_d3d9_tests': {
     'tester_configs': [
       {
         'fyi_only': True,
+        'os_types': ['win'],
         'run_on_optional': True,
-        'os_types': ['win']
       }
     ],
     'target_name': 'webgl_conformance',
@@ -615,16 +863,25 @@ TELEMETRY_TESTS = {
     'tester_configs': [
       {
         'fyi_only': True,
+        'os_types': ['win'],
         'run_on_optional': True,
-        'os_types': ['win']
       }
     ],
     'disabled_tester_configs': [
       {
-        # BUG 555545: Disable webgl_conformance_gl_tests on Win/AMD
         'swarming_dimension_sets': [
+          # BUG 555545: Disable webgl_conformance_gl_tests on Win/AMD
           {
             'gpu': '1002:6779',
+            'os': 'Windows-2008ServerR2-SP1'
+          },
+          # BUG 590951: Disable webgl_conformance_gl_tests on Win/Intel
+          {
+            'gpu': '8086:041a',
+            'os': 'Windows-2008ServerR2-SP1'
+          },
+          {
+            'gpu': '8086:0412',
             'os': 'Windows-2008ServerR2-SP1'
           },
         ],
@@ -650,8 +907,24 @@ TELEMETRY_TESTS = {
   'webgl2_conformance_tests': {
     'tester_configs': [
       {
+         # The WebGL 2.0 conformance tests take over an hour to run on
+         # the Debug bots, which is too long.
+        'build_configs': ['Release', 'Release_x64'],
         'fyi_only': True,
         'run_on_optional': True,
+      },
+    ],
+    'disabled_tester_configs': [
+      {
+        'names': [
+          # http://crbug.com/599451: this test is currently too slow
+          # to run on x64 in Debug mode. Need to shard the tests.
+          'Win7 x64 Debug (NVIDIA)',
+          # http://crbug.com/540543: Linux Intel driver is GL 3.0 and
+          # doesn't support features needed for ES3
+          'Linux Release (New Intel)',
+          'Linux Debug (New Intel)',
+        ],
       },
     ],
     'target_name': 'webgl_conformance',
@@ -659,6 +932,46 @@ TELEMETRY_TESTS = {
       '--webgl-conformance-version=2.0.0',
       '--webgl2-only=true',
     ],
+    'swarming': {
+      # These tests currently take about an hour to run. Split them
+      # into roughly 5-minute shards.
+      'shards': 12,
+    },
+  },
+  'webgl2_conformance_angle_tests': {
+    'tester_configs': [
+      {
+         # The WebGL 2.0 conformance tests take over an hour to run on
+         # the Debug bots, which is too long.
+        'build_configs': ['Release'],
+        'fyi_only': True,
+        'run_on_optional': False,
+        # Only run on the NVIDIA Release and New Intel Release Linux bots
+        'swarming_dimension_sets': [
+          {
+            'gpu': '10de:104a',
+            'os': 'Linux'
+          },
+          {
+            'gpu': '8086:0412',
+            'os': 'Linux'
+          },
+        ],
+      },
+    ],
+    'target_name': 'webgl_conformance',
+    'extra_browser_args': [
+      '--use-gl=angle',
+    ],
+    'args': [
+      '--webgl-conformance-version=2.0.0',
+      '--webgl2-only=true',
+    ],
+    'swarming': {
+      # These tests currently take about an hour to run. Split them
+      # into roughly 5-minute shards.
+      'shards': 12,
+    },
   },
 }
 
@@ -677,6 +990,9 @@ def matches_swarming_dimensions(tester_config, dimension_sets):
         tester_config['swarming_dimensions'].items()):
       return True
   return False
+
+def is_android(tester_config):
+  return tester_config['os_type'] == 'android'
 
 def tester_config_matches_tester(tester_name, tester_config, tc, is_fyi,
                                  check_waterfall):
@@ -702,26 +1018,30 @@ def tester_config_matches_tester(tester_name, tester_config, tc, is_fyi,
     if not matches_swarming_dimensions(tester_config,
                                        tc['swarming_dimension_sets']):
       return False
+  if is_android(tester_config):
+    if not tc.get('allow_on_android', False):
+      return False
   return True
 
 def should_run_on_tester(tester_name, tester_config, test_config, is_fyi):
-  if not 'tester_configs' in test_config:
-    # Filter out tests from the "optional" bots.
-    if tester_name.startswith('Optional'):
-      return False
-    # Otherwise, if unspecified, run on all testers.
-    return True
   # Check if this config is disabled on this tester
   if 'disabled_tester_configs' in test_config:
     for dtc in test_config['disabled_tester_configs']:
       if tester_config_matches_tester(tester_name, tester_config, dtc, is_fyi,
                                       False):
         return False
-  for tc in test_config['tester_configs']:
-    if tester_config_matches_tester(tester_name, tester_config, tc, is_fyi,
-                                    True):
-      return True
-  return False
+  if 'tester_configs' in test_config:
+    for tc in test_config['tester_configs']:
+      if tester_config_matches_tester(tester_name, tester_config, tc, is_fyi,
+                                      True):
+        return True
+    return False
+  else:
+    # If tester_configs is unspecified, run nearly all tests by default,
+    # but let tester_config_matches_tester filter out any undesired
+    # tests, such as ones that should only run on the Optional bots.
+    return tester_config_matches_tester(tester_name, tester_config, {},
+                                        is_fyi, True)
 
 def generate_gtest(tester_name, tester_config, test, test_config, is_fyi):
   if not should_run_on_tester(tester_name, tester_config, test_config, is_fyi):
@@ -741,19 +1061,36 @@ def generate_gtest(tester_name, tester_config, test, test_config, is_fyi):
   else:
     # Put the swarming dimensions in anyway. If the tester is later
     # swarmed, they will come in handy.
-    result['swarming'] = {
+    if not 'swarming' in result:
+      result['swarming'] = {}
+    result['swarming'].update({
       'can_use_on_swarming_builders': True,
       'dimension_sets': [
         tester_config['swarming_dimensions']
       ],
-    }
-    if result.get('swarming_shards'):
-      result['swarming']['shards'] = result['swarming_shards']
-      result.pop('swarming_shards')
+    })
+    if is_android(tester_config):
+      # Override the isolate target to get rid of any "_apk" suffix
+      # that would be added by the recipes.
+      result['override_isolate_target'] = test
+  if 'desktop_args' in result:
+    if not is_android(tester_config):
+      if not 'args' in result:
+        result['args'] = []
+      result['args'] += result['desktop_args']
+    # Don't put the desktop args in the JSON.
+    result.pop('desktop_args')
+
+  # This flag only has an effect on the Linux bots that run tests
+  # locally (as opposed to via Swarming), which are only those couple
+  # on the chromium.gpu.fyi waterfall. Still, there is no harm in
+  # specifying it everywhere.
+  result['use_xvfb'] = False
   return result
 
 def generate_telemetry_test(tester_name, tester_config,
-                            test, test_config, is_fyi):
+                            test, test_config, is_fyi,
+                            use_gpu_integration_test_harness):
   if not should_run_on_tester(tester_name, tester_config, test_config, is_fyi):
     return None
   test_args = ['-v']
@@ -767,6 +1104,9 @@ def generate_telemetry_test(tester_name, tester_config,
   test_args.append('--extra-browser-args=' + extra_browser_args_string)
   if 'args' in test_config:
     test_args.extend(substitute_args(tester_config, test_config['args']))
+  if 'desktop_args' in test_config and not is_android(tester_config):
+    test_args.extend(substitute_args(tester_config,
+                                     test_config['desktop_args']))
   # The step name must end in 'test' or 'tests' in order for the
   # results to automatically show up on the flakiness dashboard.
   # (At least, this was true some time ago.) Continue to use this
@@ -781,21 +1121,27 @@ def generate_telemetry_test(tester_name, tester_config,
     '--show-stdout',
     '--browser=%s' % tester_config['build_config'].lower()
   ]
+  swarming = {
+    # Always say this is true regardless of whether the tester
+    # supports swarming. It doesn't hurt.
+    'can_use_on_swarming_builders': True,
+    'dimension_sets': [
+      tester_config['swarming_dimensions']
+    ]
+  }
+  if 'swarming' in test_config:
+    swarming.update(test_config['swarming'])
   result = {
     'args': prefix_args + test_args,
-    'isolate_name': 'telemetry_gpu_test',
+    'isolate_name': (
+      'telemetry_gpu_integration_test' if use_gpu_integration_test_harness
+      else 'telemetry_gpu_test'),
     'name': step_name,
     'override_compile_targets': [
-      'telemetry_gpu_test_run'
+      ('telemetry_gpu_integration_test_run' if use_gpu_integration_test_harness
+       else 'telemetry_gpu_test_run')
     ],
-    'swarming': {
-      # Always say this is true regardless of whether the tester
-      # supports swarming. It doesn't hurt.
-      'can_use_on_swarming_builders': True,
-      'dimension_sets': [
-        tester_config['swarming_dimensions']
-      ]
-    }
+    'swarming': swarming,
   }
   if 'non_precommit_args' in test_config:
     result['non_precommit_args'] = test_config['non_precommit_args']
@@ -819,11 +1165,13 @@ def generate_gtests(tester_name, tester_config, test_dictionary, is_fyi):
   return gtests
 
 def generate_telemetry_tests(tester_name, tester_config,
-                             test_dictionary, is_fyi):
+                             test_dictionary, is_fyi,
+                             use_gpu_integration_test_harness):
   isolated_scripts = []
   for test_name, test_config in sorted(test_dictionary.iteritems()):
     test = generate_telemetry_test(
-        tester_name, tester_config, test_name, test_config, is_fyi)
+      tester_name, tester_config, test_name, test_config, is_fyi,
+      use_gpu_integration_test_harness)
     if test:
       isolated_scripts.append(test)
   return isolated_scripts
@@ -833,18 +1181,15 @@ def generate_all_tests(waterfall, is_fyi):
   for builder in waterfall['builders']:
     tests[builder] = {}
   for name, config in waterfall['testers'].iteritems():
-    gtests = []
-    gtests.extend(generate_gtests(name, config, COMMON_GTESTS, is_fyi))
-    isolated_scripts = []
-    isolated_scripts.extend(generate_telemetry_tests(
-        name, config, TELEMETRY_TESTS, is_fyi))
-    cur_tests = {}
-    if gtests:
-      cur_tests['gtest_tests'] = sorted(gtests, key=lambda x: x['test'])
-    if isolated_scripts:
-      cur_tests['isolated_scripts'] = sorted(
-          isolated_scripts, key=lambda x: x['name'])
-    tests[name] = cur_tests
+    gtests = generate_gtests(name, config, COMMON_GTESTS, is_fyi)
+    isolated_scripts = \
+      generate_telemetry_tests(name, config, TELEMETRY_TESTS, is_fyi, False) + \
+      generate_telemetry_tests(name, config, TELEMETRY_GPU_INTEGRATION_TESTS,
+                               is_fyi, True)
+    tests[name] = {
+      'gtest_tests': sorted(gtests, key=lambda x: x['test']),
+      'isolated_scripts': sorted(isolated_scripts, key=lambda x: x['name'])
+    }
   tests['AAAAA1 AUTOGENERATED FILE DO NOT EDIT'] = {}
   tests['AAAAA2 See generate_buildbot_json.py to make changes'] = {}
   filename = 'chromium.gpu.fyi.json' if is_fyi else 'chromium.gpu.json'

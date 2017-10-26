@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/non_thread_safe.h"
 #include "net/base/address_family.h"
@@ -25,6 +26,8 @@
 #include "net/udp/diff_serv_code_point.h"
 
 namespace net {
+
+class IPAddress;
 
 class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
  public:
@@ -136,7 +139,7 @@ class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
   // |group_address| is the group address to join, could be either
   // an IPv4 or IPv6 address.
   // Returns a net error code.
-  int JoinGroup(const IPAddressNumber& group_address) const;
+  int JoinGroup(const IPAddress& group_address) const;
 
   // Leaves the multicast group.
   // |group_address| is the group address to leave, could be either
@@ -145,7 +148,7 @@ class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
   // It's optional to leave the multicast group before destroying
   // the socket. It will be done by the OS.
   // Returns a net error code.
-  int LeaveGroup(const IPAddressNumber& group_address) const;
+  int LeaveGroup(const IPAddress& group_address) const;
 
   // Sets interface to use for multicast. If |interface_index| set to 0,
   // default interface is used.
@@ -251,7 +254,7 @@ class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
   int SetMulticastOptions();
   int DoBind(const IPEndPoint& address);
   // Binds to a random port on |address|.
-  int RandomBind(const IPAddressNumber& address);
+  int RandomBind(const IPAddress& address);
 
   int socket_;
 
@@ -278,8 +281,8 @@ class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
 
   // These are mutable since they're just cached copies to make
   // GetPeerAddress/GetLocalAddress smarter.
-  mutable scoped_ptr<IPEndPoint> local_address_;
-  mutable scoped_ptr<IPEndPoint> remote_address_;
+  mutable std::unique_ptr<IPEndPoint> local_address_;
+  mutable std::unique_ptr<IPEndPoint> remote_address_;
 
   // The socket's posix wrappers
   base::MessageLoopForIO::FileDescriptorWatcher read_socket_watcher_;
@@ -297,7 +300,7 @@ class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
   // The buffer used by InternalWrite() to retry Write requests
   scoped_refptr<IOBuffer> write_buf_;
   int write_buf_len_;
-  scoped_ptr<IPEndPoint> send_to_address_;
+  std::unique_ptr<IPEndPoint> send_to_address_;
 
   // External callback; called when read is complete.
   CompletionCallback read_callback_;
@@ -306,6 +309,9 @@ class NET_EXPORT UDPSocketPosix : public base::NonThreadSafe {
   CompletionCallback write_callback_;
 
   BoundNetLog net_log_;
+
+  // Network that this socket is bound to via BindToNetwork().
+  NetworkChangeNotifier::NetworkHandle bound_network_;
 
   DISALLOW_COPY_AND_ASSIGN(UDPSocketPosix);
 };

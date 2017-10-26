@@ -27,6 +27,7 @@ class UI_BASE_EXPORT DefaultThemeProvider : public ThemeProvider {
   // Overridden from ui::ThemeProvider:
   gfx::ImageSkia* GetImageSkiaNamed(int id) const override;
   SkColor GetColor(int id) const override;
+  color_utils::HSL GetTint(int id) const override;
   int GetDisplayProperty(int id) const override;
   bool ShouldUseNativeFrame() const override;
   bool HasCustomImage(int id) const override;
@@ -35,11 +36,14 @@ class UI_BASE_EXPORT DefaultThemeProvider : public ThemeProvider {
 
 #if defined(OS_MACOSX)
   bool UsingSystemTheme() const override;
+  bool InIncognitoMode() const override;
+  bool HasCustomColor(int id) const override;
   NSImage* GetNSImageNamed(int id) const override;
   NSColor* GetNSImageColorNamed(int id) const override;
   NSColor* GetNSColor(int id) const override;
   NSColor* GetNSColorTint(int id) const override;
   NSGradient* GetNSGradient(int id) const override;
+  bool ShouldIncreaseContrast() const override;
 #endif
 
  private:

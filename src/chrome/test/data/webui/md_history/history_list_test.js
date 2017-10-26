@@ -3,68 +3,37 @@
 // found in the LICENSE file.
 
 cr.define('md_history.history_list_test', function() {
-  // Array of test history data.
-  var TEST_HISTORY_RESULTS = [
-    {
-      "dateRelativeDay": "Today - Wednesday, December 9, 2015",
-      "url": "https://www.google.com"
-    },
-    {
-      "dateRelativeDay": "Yesterday - Tuesday, December 8, 2015",
-      "url": "https://en.wikipedia.com"
-    },
-    {
-      "dateRelativeDay": "Monday, December 7, 2015",
-      "url": "https://www.example.com"
-    },
-    {
-      "dateRelativeDay": "Monday, December 7, 2015",
-      "url": "https://www.google.com"
-    }
-  ];
-
-  var ADDITIONAL_RESULTS = [
-    {
-      "dateRelativeDay": "Monday, December 7, 2015",
-      "url": "https://en.wikipedia.com"
-    },
-    {
-      "dateRelativeDay": "Monday, December 7, 2015",
-      "url": "https://www.youtube.com"
-    },
-    {
-      "dateRelativeDay": "Sunday, December 6, 2015",
-      "url": "https://www.google.com"
-    },
-    {
-      "dateRelativeDay": "Saturday, December 5, 2015",
-      "url": "https://www.example.com"
-    }
-  ];
-
   function registerTests() {
     suite('history-list', function() {
+      var app;
       var element;
       var toolbar;
+      var TEST_HISTORY_RESULTS;
+      var ADDITIONAL_RESULTS;
 
       suiteSetup(function() {
-        element = $('history-list');
-        toolbar = $('toolbar');
+        app = $('history-app');
+        element = app.$['history-list'];
+        toolbar = app.$['toolbar'];
+
+        TEST_HISTORY_RESULTS = [
+          createHistoryEntry('2016-03-15', 'https://www.google.com'),
+          createHistoryEntry('2016-03-14 10:00', 'https://www.example.com'),
+          createHistoryEntry('2016-03-14 9:00', 'https://www.google.com'),
+          createHistoryEntry('2016-03-13', 'https://en.wikipedia.org')
+        ];
+
+        ADDITIONAL_RESULTS = [
+          createHistoryEntry('2016-03-13 10:00', 'https://en.wikipedia.org'),
+          createHistoryEntry('2016-03-13 9:50', 'https://www.youtube.com'),
+          createHistoryEntry('2016-03-11', 'https://www.google.com'),
+          createHistoryEntry('2016-03-10', 'https://www.example.com')
+        ];
       });
 
-      setup(function() {
-        element.addNewResults(TEST_HISTORY_RESULTS);
-      });
-
-      test('setting first and last items', function() {
-        assertTrue(element.historyData[0].isLastItem);
-        assertTrue(element.historyData[0].isFirstItem);
-        assertTrue(element.historyData[2].isFirstItem);
-        assertTrue(element.historyData[3].isLastItem);
-      });
-
-      test('cancelling selection of multiple items', function(done) {
-        flush(function() {
+      test('cancelling selection of multiple items', function() {
+        app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
+        return flush().then(function() {
           var items = Polymer.dom(element.root)
               .querySelectorAll('history-item');
 
@@ -73,107 +42,164 @@ cr.define('md_history.history_list_test', function() {
 
           // Make sure that the array of data that determines whether or not an
           // item is selected is what we expect after selecting the two items.
-          assertFalse(element.historyData[0].selected);
-          assertFalse(element.historyData[1].selected);
-          assertTrue(element.historyData[2].selected);
-          assertTrue(element.historyData[3].selected);
+          assertFalse(element.historyData_[0].selected);
+          assertFalse(element.historyData_[1].selected);
+          assertTrue(element.historyData_[2].selected);
+          assertTrue(element.historyData_[3].selected);
 
           toolbar.onClearSelectionTap_();
 
           // Make sure that clearing the selection updates both the array and
           // the actual history-items affected.
-          assertFalse(element.historyData[0].selected);
-          assertFalse(element.historyData[1].selected);
-          assertFalse(element.historyData[2].selected);
-          assertFalse(element.historyData[3].selected);
+          assertFalse(element.historyData_[0].selected);
+          assertFalse(element.historyData_[1].selected);
+          assertFalse(element.historyData_[2].selected);
+          assertFalse(element.historyData_[3].selected);
 
           assertFalse(items[2].$.checkbox.checked);
           assertFalse(items[3].$.checkbox.checked);
-
-          done();
         });
       });
 
-      test('updating history results', function(done) {
-        element.addNewResults(ADDITIONAL_RESULTS);
+      test('setting first and last items', function() {
+        app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
 
-        flush(function() {
-          assertTrue(element.historyData[2].isFirstItem);
-          assertTrue(element.historyData[5].isLastItem);
-
-          assertTrue(element.historyData[6].isFirstItem);
-          assertTrue(element.historyData[6].isLastItem);
-
-          assertTrue(element.historyData[7].isFirstItem);
-          assertTrue(element.historyData[7].isLastItem);
-
-          done();
+        return flush().then(function() {
+          var items =
+              Polymer.dom(element.root).querySelectorAll('history-item');
+          assertTrue(items[0].isCardStart);
+          assertTrue(items[0].isCardEnd);
+          assertFalse(items[1].isCardEnd);
+          assertFalse(items[2].isCardStart);
+          assertTrue(items[2].isCardEnd);
+          assertTrue(items[3].isCardStart);
+          assertTrue(items[3].isCardEnd);
         });
       });
 
-      test('removeVisits for multiple items', function(done) {
-        // Ensure that the correct identifying data is being used for removal.
-        registerMessageCallback('removeVisits', this, function (toBeRemoved) {
+      test('updating history results', function() {
+        app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
+        app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
 
-          assertEquals(toBeRemoved[0].url, element.historyData[0].url);
-          assertEquals(toBeRemoved[1].url, element.historyData[1].url);
-          assertEquals(toBeRemoved[0].timestamps,
-                       element.historyData[0].timestamps);
-          assertEquals(toBeRemoved[1].timestamps,
-                       element.historyData[1].timestamps);
+        return flush().then(function() {
+          var items =
+              Polymer.dom(element.root).querySelectorAll('history-item');
+          assertTrue(items[3].isCardStart);
+          assertTrue(items[5].isCardEnd);
 
-          done();
+          assertTrue(items[6].isCardStart);
+          assertTrue(items[6].isCardEnd);
+
+          assertTrue(items[7].isCardStart);
+          assertTrue(items[7].isCardEnd);
         });
+      });
 
-        flush(function() {
+      test('deleting multiple items from view', function() {
+        app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
+        app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
+        return flush().then(function() {
           items = Polymer.dom(element.root).querySelectorAll('history-item');
 
-          MockInteractions.tap(items[0].$.checkbox);
-          MockInteractions.tap(items[1].$.checkbox);
+          element.removeDeletedHistory_([
+            element.historyData_[2], element.historyData_[5],
+            element.historyData_[7]
+          ]);
 
-          toolbar.onDeleteTap_();
+          return flush();
+        }).then(function() {
+          items = Polymer.dom(element.root).querySelectorAll('history-item');
+
+          assertEquals(element.historyData_.length, 5);
+          assertEquals(element.historyData_[0].dateRelativeDay,
+                       '2016-03-15');
+          assertEquals(element.historyData_[2].dateRelativeDay,
+                       '2016-03-13');
+          assertEquals(element.historyData_[4].dateRelativeDay,
+                       '2016-03-11');
+
+          // Checks that the first and last items have been reset correctly.
+          assertTrue(items[2].isCardStart);
+          assertTrue(items[3].isCardEnd);
+          assertTrue(items[4].isCardStart);
+          assertTrue(items[4].isCardEnd)
         });
       });
 
-      test('deleting multiple items from view', function(done) {
-        element.addNewResults(ADDITIONAL_RESULTS);
-        flush(function() {
-          items = Polymer.dom(element.root).querySelectorAll('history-item');
+      test('search results display with correct item title', function() {
+        app.historyResult(createHistoryInfo(),
+            [createHistoryEntry('2016-03-15', 'https://www.google.com')]);
+        element.searchedTerm = 'Google';
 
-          // Selects the checkboxes.
-          element.set('historyData.2.selected', true);
-          items[2].onCheckboxSelected_();
-          element.set('historyData.5.selected', true);
-          items[5].onCheckboxSelected_();
-          element.set('historyData.7.selected', true);
-          items[7].onCheckboxSelected_();
+        return flush().then(function() {
+          var item = element.$$('history-item');
+          assertTrue(item.isCardStart);
+          var heading = item.$$('#date-accessed').textContent;
+          var title = item.$.title;
 
-          element.removeDeletedHistory(3);
+          // Check that the card title displays the search term somewhere.
+          var index = heading.indexOf('Google');
+          assertTrue(index != -1);
 
-          flush(function() {
-            items = Polymer.dom(element.root).querySelectorAll('history-item');
+          // Check that the search term is bolded correctly in the history-item.
+          assertGT(
+              title.children[0].$.container.innerHTML.indexOf('<b>google</b>'),
+              -1);
+        });
+      });
 
-            assertEquals(element.historyData.length, 5);
-            assertEquals(element.historyData[0].dateRelativeDay,
-                         "Today - Wednesday, December 9, 2015");
-            assertEquals(element.historyData[2].dateRelativeDay,
-                         "Monday, December 7, 2015");
-            assertEquals(element.historyData[4].dateRelativeDay,
-                         "Sunday, December 6, 2015");
+      test('correct display message when no history available', function() {
+        app.historyResult(createHistoryInfo(), []);
 
-            // Checks that the first and last items have been reset correctly.
-            assertTrue(element.historyData[2].isFirstItem);
-            assertTrue(element.historyData[3].isLastItem);
-            assertTrue(element.historyData[4].isFirstItem);
-            assertTrue(element.historyData[4].isLastItem)
+        return flush().then(function() {
+          assertFalse(element.$['no-results'].hidden);
+          assertTrue(element.$['infinite-list'].hidden);
 
+          app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
+          return flush();
+        }).then(function() {
+          assertTrue(element.$['no-results'].hidden);
+          assertFalse(element.$['infinite-list'].hidden);
+        });
+      });
+
+      test('more from this site sends and sets correct data', function(done) {
+        app.queryingDisabled_ = false;
+        registerMessageCallback('queryHistory', this, function (info) {
+          assertEquals('example.com', info[0]);
+          flush().then(function() {
+            assertEquals(
+                'example.com',
+                toolbar.$['main-toolbar'].getSearchField().getValue());
             done();
           });
+        });
+
+        element.$.sharedMenu.itemData = {domain: 'example.com'};
+        MockInteractions.tap(element.$.menuMoreButton);
+      });
+
+      test('changing search deselects items', function() {
+        app.historyResult(
+            createHistoryInfo('ex'),
+            [createHistoryEntry('2016-06-9', 'https://www.example.com')]);
+        return flush().then(function() {
+          var item = element.$$('history-item');
+          MockInteractions.tap(item.$.checkbox);
+
+          assertEquals(1, toolbar.count);
+
+          app.historyResult(
+              createHistoryInfo('ample'),
+              [createHistoryEntry('2016-06-9', 'https://www.example.com')]);
+          assertEquals(0, toolbar.count);
         });
       });
 
       teardown(function() {
-        element.historyData = [];
+        element.historyData_ = [];
+        element.searchedTerm = '';
+        registerMessageCallback('removeVisits', this, undefined);
       });
     });
   }

@@ -29,7 +29,6 @@
 #include "core/html/HTMLMediaElement.h"
 #include "core/html/HTMLVideoElement.h"
 #include "core/layout/LayoutPart.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/compositing/CompositedLayerMapping.h"
 #include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/paint/PaintLayer.h"
@@ -108,7 +107,7 @@ void GraphicsLayerTreeBuilder::rebuild(PaintLayer& layer, AncestorInfo info)
     if (layer.scrollParent()
         && layer.scrollParent()->hasCompositedLayerMapping()
         && layer.scrollParent()->compositedLayerMapping()->needsToReparentOverflowControls()
-        && layer.scrollParent()->scrollableArea()->topmostScrollChild() == &layer)
+        && layer.scrollParent()->getScrollableArea()->topmostScrollChild() == &layer)
         info.childLayersOfEnclosingCompositedLayer->append(layer.scrollParent()->compositedLayerMapping()->detachLayerForOverflowControls(*info.enclosingCompositedLayer));
 }
 

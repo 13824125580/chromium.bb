@@ -4,7 +4,10 @@
 
 #include "media/base/stream_parser_buffer.h"
 
+#include <algorithm>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "media/base/timestamp_constants.h"
 
 namespace media {
@@ -31,10 +34,9 @@ static scoped_refptr<StreamParserBuffer> CopyBuffer(
   copied_buffer->set_splice_timestamp(buffer.splice_timestamp());
   const DecryptConfig* decrypt_config = buffer.decrypt_config();
   if (decrypt_config) {
-    copied_buffer->set_decrypt_config(
-        make_scoped_ptr(new DecryptConfig(decrypt_config->key_id(),
-                                          decrypt_config->iv(),
-                                          decrypt_config->subsamples())));
+    copied_buffer->set_decrypt_config(base::WrapUnique(
+        new DecryptConfig(decrypt_config->key_id(), decrypt_config->iv(),
+                          decrypt_config->subsamples())));
   }
 
   return copied_buffer;

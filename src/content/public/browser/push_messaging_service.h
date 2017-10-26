@@ -19,6 +19,7 @@ namespace content {
 
 class BrowserContext;
 class ServiceWorkerContext;
+struct PushSubscriptionOptions;
 
 // A push service-agnostic interface that the Push API uses for talking to
 // push messaging services like GCM. Must only be used on the UI thread.
@@ -40,33 +41,29 @@ class CONTENT_EXPORT PushMessagingService {
                                              bool success,
                                              bool not_found)>;
 
-  using ResultCallback = base::Callback<void(bool success)>;
-
   virtual ~PushMessagingService() {}
 
-  // Returns the absolute URL exposed by the push server where the webapp server
-  // can send push messages. This is currently assumed to be the same for all
-  // origins and push registrations.
-  virtual GURL GetPushEndpoint() = 0;
+  // Returns the absolute URL to the endpoint of the push service where messages
+  // should be posted to. Should return an endpoint compatible with the Web Push
+  // Protocol when |standard_protocol| is true.
+  virtual GURL GetEndpoint(bool standard_protocol) const = 0;
 
-  // Subscribe the given |sender_id| with the push messaging service in a
-  // document context. The frame is known and a permission UI may be displayed
-  // to the user.
+  // Subscribe the given |options.sender_info| with the push messaging service
+  // in a document context. The frame is known and a permission UI may be
+  // displayed to the user.
   virtual void SubscribeFromDocument(const GURL& requesting_origin,
                                      int64_t service_worker_registration_id,
-                                     const std::string& sender_id,
                                      int renderer_id,
                                      int render_frame_id,
-                                     bool user_visible,
+                                     const PushSubscriptionOptions& options,
                                      const RegisterCallback& callback) = 0;
 
-  // Subscribe the given |sender_id| with the push messaging service. The frame
-  // is not known so if permission was not previously granted by the user this
-  // request should fail.
+  // Subscribe the given |options.sender_info| with the push messaging service.
+  // The frame is not known so if permission was not previously granted by the
+  // user this request should fail.
   virtual void SubscribeFromWorker(const GURL& requesting_origin,
                                    int64_t service_worker_registration_id,
-                                   const std::string& sender_id,
-                                   bool user_visible,
+                                   const PushSubscriptionOptions& options,
                                    const RegisterCallback& callback) = 0;
 
   // Retrieves the encryption information associated with the subscription
@@ -94,21 +91,6 @@ class CONTENT_EXPORT PushMessagingService {
   // receiving a push message are supported. Influences permission request and
   // permission check behaviour.
   virtual bool SupportNonVisibleMessages() = 0;
-
-  // Provide a storage mechanism to read/write an opaque
-  // "notifications_shown_by_last_few_pushes" string associated with a Service
-  // Worker registration. Stored data is deleted when the associated
-  // registration is deleted.
-  static void GetNotificationsShownByLastFewPushes(
-      ServiceWorkerContext* service_worker_context,
-      int64_t service_worker_registration_id,
-      const StringCallback& callback);
-  static void SetNotificationsShownByLastFewPushes(
-      ServiceWorkerContext* service_worker_context,
-      int64_t service_worker_registration_id,
-      const GURL& origin,
-      const std::string& notifications_shown,
-      const ResultCallback& callback);
 
  protected:
   static void GetSenderId(BrowserContext* browser_context,

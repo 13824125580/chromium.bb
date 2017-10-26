@@ -2,22 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/password_manager/password_store_win.h"
+
 #include <windows.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "chrome/browser/password_manager/password_store_win.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/os_crypt/ie7_password_win.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
@@ -127,7 +131,7 @@ class PasswordStoreWinTest : public testing::Test {
         BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
         BrowserThread::GetMessageLoopProxyForThread(BrowserThread::DB));
     // Need to add at least one table so the database gets created.
-    wdbs_->AddTable(scoped_ptr<WebDatabaseTable>(new LoginsTable()));
+    wdbs_->AddTable(std::unique_ptr<WebDatabaseTable>(new LoginsTable()));
     wdbs_->LoadDatabase();
     wds_ = new PasswordWebDataService(
         wdbs_,
@@ -139,15 +143,20 @@ class PasswordStoreWinTest : public testing::Test {
   void TearDown() override {
     if (store_.get())
       store_->ShutdownOnUIThread();
-    wds_->ShutdownOnUIThread();
-    wdbs_->ShutdownDatabase();
-    wds_ = nullptr;
-    wdbs_ = nullptr;
-    base::WaitableEvent done(false, false);
+    if (wds_) {
+      wds_->ShutdownOnUIThread();
+      wds_ = nullptr;
+    }
+    if (wdbs_) {
+      wdbs_->ShutdownDatabase();
+      wdbs_ = nullptr;
+    }
+    base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
     BrowserThread::PostTask(BrowserThread::DB, FROM_HERE,
         base::Bind(&base::WaitableEvent::Signal, base::Unretained(&done)));
     done.Wait();
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
     base::MessageLoop::current()->Run();
     db_thread_.Stop();
@@ -161,7 +170,7 @@ class PasswordStoreWinTest : public testing::Test {
     return new PasswordStoreWin(
         base::ThreadTaskRunnerHandle::Get(),
         BrowserThread::GetMessageLoopProxyForThread(BrowserThread::DB),
-        make_scoped_ptr(new LoginDatabase(test_login_db_file_path())),
+        base::WrapUnique(new LoginDatabase(test_login_db_file_path())),
         wds_.get());
   }
 
@@ -171,7 +180,7 @@ class PasswordStoreWinTest : public testing::Test {
   content::TestBrowserThread db_thread_;
 
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   scoped_refptr<PasswordWebDataService> wds_;
   scoped_refptr<WebDatabaseService> wdbs_;
   scoped_refptr<PasswordStore> store_;
@@ -206,7 +215,8 @@ TEST_F(PasswordStoreWinTest, DISABLED_ConvertIE7Login) {
 
   // The WDS schedules tasks to run on the DB thread so we schedule yet another
   // task to notify us that it's safe to carry on with the test.
-  WaitableEvent done(false, false);
+  WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED);
   BrowserThread::PostTask(BrowserThread::DB, FROM_HERE,
       base::Bind(&WaitableEvent::Signal, base::Unretained(&done)));
   done.Wait();
@@ -232,7 +242,7 @@ TEST_F(PasswordStoreWinTest, DISABLED_ConvertIE7Login) {
     L"",
     true, false, 1,
   };
-  scoped_ptr<PasswordForm> form =
+  std::unique_ptr<PasswordForm> form =
       CreatePasswordFormFromDataForTesting(form_data);
 
   // The returned form will not have 'action' or '*_element' fields set. This
@@ -262,8 +272,7 @@ TEST_F(PasswordStoreWinTest, DISABLED_ConvertIE7Login) {
   base::MessageLoop::current()->Run();
 }
 
-// Crashy.  http://crbug.com/86558
-TEST_F(PasswordStoreWinTest, DISABLED_OutstandingWDSQueries) {
+TEST_F(PasswordStoreWinTest, OutstandingWDSQueries) {
   store_ = CreatePasswordStore();
   EXPECT_TRUE(store_->Init(syncer::SyncableService::StartSyncFlare()));
 
@@ -279,7 +288,7 @@ TEST_F(PasswordStoreWinTest, DISABLED_OutstandingWDSQueries) {
     L"",
     true, false, 1,
   };
-  scoped_ptr<PasswordForm> form =
+  std::unique_ptr<PasswordForm> form =
       CreatePasswordFormFromDataForTesting(form_data);
 
   MockPasswordStoreConsumer consumer;
@@ -288,7 +297,10 @@ TEST_F(PasswordStoreWinTest, DISABLED_OutstandingWDSQueries) {
   // Release the PSW and the WDS before the query can return.
   store_->ShutdownOnUIThread();
   store_ = nullptr;
+  wds_->ShutdownOnUIThread();
   wds_ = nullptr;
+  wdbs_->ShutdownDatabase();
+  wdbs_ = nullptr;
 
   base::MessageLoop::current()->RunUntilIdle();
 }
@@ -303,7 +315,8 @@ TEST_F(PasswordStoreWinTest, DISABLED_MultipleWDSQueriesOnDifferentThreads) {
 
   // The WDS schedules tasks to run on the DB thread so we schedule yet another
   // task to notify us that it's safe to carry on with the test.
-  WaitableEvent done(false, false);
+  WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED);
   BrowserThread::PostTask(BrowserThread::DB, FROM_HERE,
       base::Bind(&WaitableEvent::Signal, base::Unretained(&done)));
   done.Wait();
@@ -328,7 +341,7 @@ TEST_F(PasswordStoreWinTest, DISABLED_MultipleWDSQueriesOnDifferentThreads) {
     L"",
     true, false, 1,
   };
-  scoped_ptr<PasswordForm> form =
+  std::unique_ptr<PasswordForm> form =
       CreatePasswordFormFromDataForTesting(form_data);
 
   PasswordFormData expected_form_data = {
@@ -384,7 +397,7 @@ TEST_F(PasswordStoreWinTest, EmptyLogins) {
     L"",
     true, false, 1,
   };
-  scoped_ptr<PasswordForm> form =
+  std::unique_ptr<PasswordForm> form =
       CreatePasswordFormFromDataForTesting(form_data);
 
   MockPasswordStoreConsumer consumer;

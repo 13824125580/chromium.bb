@@ -67,22 +67,18 @@ MHTMLArchive::MHTMLArchive()
 {
 }
 
-MHTMLArchive::~MHTMLArchive()
-{
-}
-
-PassRefPtrWillBeRawPtr<MHTMLArchive> MHTMLArchive::create(const KURL& url, SharedBuffer* data)
+MHTMLArchive* MHTMLArchive::create(const KURL& url, SharedBuffer* data)
 {
     // For security reasons we only load MHTML pages from local URLs.
     if (!SchemeRegistry::shouldTreatURLSchemeAsLocal(url.protocol()))
         return nullptr;
 
     MHTMLParser parser(data);
-    WillBeHeapVector<RefPtrWillBeMember<ArchiveResource>> resources = parser.parseArchive();
+    HeapVector<Member<ArchiveResource>> resources = parser.parseArchive();
     if (resources.isEmpty())
         return nullptr; // Invalid MHTML file.
 
-    RefPtrWillBeRawPtr<MHTMLArchive> archive = adoptRefWillBeNoop(new MHTMLArchive);
+    MHTMLArchive* archive = new MHTMLArchive;
     // The first document suitable resource is the main resource of the top frame.
     for (size_t i = 0; i < resources.size(); ++i) {
         const AtomicString& mimeType = resources[i]->mimeType();
@@ -91,7 +87,7 @@ PassRefPtrWillBeRawPtr<MHTMLArchive> MHTMLArchive::create(const KURL& url, Share
         else
             archive->setMainResource(resources[i].get());
     }
-    return archive.release();
+    return archive;
 }
 
 void MHTMLArchive::generateMHTMLHeader(
@@ -109,20 +105,20 @@ void MHTMLArchive::generateMHTMLHeader(
         now.hour(), now.minute(), now.second(), 0);
 
     StringBuilder stringBuilder;
-    stringBuilder.appendLiteral("From: <Saved by Blink>\r\n");
-    stringBuilder.appendLiteral("Subject: ");
+    stringBuilder.append("From: <Saved by Blink>\r\n");
+    stringBuilder.append("Subject: ");
     // We replace non ASCII characters with '?' characters to match IE's behavior.
     stringBuilder.append(replaceNonPrintableCharacters(title));
-    stringBuilder.appendLiteral("\r\nDate: ");
+    stringBuilder.append("\r\nDate: ");
     stringBuilder.append(dateString);
-    stringBuilder.appendLiteral("\r\nMIME-Version: 1.0\r\n");
-    stringBuilder.appendLiteral("Content-Type: multipart/related;\r\n");
-    stringBuilder.appendLiteral("\ttype=\"");
+    stringBuilder.append("\r\nMIME-Version: 1.0\r\n");
+    stringBuilder.append("Content-Type: multipart/related;\r\n");
+    stringBuilder.append("\ttype=\"");
     stringBuilder.append(mimeType);
-    stringBuilder.appendLiteral("\";\r\n");
-    stringBuilder.appendLiteral("\tboundary=\"");
+    stringBuilder.append("\";\r\n");
+    stringBuilder.append("\tboundary=\"");
     stringBuilder.append(boundary);
-    stringBuilder.appendLiteral("\"\r\n\r\n");
+    stringBuilder.append("\"\r\n\r\n");
 
     // We use utf8() below instead of ascii() as ascii() replaces CRLFs with ??
     // (we still only have put ASCII characters in it).
@@ -143,16 +139,18 @@ void MHTMLArchive::generateMHTMLPart(
     ASSERT(contentID.isEmpty() || contentID[0] == '<');
 
     StringBuilder stringBuilder;
-    stringBuilder.append("--" + boundary + "\r\n");
+    stringBuilder.append("--");
+    stringBuilder.append(boundary);
+    stringBuilder.append("\r\n");
 
-    stringBuilder.appendLiteral("Content-Type: ");
+    stringBuilder.append("Content-Type: ");
     stringBuilder.append(resource.mimeType);
-    stringBuilder.appendLiteral("\r\n");
+    stringBuilder.append("\r\n");
 
     if (!contentID.isEmpty()) {
-        stringBuilder.appendLiteral("Content-ID: ");
+        stringBuilder.append("Content-ID: ");
         stringBuilder.append(contentID);
-        stringBuilder.appendLiteral("\r\n");
+        stringBuilder.append("\r\n");
     }
 
     const char* contentEncoding = 0;
@@ -163,17 +161,17 @@ void MHTMLArchive::generateMHTMLPart(
     else
         contentEncoding = base64;
 
-    stringBuilder.appendLiteral("Content-Transfer-Encoding: ");
+    stringBuilder.append("Content-Transfer-Encoding: ");
     stringBuilder.append(contentEncoding);
-    stringBuilder.appendLiteral("\r\n");
+    stringBuilder.append("\r\n");
 
     if (!resource.url.protocolIsAbout()) {
-        stringBuilder.appendLiteral("Content-Location: ");
-        stringBuilder.append(resource.url);
-        stringBuilder.appendLiteral("\r\n");
+        stringBuilder.append("Content-Location: ");
+        stringBuilder.append(resource.url.getString());
+        stringBuilder.append("\r\n");
     }
 
-    stringBuilder.appendLiteral("\r\n");
+    stringBuilder.append("\r\n");
 
     CString asciiString = stringBuilder.toString().utf8();
     outputBuffer.append(asciiString.data(), asciiString.length());
@@ -220,7 +218,7 @@ void MHTMLArchive::generateMHTMLFooter(
     outputBuffer.append(asciiString.data(), asciiString.length());
 }
 
-void MHTMLArchive::setMainResource(PassRefPtrWillBeRawPtr<ArchiveResource> mainResource)
+void MHTMLArchive::setMainResource(ArchiveResource* mainResource)
 {
     m_mainResource = mainResource;
 }
@@ -236,15 +234,13 @@ void MHTMLArchive::addSubresource(ArchiveResource* resource)
 
 ArchiveResource* MHTMLArchive::subresourceForURL(const KURL& url) const
 {
-    return m_subresources.get(url.string());
+    return m_subresources.get(url.getString());
 }
 
 DEFINE_TRACE(MHTMLArchive)
 {
     visitor->trace(m_mainResource);
-#if ENABLE(OILPAN)
     visitor->trace(m_subresources);
-#endif
 }
 
 } // namespace blink

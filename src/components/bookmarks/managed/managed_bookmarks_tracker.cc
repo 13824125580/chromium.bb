@@ -10,6 +10,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -25,6 +26,7 @@ namespace bookmarks {
 const char ManagedBookmarksTracker::kName[] = "name";
 const char ManagedBookmarksTracker::kUrl[] = "url";
 const char ManagedBookmarksTracker::kChildren[] = "children";
+const char ManagedBookmarksTracker::kFolderName[] = "toplevel_name";
 
 ManagedBookmarksTracker::ManagedBookmarksTracker(
     BookmarkModel* model,
@@ -40,10 +42,10 @@ ManagedBookmarksTracker::ManagedBookmarksTracker(
 
 ManagedBookmarksTracker::~ManagedBookmarksTracker() {}
 
-scoped_ptr<base::ListValue>
+std::unique_ptr<base::ListValue>
 ManagedBookmarksTracker::GetInitialManagedBookmarks() {
   const base::ListValue* list = prefs_->GetList(GetPrefName());
-  return make_scoped_ptr(list->DeepCopy());
+  return base::WrapUnique(list->DeepCopy());
 }
 
 // static
@@ -105,6 +107,10 @@ base::string16 ManagedBookmarksTracker::GetBookmarksFolderTitle() const {
     return l10n_util::GetStringUTF16(
         IDS_BOOKMARK_BAR_SUPERVISED_FOLDER_DEFAULT_NAME);
   } else {
+    std::string name = prefs_->GetString(prefs::kManagedBookmarksFolderName);
+    if (!name.empty())
+      return base::UTF8ToUTF16(name);
+
     const std::string domain = get_management_domain_callback_.Run();
     if (domain.empty()) {
       return l10n_util::GetStringUTF16(

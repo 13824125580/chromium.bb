@@ -5,7 +5,7 @@
 #include "chromeos/binder/remote_object.h"
 
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/binder/command_broker.h"
 
 namespace binder {
@@ -31,7 +31,7 @@ Object::Type RemoteObject::GetType() const {
 
 bool RemoteObject::Transact(CommandBroker* command_broker,
                             const TransactionData& data,
-                            scoped_ptr<TransactionData>* reply) {
+                            std::unique_ptr<TransactionData>* reply) {
   return command_broker->Transact(handle_, data, reply);
 }
 

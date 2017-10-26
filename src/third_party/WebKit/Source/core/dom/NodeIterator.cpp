@@ -27,7 +27,6 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/Attr.h"
 #include "core/dom/Document.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/dom/NodeTraversal.h"
 
 namespace blink {
@@ -36,7 +35,7 @@ NodeIterator::NodePointer::NodePointer()
 {
 }
 
-NodeIterator::NodePointer::NodePointer(PassRefPtrWillBeRawPtr<Node> n, bool b)
+NodeIterator::NodePointer::NodePointer(Node* n, bool b)
     : node(n)
     , isPointerBeforeNode(b)
 {
@@ -71,7 +70,7 @@ bool NodeIterator::NodePointer::moveToPrevious(Node* root)
     return node;
 }
 
-NodeIterator::NodeIterator(PassRefPtrWillBeRawPtr<Node> rootNode, unsigned whatToShow, PassRefPtrWillBeRawPtr<NodeFilter> filter)
+NodeIterator::NodeIterator(Node* rootNode, unsigned whatToShow, NodeFilter* filter)
     : NodeIteratorBase(rootNode, whatToShow, filter)
     , m_referenceNode(root(), true)
 {
@@ -80,60 +79,52 @@ NodeIterator::NodeIterator(PassRefPtrWillBeRawPtr<Node> rootNode, unsigned whatT
         root()->document().attachNodeIterator(this);
 }
 
-#if !ENABLE(OILPAN)
-NodeIterator::~NodeIterator()
+Node* NodeIterator::nextNode(ExceptionState& exceptionState)
 {
-    if (!root()->isAttributeNode())
-        root()->document().detachNodeIterator(this);
-}
-#endif
-
-PassRefPtrWillBeRawPtr<Node> NodeIterator::nextNode(ExceptionState& exceptionState)
-{
-    RefPtrWillBeRawPtr<Node> result = nullptr;
+    Node* result = nullptr;
 
     m_candidateNode = m_referenceNode;
     while (m_candidateNode.moveToNext(root())) {
         // NodeIterators treat the DOM tree as a flat list of nodes.
         // In other words, FILTER_REJECT does not pass over descendants
         // of the rejected node. Hence, FILTER_REJECT is the same as FILTER_SKIP.
-        RefPtrWillBeRawPtr<Node> provisionalResult = m_candidateNode.node;
-        bool nodeWasAccepted = acceptNode(provisionalResult.get(), exceptionState) == NodeFilter::FILTER_ACCEPT;
+        Node* provisionalResult = m_candidateNode.node;
+        bool nodeWasAccepted = acceptNode(provisionalResult, exceptionState) == NodeFilter::FILTER_ACCEPT;
         if (exceptionState.hadException())
             break;
         if (nodeWasAccepted) {
             m_referenceNode = m_candidateNode;
-            result = provisionalResult.release();
+            result = provisionalResult;
             break;
         }
     }
 
     m_candidateNode.clear();
-    return result.release();
+    return result;
 }
 
-PassRefPtrWillBeRawPtr<Node> NodeIterator::previousNode(ExceptionState& exceptionState)
+Node* NodeIterator::previousNode(ExceptionState& exceptionState)
 {
-    RefPtrWillBeRawPtr<Node> result = nullptr;
+    Node* result = nullptr;
 
     m_candidateNode = m_referenceNode;
     while (m_candidateNode.moveToPrevious(root())) {
         // NodeIterators treat the DOM tree as a flat list of nodes.
         // In other words, FILTER_REJECT does not pass over descendants
         // of the rejected node. Hence, FILTER_REJECT is the same as FILTER_SKIP.
-        RefPtrWillBeRawPtr<Node> provisionalResult = m_candidateNode.node;
-        bool nodeWasAccepted = acceptNode(provisionalResult.get(), exceptionState) == NodeFilter::FILTER_ACCEPT;
+        Node* provisionalResult = m_candidateNode.node;
+        bool nodeWasAccepted = acceptNode(provisionalResult, exceptionState) == NodeFilter::FILTER_ACCEPT;
         if (exceptionState.hadException())
             break;
         if (nodeWasAccepted) {
             m_referenceNode = m_candidateNode;
-            result = provisionalResult.release();
+            result = provisionalResult;
             break;
         }
     }
 
     m_candidateNode.clear();
-    return result.release();
+    return result;
 }
 
 void NodeIterator::detach()
@@ -149,7 +140,7 @@ void NodeIterator::nodeWillBeRemoved(Node& removedNode)
 
 void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenceNode) const
 {
-    ASSERT(root()->document() == removedNode.document());
+    DCHECK_EQ(root()->document(), removedNode.document());
 
     // Iterator is not affected if the removed node is the reference node and is the root.
     // or if removed node is not the reference node, or the ancestor of the reference node.
@@ -218,6 +209,11 @@ DEFINE_TRACE(NodeIterator)
     visitor->trace(m_referenceNode);
     visitor->trace(m_candidateNode);
     NodeIteratorBase::trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(NodeIterator)
+{
+    NodeIteratorBase::traceWrappers(visitor);
 }
 
 } // namespace blink

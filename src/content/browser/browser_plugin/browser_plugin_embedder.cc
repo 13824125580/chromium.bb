@@ -105,9 +105,7 @@ void BrowserPluginEmbedder::ClearGuestDragStateIfApplicable() {
 // static
 bool BrowserPluginEmbedder::DidSendScreenRectsCallback(
    WebContents* guest_web_contents) {
-  RenderWidgetHostImpl::From(
-      guest_web_contents->GetRenderViewHost()->GetWidget())
-      ->SendScreenRects();
+  static_cast<WebContentsImpl*>(guest_web_contents)->SendScreenRects();
   // Not handled => Iterate over all guests.
   return false;
 }
@@ -218,6 +216,17 @@ BrowserPluginGuest* BrowserPluginEmbedder::GetFullPageGuest() {
   if (!guest_contents)
     return nullptr;
   return guest_contents->GetBrowserPluginGuest();
+}
+
+// static
+bool BrowserPluginEmbedder::GuestRecentlyAudibleCallback(WebContents* guest) {
+  return guest->WasRecentlyAudible();
+}
+
+bool BrowserPluginEmbedder::WereAnyGuestsRecentlyAudible() {
+  return GetBrowserPluginGuestManager()->ForEachGuest(
+      web_contents(),
+      base::Bind(&BrowserPluginEmbedder::GuestRecentlyAudibleCallback));
 }
 
 // static

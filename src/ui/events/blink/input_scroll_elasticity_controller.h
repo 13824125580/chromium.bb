@@ -50,14 +50,15 @@ class InputScrollElasticityController {
 
   base::WeakPtr<InputScrollElasticityController> GetWeakPtr();
 
-  // Update the overscroll state based a wheel event that has been processed.
+  // Update the overscroll state based a gesture event that has been processed.
   // Note that this assumes that all events are coming from a single input
   // device. If the user simultaneously uses multiple input devices, Cocoa may
   // not correctly pass all the gesture begin and end events. In this case,
   // this class may disregard some scrolls that come in at unexpected times.
-  void ObserveWheelEventAndResult(
-      const blink::WebMouseWheelEvent& wheel_event,
+  void ObserveGestureEventAndResult(
+      const blink::WebGestureEvent& gesture_event,
       const cc::InputHandlerScrollResult& scroll_result);
+
   void Animate(base::TimeTicks time);
 
   void ReconcileStretchAndScroll();

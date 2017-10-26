@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "base/command_line.h"
@@ -16,7 +17,6 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/tuple.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
@@ -155,11 +155,11 @@ class SpellcheckServiceBrowserTest : public InProcessBrowserTest {
     if (!ok)
       return false;
 
-    return base::get<0>(param);
+    return std::get<0>(param);
   }
 
  private:
-  scoped_ptr<content::MockRenderProcessHost> renderer_;
+  std::unique_ptr<content::MockRenderProcessHost> renderer_;
 
   // Not owned preferences service.
   PrefService* prefs_;
@@ -230,10 +230,17 @@ IN_PROC_BROWSER_TEST_F(SpellcheckServiceBrowserTest,
   EXPECT_FALSE(GetFirstEnableSpellcheckMessageParam());
 }
 
+// Flaky on Windows, see https://crbug.com/611029.
+#if defined(OS_WIN)
+#define MAYBE_StartWithoutLanguages DISABLED_StartWithoutLanguages
+#else
+#define MAYBE_StartWithoutLanguages StartWithoutLanguages
+#endif
 // Starting without spellcheck languages should send the 'disable spellcheck'
 // message to the renderer. Consequently adding spellchecking languages should
 // enable spellcheck.
-IN_PROC_BROWSER_TEST_F(SpellcheckServiceBrowserTest, StartWithoutLanguages) {
+IN_PROC_BROWSER_TEST_F(SpellcheckServiceBrowserTest,
+                       MAYBE_StartWithoutLanguages) {
   InitSpellcheck(true, "", "");
   EXPECT_FALSE(GetFirstEnableSpellcheckMessageParam());
 
@@ -268,7 +275,8 @@ IN_PROC_BROWSER_TEST_F(SpellcheckServiceBrowserTest, DeleteCorruptedBDICT) {
 
   // Attach an event to the SpellcheckService object so we can receive its
   // status updates.
-  base::WaitableEvent event(true, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   SpellcheckService::AttachStatusEvent(&event);
 
   BrowserContext* context = GetContext();

@@ -4,6 +4,8 @@
 
 #include "content/browser/frame_host/interstitial_page_impl.h"
 
+#include <tuple>
+
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
@@ -50,6 +52,10 @@ class TestInterstitialPageDelegate : public InterstitialPageDelegate {
            "function get_selection() {"
            "  window.domAutomationController.send("
            "      window.getSelection().toString());"
+           "}"
+           "function set_selection_change_listener() {"
+           "  document.addEventListener('selectionchange',"
+           "    function() { document.title='SELECTION_CHANGED'; })"
            "}"
            "</script>"
            "</head>"
@@ -101,14 +107,14 @@ class InterstitialTitleUpdateWatcher : public BrowserMessageFilter {
         BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
             base::Bind(&InterstitialTitleUpdateWatcher::OnTitleUpdateReceived,
-                       this, base::get<0>(params)));
+                       this, std::get<0>(params)));
       }
     }
     return false;
   }
 
   base::string16 expected_title_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(InterstitialTitleUpdateWatcher);
 };
@@ -156,7 +162,7 @@ class ClipboardMessageWatcher : public IPC::MessageFilter {
         BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
             base::Bind(&ClipboardMessageWatcher::OnWriteText, this,
-                       base::UTF16ToUTF8(base::get<1>(params))));
+                       base::UTF16ToUTF8(std::get<1>(params))));
       }
       return true;
     }
@@ -169,7 +175,7 @@ class ClipboardMessageWatcher : public IPC::MessageFilter {
     return false;
   }
 
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   std::string last_text_;
 
   DISALLOW_COPY_AND_ASSIGN(ClipboardMessageWatcher);
@@ -279,6 +285,11 @@ class InterstitialPageImplTest : public ContentBrowserTest {
                          "create_input_and_set_text('" + text + "')");
   }
 
+  bool SetSelectionChangeListener() {
+    return ExecuteScript(interstitial_->GetMainFrame(),
+                         "set_selection_change_listener()");
+  }
+
   std::string PerformCut() {
     clipboard_message_watcher_->InitWait();
     title_update_watcher_->InitWait("TEXT_CHANGED");
@@ -308,14 +319,18 @@ class InterstitialPageImplTest : public ContentBrowserTest {
   }
 
   void PerformSelectAll() {
+    title_update_watcher_->InitWait("SELECTION_CHANGED");
     RenderFrameHostImpl* rfh =
         static_cast<RenderFrameHostImpl*>(interstitial_->GetMainFrame());
     rfh->GetRenderWidgetHost()->delegate()->SelectAll();
+    title_update_watcher_->Wait();
   }
 
  private:
   void RunTaskOnIOThreadAndWait(const base::Closure& task) {
-    base::WaitableEvent completion(false, false);
+    base::WaitableEvent completion(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
     BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
                             base::Bind(&InterstitialPageImplTest::RunTask, this,
                                        task, &completion));
@@ -327,7 +342,7 @@ class InterstitialPageImplTest : public ContentBrowserTest {
     completion->Signal();
   }
 
-  scoped_ptr<InterstitialPageImpl> interstitial_;
+  std::unique_ptr<InterstitialPageImpl> interstitial_;
   scoped_refptr<ClipboardMessageWatcher> clipboard_message_watcher_;
   scoped_refptr<InterstitialTitleUpdateWatcher> title_update_watcher_;
 
@@ -387,12 +402,14 @@ IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, Paste) {
 
 IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, SelectAll) {
   SetUpInterstitialPage();
+  ASSERT_TRUE(SetSelectionChangeListener());
 
   std::string input_text;
   ASSERT_TRUE(GetSelection(&input_text));
   EXPECT_EQ(std::string(), input_text);
 
   PerformSelectAll();
+
   ASSERT_TRUE(GetSelection(&input_text));
   EXPECT_EQ("original body text", input_text);
 

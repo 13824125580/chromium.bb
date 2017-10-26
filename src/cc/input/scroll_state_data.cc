@@ -9,8 +9,8 @@ namespace cc {
 ScrollStateData::ScrollStateData()
     : delta_x(0),
       delta_y(0),
-      start_position_x(0),
-      start_position_y(0),
+      position_x(0),
+      position_y(0),
       velocity_x(0),
       velocity_y(0),
       is_beginning(false),
@@ -23,26 +23,28 @@ ScrollStateData::ScrollStateData()
       delta_granularity(0),
       caused_scroll_x(false),
       caused_scroll_y(false),
-      current_native_scrolling_node_(nullptr),
-      current_native_scrolling_element_(0) {}
+      current_native_scrolling_node_(nullptr) {}
 
 ScrollStateData::ScrollStateData(const ScrollStateData& other) = default;
 
 ScrollNode* ScrollStateData::current_native_scrolling_node() const {
   return current_native_scrolling_node_;
 }
+
 void ScrollStateData::set_current_native_scrolling_node(
     ScrollNode* current_native_scrolling_node) {
   current_native_scrolling_node_ = current_native_scrolling_node;
-  current_native_scrolling_element_ = 0;
+  current_native_scrolling_element_ = ElementId();
 }
-uint64_t ScrollStateData::current_native_scrolling_element() const {
+
+ElementId ScrollStateData::current_native_scrolling_element() const {
   if (current_native_scrolling_node_)
     return current_native_scrolling_node_->data.element_id;
   return current_native_scrolling_element_;
 }
+
 void ScrollStateData::set_current_native_scrolling_element(
-    uint64_t element_id) {
+    ElementId element_id) {
   current_native_scrolling_element_ = element_id;
   current_native_scrolling_node_ = nullptr;
 }

@@ -89,7 +89,7 @@ blink::WebSpeechSynthesizer* ContentRendererClient::OverrideSpeechSynthesizer(
 content::ResourceLoaderBridge*
 ContentRendererClient::OverrideResourceLoaderBridge(
     const content::RequestInfo& request_info,
-    content::ResourceRequestBody* request_body) {
+    content::ResourceRequestBodyImpl* request_body) {
   return NULL;
 }
 
@@ -105,7 +105,7 @@ bool ContentRendererClient::AllowPopup() {
   return false;
 }
 
-#ifdef OS_ANDROID
+#if defined(OS_ANDROID)
 bool ContentRendererClient::HandleNavigation(
     RenderFrame* render_frame,
     bool is_content_initiated,
@@ -115,6 +115,10 @@ bool ContentRendererClient::HandleNavigation(
     blink::WebNavigationType type,
     blink::WebNavigationPolicy default_policy,
     bool is_redirect) {
+  return false;
+}
+
+bool ContentRendererClient::ShouldUseMediaPlayerForURL(const GURL& url) {
   return false;
 }
 #endif
@@ -166,11 +170,10 @@ bool ContentRendererClient::AllowPepperMediaStreamAPI(const GURL& url) {
   return false;
 }
 
-void ContentRendererClient::AddKeySystems(
-    std::vector<media::KeySystemInfo>* key_systems) {
-}
+void ContentRendererClient::AddSupportedKeySystems(
+    std::vector<std::unique_ptr<media::KeySystemProperties>>* key_systems) {}
 
-scoped_ptr<media::RendererFactory>
+std::unique_ptr<media::RendererFactory>
 ContentRendererClient::CreateMediaRendererFactory(
     RenderFrame* render_frame,
     media::GpuVideoAcceleratorFactories* gpu_factories,
@@ -178,7 +181,7 @@ ContentRendererClient::CreateMediaRendererFactory(
   return nullptr;
 }
 
-scoped_ptr<MediaStreamRendererFactory>
+std::unique_ptr<MediaStreamRendererFactory>
 ContentRendererClient::CreateMediaStreamRendererFactory() {
   return nullptr;
 }
@@ -223,17 +226,13 @@ BrowserPluginDelegate* ContentRendererClient::CreateBrowserPluginDelegate(
   return nullptr;
 }
 
-scoped_ptr<blink::WebAppBannerClient>
+std::unique_ptr<blink::WebAppBannerClient>
 ContentRendererClient::CreateAppBannerClient(RenderFrame* render_frame) {
   return nullptr;
 }
 
 bool ContentRendererClient::ShouldEnforceWebRTCRoutingPreferences() {
   return true;
-}
-
-base::StringPiece ContentRendererClient::GetOriginTrialPublicKey() {
-  return base::StringPiece();
 }
 
 }  // namespace content

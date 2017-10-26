@@ -40,6 +40,7 @@
   },
   'includes': [
     'chrome_nibs.gypi',
+    '../media/cdm_paths.gypi',
   ],
   # TODO(mark): Come up with a fancier way to do this.  It should
   # only be necessary to list framework-Info.plist once, not the
@@ -56,12 +57,9 @@
 
     'app/framework-Info.plist',
     '<@(mac_all_xibs)',
-    'app/theme/find_next_Template.pdf',
-    'app/theme/find_prev_Template.pdf',
-    'app/theme/menu_overflow_down.pdf',
-    'app/theme/menu_overflow_up.pdf',
     'browser/mac/install.sh',
     '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_100_percent.pak',
+    '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_material_100_percent.pak',
     '<(SHARED_INTERMEDIATE_DIR)/repack/resources.pak',
     '<!@pymod_do_main(repack_locales -o -p <(OS) -g <(grit_out_dir) -s <(SHARED_INTERMEDIATE_DIR) -x <(SHARED_INTERMEDIATE_DIR) <(locales))',
     # Note: pseudo_locales are generated via the packed_resources
@@ -74,7 +72,6 @@
   'dependencies': [
     'app_mode_app',
     # Bring in pdfsqueeze and run it on all pdfs
-    '../build/temp_gyp/pdfsqueeze.gyp:pdfsqueeze',
     '../crypto/crypto.gyp:crypto',
     # On Mac, Flash gets put into the framework, so we need this
     # dependency here. flash_player.gyp will copy the Flash bundle
@@ -84,21 +81,6 @@
     '../third_party/widevine/cdm/widevine_cdm.gyp:widevinecdmadapter',
     'chrome_resources.gyp:packed_extra_resources',
     'chrome_resources.gyp:packed_resources',
-  ],
-  'rules': [
-    {
-      'rule_name': 'pdfsqueeze',
-      'extension': 'pdf',
-      'inputs': [
-        '<(PRODUCT_DIR)/pdfsqueeze',
-      ],
-      'outputs': [
-        '<(INTERMEDIATE_DIR)/pdfsqueeze/<(RULE_INPUT_ROOT).pdf',
-      ],
-      'action': ['<(PRODUCT_DIR)/pdfsqueeze',
-                 '<(RULE_INPUT_PATH)', '<@(_outputs)'],
-      'message': 'Running pdfsqueeze on <(RULE_INPUT_PATH)',
-    },
   ],
   'variables': {
     'theme_dir_name': '<(branding_path_component)',
@@ -114,29 +96,15 @@
       # but this seems like a really good place to store them.
       'postbuild_name': 'Tweak Info.plist',
       'action': ['<(tweak_info_plist_path)',
+                 '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                  '--breakpad=<(mac_breakpad_compiled_in)',
                  '--breakpad_uploads=<(mac_breakpad_uploads)',
                  '--keystone=0',
                  '--scm=1',
                  '--branding=<(branding)'],
     },
-    {
-      'postbuild_name': 'Symlink Libraries',
-      'action': [
-        'ln',
-        '-fns',
-        'Versions/Current/Libraries',
-        '${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Libraries'
-      ],
-    },
   ],
   'copies': [
-    {
-      'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Libraries',
-      'files': [
-        '<(PRODUCT_DIR)/exif.so',
-      ],
-    },
     {
       'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers',
       'files': [
@@ -161,28 +129,34 @@
         ['branding == "Chrome"', {
           'files': [
             '<(PRODUCT_DIR)/PepperFlash/PepperFlashPlayer.plugin',
+            '<(PRODUCT_DIR)/PepperFlash/manifest.json',
           ],
         }],
       ],
     },
     {
-      # This file is used by the component installer.
-      # It is not a complete plugin on its own.
-      'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Internet Plug-Ins/',
+      # The adapter is not a complete library on its own. It needs the Widevine
+      # CDM to work.
+      'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Libraries/<(widevine_cdm_path)',
       'files': [],
       'conditions': [
         ['branding == "Chrome"', {
           'files': [
-            '<(PRODUCT_DIR)/widevinecdmadapter.plugin',
+            '<(PRODUCT_DIR)/<(widevine_cdm_path)/libwidevinecdm.dylib',
+            '<(PRODUCT_DIR)/<(widevine_cdm_path)/widevinecdmadapter.plugin',
           ],
         }],
       ],
     },
     {
-      # Copy of resources used by tests.
-      'destination': '<(PRODUCT_DIR)',
-      'files': [
-          '<(SHARED_INTERMEDIATE_DIR)/repack/resources.pak'
+      'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)/Libraries/WidevineCdm',
+      'files': [],
+      'conditions': [
+        ['branding == "Chrome"', {
+          'files': [
+            '<(PRODUCT_DIR)/WidevineCdm/manifest.json',
+          ],
+        }],
       ],
     },
     {
@@ -271,15 +245,6 @@
     ['enable_hidpi==1', {
       'mac_bundle_resources': [
         '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_200_percent.pak',
-      ],
-    }],
-    ['enable_topchrome_md==1', {
-      'mac_bundle_resources': [
-      '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_material_100_percent.pak',
-      ],
-    }],
-    ['enable_topchrome_md==1 and enable_hidpi==1', {
-      'mac_bundle_resources': [
         '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_material_200_percent.pak',
       ],
     }],

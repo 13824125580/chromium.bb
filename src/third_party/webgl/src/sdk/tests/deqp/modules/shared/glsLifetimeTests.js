@@ -705,7 +705,7 @@ glsLifetimeTests.ES2Types = function() {
     this.m_shaderInAtt = new glsLifetimeTests.ShaderProgramInputAttacher(this.m_shaderAtt);
 
     this.m_types.push(this.m_bufferType, this.m_textureType, this.m_rboType, this.m_fboType, this.m_shaderType, this.m_programType);
-    this.m_attachers.push(this.m_texFboAtt, this.m_texFboAtt, this.m_shaderAtt);
+    this.m_attachers.push(this.m_texFboAtt, this.m_rboFboAtt, this.m_shaderAtt);
     this.m_inAttachers.push(this.m_texFboInAtt, this.m_rboFboInAtt, this.m_shaderInAtt);
     this.m_outAttachers.push(this.m_texFboOutAtt, this.m_rboFboOutAtt);
 };
@@ -996,7 +996,12 @@ glsLifetimeTests.OutputAttachmentTest.prototype.iterate = function() {
 
     // For reference purposes, make note of what refSeed looks like.
     this.m_outputAttacher.setupContainer(refSeed, container);
+    // Since in WebGL, buffer bound to TRANSFORM_FEEDBACK_BUFFER can not be bound to other targets.
+    // Unfortunately, element will be bound again in drawAttachment() for drawing.
+    // Detach element from container before drawing, then reattach it after drawing.
+    attacher.detach(element, container);
     this.m_outputAttacher.drawAttachment(element, refSurface);
+    attacher.attach(element, container);
     elementType.release(element);
 
     bufferedLogToConsole('Writing to a container after deletion of attachment');

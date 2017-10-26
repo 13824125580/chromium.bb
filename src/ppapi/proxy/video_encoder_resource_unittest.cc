@@ -33,7 +33,10 @@ namespace {
 
 class MockCompletionCallback {
  public:
-  MockCompletionCallback() : called_(false), call_event_(false, false) {}
+  MockCompletionCallback()
+      : called_(false),
+        call_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                    base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   bool called() { return called_; }
   int32_t result() { return result_; }
@@ -123,7 +126,7 @@ class VideoEncoderResourceTest : public PluginProxyTest,
   void CreateBitstreamSharedMemory(uint32_t buffer_size, uint32_t nb_buffers) {
     shared_memory_bitstreams_.clear();
     for (uint32_t i = 0; i < nb_buffers; ++i) {
-      scoped_ptr<base::SharedMemory> mem(new base::SharedMemory());
+      std::unique_ptr<base::SharedMemory> mem(new base::SharedMemory());
       ASSERT_TRUE(mem->CreateAnonymous(buffer_size));
       shared_memory_bitstreams_.push_back(std::move(mem));
     }
@@ -131,7 +134,7 @@ class VideoEncoderResourceTest : public PluginProxyTest,
 
   void CreateVideoFramesSharedMemory(uint32_t frame_length,
                                      uint32_t frame_count) {
-    scoped_ptr<base::SharedMemory> shared_memory_frames(
+    std::unique_ptr<base::SharedMemory> shared_memory_frames(
         new base::SharedMemory());
     uint32_t buffer_length =
         frame_length + sizeof(ppapi::MediaStreamBuffer::Video);

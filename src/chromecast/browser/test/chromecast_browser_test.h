@@ -5,8 +5,9 @@
 #ifndef CHROMECAST_BROWSER_TEST_CHROMECAST_BROWSER_TEST_H_
 #define CHROMECAST_BROWSER_TEST_CHROMECAST_BROWSER_TEST_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_base.h"
 
@@ -16,7 +17,7 @@ class WebContents;
 
 namespace chromecast {
 namespace shell {
-class CastContentWindow;
+class ChromecastBrowserTestHelper;
 
 // This test allows for running an entire browser-process lifecycle per unit
 // test, using Chromecast's cast_shell. This starts up the shell, runs a test
@@ -35,18 +36,9 @@ class ChromecastBrowserTest : public content::BrowserTestBase {
   void RunTestOnMainThreadLoop() override;
 
  protected:
-  void NavigateToURL(content::WebContents* window, const GURL& gurl);
-
-  // Creates a new window and loads about:blank.
-  content::WebContents* CreateBrowser();
-
-  // Returns the window for the test.
-  content::WebContents* web_contents() const { return web_contents_.get(); }
+  std::unique_ptr<ChromecastBrowserTestHelper> helper_;
 
  private:
-  scoped_ptr<content::WebContents> web_contents_;
-  scoped_ptr<CastContentWindow> window_;
-
   bool setup_called_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromecastBrowserTest);

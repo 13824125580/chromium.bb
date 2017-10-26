@@ -26,7 +26,7 @@ REPLACEMENTS = {
   'use_system_libjpeg': 'third_party/libjpeg/libjpeg.gyp',
   'use_system_libpng': 'third_party/libpng/libpng.gyp',
   'use_system_libusb': 'third_party/libusb/libusb.gyp',
-  'use_system_libvpx': 'third_party/libvpx_new/libvpx.gyp',
+  'use_system_libvpx': 'third_party/libvpx/libvpx.gyp',
   'use_system_libwebp': 'third_party/libwebp/libwebp.gyp',
   'use_system_libxml': 'third_party/libxml/libxml.gyp',
   'use_system_libxnvctrl' : 'third_party/libXNVCtrl/libXNVCtrl.gyp',
@@ -36,7 +36,7 @@ REPLACEMENTS = {
   'use_system_re2': 'third_party/re2/re2.gyp',
   'use_system_snappy': 'third_party/snappy/snappy.gyp',
   'use_system_sqlite': 'third_party/sqlite/sqlite.gyp',
-  'use_system_v8': 'v8/tools/gyp/v8.gyp',
+  'use_system_v8': 'v8/src/v8.gyp',
   'use_system_zlib': 'third_party/zlib/zlib.gyp',
 }
 

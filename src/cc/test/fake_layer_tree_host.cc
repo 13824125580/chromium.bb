@@ -4,6 +4,8 @@
 
 #include "cc/test/fake_layer_tree_host.h"
 
+#include "base/memory/ptr_util.h"
+#include "cc/animation/animation_host.h"
 #include "cc/layers/layer.h"
 #include "cc/test/fake_image_serialization_processor.h"
 #include "cc/test/test_task_graph_runner.h"
@@ -28,15 +30,13 @@ FakeLayerTreeHost::FakeLayerTreeHost(FakeLayerTreeHostClient* client,
   client_->SetLayerTreeHost(this);
 }
 
-scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
+std::unique_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
     FakeLayerTreeHostClient* client,
     TestTaskGraphRunner* task_graph_runner) {
-  LayerTreeSettings settings;
-  settings.use_compositor_animation_timelines = true;
-  return Create(client, task_graph_runner, settings);
+  return Create(client, task_graph_runner, LayerTreeSettings());
 }
 
-scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
+std::unique_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
     FakeLayerTreeHostClient* client,
     TestTaskGraphRunner* task_graph_runner,
     const LayerTreeSettings& settings) {
@@ -44,7 +44,7 @@ scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
                 CompositorMode::SINGLE_THREADED);
 }
 
-scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
+std::unique_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
     FakeLayerTreeHostClient* client,
     TestTaskGraphRunner* task_graph_runner,
     const LayerTreeSettings& settings,
@@ -53,10 +53,11 @@ scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
   params.client = client;
   params.settings = &settings;
   params.task_graph_runner = task_graph_runner;
-  return make_scoped_ptr(new FakeLayerTreeHost(client, &params, mode));
+  params.animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  return base::WrapUnique(new FakeLayerTreeHost(client, &params, mode));
 }
 
-scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
+std::unique_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
     FakeLayerTreeHostClient* client,
     TestTaskGraphRunner* task_graph_runner,
     const LayerTreeSettings& settings,
@@ -67,7 +68,8 @@ scoped_ptr<FakeLayerTreeHost> FakeLayerTreeHost::Create(
   params.settings = &settings;
   params.task_graph_runner = task_graph_runner;
   params.image_serialization_processor = image_serialization_processor;
-  return make_scoped_ptr(new FakeLayerTreeHost(client, &params, mode));
+  params.animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  return base::WrapUnique(new FakeLayerTreeHost(client, &params, mode));
 }
 
 FakeLayerTreeHost::~FakeLayerTreeHost() {
@@ -83,14 +85,13 @@ const RendererCapabilities& FakeLayerTreeHost::GetRendererCapabilities() const {
 void FakeLayerTreeHost::SetNeedsCommit() { needs_commit_ = true; }
 
 LayerImpl* FakeLayerTreeHost::CommitAndCreateLayerImplTree() {
-  scoped_ptr<LayerImpl> old_root_layer_impl = active_tree()->DetachLayerTree();
+  TreeSynchronizer::SynchronizeTrees(root_layer(), active_tree());
+  active_tree()->SetPropertyTrees(property_trees());
+  TreeSynchronizer::PushLayerProperties(root_layer()->layer_tree_host(),
+                                        active_tree());
+  animation_host()->PushPropertiesTo(host_impl_.animation_host());
 
-  scoped_ptr<LayerImpl> layer_impl = TreeSynchronizer::SynchronizeTrees(
-      root_layer(), std::move(old_root_layer_impl), active_tree());
-  active_tree()->SetPropertyTrees(*property_trees());
-  TreeSynchronizer::PushProperties(root_layer(), layer_impl.get());
-
-  active_tree()->SetRootLayer(std::move(layer_impl));
+  active_tree()->UpdatePropertyTreeScrollOffset(property_trees());
 
   if (page_scale_layer() && inner_viewport_scroll_layer()) {
     active_tree()->SetViewportLayersFromIds(
@@ -102,19 +103,18 @@ LayerImpl* FakeLayerTreeHost::CommitAndCreateLayerImplTree() {
   }
 
   active_tree()->UpdatePropertyTreesForBoundsDelta();
-  return active_tree()->root_layer();
+  return active_tree()->root_layer_for_testing();
 }
 
 LayerImpl* FakeLayerTreeHost::CommitAndCreatePendingTree() {
-  scoped_ptr<LayerImpl> old_root_layer_impl = pending_tree()->DetachLayerTree();
+  TreeSynchronizer::SynchronizeTrees(root_layer(), pending_tree());
+  pending_tree()->SetPropertyTrees(property_trees());
+  TreeSynchronizer::PushLayerProperties(root_layer()->layer_tree_host(),
+                                        pending_tree());
+  animation_host()->PushPropertiesTo(host_impl_.animation_host());
 
-  scoped_ptr<LayerImpl> layer_impl = TreeSynchronizer::SynchronizeTrees(
-      root_layer(), std::move(old_root_layer_impl), pending_tree());
-  pending_tree()->SetPropertyTrees(*property_trees());
-  TreeSynchronizer::PushProperties(root_layer(), layer_impl.get());
-
-  pending_tree()->SetRootLayer(std::move(layer_impl));
-  return pending_tree()->root_layer();
+  pending_tree()->UpdatePropertyTreeScrollOffset(property_trees());
+  return pending_tree()->root_layer_for_testing();
 }
 
 }  // namespace cc

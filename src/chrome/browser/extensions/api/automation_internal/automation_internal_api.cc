@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -245,7 +246,7 @@ AutomationInternalEnableTabFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(automation_info);
 
   using api::automation_internal::EnableTab::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   content::WebContents* contents = NULL;
   if (params->args.tab_id.get()) {
@@ -295,7 +296,7 @@ ExtensionFunction::ResponseAction AutomationInternalEnableFrameFunction::Run() {
   // TODO(dtseng): Limited to desktop tree for now pending out of proc iframes.
   using api::automation_internal::EnableFrame::Params;
 
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   content::RenderFrameHost* rfh =
@@ -306,7 +307,11 @@ ExtensionFunction::ResponseAction AutomationInternalEnableFrameFunction::Run() {
   content::WebContents* contents =
       content::WebContents::FromRenderFrameHost(rfh);
   AutomationWebContentsObserver::CreateForWebContents(contents);
-  contents->EnableTreeOnlyAccessibilityMode();
+
+  // Only call this if this is the root of a frame tree, to avoid resetting
+  // the accessibility state multiple times.
+  if (!rfh->GetParent())
+    contents->EnableTreeOnlyAccessibilityMode();
 
   return RespondNow(NoArguments());
 }
@@ -317,7 +322,7 @@ AutomationInternalPerformActionFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(automation_info && automation_info->interact);
 
   using api::automation_internal::PerformAction::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   if (params->args.tree_id == kDesktopTreeID) {
@@ -389,7 +394,7 @@ AutomationInternalEnableDesktopFunction::Run() {
     return RespondNow(Error("desktop permission must be requested"));
 
   using api::automation_internal::EnableDesktop::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   // This gets removed when the extension process dies.
@@ -414,7 +419,7 @@ AutomationInternalQuerySelectorFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(automation_info);
 
   using api::automation_internal::QuerySelector::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   if (params->args.tree_id == kDesktopTreeID) {
@@ -448,7 +453,8 @@ void AutomationInternalQuerySelectorFunction::OnResponse(
     return;
   }
 
-  Respond(OneArgument(new base::FundamentalValue(result_acc_obj_id)));
+  Respond(
+      OneArgument(base::MakeUnique<base::FundamentalValue>(result_acc_obj_id)));
 }
 
 }  // namespace extensions

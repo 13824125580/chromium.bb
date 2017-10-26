@@ -8,11 +8,15 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#import "RTCICECandidate.h"
+#import "WebRTC/RTCIceCandidate.h"
 
-@interface RTCICECandidate (JSON)
+@interface RTCIceCandidate (JSON)
 
-+ (RTCICECandidate *)candidateFromJSONDictionary:(NSDictionary *)dictionary;
++ (RTCIceCandidate *)candidateFromJSONDictionary:(NSDictionary *)dictionary;
++ (NSArray<RTCIceCandidate *> *)candidatesFromJSONDictionary:
+    (NSDictionary *)dictionary;
++ (NSData *)JSONDataForIceCandidates:(NSArray<RTCIceCandidate *> *)candidates
+                            withType:(NSString *)typeValue;
 - (NSData *)JSONData;
 
 @end

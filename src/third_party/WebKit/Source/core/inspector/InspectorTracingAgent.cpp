@@ -24,8 +24,7 @@ const char devtoolsMetadataEventCategory[] = TRACE_DISABLED_BY_DEFAULT("devtools
 }
 
 InspectorTracingAgent::InspectorTracingAgent(Client* client, InspectorWorkerAgent* workerAgent, InspectedFrames* inspectedFrames)
-    : InspectorBaseAgent<InspectorTracingAgent, protocol::Frontend::Tracing>("Tracing")
-    , m_layerTreeId(0)
+    : m_layerTreeId(0)
     , m_client(client)
     , m_workerAgent(workerAgent)
     , m_inspectedFrames(inspectedFrames)
@@ -43,21 +42,28 @@ void InspectorTracingAgent::restore()
 {
     emitMetadataEvents();
 }
-void InspectorTracingAgent::start(ErrorString*,
+void InspectorTracingAgent::start(ErrorString* errorString,
     const Maybe<String>& categories,
     const Maybe<String>& options,
     const Maybe<double>& bufferUsageReportingInterval,
     const Maybe<String>& transferMode,
-    PassRefPtr<StartCallback> callback)
+    const Maybe<protocol::Tracing::TraceConfig>& config,
+    std::unique_ptr<StartCallback> callback)
 {
     ASSERT(sessionId().isEmpty());
+    if (config.isJust()) {
+        *errorString =
+            "Using trace config on renderer targets is not supported yet.";
+        return;
+    }
+
     m_state->setString(TracingAgentState::sessionId, IdentifiersFactory::createIdentifier());
     m_client->enableTracing(categories.fromMaybe(String()));
     emitMetadataEvents();
     callback->sendSuccess();
 }
 
-void InspectorTracingAgent::end(ErrorString* errorString, PassRefPtr<EndCallback> callback)
+void InspectorTracingAgent::end(ErrorString* errorString, std::unique_ptr<EndCallback> callback)
 {
     m_client->disableTracing();
     resetSessionId();
@@ -66,8 +72,9 @@ void InspectorTracingAgent::end(ErrorString* errorString, PassRefPtr<EndCallback
 
 String InspectorTracingAgent::sessionId()
 {
-    String result;
-    m_state->getString(TracingAgentState::sessionId, &result);
+    String16 result;
+    if (m_state)
+        m_state->getString(TracingAgentState::sessionId, &result);
     return result;
 }
 
@@ -93,7 +100,7 @@ void InspectorTracingAgent::disable(ErrorString*)
 void InspectorTracingAgent::resetSessionId()
 {
     m_state->remove(TracingAgentState::sessionId);
-    m_workerAgent->setTracingSessionId(sessionId());
+    m_workerAgent->setTracingSessionId(String());
 }
 
 } // namespace blink

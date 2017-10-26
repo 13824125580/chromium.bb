@@ -2,26 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/background/background_mode_manager.h"
+
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/background/background_trigger.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/keep_alive_registry.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/status_icons/status_icon_menu_model.h"
@@ -55,8 +59,8 @@ using testing::StrictMock;
 
 namespace {
 
-scoped_ptr<TestingProfileManager> CreateTestingProfileManager() {
-  scoped_ptr<TestingProfileManager> profile_manager(
+std::unique_ptr<TestingProfileManager> CreateTestingProfileManager() {
+  std::unique_ptr<TestingProfileManager> profile_manager(
       new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
   EXPECT_TRUE(profile_manager->SetUp());
   return profile_manager;
@@ -139,12 +143,12 @@ class TestStatusIcon : public StatusIcon {
 };
 
 void AssertBackgroundModeActive(const TestBackgroundModeManager& manager) {
-  EXPECT_TRUE(chrome::WillKeepAlive());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
   EXPECT_TRUE(manager.HaveStatusTray());
 }
 
 void AssertBackgroundModeInactive(const TestBackgroundModeManager& manager) {
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
   EXPECT_FALSE(manager.HaveStatusTray());
 }
 
@@ -200,22 +204,13 @@ class BackgroundModeManagerTest : public testing::Test {
     command_line_.reset(new base::CommandLine(base::CommandLine::NO_PROGRAM));
     profile_manager_ = CreateTestingProfileManager();
     profile_ = profile_manager_->CreateTestingProfile("p1");
-    chrome::DisableShutdownForTesting(true);
-  }
-
-  void TearDown() override {
-    // Don't allow the browser to be closed because the shutdown procedure will
-    // attempt to access objects that we haven't created (e.g., MessageCenter).
-    browser_shutdown::SetTryingToQuit(true);
-    chrome::DisableShutdownForTesting(false);
-    browser_shutdown::SetTryingToQuit(false);
   }
 
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<base::CommandLine> command_line_;
+  std::unique_ptr<base::CommandLine> command_line_;
 
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   // Test profile used by all tests - this is owned by profile_manager_.
   TestingProfile* profile_;
 
@@ -236,18 +231,9 @@ class BackgroundModeManagerWithExtensionsTest : public testing::Test {
     // Aura clears notifications from the message center at shutdown.
     message_center::MessageCenter::Initialize();
 
-    // BackgroundModeManager actually affects Chrome start/stop state,
-    // tearing down our thread bundle before we've had chance to clean
-    // everything up. Keeping Chrome alive prevents this.
-    // We aren't interested in if the keep alive works correctly in this test.
-    chrome::IncrementKeepAliveCount();
-
-#if defined(OS_CHROMEOS)
-    // On ChromeOS shutdown, HandleAppExitingForPlatform will call
-    // chrome::DecrementKeepAliveCount because it assumes the aura shell
-    // called chrome::IncrementKeepAliveCount. Simulate the call here.
-    chrome::IncrementKeepAliveCount();
-#endif
+    test_keep_alive_.reset(
+        new ScopedKeepAlive(KeepAliveOrigin::BACKGROUND_MODE_MANAGER,
+                            KeepAliveRestartOption::DISABLED));
 
     // Create our test BackgroundModeManager.
     manager_.reset(new TestBackgroundModeManager(
@@ -273,9 +259,9 @@ class BackgroundModeManagerWithExtensionsTest : public testing::Test {
     Mock::VerifyAndClearExpectations(manager_.get());
 
     // We're getting ready to shutdown the message loop. Clear everything out!
-    base::MessageLoop::current()->RunUntilIdle();
-    // Matching the call to IncrementKeepAliveCount in SetUp().
-    chrome::DecrementKeepAliveCount();
+    base::RunLoop().RunUntilIdle();
+
+    test_keep_alive_.reset();
 
     // TestBackgroundModeManager has dependencies on the infrastructure.
     // It should get cleared first.
@@ -288,9 +274,8 @@ class BackgroundModeManagerWithExtensionsTest : public testing::Test {
     // before tearing down the Message Center.
     profile_manager_.reset();
 
-    // Message Center shutdown must occur after the DecrementKeepAliveCount
-    // because DecrementKeepAliveCount will end up referencing the message
-    // center during cleanup.
+    // Message Center shutdown must occur after the KeepAlive is released
+    // because clearing it will end up referencing the message center.
     message_center::MessageCenter::Shutdown();
 
     // Clear the shutdown flag to isolate the remaining effect of this test.
@@ -302,7 +287,7 @@ class BackgroundModeManagerWithExtensionsTest : public testing::Test {
       extensions::Manifest::Location location,
       const std::string& data,
       const std::string& id) {
-    scoped_ptr<base::DictionaryValue> parsed_manifest(
+    std::unique_ptr<base::DictionaryValue> parsed_manifest(
         extensions::api_test_utils::ParseDictionary(data));
     return extensions::api_test_utils::CreateExtension(
         location, parsed_manifest.get(), id);
@@ -317,17 +302,23 @@ class BackgroundModeManagerWithExtensionsTest : public testing::Test {
     return false;
   }
 
-  scoped_ptr<TestBackgroundModeManager> manager_;
+  std::unique_ptr<TestBackgroundModeManager> manager_;
 
-  scoped_ptr<base::CommandLine> command_line_;
+  std::unique_ptr<base::CommandLine> command_line_;
 
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   // Test profile used by all tests - this is owned by profile_manager_.
   TestingProfile* profile_;
 
  private:
   // Required for extension service.
   content::TestBrowserThreadBundle thread_bundle_;
+
+  // BackgroundModeManager actually affects Chrome start/stop state,
+  // tearing down our thread bundle before we've had chance to clean
+  // everything up. Keeping Chrome alive prevents this.
+  // We aren't interested in if the keep alive works correctly in this test.
+  std::unique_ptr<ScopedKeepAlive> test_keep_alive_;
 
 #if defined(OS_CHROMEOS)
   // ChromeOS needs extra services to run in the following order.
@@ -344,7 +335,7 @@ TEST_F(BackgroundModeManagerTest, BackgroundAppLoadUnload) {
   AdvancedTestBackgroundModeManager manager(
       *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 
   // Mimic app load.
   EXPECT_CALL(manager, EnableLaunchOnStartup(true)).Times(Exactly(1));
@@ -477,7 +468,7 @@ TEST_F(BackgroundModeManagerTest, MultiProfile) {
       *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
   manager.RegisterProfile(profile2);
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 
   // Install app, should show status tray icon.
   EXPECT_CALL(manager, EnableLaunchOnStartup(true)).Times(Exactly(1));
@@ -528,7 +519,7 @@ TEST_F(BackgroundModeManagerTest, ProfileAttributesStorage) {
   AdvancedTestBackgroundModeManager manager(*command_line_, storage, true);
   manager.RegisterProfile(profile_);
   manager.RegisterProfile(profile2);
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
   EXPECT_EQ(2u, storage->GetNumberOfProfiles());
 
   ProfileAttributesEntry* entry1;
@@ -577,7 +568,7 @@ TEST_F(BackgroundModeManagerTest, ProfileAttributesStorageObserver) {
   AdvancedTestBackgroundModeManager manager(
       *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 
   // Install app, should show status tray icon.
   EXPECT_CALL(manager, EnableLaunchOnStartup(true)).Times(Exactly(1));
@@ -595,7 +586,7 @@ TEST_F(BackgroundModeManagerTest, ProfileAttributesStorageObserver) {
   EXPECT_EQ(base::UTF8ToUTF16("p1"),
             manager.GetBackgroundModeData(profile_)->name());
 
-  EXPECT_TRUE(chrome::WillKeepAlive());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
   TestingProfile* profile2 = profile_manager_->CreateTestingProfile("p2");
   manager.RegisterProfile(profile2);
   EXPECT_EQ(2, manager.NumberOfBackgroundModeData());
@@ -606,7 +597,7 @@ TEST_F(BackgroundModeManagerTest, ProfileAttributesStorageObserver) {
 
   manager.OnProfileWillBeRemoved(profile2->GetPath());
   // Should still be in background mode after deleting profile.
-  EXPECT_TRUE(chrome::WillKeepAlive());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
   EXPECT_EQ(1, manager.NumberOfBackgroundModeData());
 
   // Check that the background mode data we think is in the map actually is.
@@ -620,7 +611,7 @@ TEST_F(BackgroundModeManagerTest, DeleteBackgroundProfile) {
   AdvancedTestBackgroundModeManager manager(
       *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 
   // Install app, should show status tray icon.
   EXPECT_CALL(manager, EnableLaunchOnStartup(true)).Times(Exactly(1));
@@ -634,11 +625,11 @@ TEST_F(BackgroundModeManagerTest, DeleteBackgroundProfile) {
       manager.GetBackgroundModeData(profile_)->name());
 
   EXPECT_CALL(manager, EnableLaunchOnStartup(false)).Times(Exactly(1));
-  EXPECT_TRUE(chrome::WillKeepAlive());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
   manager.SetBackgroundClientCountForProfile(profile_, 0);
   manager.OnProfileWillBeRemoved(profile_->GetPath());
   Mock::VerifyAndClearExpectations(&manager);
-  EXPECT_FALSE(chrome::WillKeepAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 }
 
 TEST_F(BackgroundModeManagerTest, DisableBackgroundModeUnderTestFlag) {
@@ -718,8 +709,8 @@ TEST_F(BackgroundModeManagerWithExtensionsTest, BackgroundMenuGeneration) {
   service->AddExtension(regular_extension_with_options.get());
   Mock::VerifyAndClearExpectations(manager_.get());
 
-  scoped_ptr<StatusIconMenuModel> menu(new StatusIconMenuModel(NULL));
-  scoped_ptr<StatusIconMenuModel> submenu(new StatusIconMenuModel(NULL));
+  std::unique_ptr<StatusIconMenuModel> menu(new StatusIconMenuModel(NULL));
+  std::unique_ptr<StatusIconMenuModel> submenu(new StatusIconMenuModel(NULL));
   BackgroundModeManager::BackgroundModeData* bmd =
       manager_->GetBackgroundModeData(profile_);
   bmd->BuildProfileMenu(submenu.get(), menu.get());

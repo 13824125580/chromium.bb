@@ -6,6 +6,7 @@
 
 #include "android_webview/browser/aw_browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/channel_id_store.h"
 #include "net/url_request/url_request_context.h"
@@ -21,7 +22,7 @@ namespace {
 
 void CompletionCallback(TokenBindingManager::KeyReadyCallback callback,
                         ChannelIDService::Request* request,
-                        scoped_ptr<crypto::ECPrivateKey>* key,
+                        std::unique_ptr<crypto::ECPrivateKey>* key,
                         int status) {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
@@ -39,8 +40,8 @@ void GetKeyImpl(const std::string& host,
   ChannelIDService* service =
       context_getter->GetURLRequestContext()->channel_id_service();
   ChannelIDService::Request* request = new ChannelIDService::Request();
-  scoped_ptr<crypto::ECPrivateKey>* key =
-      new scoped_ptr<crypto::ECPrivateKey>();
+  std::unique_ptr<crypto::ECPrivateKey>* key =
+      new std::unique_ptr<crypto::ECPrivateKey>();
   // The request will own the callback if the call to service returns
   // PENDING. The request releases the ownership before calling the callback.
   net::CompletionCallback completion_callback = base::Bind(
@@ -84,7 +85,8 @@ TokenBindingManager::TokenBindingManager() : enabled_(false) {}
 void TokenBindingManager::GetKey(const std::string& host,
                                  KeyReadyCallback callback) {
   scoped_refptr<net::URLRequestContextGetter> context_getter =
-      AwBrowserContext::GetDefault()->GetRequestContext();
+      content::BrowserContext::GetDefaultStoragePartition(
+          AwBrowserContext::GetDefault())->GetURLRequestContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&GetKeyImpl, host, callback, context_getter));
@@ -93,7 +95,8 @@ void TokenBindingManager::GetKey(const std::string& host,
 void TokenBindingManager::DeleteKey(const std::string& host,
                                     DeletionCompleteCallback callback) {
   scoped_refptr<net::URLRequestContextGetter> context_getter =
-      AwBrowserContext::GetDefault()->GetRequestContext();
+      content::BrowserContext::GetDefaultStoragePartition(
+          AwBrowserContext::GetDefault())->GetURLRequestContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&DeleteKeyImpl, host, callback, context_getter, false));
@@ -101,7 +104,8 @@ void TokenBindingManager::DeleteKey(const std::string& host,
 
 void TokenBindingManager::DeleteAllKeys(DeletionCompleteCallback callback) {
   scoped_refptr<net::URLRequestContextGetter> context_getter =
-      AwBrowserContext::GetDefault()->GetRequestContext();
+      content::BrowserContext::GetDefaultStoragePartition(
+          AwBrowserContext::GetDefault())->GetURLRequestContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&DeleteKeyImpl, "", callback, context_getter, true));

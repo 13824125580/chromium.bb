@@ -100,29 +100,29 @@ bool PopulateItem(const base::Value& from,
   return true;
 }
 
-bool PopulateItem(const base::Value& from, linked_ptr<base::Value>* out) {
-  *out = make_linked_ptr(from.DeepCopy());
+bool PopulateItem(const base::Value& from, std::unique_ptr<base::Value>* out) {
+  *out = from.CreateDeepCopy();
   return true;
 }
 
 bool PopulateItem(const base::Value& from,
-                  linked_ptr<base::Value>* out,
+                  std::unique_ptr<base::Value>* out,
                   base::string16* error) {
-  *out = make_linked_ptr(from.DeepCopy());
+  *out = from.CreateDeepCopy();
   return true;
 }
 
 bool PopulateItem(const base::Value& from,
-                  linked_ptr<base::DictionaryValue>* out) {
+                  std::unique_ptr<base::DictionaryValue>* out) {
   const base::DictionaryValue* dict = nullptr;
   if (!from.GetAsDictionary(&dict))
     return false;
-  *out = make_linked_ptr(dict->DeepCopy());
+  *out = dict->CreateDeepCopy();
   return true;
 }
 
 bool PopulateItem(const base::Value& from,
-                  linked_ptr<base::DictionaryValue>* out,
+                  std::unique_ptr<base::DictionaryValue>* out,
                   base::string16* error) {
   const base::DictionaryValue* dict = nullptr;
   if (!from.GetAsDictionary(&dict)) {
@@ -133,24 +133,24 @@ bool PopulateItem(const base::Value& from,
                                     ValueTypeToString(from.GetType())));
     return false;
   }
-  *out = make_linked_ptr(dict->DeepCopy());
+  *out = dict->CreateDeepCopy();
   return true;
 }
 
 void AddItemToList(const int from, base::ListValue* out) {
-  out->Append(new base::FundamentalValue(from));
+  out->AppendInteger(from);
 }
 
 void AddItemToList(const bool from, base::ListValue* out) {
-  out->Append(new base::FundamentalValue(from));
+  out->AppendBoolean(from);
 }
 
 void AddItemToList(const double from, base::ListValue* out) {
-  out->Append(new base::FundamentalValue(from));
+  out->AppendDouble(from);
 }
 
 void AddItemToList(const std::string& from, base::ListValue* out) {
-  out->Append(new base::StringValue(from));
+  out->AppendString(from);
 }
 
 void AddItemToList(const std::vector<char>& from, base::ListValue* out) {
@@ -158,13 +158,14 @@ void AddItemToList(const std::vector<char>& from, base::ListValue* out) {
       base::BinaryValue::CreateWithCopiedBuffer(from.data(), from.size()));
 }
 
-void AddItemToList(const linked_ptr<base::Value>& from, base::ListValue* out) {
-  out->Append(from->DeepCopy());
+void AddItemToList(const std::unique_ptr<base::Value>& from,
+                   base::ListValue* out) {
+  out->Append(from->CreateDeepCopy());
 }
 
-void AddItemToList(const linked_ptr<base::DictionaryValue>& from,
+void AddItemToList(const std::unique_ptr<base::DictionaryValue>& from,
                    base::ListValue* out) {
-  out->Append(static_cast<base::Value*>(from->DeepCopy()));
+  out->Append(from->CreateDeepCopy());
 }
 
 std::string ValueTypeToString(base::Value::Type type) {

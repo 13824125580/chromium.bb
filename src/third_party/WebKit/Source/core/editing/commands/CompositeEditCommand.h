@@ -43,7 +43,7 @@ class Text;
 
 class EditCommandComposition final : public UndoStep {
 public:
-    static PassRefPtrWillBeRawPtr<EditCommandComposition> create(Document*, const VisibleSelection&, const VisibleSelection&, EditAction);
+    static EditCommandComposition* create(Document*, const VisibleSelection&, const VisibleSelection&, EditAction);
 
     bool belongsTo(const LocalFrame&) const override;
     void unapply() override;
@@ -63,17 +63,20 @@ public:
 private:
     EditCommandComposition(Document*, const VisibleSelection& startingSelection, const VisibleSelection& endingSelection, EditAction);
 
-    RefPtrWillBeMember<Document> m_document;
+    Member<Document> m_document;
     VisibleSelection m_startingSelection;
     VisibleSelection m_endingSelection;
-    WillBeHeapVector<RefPtrWillBeMember<SimpleEditCommand>> m_commands;
-    RefPtrWillBeMember<Element> m_startingRootEditableElement;
-    RefPtrWillBeMember<Element> m_endingRootEditableElement;
+    HeapVector<Member<SimpleEditCommand>> m_commands;
+    Member<Element> m_startingRootEditableElement;
+    Member<Element> m_endingRootEditableElement;
     EditAction m_editAction;
 };
 
 class CompositeEditCommand : public EditCommand {
 public:
+    enum ShouldPreserveSelection { PreserveSelection, DoNotPreserveSelection };
+    enum ShouldPreserveStyle { PreserveStyle, DoNotPreserveStyle };
+
     ~CompositeEditCommand() override;
 
     // Returns |false| if the command failed.  e.g. It's aborted.
@@ -96,69 +99,68 @@ protected:
     //
     // sugary-sweet convenience functions to help create and apply edit commands in composite commands
     //
-    void appendNode(PassRefPtrWillBeRawPtr<Node>, PassRefPtrWillBeRawPtr<ContainerNode> parent, EditingState*);
-    void applyCommandToComposite(PassRefPtrWillBeRawPtr<EditCommand>, EditingState*);
-    void applyCommandToComposite(PassRefPtrWillBeRawPtr<CompositeEditCommand>, const VisibleSelection&, EditingState*);
+    void appendNode(Node*, ContainerNode* parent, EditingState*);
+    void applyCommandToComposite(EditCommand*, EditingState*);
+    void applyCommandToComposite(CompositeEditCommand*, const VisibleSelection&, EditingState*);
     void applyStyle(const EditingStyle*, EditingState*);
     void applyStyle(const EditingStyle*, const Position& start, const Position& end, EditingState*);
-    void applyStyledElement(PassRefPtrWillBeRawPtr<Element>, EditingState*);
-    void removeStyledElement(PassRefPtrWillBeRawPtr<Element>, EditingState*);
+    void applyStyledElement(Element*, EditingState*);
+    void removeStyledElement(Element*, EditingState*);
     void deleteSelection(EditingState*, bool smartDelete = false, bool mergeBlocksAfterDelete = true, bool expandForSpecialElements = true, bool sanitizeMarkup = true);
     void deleteSelection(const VisibleSelection&, EditingState*, bool smartDelete = false, bool mergeBlocksAfterDelete = true, bool expandForSpecialElements = true, bool sanitizeMarkup = true);
-    virtual void deleteTextFromNode(PassRefPtrWillBeRawPtr<Text>, unsigned offset, unsigned count);
+    virtual void deleteTextFromNode(Text*, unsigned offset, unsigned count);
     bool isRemovableBlock(const Node*);
-    void insertNodeAfter(PassRefPtrWillBeRawPtr<Node>, PassRefPtrWillBeRawPtr<Node> refChild, EditingState*);
-    void insertNodeAt(PassRefPtrWillBeRawPtr<Node>, const Position&, EditingState*);
-    void insertNodeAtTabSpanPosition(PassRefPtrWillBeRawPtr<Node>, const Position&, EditingState*);
-    void insertNodeBefore(PassRefPtrWillBeRawPtr<Node>, PassRefPtrWillBeRawPtr<Node> refChild, EditingState*, ShouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
+    void insertNodeAfter(Node*, Node* refChild, EditingState*);
+    void insertNodeAt(Node*, const Position&, EditingState*);
+    void insertNodeAtTabSpanPosition(Node*, const Position&, EditingState*);
+    void insertNodeBefore(Node*, Node* refChild, EditingState*, ShouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
     void insertParagraphSeparator(EditingState*, bool useDefaultParagraphElement = false, bool pasteBlockqutoeIntoUnquotedArea = false);
-    void insertTextIntoNode(PassRefPtrWillBeRawPtr<Text>, unsigned offset, const String& text);
-    void mergeIdenticalElements(PassRefPtrWillBeRawPtr<Element>, PassRefPtrWillBeRawPtr<Element>, EditingState*);
+    void insertTextIntoNode(Text*, unsigned offset, const String& text);
+    void mergeIdenticalElements(Element*, Element*, EditingState*);
     void rebalanceWhitespace();
     void rebalanceWhitespaceAt(const Position&);
-    void rebalanceWhitespaceOnTextSubstring(PassRefPtrWillBeRawPtr<Text>, int startOffset, int endOffset);
+    void rebalanceWhitespaceOnTextSubstring(Text*, int startOffset, int endOffset);
     void prepareWhitespaceAtPositionForSplit(Position&);
     void replaceCollapsibleWhitespaceWithNonBreakingSpaceIfNeeded(const VisiblePosition&);
     bool canRebalance(const Position&) const;
     bool shouldRebalanceLeadingWhitespaceFor(const String&) const;
-    void removeCSSProperty(PassRefPtrWillBeRawPtr<Element>, CSSPropertyID);
-    void removeElementAttribute(PassRefPtrWillBeRawPtr<Element>, const QualifiedName& attribute);
-    void removeChildrenInRange(PassRefPtrWillBeRawPtr<Node>, unsigned from, unsigned to, EditingState*);
-    virtual void removeNode(PassRefPtrWillBeRawPtr<Node>, EditingState*, ShouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
-    HTMLSpanElement* replaceElementWithSpanPreservingChildrenAndAttributes(PassRefPtrWillBeRawPtr<HTMLElement>);
-    void removeNodePreservingChildren(PassRefPtrWillBeRawPtr<Node> node, EditingState* editingState, ShouldAssumeContentIsAlwaysEditable shouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
-    void removeNodeAndPruneAncestors(PassRefPtrWillBeRawPtr<Node> node, EditingState* editingState, Node* excludeNode = nullptr);
-    void moveRemainingSiblingsToNewParent(Node*, Node* pastLastNodeToMove, PassRefPtrWillBeRawPtr<Element> prpNewParent, EditingState*, PassRefPtrWillBeRawPtr<Node> prpRefChild = nullptr);
+    void removeCSSProperty(Element*, CSSPropertyID);
+    void removeElementAttribute(Element*, const QualifiedName& attribute);
+    void removeChildrenInRange(Node*, unsigned from, unsigned to, EditingState*);
+    virtual void removeNode(Node*, EditingState*, ShouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
+    HTMLSpanElement* replaceElementWithSpanPreservingChildrenAndAttributes(HTMLElement*);
+    void removeNodePreservingChildren(Node* node, EditingState* editingState, ShouldAssumeContentIsAlwaysEditable shouldAssumeContentIsAlwaysEditable = DoNotAssumeContentIsAlwaysEditable);
+    void removeNodeAndPruneAncestors(Node* node, EditingState* editingState, Node* excludeNode = nullptr);
+    void moveRemainingSiblingsToNewParent(Node*, Node* pastLastNodeToMove, Element* newParent, EditingState*, Node* prpRefChild = nullptr);
     void updatePositionForNodeRemovalPreservingChildren(Position&, Node&);
-    void prune(PassRefPtrWillBeRawPtr<Node>, EditingState*, Node* excludeNode = nullptr);
-    void replaceTextInNode(PassRefPtrWillBeRawPtr<Text>, unsigned offset, unsigned count, const String& replacementText);
+    void prune(Node*, EditingState*, Node* excludeNode = nullptr);
+    void replaceTextInNode(Text*, unsigned offset, unsigned count, const String& replacementText);
     Position replaceSelectedTextInNode(const String&);
-    void replaceTextInNodePreservingMarkers(PassRefPtrWillBeRawPtr<Text>, unsigned offset, unsigned count, const String& replacementText);
+    void replaceTextInNodePreservingMarkers(Text*, unsigned offset, unsigned count, const String& replacementText);
     Position positionOutsideTabSpan(const Position&);
-    void setNodeAttribute(PassRefPtrWillBeRawPtr<Element>, const QualifiedName& attribute, const AtomicString& value);
-    void splitElement(PassRefPtrWillBeRawPtr<Element>, PassRefPtrWillBeRawPtr<Node> atChild);
-    void splitTextNode(PassRefPtrWillBeRawPtr<Text>, unsigned offset);
-    void splitTextNodeContainingElement(PassRefPtrWillBeRawPtr<Text>, unsigned offset);
-    void wrapContentsInDummySpan(PassRefPtrWillBeRawPtr<Element>);
+    void setNodeAttribute(Element*, const QualifiedName& attribute, const AtomicString& value);
+    void splitElement(Element*, Node* atChild);
+    void splitTextNode(Text*, unsigned offset);
+    void splitTextNodeContainingElement(Text*, unsigned offset);
+    void wrapContentsInDummySpan(Element*);
 
-    void deleteInsignificantText(PassRefPtrWillBeRawPtr<Text>, unsigned start, unsigned end);
+    void deleteInsignificantText(Text*, unsigned start, unsigned end);
     void deleteInsignificantText(const Position& start, const Position& end);
     void deleteInsignificantTextDownstream(const Position&);
 
-    PassRefPtrWillBeRawPtr<HTMLBRElement> appendBlockPlaceholder(PassRefPtrWillBeRawPtr<Element>, EditingState*);
-    PassRefPtrWillBeRawPtr<HTMLBRElement> insertBlockPlaceholder(const Position&, EditingState*);
-    PassRefPtrWillBeRawPtr<HTMLBRElement> addBlockPlaceholderIfNeeded(Element*, EditingState*);
+    HTMLBRElement* appendBlockPlaceholder(Element*, EditingState*);
+    HTMLBRElement* insertBlockPlaceholder(const Position&, EditingState*);
+    HTMLBRElement* addBlockPlaceholderIfNeeded(Element*, EditingState*);
     void removePlaceholderAt(const Position&);
 
-    PassRefPtrWillBeRawPtr<HTMLElement> insertNewDefaultParagraphElementAt(const Position&, EditingState*);
+    HTMLElement* insertNewDefaultParagraphElementAt(const Position&, EditingState*);
 
-    PassRefPtrWillBeRawPtr<HTMLElement> moveParagraphContentsToNewBlockIfNecessary(const Position&, EditingState*);
+    HTMLElement* moveParagraphContentsToNewBlockIfNecessary(const Position&, EditingState*);
 
     void pushAnchorElementDown(Element*, EditingState*);
 
-    // FIXME: preserveSelection and preserveStyle should be enums
-    void moveParagraph(const VisiblePosition&, const VisiblePosition&, const VisiblePosition&, EditingState*, bool preserveSelection = false, bool preserveStyle = true, Node* constrainingAncestor = nullptr);
-    void moveParagraphs(const VisiblePosition&, const VisiblePosition&, const VisiblePosition&, EditingState*, bool preserveSelection = false, bool preserveStyle = true, Node* constrainingAncestor = nullptr);
+    void moveParagraph(const VisiblePosition&, const VisiblePosition&, const VisiblePosition&, EditingState*, ShouldPreserveSelection = DoNotPreserveSelection, ShouldPreserveStyle = PreserveStyle, Node* constrainingAncestor = nullptr);
+    void moveParagraphs(const VisiblePosition&, const VisiblePosition&, const VisiblePosition&, EditingState*, ShouldPreserveSelection = DoNotPreserveSelection, ShouldPreserveStyle = PreserveStyle, Node* constrainingAncestor = nullptr);
     void moveParagraphWithClones(const VisiblePosition& startOfParagraphToMove, const VisiblePosition& endOfParagraphToMove, HTMLElement* blockElement, Node* outerNode, EditingState*);
     void cloneParagraphUnderNewElement(const Position& start, const Position& end, Node* outerNode, Element* blockElement, EditingState*);
     void cleanupAfterDeletion(EditingState*, VisiblePosition destination = VisiblePosition());
@@ -169,20 +171,20 @@ protected:
     Position positionAvoidingSpecialElementBoundary(const Position&, EditingState*);
 
     bool prepareForBlockCommand(VisiblePosition& startOfSelection, VisiblePosition& endOfSelection,
-                                RefPtrWillBeRawPtr<ContainerNode>& startScope, RefPtrWillBeRawPtr<ContainerNode>& endScope,
+                                ContainerNode*& startScope, ContainerNode*& endScope,
                                 int& startIndex, int& endIndex,
                                 bool includeEmptyParagraphAtEnd);
-    void finishBlockCommand(PassRefPtrWillBeRawPtr<ContainerNode> startScope, PassRefPtrWillBeRawPtr<ContainerNode> endScope,
+    void finishBlockCommand(ContainerNode* startScope, ContainerNode* endScope,
                             int startIndex, int endIndex);
 
-    PassRefPtrWillBeRawPtr<Node> splitTreeToNode(Node*, Node*, bool splitAncestor = false);
+    Node* splitTreeToNode(Node*, Node*, bool splitAncestor = false);
 
-    WillBeHeapVector<RefPtrWillBeMember<EditCommand>> m_commands;
+    HeapVector<Member<EditCommand>> m_commands;
 
 private:
     bool isCompositeEditCommand() const final { return true; }
 
-    RefPtrWillBeMember<EditCommandComposition> m_composition;
+    Member<EditCommandComposition> m_composition;
 };
 
 DEFINE_TYPE_CASTS(CompositeEditCommand, EditCommand, command, command->isCompositeEditCommand(), command.isCompositeEditCommand());

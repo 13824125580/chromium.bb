@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/browser/api/declarative/test_rules_registry.h"
@@ -51,7 +52,7 @@ class RulesRegistryServiceTest : public testing::Test {
 
   void TearDown() override {
     // Make sure that deletion traits of all registries are executed.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  protected:
@@ -99,14 +100,15 @@ TEST_F(RulesRegistryServiceTest, TestConstructionAndMultiThreading) {
       base::Bind(&VerifyNumberOfRules,
                  registry_service.GetRulesRegistry(key, "io"), 1));
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Test extension uninstalling.
-  scoped_ptr<base::DictionaryValue> manifest = DictionaryBuilder()
-                                                   .Set("name", "Extension")
-                                                   .Set("version", "1.0")
-                                                   .Set("manifest_version", 2)
-                                                   .Build();
+  std::unique_ptr<base::DictionaryValue> manifest =
+      DictionaryBuilder()
+          .Set("name", "Extension")
+          .Set("version", "1.0")
+          .Set("manifest_version", 2)
+          .Build();
   scoped_refptr<Extension> extension = ExtensionBuilder()
                                            .SetManifest(std::move(manifest))
                                            .SetID(kExtensionId)
@@ -123,7 +125,7 @@ TEST_F(RulesRegistryServiceTest, TestConstructionAndMultiThreading) {
       base::Bind(&VerifyNumberOfRules,
                  registry_service.GetRulesRegistry(key, "io"), 0));
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace extensions

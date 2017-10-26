@@ -9,6 +9,7 @@ import android.util.Pair;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
@@ -31,6 +32,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * Test suite for the open tabs (sessions) sync data type.
@@ -73,7 +75,7 @@ public class OpenTabsTest extends SyncTestBase {
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        setUpTestAccountAndSignInToSync();
+        setUpTestAccountAndSignIn();
         mClientName = getClientName();
         mSessionTagCounter = 0;
     }
@@ -87,9 +89,12 @@ public class OpenTabsTest extends SyncTestBase {
         waitForServerTabs(URL);
     }
 
+    /*
     // Test syncing multiple open tabs from client to server.
     @LargeTest
     @Feature({"Sync"})
+    */
+    @FlakyTest(message = "https://crbug.com/592437")
     public void testUploadMultipleOpenTabs() throws Exception {
         loadUrl(URL);
         loadUrlInNewTab(URL2);
@@ -98,9 +103,12 @@ public class OpenTabsTest extends SyncTestBase {
         waitForServerTabs(URL, URL2, URL3);
     }
 
+    /*
     // Test syncing an open tab from client to server.
     @LargeTest
     @Feature({"Sync"})
+    */
+    @FlakyTest(message = "https://crbug.com/592437")
     public void testUploadAndCloseOpenTab() throws Exception {
         loadUrl(URL);
         // Can't have zero tabs, so we have to open two to test closing one.
@@ -232,41 +240,37 @@ public class OpenTabsTest extends SyncTestBase {
             throws InterruptedException {
         final List<String> urlList = new ArrayList<String>(urls.length);
         for (String url : urls) urlList.add(url);
-        pollForCriteria(new Criteria("Expected local open tabs for client " + clientName + ": "
-                        + Arrays.toString(urls)) {
+        pollInstrumentationThread(Criteria.equals(urlList, new Callable<List<String>>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return getLocalTabsForClient(clientName).urls.equals(urlList);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+            public List<String> call() throws Exception {
+                return getLocalTabsForClient(clientName).urls;
             }
-        });
+        }));
     }
 
     private void waitForServerTabs(final String... urls)
             throws InterruptedException {
-        pollForCriteria(new Criteria("Expected server open tabs: " + Arrays.toString(urls)) {
-            @Override
-            public boolean isSatisfied() {
-                try {
-                    return mFakeServerHelper.verifySessions(urls);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        });
+        pollInstrumentationThread(
+                new Criteria("Expected server open tabs: " + Arrays.toString(urls)) {
+                    @Override
+                    public boolean isSatisfied() {
+                        try {
+                            return mFakeServerHelper.verifySessions(urls);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                });
     }
 
     private String getClientName() throws Exception {
-        pollForCriteria(new Criteria("Expected 2 entities when getting the client name.") {
+        pollInstrumentationThread(new Criteria("Expected at least one tab entity to exist.") {
             @Override
             public boolean isSatisfied() {
                 try {
-                    return SyncTestUtil.getLocalData(mContext, OPEN_TABS_TYPE).size() == 2;
+                    return SyncTestUtil.getLocalData(mContext, OPEN_TABS_TYPE).size() > 0;
                 } catch (JSONException e) {
-                    throw new RuntimeException(e);
+                    return false;
                 }
             }
         });

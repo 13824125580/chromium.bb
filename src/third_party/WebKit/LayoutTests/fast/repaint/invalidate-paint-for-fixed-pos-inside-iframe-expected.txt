@@ -1,15 +1,18 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [18, 418, 50, 50]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow (positioned) DIV"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow (positioned) DIV",
+          "rect": [18, 418, 50, 50],
+          "reason": "style change"
+        }
       ]
     }
   ]

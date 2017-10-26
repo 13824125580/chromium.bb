@@ -35,7 +35,6 @@
 #include "core/html/HTMLDataListOptionsCollection.h"
 #include "core/html/HTMLFormControlElement.h"
 #include "core/html/HTMLInputElement.h"
-#include "core/html/HTMLMeterElement.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/shadow/MediaControlElements.h"
@@ -118,7 +117,7 @@ void LayoutTheme::adjustStyle(ComputedStyle& style, Element* e)
         case ButtonPart: {
             // Border
             LengthBox borderBox(style.borderTopWidth(), style.borderRightWidth(), style.borderBottomWidth(), style.borderLeftWidth());
-            borderBox = m_platformTheme->controlBorder(part, style.font().fontDescription(), borderBox, style.effectiveZoom());
+            borderBox = m_platformTheme->controlBorder(part, style.font().getFontDescription(), borderBox, style.effectiveZoom());
             if (borderBox.top().value() != static_cast<int>(style.borderTopWidth())) {
                 if (borderBox.top().value())
                     style.setBorderTopWidth(borderBox.top().value());
@@ -147,7 +146,7 @@ void LayoutTheme::adjustStyle(ComputedStyle& style, Element* e)
             }
 
             // Padding
-            LengthBox paddingBox = m_platformTheme->controlPadding(part, style.font().fontDescription(), style.paddingBox(), style.effectiveZoom());
+            LengthBox paddingBox = m_platformTheme->controlPadding(part, style.font().getFontDescription(), style.paddingBox(), style.effectiveZoom());
             if (paddingBox != style.paddingBox())
                 style.setPaddingBox(paddingBox);
 
@@ -158,22 +157,22 @@ void LayoutTheme::adjustStyle(ComputedStyle& style, Element* e)
             // Width / Height
             // The width and height here are affected by the zoom.
             // FIXME: Check is flawed, since it doesn't take min-width/max-width into account.
-            LengthSize controlSize = m_platformTheme->controlSize(part, style.font().fontDescription(), LengthSize(style.width(), style.height()), style.effectiveZoom());
+            LengthSize controlSize = m_platformTheme->controlSize(part, style.font().getFontDescription(), LengthSize(style.width(), style.height()), style.effectiveZoom());
             if (controlSize.width() != style.width())
                 style.setWidth(controlSize.width());
             if (controlSize.height() != style.height())
                 style.setHeight(controlSize.height());
 
             // Min-Width / Min-Height
-            LengthSize minControlSize = m_platformTheme->minimumControlSize(part, style.font().fontDescription(), style.effectiveZoom());
+            LengthSize minControlSize = m_platformTheme->minimumControlSize(part, style.font().getFontDescription(), style.effectiveZoom());
             if (minControlSize.width() != style.minWidth())
                 style.setMinWidth(minControlSize.width());
             if (minControlSize.height() != style.minHeight())
                 style.setMinHeight(minControlSize.height());
 
             // Font
-            FontDescription controlFont = m_platformTheme->controlFont(part, style.font().fontDescription(), style.effectiveZoom());
-            if (controlFont != style.font().fontDescription()) {
+            FontDescription controlFont = m_platformTheme->controlFont(part, style.font().getFontDescription(), style.effectiveZoom());
+            if (controlFont != style.font().getFontDescription()) {
                 // Reset our line-height
                 style.setLineHeight(ComputedStyle::initialLineHeight());
 
@@ -218,10 +217,6 @@ void LayoutTheme::adjustStyle(ComputedStyle& style, Element* e)
         return adjustSearchFieldStyle(style);
     case SearchFieldCancelButtonPart:
         return adjustSearchFieldCancelButtonStyle(style);
-    case SearchFieldDecorationPart:
-        return adjustSearchFieldDecorationStyle(style);
-    case SearchFieldResultsDecorationPart:
-        return adjustSearchFieldResultsDecorationStyle(style);
     default:
         break;
     }
@@ -231,7 +226,7 @@ String LayoutTheme::extraDefaultStyleSheet()
 {
     StringBuilder runtimeCSS;
     if (RuntimeEnabledFeatures::contextMenuEnabled())
-        runtimeCSS.appendLiteral("menu[type=\"popup\" i] { display: none; }");
+        runtimeCSS.append("menu[type=\"popup\" i] { display: none; }");
     return runtimeCSS.toString();
 }
 
@@ -398,11 +393,6 @@ bool LayoutTheme::isControlStyled(const ComputedStyle& style) const
     case SquareButtonPart:
     case ButtonPart:
     case ProgressBarPart:
-    case MeterPart:
-    case RelevancyLevelIndicatorPart:
-    case ContinuousCapacityLevelIndicatorPart:
-    case DiscreteCapacityLevelIndicatorPart:
-    case RatingLevelIndicatorPart:
         return style.hasAuthorBackground() || style.hasAuthorBorder();
 
     case MenulistPart:
@@ -410,10 +400,6 @@ bool LayoutTheme::isControlStyled(const ComputedStyle& style) const
     case TextAreaPart:
     case TextFieldPart:
         return style.hasAuthorBackground() || style.hasAuthorBorder() || style.boxShadow();
-
-    case SliderHorizontalPart:
-    case SliderVerticalPart:
-        return style.boxShadow();
 
     default:
         return false;
@@ -622,16 +608,6 @@ void LayoutTheme::adjustMenuListStyle(ComputedStyle&, Element*) const
 {
 }
 
-IntSize LayoutTheme::meterSizeForBounds(const LayoutMeter&, const IntRect& bounds) const
-{
-    return bounds.size();
-}
-
-bool LayoutTheme::supportsMeter(ControlPart) const
-{
-    return false;
-}
-
 double LayoutTheme::animationRepeatIntervalForProgressBar() const
 {
     return 0;
@@ -665,14 +641,6 @@ void LayoutTheme::adjustSearchFieldStyle(ComputedStyle&) const
 }
 
 void LayoutTheme::adjustSearchFieldCancelButtonStyle(ComputedStyle&) const
-{
-}
-
-void LayoutTheme::adjustSearchFieldDecorationStyle(ComputedStyle&) const
-{
-}
-
-void LayoutTheme::adjustSearchFieldResultsDecorationStyle(ComputedStyle&) const
 {
 }
 
@@ -802,16 +770,12 @@ Color LayoutTheme::systemColor(CSSValueID cssValueId) const
         return 0xFF000000;
     case CSSValueInternalActiveListBoxSelection:
         return activeListBoxSelectionBackgroundColor();
-        break;
     case CSSValueInternalActiveListBoxSelectionText:
         return activeListBoxSelectionForegroundColor();
-        break;
     case CSSValueInternalInactiveListBoxSelection:
         return inactiveListBoxSelectionBackgroundColor();
-        break;
     case CSSValueInternalInactiveListBoxSelectionText:
         return inactiveListBoxSelectionForegroundColor();
-        break;
     default:
         break;
     }
@@ -892,8 +856,7 @@ String LayoutTheme::fileListNameForWidth(Locale& locale, const FileList* fileLis
     } else if (fileList->length() == 1) {
         string = fileList->item(0)->name();
     } else {
-        // FIXME: Localization of fileList->length().
-        return StringTruncator::rightTruncate(locale.queryString(WebLocalizedString::MultipleFileUploadText, String::number(fileList->length())), width, font);
+        return StringTruncator::rightTruncate(locale.queryString(WebLocalizedString::MultipleFileUploadText, locale.convertToLocalizedNumber(String::number(fileList->length()))), width, font);
     }
 
     return StringTruncator::centerTruncate(string, width, font);
@@ -904,16 +867,15 @@ bool LayoutTheme::shouldOpenPickerWithF4Key() const
     return false;
 }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 bool LayoutTheme::supportsCalendarPicker(const AtomicString& type) const
 {
+    DCHECK(RuntimeEnabledFeatures::inputMultipleFieldsUIEnabled());
     return type == InputTypeNames::date
         || type == InputTypeNames::datetime
         || type == InputTypeNames::datetime_local
         || type == InputTypeNames::month
         || type == InputTypeNames::week;
 }
-#endif
 
 bool LayoutTheme::shouldUseFallbackTheme(const ComputedStyle&) const
 {

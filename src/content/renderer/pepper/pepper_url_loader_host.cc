@@ -100,7 +100,7 @@ PepperURLLoaderHost::~PepperURLLoaderHost() {
   // re-entering the scoped_ptr destructor with the same scoped_ptr object
   // via loader_.reset(). Be sure that loader_ is first NULL then destroy
   // the scoped_ptr. See http://crbug.com/159429.
-  scoped_ptr<blink::WebURLLoader> for_destruction_only(loader_.release());
+  std::unique_ptr<blink::WebURLLoader> for_destruction_only(loader_.release());
 }
 
 int32_t PepperURLLoaderHost::OnResourceMessageReceived(
@@ -264,7 +264,9 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
   // The requests from the plugins with private permission which can bypass same
   // origin must skip the ServiceWorker.
   web_request.setSkipServiceWorker(
-      host()->permissions().HasPermission(ppapi::PERMISSION_PRIVATE));
+      host()->permissions().HasPermission(ppapi::PERMISSION_PRIVATE)
+          ? blink::WebURLRequest::SkipServiceWorker::All
+          : blink::WebURLRequest::SkipServiceWorker::None);
 
   WebURLLoaderOptions options;
   if (has_universal_access_) {
@@ -385,7 +387,7 @@ blink::WebLocalFrame* PepperURLLoaderHost::GetFrame() {
           renderer_ppapi_host_->GetPluginInstance(pp_instance()));
   if (!instance_object || instance_object->is_deleted())
     return NULL;
-  return instance_object->GetContainer()->element().document().frame();
+  return instance_object->GetContainer()->document().frame();
 }
 
 void PepperURLLoaderHost::SetDefersLoading(bool defers_loading) {

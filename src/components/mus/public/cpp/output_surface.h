@@ -17,23 +17,25 @@ namespace mus {
 class OutputSurface : public cc::OutputSurface, public WindowSurfaceClient {
  public:
   OutputSurface(const scoped_refptr<cc::ContextProvider>& context_provider,
-                scoped_ptr<WindowSurface> surface);
+                std::unique_ptr<WindowSurface> surface);
   ~OutputSurface() override;
 
   // cc::OutputSurface implementation.
-  void SwapBuffers(cc::CompositorFrame* frame) override;
+  void SwapBuffers(cc::CompositorFrame frame) override;
   bool BindToClient(cc::OutputSurfaceClient* client) override;
   void DetachFromClient() override;
+  void BindFramebuffer() override;
+  uint32_t GetFramebufferCopyTextureFormat() override;
 
  private:
   // WindowSurfaceClient implementation:
   void OnResourcesReturned(
       WindowSurface* surface,
-      mojo::Array<mojom::ReturnedResourcePtr> resources) override;
+      mojo::Array<cc::ReturnedResource> resources) override;
 
   void SwapBuffersComplete();
 
-  scoped_ptr<WindowSurface> surface_;
+  std::unique_ptr<WindowSurface> surface_;
 
   DISALLOW_COPY_AND_ASSIGN(OutputSurface);
 };

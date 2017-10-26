@@ -24,7 +24,8 @@
 #include "webrtc/media/base/videocommon.h"
 
 namespace rtc {
-class ByteBuffer;
+class ByteBufferReader;
+class ByteBufferWriter;
 class StreamInterface;
 }
 
@@ -45,8 +46,8 @@ class RtpDumpWriter;
 class VideoFrame;
 
 struct RawRtpPacket {
-  void WriteToByteBuffer(uint32_t in_ssrc, rtc::ByteBuffer* buf) const;
-  bool ReadFromByteBuffer(rtc::ByteBuffer* buf);
+  void WriteToByteBuffer(uint32_t in_ssrc, rtc::ByteBufferWriter* buf) const;
+  bool ReadFromByteBuffer(rtc::ByteBufferReader* buf);
   // Check if this packet is the same as the specified packet except the
   // sequence number and timestamp, which should be the same as the specified
   // parameters.
@@ -65,8 +66,8 @@ struct RawRtpPacket {
 };
 
 struct RawRtcpPacket {
-  void WriteToByteBuffer(rtc::ByteBuffer* buf) const;
-  bool ReadFromByteBuffer(rtc::ByteBuffer* buf);
+  void WriteToByteBuffer(rtc::ByteBufferWriter* buf) const;
+  bool ReadFromByteBuffer(rtc::ByteBufferReader* buf);
   bool EqualsTo(const RawRtcpPacket& packet) const;
 
   uint8_t ver_to_count;
@@ -165,45 +166,6 @@ class VideoMediaErrorCatcher : public sigslot::has_slots<> {
   uint32_t ssrc_;
   VideoMediaChannel::Error error_;
 };
-
-// Returns the absolute path to a file in the testdata/ directory.
-std::string GetTestFilePath(const std::string& filename);
-
-// PSNR formula: psnr = 10 * log10 (Peak Signal^2 / mse)
-// sse is set to a small number for identical frames or sse == 0
-static inline double ComputePSNR(double sse, double count) {
-  return libyuv::SumSquareErrorToPsnr(static_cast<uint64_t>(sse),
-                                      static_cast<uint64_t>(count));
-}
-
-static inline double ComputeSumSquareError(const uint8_t* org,
-                                           const uint8_t* rec,
-                                           int size) {
-  return static_cast<double>(libyuv::ComputeSumSquareError(org, rec, size));
-}
-
-// Loads the image with the specified prefix and size into |out|.
-bool LoadPlanarYuvTestImage(const std::string& prefix,
-                            int width,
-                            int height,
-                            uint8_t* out);
-
-// Dumps the YUV image out to a file, for visual inspection.
-// PYUV tool can be used to view dump files.
-void DumpPlanarYuvTestImage(const std::string& prefix,
-                            const uint8_t* img,
-                            int w,
-                            int h);
-
-// Dumps the ARGB image out to a file, for visual inspection.
-// ffplay tool can be used to view dump files.
-void DumpPlanarArgbTestImage(const std::string& prefix,
-                             const uint8_t* img,
-                             int w,
-                             int h);
-
-// Compare two I420 frames.
-bool VideoFrameEqual(const VideoFrame* frame0, const VideoFrame* frame1);
 
 // Checks whether |codecs| contains |codec|; checks using Codec::Matches().
 template <class C>

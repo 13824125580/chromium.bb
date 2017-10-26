@@ -10,7 +10,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/libgtk2ui/gtk2_ui.h"
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -23,7 +22,8 @@
 #include "ui/base/ime/input_method_initializer.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/native_theme/native_theme_aura.h"
 #include "ui/native_theme/native_theme_dark_aura.h"
 #include "ui/views/linux_ui/linux_ui.h"
@@ -84,11 +84,15 @@ void ChromeBrowserMainExtraPartsViewsLinux::ToolkitInitialized() {
 
 void ChromeBrowserMainExtraPartsViewsLinux::PreCreateThreads() {
   ChromeBrowserMainExtraPartsViews::PreCreateThreads();
+  // TODO(varkha): The next call should not be necessary once Material Design is
+  // on unconditionally.
+  views::LinuxUI::instance()->MaterialDesignControllerReady();
   views::LinuxUI::instance()->UpdateDeviceScaleFactor(
-      gfx::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor());
+      display::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor());
 }
 
 void ChromeBrowserMainExtraPartsViewsLinux::PreProfileInit() {
+  ChromeBrowserMainExtraPartsViews::PreProfileInit();
   // On the Linux desktop, we want to prevent the user from logging in as root,
   // so that we don't destroy the profile. Now that we have some minimal ui
   // initialized, check to see if we're running as root and bail if we are.
@@ -105,8 +109,7 @@ void ChromeBrowserMainExtraPartsViewsLinux::PreProfileInit() {
   base::string16 message = l10n_util::GetStringFUTF16(
       IDS_REFUSE_TO_RUN_AS_ROOT_2, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME));
 
-  chrome::ShowMessageBox(NULL, title, message,
-                         chrome::MESSAGE_BOX_TYPE_WARNING);
+  chrome::ShowWarningMessageBox(NULL, title, message);
 
   // Avoids gpu_process_transport_factory.cc(153)] Check failed:
   // per_compositor_data_.empty() when quit is chosen.

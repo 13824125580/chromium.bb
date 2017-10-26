@@ -32,6 +32,7 @@
 #include "public/web/WebColorSuggestion.h"
 #include "public/web/WebFrameClient.h"
 #include "web/WebLocalFrameImpl.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
@@ -80,7 +81,7 @@ AXObject* ColorChooserUIController::rootAXObject()
 
 void ColorChooserUIController::didChooseColor(const WebColor& color)
 {
-    ASSERT(m_client);
+    DCHECK(m_client);
     m_client->didChooseColor(Color(static_cast<RGBA32>(color)));
 }
 
@@ -93,12 +94,12 @@ void ColorChooserUIController::didEndChooser()
 
 void ColorChooserUIController::openColorChooser()
 {
-    ASSERT(!m_chooser);
+    DCHECK(!m_chooser);
     WebLocalFrameImpl* frame = WebLocalFrameImpl::fromFrame(m_frame);
     WebFrameClient* webFrameClient = frame->client();
     if (!webFrameClient)
         return;
-    m_chooser = adoptPtr(webFrameClient->createColorChooser(
+    m_chooser = wrapUnique(webFrameClient->createColorChooser(
         this, static_cast<WebColor>(m_client->currentColor().rgb()), m_client->suggestions()));
 }
 

@@ -5,12 +5,12 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_SIGNIN_INLINE_LOGIN_HANDLER_IMPL_H_
 #define CHROME_BROWSER_UI_WEBUI_SIGNIN_INLINE_LOGIN_HANDLER_IMPL_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
 #include "chrome/browser/ui/webui/signin/inline_login_handler.h"
@@ -88,8 +88,8 @@ class InlineLoginHandlerImpl : public InlineLoginHandler,
     content::StoragePartition* partition;
     // URL of sign in containing parameters such as email, source, etc.
     GURL url;
-    // Path to profile being signed in.  Non empty only when signing
-    // in to the profile from the user manager.
+    // Path to profile being signed in. Non empty only when unlocking a profile
+    // from the user manager.
     base::FilePath profile_path;
     // When true, an extra prompt will be shown to the user before sign in
     // completes.

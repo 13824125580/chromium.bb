@@ -24,10 +24,21 @@ media_router.CastModeType = {
 };
 
 /**
- * The ESC key maps to keycode '27'.
- * @const {number}
+ * The ESC key maps to KeyboardEvent.key value 'Escape'.
+ * @const {string}
  */
-media_router.KEYCODE_ESC = 27;
+media_router.KEY_ESC = 'Escape';
+
+/**
+ * This corresponds to the C++ MediaRouterMetrics
+ * MediaRouterRouteCreationOutcome.
+ * @enum {number}
+ */
+media_router.MediaRouterRouteCreationOutcome = {
+  SUCCESS: 0,
+  FAILURE_NO_ROUTE: 1,
+  FAILURE_INVALID_SINK: 2,
+};
 
 /**
  * This corresponds to the C++ MediaRouterMetrics MediaRouterUserAction.
@@ -39,6 +50,7 @@ media_router.MediaRouterUserAction = {
   STOP_LOCAL: 2,
   CLOSE: 3,
   STATUS_REMOTE: 4,
+  REPLACE_LOCAL_ROUTE: 5,
 };
 
 /**
@@ -53,6 +65,14 @@ media_router.MediaRouterView = {
   ROUTE_DETAILS: 'route-details',
   SINK_LIST: 'sink-list',
 };
+
+/**
+ * The minimum number of sinks to have to enable the search input strictly for
+ * filtering (i.e. the Media Router doesn't support search so the search input
+ * only filters existing sinks).
+ * @const {number}
+ */
+media_router.MINIMUM_SINKS_FOR_SEARCH = 20;
 
 /**
  * This corresponds to the C++ MediaSink IconType.
@@ -108,8 +128,8 @@ cr.define('media_router', function() {
    * @param {string} title The issue title.
    * @param {string} message The issue message.
    * @param {number} defaultActionType The type of default action.
-   * @param {?number} secondaryActionType The type of optional action.
-   * @param {?string} mediaRouteId The route ID to which this issue
+   * @param {number|undefined} secondaryActionType The type of optional action.
+   * @param {?string} routeId The route ID to which this issue
    *                  pertains. If not set, this is a global issue.
    * @param {boolean} isBlocking True if this issue blocks other UI.
    * @param {?number} helpPageId The numeric help center ID.
@@ -117,7 +137,7 @@ cr.define('media_router', function() {
    * @struct
    */
   var Issue = function(id, title, message, defaultActionType,
-                       secondaryActionType, mediaRouteId, isBlocking,
+                       secondaryActionType, routeId, isBlocking,
                        helpPageId) {
     /** @type {string} */
     this.id = id;
@@ -131,11 +151,11 @@ cr.define('media_router', function() {
     /** @type {number} */
     this.defaultActionType = defaultActionType;
 
-    /** @type {?number} */
+    /** @type {number|undefined} */
     this.secondaryActionType = secondaryActionType;
 
     /** @type {?string} */
-    this.mediaRouteId = mediaRouteId;
+    this.routeId = routeId;
 
     /** @type {boolean} */
     this.isBlocking = isBlocking;
@@ -178,6 +198,9 @@ cr.define('media_router', function() {
     /** @type {boolean} */
     this.canJoin = canJoin;
 
+    /** @type {number|undefined} */
+    this.currentCastMode = undefined;
+
     /** @type {?string} */
     this.customControllerPath = customControllerPath;
   };
@@ -216,6 +239,9 @@ cr.define('media_router', function() {
 
     /** @type {number} */
     this.castModes = castModes;
+
+    /** @type {boolean} */
+    this.isPseudoSink = false;
   };
 
 

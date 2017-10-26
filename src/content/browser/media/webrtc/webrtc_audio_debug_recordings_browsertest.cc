@@ -59,7 +59,7 @@ base::FilePath GetExpectedInputAudioFileName(const base::FilePath& base_file,
   return base_file.AddExtension(IntToStringType(render_process_id))
                   .AddExtension(FILE_PATH_LITERAL("source_input"))
                   .AddExtension(IntToStringType(kExpectedStreamId))
-                  .AddExtension(FILE_PATH_LITERAL("pcm"));
+                  .AddExtension(FILE_PATH_LITERAL("wav"));
 }
 
 }  // namespace
@@ -202,13 +202,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
 
 // Timing out on ARM linux bot: http://crbug.com/238490
 // Renderer crashes under Android ASAN: https://crbug.com/408496.
-// Flaky on XP and Mac: http://crbug.com/425034.
 IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
                        DISABLED_TwoCallsWithAudioDebugRecordings) {
-  if (OnWinXp()) {
-    LOG(INFO) << "Disabled on Win XP: skipping test...";
-    return;
-  }
   if (!media::AudioManager::Get()->HasAudioOutputDevices()) {
     LOG(INFO) << "Missing output devices: skipping test...";
     return;
@@ -238,9 +233,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
   ExecuteJavascriptAndWaitForOk("call({video: true, audio: true});");
   std::string result;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell2->web_contents(),
-      "call({video: true, audio: true});",
-      &result));
+      shell2, "call({video: true, audio: true});", &result));
   ASSERT_STREQ("OK", result.c_str());
 
   EXPECT_FALSE(base::PathExists(base_file));

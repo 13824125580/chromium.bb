@@ -4,15 +4,12 @@
 
 package org.chromium.chrome.browser.sync;
 
-import android.content.Context;
-import android.os.AsyncTask;
-
+import org.chromium.base.Promise;
 import org.chromium.chrome.browser.BrowsingDataType;
 import org.chromium.chrome.browser.TimePeriod;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge.OnClearBrowsingDataListener;
-import org.chromium.chrome.browser.provider.ChromeBrowserProviderClient;
 
 /**
  * A class to wipe the user's bookmarks and all types of sync data.
@@ -28,32 +25,29 @@ public class SyncUserDataWiper {
 
     /**
      * Wipes the user's bookmarks and sync data.
-     * @param callback Called when the data is cleared.
+     * @return A promise which will be fulfilled once the data is wiped.
      */
-    public static void wipeSyncUserData(final Context context, final Runnable callback) {
+    public static Promise<Void> wipeSyncUserData() {
+        final Promise<Void> promise = new Promise<>();
+
         final BookmarkModel model = new BookmarkModel();
-
-        // The ChromeBrowserProvider API currently enforces calls to not be on the UI thread.
-        // This is being reviewed in http://crbug.com/225050 and this code could be simplified.
-        new AsyncTask<Void, Void, Void>() {
+        model.runAfterBookmarkModelLoaded(new Runnable() {
             @Override
-            protected Void doInBackground(Void... arg0) {
-                ChromeBrowserProviderClient.removeAllUserBookmarks(context);
-                return null;
-            }
-
-            @Override
-            protected void onPostExecute(Void result) {
+            public void run() {
+                model.removeAllUserBookmarks();
+                model.destroy();
                 PrefServiceBridge.getInstance().clearBrowsingData(
                         new OnClearBrowsingDataListener(){
                             @Override
                             public void onBrowsingDataCleared() {
-                                callback.run();
+                                promise.fulfill(null);
                             }
                         },
                         SYNC_DATA_TYPES, TimePeriod.EVERYTHING);
             }
-        }.execute();
+        });
+
+        return promise;
     }
 }
 

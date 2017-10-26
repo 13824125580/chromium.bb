@@ -37,9 +37,11 @@
 #include "core/frame/LocalFrameLifecycleObserver.h"
 #include "platform/Timer.h"
 #include "platform/heap/Handle.h"
+#include "platform/heap/SelfKeepAlive.h"
 #include "public/platform/WebURLLoaderClient.h"
+#include "wtf/Forward.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -57,10 +59,9 @@ class ResourceRequest;
 // The ping loader is used by audit pings, beacon transmissions and image loads
 // during page unloading.
 //
-class CORE_EXPORT PingLoader : public RefCountedWillBeRefCountedGarbageCollected<PingLoader>, public LocalFrameLifecycleObserver, private WebURLLoaderClient {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(PingLoader);
+class CORE_EXPORT PingLoader : public GarbageCollectedFinalized<PingLoader>, public LocalFrameLifecycleObserver, private WebURLLoaderClient {
+    USING_GARBAGE_COLLECTED_MIXIN(PingLoader);
     WTF_MAKE_NONCOPYABLE(PingLoader);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(PingLoader);
 public:
     ~PingLoader() override;
 
@@ -95,10 +96,11 @@ private:
 
     void didFailLoading(LocalFrame*);
 
-    OwnPtr<WebURLLoader> m_loader;
+    std::unique_ptr<WebURLLoader> m_loader;
     Timer<PingLoader> m_timeout;
     String m_url;
     unsigned long m_identifier;
+    SelfKeepAlive<PingLoader> m_keepAlive;
 };
 
 } // namespace blink

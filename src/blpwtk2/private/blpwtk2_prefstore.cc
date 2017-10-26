@@ -64,15 +64,15 @@ bool PrefStore::GetMutableValue(const std::string& key, base::Value** result)
     return d_prefs.GetValue(key, result);
 }
 
-void PrefStore::SetValue(const std::string& key, scoped_ptr<base::Value> value, uint32_t flags)
+void PrefStore::SetValue(const std::string& key, std::unique_ptr<base::Value> value, uint32_t flags)
 {
-    if (d_prefs.SetValue(key, value.Pass()))
+    if (d_prefs.SetValue(key, std::move(value)))
         ReportValueChanged(key, flags);
 }
 
-void PrefStore::SetValueSilently(const std::string& key, scoped_ptr<base::Value> value, uint32_t flags)
+void PrefStore::SetValueSilently(const std::string& key, std::unique_ptr<base::Value> value, uint32_t flags)
 {
-    d_prefs.SetValue(key, value.Pass());
+    d_prefs.SetValue(key, std::move(value));
 }
 
 void PrefStore::RemoveValue(const std::string& key, uint32_t flags)
@@ -99,7 +99,7 @@ PersistentPrefStore::PrefReadError PrefStore::ReadPrefs()
 
 void PrefStore::ReadPrefsAsync(ReadErrorDelegate* error_delegate_raw)
 {
-    scoped_ptr<ReadErrorDelegate> error_delegate(error_delegate_raw);
+    std::unique_ptr<ReadErrorDelegate> error_delegate(error_delegate_raw);
     OnInitializationCompleted();
 }
 

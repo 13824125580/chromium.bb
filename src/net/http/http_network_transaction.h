@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "crypto/ec_private_key.h"
 #include "net/base/net_error_details.h"
@@ -27,7 +27,6 @@
 #include "net/socket/connection_attempts.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_config_service.h"
-#include "net/ssl/ssl_failure_state.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
 
 namespace crypto {
@@ -36,7 +35,7 @@ class ECPrivateKey;
 
 namespace net {
 
-class BidirectionalStreamJob;
+class BidirectionalStreamImpl;
 class ClientSocketHandle;
 class HttpAuthController;
 class HttpNetworkSession;
@@ -89,25 +88,22 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       WebSocketHandshakeStreamBase::CreateHelper* create_helper) override;
   void SetBeforeNetworkStartCallback(
       const BeforeNetworkStartCallback& callback) override;
-  void SetBeforeProxyHeadersSentCallback(
-      const BeforeProxyHeadersSentCallback& callback) override;
+  void SetBeforeHeadersSentCallback(
+      const BeforeHeadersSentCallback& callback) override;
   int ResumeNetworkStart() override;
 
   // HttpStreamRequest::Delegate methods:
   void OnStreamReady(const SSLConfig& used_ssl_config,
                      const ProxyInfo& used_proxy_info,
                      HttpStream* stream) override;
-  void OnBidirectionalStreamJobReady(
-      const SSLConfig& used_ssl_config,
-      const ProxyInfo& used_proxy_info,
-      BidirectionalStreamJob* stream_job) override;
+  void OnBidirectionalStreamImplReady(const SSLConfig& used_ssl_config,
+                                      const ProxyInfo& used_proxy_info,
+                                      BidirectionalStreamImpl* stream) override;
   void OnWebSocketHandshakeStreamReady(
       const SSLConfig& used_ssl_config,
       const ProxyInfo& used_proxy_info,
       WebSocketHandshakeStreamBase* stream) override;
-  void OnStreamFailed(int status,
-                      const SSLConfig& used_ssl_config,
-                      SSLFailureState ssl_failure_state) override;
+  void OnStreamFailed(int status, const SSLConfig& used_ssl_config) override;
   void OnCertificateError(int status,
                           const SSLConfig& used_ssl_config,
                           const SSLInfo& ssl_info) override;
@@ -155,8 +151,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
     STATE_GENERATE_PROXY_AUTH_TOKEN_COMPLETE,
     STATE_GENERATE_SERVER_AUTH_TOKEN,
     STATE_GENERATE_SERVER_AUTH_TOKEN_COMPLETE,
-    STATE_GET_TOKEN_BINDING_KEY,
-    STATE_GET_TOKEN_BINDING_KEY_COMPLETE,
+    STATE_GET_PROVIDED_TOKEN_BINDING_KEY,
+    STATE_GET_PROVIDED_TOKEN_BINDING_KEY_COMPLETE,
+    STATE_GET_REFERRED_TOKEN_BINDING_KEY,
+    STATE_GET_REFERRED_TOKEN_BINDING_KEY_COMPLETE,
     STATE_INIT_REQUEST_BODY,
     STATE_INIT_REQUEST_BODY_COMPLETE,
     STATE_BUILD_REQUEST,
@@ -199,8 +197,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int DoGenerateProxyAuthTokenComplete(int result);
   int DoGenerateServerAuthToken();
   int DoGenerateServerAuthTokenComplete(int result);
-  int DoGetTokenBindingKey();
-  int DoGetTokenBindingKeyComplete(int result);
+  int DoGetProvidedTokenBindingKey();
+  int DoGetProvidedTokenBindingKeyComplete(int result);
+  int DoGetReferredTokenBindingKey();
+  int DoGetReferredTokenBindingKeyComplete(int result);
   int DoInitRequestBody();
   int DoInitRequestBodyComplete(int result);
   int DoBuildRequest();
@@ -322,28 +322,20 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // |proxy_info_| is the ProxyInfo used by the HttpStreamRequest.
   ProxyInfo proxy_info_;
 
-  scoped_ptr<HttpStreamRequest> stream_request_;
-  scoped_ptr<HttpStream> stream_;
+  std::unique_ptr<HttpStreamRequest> stream_request_;
+  std::unique_ptr<HttpStream> stream_;
 
   // True if we've validated the headers that the stream parser has returned.
   bool headers_valid_;
 
   SSLConfig server_ssl_config_;
   SSLConfig proxy_ssl_config_;
-  // The SSLFailureState of the most recent failed stream.
-  SSLFailureState server_ssl_failure_state_;
-  // fallback_error_code contains the error code that caused the last TLS
-  // fallback. If the fallback connection results in
-  // ERR_SSL_INAPPROPRIATE_FALLBACK (i.e. the server indicated that the
-  // fallback should not have been needed) then we use this value to return the
-  // original error that triggered the fallback.
-  int fallback_error_code_;
-  // The SSLFailureState which caused the last TLS version fallback.
-  SSLFailureState fallback_failure_state_;
 
-  // Key to use for signing message in Token Binding header.
-  scoped_ptr<crypto::ECPrivateKey> token_binding_key_;
-  // Object to manage lookup of |token_binding_key_|.
+  // Keys to use for signing message in Token Binding header.
+  std::unique_ptr<crypto::ECPrivateKey> provided_token_binding_key_;
+  std::unique_ptr<crypto::ECPrivateKey> referred_token_binding_key_;
+  // Object to manage lookup of |provided_token_binding_key_| and
+  // |referred_token_binding_key_|.
   ChannelIDService::Request token_binding_request_;
 
   HttpRequestHeaders request_headers_;
@@ -383,7 +375,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       websocket_handshake_stream_base_create_helper_;
 
   BeforeNetworkStartCallback before_network_start_callback_;
-  BeforeProxyHeadersSentCallback before_proxy_headers_sent_callback_;
+  BeforeHeadersSentCallback before_headers_sent_callback_;
 
   ConnectionAttempts connection_attempts_;
   IPEndPoint remote_endpoint_;

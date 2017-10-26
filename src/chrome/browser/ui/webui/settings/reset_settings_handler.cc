@@ -35,8 +35,6 @@
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/reset/metrics.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_manager_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #endif  // defined(OS_CHROMEOS)
@@ -48,12 +46,8 @@
 
 namespace settings {
 
-ResetSettingsHandler::ResetSettingsHandler(
-    Profile* profile, bool allow_powerwash)
+ResetSettingsHandler::ResetSettingsHandler(Profile* profile)
     : profile_(profile), weak_ptr_factory_(this) {
-#if defined(OS_CHROMEOS)
-  allow_powerwash_ = allow_powerwash;
-#endif  // defined(OS_CHROMEOS)
   google_brand::GetBrand(&brandcode_);
 }
 
@@ -61,8 +55,8 @@ ResetSettingsHandler::~ResetSettingsHandler() {}
 
 ResetSettingsHandler* ResetSettingsHandler::Create(
     content::WebUIDataSource* html_source, Profile* profile) {
-  bool allow_powerwash = false;
 #if defined(OS_CHROMEOS)
+  bool allow_powerwash = false;
   policy::BrowserPolicyConnectorChromeOS* connector =
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
   allow_powerwash = !connector->IsEnterpriseManaged() &&
@@ -80,8 +74,7 @@ ResetSettingsHandler* ResetSettingsHandler::Create(
   }
   html_source->AddBoolean("showResetProfileBanner", show_reset_profile_banner);
 
-  // Inject |allow_powerwash| for testing.
-  return new ResetSettingsHandler(profile, allow_powerwash);
+  return new ResetSettingsHandler(profile);
 }
 
 void ResetSettingsHandler::RegisterMessages() {
@@ -90,6 +83,9 @@ void ResetSettingsHandler::RegisterMessages() {
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("onShowResetProfileDialog",
       base::Bind(&ResetSettingsHandler::OnShowResetProfileDialog,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback("getReportedSettings",
+      base::Bind(&ResetSettingsHandler::HandleGetReportedSettings,
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("onHideResetProfileDialog",
       base::Bind(&ResetSettingsHandler::OnHideResetProfileDialog,
@@ -102,18 +98,18 @@ void ResetSettingsHandler::RegisterMessages() {
        "onPowerwashDialogShow",
        base::Bind(&ResetSettingsHandler::OnShowPowerwashDialog,
                   base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "requestFactoryResetRestart",
-      base::Bind(&ResetSettingsHandler::HandleFactoryResetRestart,
-                 base::Unretained(this)));
 #endif  // defined(OS_CHROMEOS)
 }
 
 void ResetSettingsHandler::HandleResetProfileSettings(
-    const base::ListValue* value) {
+    const base::ListValue* args) {
+  AllowJavascript();
+
+  CHECK_EQ(2U, args->GetSize());
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
   bool send_settings = false;
-  bool success = value->GetBoolean(0, &send_settings);
-  DCHECK(success);
+  CHECK(args->GetBoolean(1, &send_settings));
 
   DCHECK(brandcode_.empty() || config_fetcher_);
   if (config_fetcher_ && config_fetcher_->IsActive()) {
@@ -121,21 +117,23 @@ void ResetSettingsHandler::HandleResetProfileSettings(
     config_fetcher_->SetCallback(
         base::Bind(&ResetSettingsHandler::ResetProfile,
                    base::Unretained(this),
+                   callback_id,
                    send_settings));
   } else {
-    ResetProfile(send_settings);
+    ResetProfile(callback_id, send_settings);
   }
 }
 
 void ResetSettingsHandler::OnResetProfileSettingsDone(
-    bool send_feedback) {
-  web_ui()->CallJavascriptFunction("SettingsResetPage.doneResetting");
+    std::string callback_id, bool send_feedback) {
+  ResolveJavascriptCallback(
+      base::StringValue(callback_id), *base::Value::CreateNullValue());
   if (send_feedback && setting_snapshot_) {
     ResettableSettingsSnapshot current_snapshot(profile_);
     int difference = setting_snapshot_->FindDifferentFields(current_snapshot);
     if (difference) {
       setting_snapshot_->Subtract(current_snapshot);
-      scoped_ptr<reset_report::ChromeResetReport> report_proto =
+      std::unique_ptr<reset_report::ChromeResetReport> report_proto =
           SerializeSettingsReportToProto(*setting_snapshot_, difference);
       if (report_proto)
         SendSettingsFeedbackProto(*report_proto, profile_);
@@ -144,14 +142,30 @@ void ResetSettingsHandler::OnResetProfileSettingsDone(
   setting_snapshot_.reset();
 }
 
+void ResetSettingsHandler::HandleGetReportedSettings(
+    const base::ListValue* args) {
+  AllowJavascript();
+
+  CHECK_EQ(1U, args->GetSize());
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+
+  setting_snapshot_->RequestShortcuts(base::Bind(
+      &ResetSettingsHandler::OnGetReportedSettingsDone,
+      weak_ptr_factory_.GetWeakPtr(),
+      callback_id));
+}
+
+void ResetSettingsHandler::OnGetReportedSettingsDone(std::string callback_id) {
+  std::unique_ptr<base::ListValue> list =
+      GetReadableFeedbackForSnapshot(profile_, *setting_snapshot_);
+  ResolveJavascriptCallback(base::StringValue(callback_id), *list);
+}
+
 void ResetSettingsHandler::OnShowResetProfileDialog(
-    const base::ListValue* value) {
+    const base::ListValue* args) {
   if (!GetResetter()->IsActive()) {
     setting_snapshot_.reset(new ResettableSettingsSnapshot(profile_));
-    setting_snapshot_->RequestShortcuts(base::Bind(
-        &ResetSettingsHandler::UpdateFeedbackUI,
-        weak_ptr_factory_.GetWeakPtr()));
-    UpdateFeedbackUI();
   }
 
   if (brandcode_.empty())
@@ -164,13 +178,13 @@ void ResetSettingsHandler::OnShowResetProfileDialog(
 }
 
 void ResetSettingsHandler::OnHideResetProfileDialog(
-    const base::ListValue* value) {
+    const base::ListValue* args) {
   if (!GetResetter()->IsActive())
     setting_snapshot_.reset();
 }
 
 void ResetSettingsHandler::OnHideResetProfileBanner(
-    const base::ListValue* value) {
+    const base::ListValue* args) {
   chrome_prefs::ClearResetTime(profile_);
 }
 
@@ -180,10 +194,11 @@ void ResetSettingsHandler::OnSettingsFetched() {
   // The master prefs is fetched. We are waiting for user pressing 'Reset'.
 }
 
-void ResetSettingsHandler::ResetProfile(bool send_settings) {
+void ResetSettingsHandler::ResetProfile(std::string callback_id,
+                                        bool send_settings) {
   DCHECK(!GetResetter()->IsActive());
 
-  scoped_ptr<BrandcodedDefaultSettings> default_settings;
+  std::unique_ptr<BrandcodedDefaultSettings> default_settings;
   if (config_fetcher_) {
     DCHECK(!config_fetcher_->IsActive());
     default_settings = config_fetcher_->GetSettings();
@@ -201,20 +216,10 @@ void ResetSettingsHandler::ResetProfile(bool send_settings) {
       ProfileResetter::ALL, std::move(default_settings),
       base::Bind(&ResetSettingsHandler::OnResetProfileSettingsDone,
                  weak_ptr_factory_.GetWeakPtr(),
+                 callback_id,
                  send_settings));
   content::RecordAction(base::UserMetricsAction("ResetProfile"));
   UMA_HISTOGRAM_BOOLEAN("ProfileReset.SendFeedback", send_settings);
-}
-
-void ResetSettingsHandler::UpdateFeedbackUI() {
-  if (!setting_snapshot_)
-    return;
-  scoped_ptr<base::ListValue> list = GetReadableFeedbackForSnapshot(
-      profile_, *setting_snapshot_);
-  base::DictionaryValue feedback_info;
-  feedback_info.Set("feedbackInfo", list.release());
-  web_ui()->CallJavascriptFunction(
-      "SettingsResetPage.setFeedbackInfo", feedback_info);
 }
 
 ProfileResetter* ResetSettingsHandler::GetResetter() {
@@ -230,20 +235,6 @@ void ResetSettingsHandler::OnShowPowerwashDialog(
       "Reset.ChromeOS.PowerwashDialogShown",
       chromeos::reset::DIALOG_FROM_OPTIONS,
       chromeos::reset::DIALOG_VIEW_TYPE_SIZE);
-}
-
-void ResetSettingsHandler::HandleFactoryResetRestart(
-    const base::ListValue* args) {
-  if (!allow_powerwash_)
-    return;
-
-  PrefService* prefs = g_browser_process->local_state();
-  prefs->SetBoolean(prefs::kFactoryResetRequested, true);
-  prefs->CommitPendingWrite();
-
-  // Perform sign out. Current chrome process will then terminate, new one will
-  // be launched (as if it was a restart).
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart();
 }
 #endif  // defined(OS_CHROMEOS)
 

@@ -59,7 +59,7 @@ WebInspector.ConsoleView = function()
 
     this._executionContextComboBox = new WebInspector.ToolbarComboBox(null, "console-context");
     this._executionContextComboBox.setMaxWidth(200);
-    this._executionContextModel = new WebInspector.ExecutionContextModel(this._executionContextComboBox.selectElement());
+    this._executionContextModel = new WebInspector.ConsoleContextSelector(this._executionContextComboBox.selectElement());
 
     this._filter = new WebInspector.ConsoleViewFilter(this);
     this._filter.addEventListener(WebInspector.ConsoleViewFilter.Events.FilterChanged, this._updateMessageList.bind(this));
@@ -70,7 +70,7 @@ WebInspector.ConsoleView = function()
     this._progressToolbarItem = new WebInspector.ToolbarItem(createElement("div"));
 
     var toolbar = new WebInspector.Toolbar("", this._contentsElement);
-    toolbar.appendToolbarItem(WebInspector.Toolbar.createActionButton(WebInspector.actionRegistry.action("console.clear")));
+    toolbar.appendToolbarItem(WebInspector.Toolbar.createActionButton(/** @type {!WebInspector.Action }*/ (WebInspector.actionRegistry.action("console.clear"))));
     toolbar.appendToolbarItem(this._filterBar.filterButton());
     toolbar.appendToolbarItem(this._executionContextComboBox);
     toolbar.appendToolbarItem(this._preserveLogCheckbox);
@@ -184,6 +184,8 @@ WebInspector.ConsoleView.prototype = {
      */
     _onMainFrameNavigated: function(event)
     {
+        if (!WebInspector.moduleSetting("preserveConsoleLog").get())
+            return;
         var frame = /** @type {!WebInspector.ResourceTreeFrame} */(event.data);
         WebInspector.console.log(WebInspector.UIString("Navigated to %s", frame.url));
     },
@@ -355,8 +357,10 @@ WebInspector.ConsoleView.prototype = {
     {
         if (this._promptElement === WebInspector.currentFocusElement())
             return;
-        WebInspector.setCurrentFocusElement(this._promptElement);
+        // Set caret position before setting focus in order to avoid scrolling
+        // by focus().
         this._prompt.moveCaretToEndOfPrompt();
+        WebInspector.setCurrentFocusElement(this._promptElement);
     },
 
     restoreScrollPositions: function()
@@ -442,7 +446,7 @@ WebInspector.ConsoleView.prototype = {
             message.timestamp = this._consoleMessages.length ? this._consoleMessages.peekLast().consoleMessage().timestamp : 0;
         var viewMessage = this._createViewMessage(message);
         message[this._viewMessageSymbol] = viewMessage;
-        var insertAt = insertionIndexForObjectInListSortedByFunction(viewMessage, this._consoleMessages, compareTimestamps, true);
+        var insertAt = this._consoleMessages.upperBound(viewMessage, compareTimestamps)
         var insertedInMiddle = insertAt < this._consoleMessages.length;
         this._consoleMessages.splice(insertAt, 0, viewMessage);
 
@@ -829,7 +833,7 @@ WebInspector.ConsoleView.prototype = {
      */
     _commandEvaluated: function(event)
     {
-        var data = /**{{result: ?WebInspector.RemoteObject, wasThrown: boolean, text: string, commandMessage: !WebInspector.ConsoleMessage}} */ (event.data);
+        var data = /** @type {{result: ?WebInspector.RemoteObject, wasThrown: boolean, text: string, commandMessage: !WebInspector.ConsoleMessage}} */ (event.data);
         this._prompt.pushHistoryItem(data.text);
         this._consoleHistorySetting.set(this._prompt.historyData().slice(-WebInspector.ConsoleView.persistedHistorySize));
         this._printResult(data.result, data.wasThrown, data.commandMessage, data.exceptionDetails);
@@ -993,13 +997,11 @@ WebInspector.ConsoleView.prototype = {
         if (!this._regexMatchRanges.length)
             return;
 
-        var currentSearchResultClassName = "current-search-result";
-
         var matchRange;
         if (this._currentMatchRangeIndex >= 0) {
             matchRange = this._regexMatchRanges[this._currentMatchRangeIndex];
             var message = this._visibleViewMessages[matchRange.messageIndex];
-            message.searchHighlightNode(matchRange.matchIndex).classList.remove(currentSearchResultClassName);
+            message.searchHighlightNode(matchRange.matchIndex).classList.remove(WebInspector.highlightedCurrentSearchResultClassName);
         }
 
         index = mod(index, this._regexMatchRanges.length);
@@ -1008,7 +1010,7 @@ WebInspector.ConsoleView.prototype = {
         matchRange = this._regexMatchRanges[index];
         var message = this._visibleViewMessages[matchRange.messageIndex];
         var highlightNode = message.searchHighlightNode(matchRange.matchIndex);
-        highlightNode.classList.add(currentSearchResultClassName);
+        highlightNode.classList.add(WebInspector.highlightedCurrentSearchResultClassName);
         this._viewport.scrollItemIntoView(matchRange.messageIndex);
         highlightNode.scrollIntoViewIfNeeded();
     },
@@ -1192,8 +1194,12 @@ WebInspector.ConsoleCommand.prototype = {
             this._formattedCommand.textContent = this.text.replaceControlCharacters();
             this._element.appendChild(this._formattedCommand);
 
-            var javascriptSyntaxHighlighter = new WebInspector.DOMSyntaxHighlighter("text/javascript", true);
-            javascriptSyntaxHighlighter.syntaxHighlightNode(this._formattedCommand).then(this._updateSearch.bind(this))
+            if (this._formattedCommand.textContent.length < WebInspector.ConsoleCommand.MaxLengthToIgnoreHighlighter) {
+                var javascriptSyntaxHighlighter = new WebInspector.DOMSyntaxHighlighter("text/javascript", true);
+                javascriptSyntaxHighlighter.syntaxHighlightNode(this._formattedCommand).then(this._updateSearch.bind(this))
+            } else {
+                this._updateSearch();
+            }
         }
         return this._element;
     },
@@ -1205,6 +1211,13 @@ WebInspector.ConsoleCommand.prototype = {
 
     __proto__: WebInspector.ConsoleViewMessage.prototype
 }
+
+/**
+ * The maximum length before strings are considered too long for syntax highlighting.
+ * @const
+ * @type {number}
+ */
+WebInspector.ConsoleCommand.MaxLengthToIgnoreHighlighter = 10000;
 
 /**
  * @constructor

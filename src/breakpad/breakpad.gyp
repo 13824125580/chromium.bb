@@ -8,9 +8,7 @@
     'breakpad_handler.gypi',
   ],
   'conditions': [
-    # minidump_stackwalk and minidump_dump are tool-type executables that do
-    # not build on iOS with Xcode (but do build on iOS with ninja.)
-    ['(OS!="ios" or "<(GENERATOR)"!="xcode" or "<(GENERATOR_FLAVOR)"=="ninja") and OS!="win"', {
+    ['OS!="win"', {
       'targets': [
         {
           # code shared by both {micro,mini}dump_stackwalk
@@ -166,7 +164,7 @@
         },
       ],
     }],
-    ['OS=="mac" or (OS=="ios" and ("<(GENERATOR)"!="xcode" or "<(GENERATOR_FLAVOR)"=="ninja"))', {
+    ['OS=="mac" or OS=="ios"', {
       'target_defaults': {
         'include_dirs': [
           'src',
@@ -195,6 +193,8 @@
             'src/common/dwarf_cu_to_module.cc',
             'src/common/dwarf/dwarf2diehandler.cc',
             'src/common/dwarf/dwarf2reader.cc',
+            'src/common/dwarf/elf_reader.cc',
+            'src/common/dwarf/elf_reader.h',
             'src/common/dwarf_line_to_module.cc',
             'src/common/language.cc',
             'src/common/mac/arch_utilities.cc',
@@ -432,6 +432,8 @@
             'src/tools/linux/symupload/sym_upload.cc',
             'src/common/linux/http_upload.cc',
             'src/common/linux/http_upload.h',
+            'src/common/linux/symbol_upload.cc',
+            'src/common/linux/symbol_upload.h',
           ],
           'include_dirs': [
             'src',
@@ -463,6 +465,8 @@
             'src/common/dwarf_cu_to_module.h',
             'src/common/dwarf/dwarf2diehandler.cc',
             'src/common/dwarf/dwarf2reader.cc',
+            'src/common/dwarf/elf_reader.cc',
+            'src/common/dwarf/elf_reader.h',
             'src/common/dwarf_line_to_module.cc',
             'src/common/dwarf_line_to_module.h',
             'src/common/language.cc',
@@ -571,6 +575,9 @@
               # Avoid running out of registers in
               # linux_syscall_support.h:sys_clone()'s inline assembly.
               'cflags': ['-marm'],
+            }],
+            ['chromeos==1', {
+              'defines': ['__CHROMEOS__'],
             }],
             ['OS=="android"', {
               'include_dirs': [
@@ -688,6 +695,11 @@
             'src/tools/linux/md2core/minidump_memory_range_unittest.cc',
           ],
 
+          # The build-id is required to test the minidump writer.
+          'ldflags': [
+            "-Wl,--build-id=0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+          ],
+
           'include_dirs': [
             'linux', # Use our copy of breakpad_googletest_includes.h
             'src',
@@ -708,9 +720,12 @@
               'variables': {
                 'test_type': 'gtest',
                 'test_suite_name': '<(_target_name)',
-                'isolate_file': 'breakpad_unittests.isolate',
               },
               'includes': [ '../build/android/test_runner.gypi' ],
+              'ldflags!': [
+                # We are overriding the build-id above so remove the default.
+                '-Wl,--build-id=sha1',
+              ],
             }],
             ['clang==1 and target_arch=="ia32"', {
               'cflags!': [
@@ -882,96 +897,57 @@
         }
       ]
     }],
-    ['OS=="ios" and "<(GENERATOR)"=="xcode" and "<(GENERATOR_FLAVOR)"!="ninja"', {
-      'variables': {
-        'ninja_output_dir': 'ninja-breakpad',
-        'ninja_product_dir':
-          '<(DEPTH)/xcodebuild/<(ninja_output_dir)/<(CONFIGURATION_NAME)',
-      },
-      # Generation is done via two actions: (1) compiling the executable with
-      # ninja, and (2) copying the executable into a location that is shared
-      # with other projects. These actions are separated into two targets in
-      # order to be able to specify that the second action should not run until
-      # the first action finishes (since the ordering of multiple actions in
-      # one target is defined only by inputs and outputs, and it's impossible
-      # to set correct inputs for the ninja build, so setting all the inputs
-      # and outputs isn't an option).
+    ['OS=="android"', {
       'targets': [
         {
-          'target_name': 'compile_breakpad_utilities',
+          'target_name': 'breakpad_unittests_stripped',
           'type': 'none',
+          'dependencies': [ 'breakpad_unittests' ],
+          'actions': [{
+            'action_name': 'strip breakpad_unittests',
+            'inputs': [ '<(PRODUCT_DIR)/breakpad_unittests' ],
+            'outputs': [ '<(PRODUCT_DIR)/breakpad_unittests_stripped' ],
+            'action': [ '<(android_strip)', '<@(_inputs)', '-o', '<@(_outputs)' ],
+          }],
+        },
+        {
+          'target_name': 'breakpad_unittests_deps',
+          'type': 'none',
+          'dependencies': [
+            'breakpad_unittests',
+            'linux_dumper_unittest_helper',
+          ],
           'variables': {
-            # Gyp to rerun
-            're_run_targets': [
-              'breakpad/breakpad.gyp',
-            ],
+             'output_dir': '<(PRODUCT_DIR)/breakpad_unittests__dist/',
+             'native_binary': '<(PRODUCT_DIR)/breakpad_unittests',
+             'include_main_binary': 1,
+             'extra_files': ['<(PRODUCT_DIR)/linux_dumper_unittest_helper'],
           },
-          'includes': ['../build/ios/mac_build.gypi'],
-          'actions': [
-            {
-              'action_name': 'compile breakpad utilities',
-              'inputs': [],
-              'outputs': [],
-              'action': [
-                '<@(ninja_cmd)',
-                'dump_syms',
-                'symupload',
-              ],
-              'message': 'Generating the breakpad executables',
-            },
-          ],
-        },
-        {
-          'target_name': 'breakpad_utilities',
-          'type': 'none',
-          'dependencies': [
-            'compile_breakpad_utilities',
-          ],
-          'actions': [
-            {
-              'action_name': 'copy dump_syms',
-              'inputs': [
-                '<(ninja_product_dir)/dump_syms',
-              ],
-              'outputs': [
-                '<(PRODUCT_DIR)/dump_syms',
-              ],
-              'action': [
-                'cp',
-                '<(ninja_product_dir)/dump_syms',
-                '<(PRODUCT_DIR)/dump_syms',
-              ],
-            },
-            {
-              'action_name': 'copy symupload',
-              'inputs': [
-                '<(ninja_product_dir)/symupload',
-              ],
-              'outputs': [
-                '<(PRODUCT_DIR)/symupload',
-              ],
-              'action': [
-                'cp',
-                '<(ninja_product_dir)/symupload',
-                '<(PRODUCT_DIR)/symupload',
-              ],
-            },
-          ],
-        },
-        {
-          'target_name': 'dump_syms',
-          'type': 'none',
-          'dependencies': [
-            'breakpad_utilities',
-          ],
-        },
-        {
-          'target_name': 'symupload',
-          'type': 'none',
-          'dependencies': [
-            'breakpad_utilities',
+          'includes': [
+            '../build/android/native_app_dependencies.gypi'
           ],
         }
+      ],
+      'conditions': [
+        ['test_isolation_mode != "noop"',
+          {
+            'targets': [
+              {
+                'target_name': 'breakpad_unittests_apk_run',
+                'type': 'none',
+                'dependencies': [
+                  'breakpad_unittests',
+                ],
+                'includes': [
+                  '../build/isolate.gypi',
+                ],
+                'sources': [
+                  'breakpad_unittests_apk.isolate',
+                ],
+              },
+            ]
+          }
+        ],
       ],
     }],
   ],

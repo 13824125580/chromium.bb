@@ -5,7 +5,7 @@
 #ifndef LayoutMultiColumnSpannerPlaceholder_h
 #define LayoutMultiColumnSpannerPlaceholder_h
 
-#include "core/layout/LayoutMultiColumnFlowThread.h"
+#include "core/layout/LayoutBlockFlow.h"
 
 namespace blink {
 
@@ -37,13 +37,14 @@ public:
     const char* name() const override { return "LayoutMultiColumnSpannerPlaceholder"; }
 
 protected:
+    void insertedIntoTree() override;
     void willBeRemovedFromTree() override;
     bool needsPreferredWidthsRecalculation() const override;
     LayoutUnit minPreferredLogicalWidth() const override;
     LayoutUnit maxPreferredLogicalWidth() const override;
     void layout() override;
     void computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop, LogicalExtentComputedValues&) const override;
-    void invalidateTreeIfNeeded(PaintInvalidationState&) override;
+    void invalidatePaintOfSubtreesIfNeeded(const PaintInvalidationState&) override;
     void paint(const PaintInfo&, const LayoutPoint& paintOffset) const override;
     bool nodeAtPoint(HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 

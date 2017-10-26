@@ -5,16 +5,18 @@
  * found in the LICENSE file.
  */
 
+#include "SkCpu.h"
 #include "SkHalf.h"
 #include "SkOnce.h"
 #include "SkOpts.h"
 
 #define SK_OPTS_NS sk_default
+#include "SkBlend_opts.h"
 #include "SkBlitMask_opts.h"
 #include "SkBlitRow_opts.h"
 #include "SkBlurImageFilter_opts.h"
 #include "SkColorCubeFilter_opts.h"
-#include "SkMatrix_opts.h"
+#include "SkColorXform_opts.h"
 #include "SkMorphologyImageFilter_opts.h"
 #include "SkSwizzler_opts.h"
 #include "SkTextureCompressor_opts.h"
@@ -33,36 +35,8 @@ namespace SK_OPTS_NS {
     }
 }
 
-#if defined(SK_CPU_X86) && !defined(SK_BUILD_FOR_IOS)
-    #if defined(SK_BUILD_FOR_WIN32)
-        #include <intrin.h>
-        static void cpuid (uint32_t abcd[4]) { __cpuid  ((int*)abcd, 1);    }
-        static void cpuid7(uint32_t abcd[4]) { __cpuidex((int*)abcd, 7, 0); }
-        static uint64_t xgetbv(uint32_t xcr) { return _xgetbv(xcr); }
-    #else
-        #include <cpuid.h>
-        #if !defined(__cpuid_count)  // Old Mac Clang doesn't have this defined.
-            #define  __cpuid_count(eax, ecx, a, b, c, d) \
-                __asm__("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "0"(eax), "2"(ecx))
-        #endif
-        static void cpuid (uint32_t abcd[4]) { __get_cpuid(1, abcd+0, abcd+1, abcd+2, abcd+3); }
-        static void cpuid7(uint32_t abcd[4]) {
-            __cpuid_count(7, 0, abcd[0], abcd[1], abcd[2], abcd[3]);
-        }
-        static uint64_t xgetbv(uint32_t xcr) {
-            uint32_t eax, edx;
-            __asm__ __volatile__ ( "xgetbv" : "=a"(eax), "=d"(edx) : "c"(xcr));
-            return (uint64_t)(edx) << 32 | eax;
-        }
-    #endif
-#elif !defined(SK_ARM_HAS_NEON)      && \
-       defined(SK_CPU_ARM32)         && \
-       defined(SK_BUILD_FOR_ANDROID) && \
-      !defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
-    #include <cpu-features.h>
-#endif
-
 namespace SkOpts {
+
     // Define default function pointer values here...
     // If our global compile options are set high enough, these defaults might even be
     // CPU-specialized, e.g. a typical x86-64 machine might start with SSE2 defaults.
@@ -84,11 +58,8 @@ namespace SkOpts {
 
     decltype(blit_mask_d32_a8) blit_mask_d32_a8 = sk_default::blit_mask_d32_a8;
 
-    decltype(blit_row_color32) blit_row_color32 = sk_default::blit_row_color32;
-
-    decltype(matrix_translate)       matrix_translate       = sk_default::matrix_translate;
-    decltype(matrix_scale_translate) matrix_scale_translate = sk_default::matrix_scale_translate;
-    decltype(matrix_affine)          matrix_affine          = sk_default::matrix_affine;
+    decltype(blit_row_color32)     blit_row_color32     = sk_default::blit_row_color32;
+    decltype(blit_row_s32a_opaque) blit_row_s32a_opaque = sk_default::blit_row_s32a_opaque;
 
     decltype(RGBA_to_BGRA)          RGBA_to_BGRA          = sk_default::RGBA_to_BGRA;
     decltype(RGBA_to_rgbA)          RGBA_to_rgbA          = sk_default::RGBA_to_rgbA;
@@ -104,48 +75,36 @@ namespace SkOpts {
     decltype(half_to_float) half_to_float = sk_default::half_to_float;
     decltype(float_to_half) float_to_half = sk_default::float_to_half;
 
+    decltype(srcover_srgb_srgb) srcover_srgb_srgb = sk_default::srcover_srgb_srgb;
+
+    decltype(color_xform_RGB1_srgb_to_2dot2)  color_xform_RGB1_srgb_to_2dot2  =
+            sk_default::color_xform_RGB1_srgb_to_2dot2;
+    decltype(color_xform_RGB1_2dot2_to_2dot2) color_xform_RGB1_2dot2_to_2dot2 =
+            sk_default::color_xform_RGB1_2dot2_to_2dot2;
+    decltype(color_xform_RGB1_srgb_to_srgb)   color_xform_RGB1_srgb_to_srgb   =
+            sk_default::color_xform_RGB1_srgb_to_srgb;
+    decltype(color_xform_RGB1_2dot2_to_srgb)  color_xform_RGB1_2dot2_to_srgb  =
+            sk_default::color_xform_RGB1_2dot2_to_srgb;
+
     // Each Init_foo() is defined in src/opts/SkOpts_foo.cpp.
     void Init_ssse3();
     void Init_sse41();
     void Init_sse42() {}
-    void Init_avx() {}
+    void Init_avx();
     void Init_avx2() {}
-    void Init_neon();
 
     static void init() {
-        // TODO: Chrome's not linking _sse* opts on iOS simulator builds.  Bug or feature?
-    #if defined(SK_CPU_X86) && !defined(SK_BUILD_FOR_IOS)
-        uint32_t abcd[] = {0,0,0,0};
-        cpuid(abcd);
-        if (abcd[2] & (1<< 9)) { Init_ssse3(); }
-        if (abcd[2] & (1<<19)) { Init_sse41(); }
-        if (abcd[2] & (1<<20)) { Init_sse42(); }
-
-        // AVX detection's kind of a pain.  This is cribbed from Chromium.
-        if ( (  abcd[2] & (7<<26)) == (7<<26) &&    // Check bits 26-28 of ecx are all set,
-             (xgetbv(0) & 6      ) == 6          ){ // and  check the OS supports XSAVE.
-            Init_avx();
-
-            // AVX2 additionally needs bit 5 set on ebx after calling cpuid(7).
-            uint32_t abcd7[] = {0,0,0,0};
-            cpuid7(abcd7);
-            if (abcd7[1] & (1<<5)) { Init_avx2(); }
-        }
-
-    #elif !defined(SK_ARM_HAS_NEON)      && \
-           defined(SK_CPU_ARM32)         && \
-           defined(SK_BUILD_FOR_ANDROID) && \
-          !defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
-        if (android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_NEON) { Init_neon(); }
+    #if defined(SK_CPU_X86) && !defined(SK_BUILD_NO_OPTS)
+        if (SkCpu::Supports(SkCpu::SSSE3)) { Init_ssse3(); }
+        if (SkCpu::Supports(SkCpu::SSE41)) { Init_sse41(); }
+        if (SkCpu::Supports(SkCpu::SSE42)) { Init_sse42(); }
+        if (SkCpu::Supports(SkCpu::AVX  )) { Init_avx();   }
+        if (SkCpu::Supports(SkCpu::AVX2 )) { Init_avx2();  }
     #endif
     }
 
-    SK_DECLARE_STATIC_ONCE(gInitOnce);
-    void Init() { SkOnce(&gInitOnce, init); }
-
-#if SK_ALLOW_STATIC_GLOBAL_INITIALIZERS
-    static struct AutoInit {
-        AutoInit() { Init(); }
-    } gAutoInit;
-#endif
-}
+    void Init() {
+        static SkOnce once;
+        once(init);
+    }
+}  // namespace SkOpts

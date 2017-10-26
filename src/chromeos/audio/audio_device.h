@@ -26,7 +26,7 @@ enum AudioDeviceType {
   AUDIO_TYPE_INTERNAL_SPEAKER,
   AUDIO_TYPE_INTERNAL_MIC,
   AUDIO_TYPE_KEYBOARD_MIC,
-  AUDIO_TYPE_AOKR,
+  AUDIO_TYPE_HOTWORD,
   AUDIO_TYPE_POST_MIX_LOOPBACK,
   AUDIO_TYPE_POST_DSP_LOOPBACK,
   AUDIO_TYPE_OTHER,
@@ -35,6 +35,7 @@ enum AudioDeviceType {
 struct CHROMEOS_EXPORT AudioDevice {
   AudioDevice();
   explicit AudioDevice(const AudioNode& node);
+  AudioDevice(const AudioDevice& other);
   std::string ToString() const;
 
   // Converts between the string type sent via D-Bus and AudioDeviceType.
@@ -44,7 +45,7 @@ struct CHROMEOS_EXPORT AudioDevice {
 
   // Indicates that an input or output audio device is for simple usage like
   // playback or recording for user. In contrast, audio device such as
-  // loopback, always on keyword recognition (AOKR), and keyboard mic are
+  // loopback, always on keyword recognition (HOTWORD), and keyboard mic are
   // not for simple usage.
   bool is_for_simple_usage() const {
     return (type == AUDIO_TYPE_HEADPHONE ||
@@ -57,7 +58,18 @@ struct CHROMEOS_EXPORT AudioDevice {
   }
 
   bool is_input;
+
+  // Id of this audio device. The legacy |id| is assigned to be unique everytime
+  // when each device got plugged, so that the same physical device will have
+  // a different id after unplug then re-plug.
+  // The |stable_device_id| is designed to be persistent across system reboot
+  // and plug/unplug for the same physical device. It is guaranteed that
+  // different type of hardware has different |stable_device_id|, but not
+  // guaranteed to be different between the same kind of audio device, e.g
+  // USB headset. |id| and |stable_device_id| can be used together to achieve
+  // various goals.
   uint64_t id;
+  uint64_t stable_device_id;
   std::string display_name;
   std::string device_name;
   std::string mic_positions;

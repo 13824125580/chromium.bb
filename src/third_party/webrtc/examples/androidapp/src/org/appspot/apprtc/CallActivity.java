@@ -10,11 +10,6 @@
 
 package org.appspot.apprtc;
 
-import org.appspot.apprtc.AppRTCClient.RoomConnectionParameters;
-import org.appspot.apprtc.AppRTCClient.SignalingParameters;
-import org.appspot.apprtc.PeerConnectionClient.PeerConnectionParameters;
-import org.appspot.apprtc.util.LooperExecutor;
-
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.FragmentTransaction;
@@ -30,12 +25,16 @@ import android.view.Window;
 import android.view.WindowManager.LayoutParams;
 import android.widget.Toast;
 
+import org.appspot.apprtc.AppRTCClient.RoomConnectionParameters;
+import org.appspot.apprtc.AppRTCClient.SignalingParameters;
+import org.appspot.apprtc.PeerConnectionClient.PeerConnectionParameters;
+import org.appspot.apprtc.util.LooperExecutor;
 import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.PeerConnectionFactory;
+import org.webrtc.RendererCommon.ScalingType;
 import org.webrtc.SessionDescription;
 import org.webrtc.StatsReport;
-import org.webrtc.RendererCommon.ScalingType;
 import org.webrtc.SurfaceViewRenderer;
 
 /**
@@ -79,6 +78,8 @@ public class CallActivity extends Activity
       "org.appspot.apprtc.AECDUMP";
   public static final String EXTRA_OPENSLES_ENABLED =
       "org.appspot.apprtc.OPENSLES";
+  public static final String EXTRA_DISABLE_BUILT_IN_AEC =
+      "org.appspot.apprtc.DISABLE_BUILT_IN_AEC";
   public static final String EXTRA_DISPLAY_HUD =
       "org.appspot.apprtc.DISPLAY_HUD";
   public static final String EXTRA_TRACING = "org.appspot.apprtc.TRACING";
@@ -132,10 +133,12 @@ public class CallActivity extends Activity
   private boolean isError;
   private boolean callControlFragmentVisible = true;
   private long callStartedTimeMs = 0;
+  private boolean micEnabled = true;
 
   // Controls
-  CallFragment callFragment;
-  HudFragment hudFragment;
+  private CallFragment callFragment;
+  private HudFragment hudFragment;
+  private CpuMonitor cpuMonitor;
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
@@ -233,14 +236,26 @@ public class CallActivity extends Activity
         intent.getStringExtra(EXTRA_AUDIOCODEC),
         intent.getBooleanExtra(EXTRA_NOAUDIOPROCESSING_ENABLED, false),
         intent.getBooleanExtra(EXTRA_AECDUMP_ENABLED, false),
-        intent.getBooleanExtra(EXTRA_OPENSLES_ENABLED, false));
+        intent.getBooleanExtra(EXTRA_OPENSLES_ENABLED, false),
+        intent.getBooleanExtra(EXTRA_DISABLE_BUILT_IN_AEC, false));
     commandLineRun = intent.getBooleanExtra(EXTRA_CMDLINE, false);
     runTimeMs = intent.getIntExtra(EXTRA_RUNTIME, 0);
 
-    // Create connection client and connection parameters.
-    appRtcClient = new WebSocketRTCClient(this, new LooperExecutor());
+    // Create connection client. Use DirectRTCClient if room name is an IP otherwise use the
+    // standard WebSocketRTCClient.
+    if (loopback || !DirectRTCClient.IP_PATTERN.matcher(roomId).matches()) {
+      appRtcClient = new WebSocketRTCClient(this, new LooperExecutor());
+    } else {
+      Log.i(TAG, "Using DirectRTCClient because room name looks like an IP.");
+      appRtcClient = new DirectRTCClient(this);
+    }
+    // Create connection parameters.
     roomConnectionParameters = new RoomConnectionParameters(
         roomUri.toString(), roomId, loopback);
+
+    // Create CPU monitor
+    cpuMonitor = new CpuMonitor(this);
+    hudFragment.setCpuMonitor(cpuMonitor);
 
     // Send intent arguments to fragments.
     callFragment.setArguments(intent.getExtras());
@@ -280,6 +295,7 @@ public class CallActivity extends Activity
     if (peerConnectionClient != null) {
       peerConnectionClient.stopVideoSource();
     }
+    cpuMonitor.pause();
   }
 
   @Override
@@ -289,6 +305,7 @@ public class CallActivity extends Activity
     if (peerConnectionClient != null) {
       peerConnectionClient.startVideoSource();
     }
+    cpuMonitor.resume();
   }
 
   @Override
@@ -326,6 +343,15 @@ public class CallActivity extends Activity
     if (peerConnectionClient != null) {
       peerConnectionClient.changeCaptureFormat(width, height, framerate);
     }
+  }
+
+  @Override
+  public boolean onToggleMic() {
+    if (peerConnectionClient != null) {
+      micEnabled = !micEnabled;
+      peerConnectionClient.setAudioEnabled(micEnabled);
+    }
+    return micEnabled;
   }
 
   // Helper functions.
@@ -558,11 +584,24 @@ public class CallActivity extends Activity
       @Override
       public void run() {
         if (peerConnectionClient == null) {
-          Log.e(TAG,
-              "Received ICE candidate for non-initilized peer connection.");
+          Log.e(TAG, "Received ICE candidate for a non-initialized peer connection.");
           return;
         }
         peerConnectionClient.addRemoteIceCandidate(candidate);
+      }
+    });
+  }
+
+  @Override
+  public void onRemoteIceCandidatesRemoved(final IceCandidate[] candidates) {
+    runOnUiThread(new Runnable() {
+      @Override
+      public void run() {
+        if (peerConnectionClient == null) {
+          Log.e(TAG, "Received ICE candidate removals for a non-initialized peer connection.");
+          return;
+        }
+        peerConnectionClient.removeRemoteIceCandidates(candidates);
       }
     });
   }
@@ -612,6 +651,18 @@ public class CallActivity extends Activity
       public void run() {
         if (appRtcClient != null) {
           appRtcClient.sendLocalIceCandidate(candidate);
+        }
+      }
+    });
+  }
+
+  @Override
+  public void onIceCandidatesRemoved(final IceCandidate[] candidates) {
+    runOnUiThread(new Runnable() {
+      @Override
+      public void run() {
+        if (appRtcClient != null) {
+          appRtcClient.sendLocalIceCandidateRemovals(candidates);
         }
       }
     });

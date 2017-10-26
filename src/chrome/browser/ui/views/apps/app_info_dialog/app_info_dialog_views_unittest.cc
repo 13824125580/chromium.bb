@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/views/apps/app_info_dialog/app_info_dialog_views.h"
 
+#include <memory>
+#include <string>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_environment.h"
@@ -20,6 +22,11 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/dialog_delegate.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/arc/arc_auth_service.h"
+#include "components/arc/test/fake_arc_bridge_service.h"
+#endif
 
 namespace test {
 
@@ -59,10 +66,17 @@ class AppInfoDialogViewsTest : public BrowserWithTestWindowTest,
   // Overridden from testing::Test:
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
+#if defined(OS_CHROMEOS)
+    arc::ArcAuthService::DisableUIForTesting();
+    bridge_service_ = base::MakeUnique<arc::FakeArcBridgeService>();
+    auth_service_ =
+        base::MakeUnique<arc::ArcAuthService>(bridge_service_.get());
+    auth_service_->OnPrimaryUserProfilePrepared(
+        extension_environment_.profile());
+#endif
     widget_ = views::DialogDelegate::CreateDialogWidget(
         new views::DialogDelegateView(), GetContext(), nullptr);
     widget_->AddObserver(this);
-
     extension_ = extension_environment_.MakePackagedApp(kTestExtensionId, true);
     dialog_ = new AppInfoDialog(widget_->GetNativeWindow(),
                                 extension_environment_.profile(),
@@ -77,6 +91,12 @@ class AppInfoDialogViewsTest : public BrowserWithTestWindowTest,
       widget_->CloseNow();
     EXPECT_TRUE(widget_destroyed_);
     extension_ = nullptr;
+#if defined(OS_CHROMEOS)
+    if (auth_service_) {
+      auth_service_->Shutdown();
+      auth_service_ = nullptr;
+    }
+#endif
     BrowserWithTestWindowTest::TearDown();
   }
 
@@ -85,7 +105,14 @@ class AppInfoDialogViewsTest : public BrowserWithTestWindowTest,
     return extension_environment_.profile();
   }
 
-  void DestroyProfile(TestingProfile* profile) override {}
+  void DestroyProfile(TestingProfile* profile) override {
+#if defined(OS_CHROMEOS)
+    if (auth_service_) {
+      auth_service_->Shutdown();
+      auth_service_ = nullptr;
+    }
+#endif
+  }
 
  protected:
   // Overridden from views::WidgetObserver:
@@ -109,7 +136,12 @@ class AppInfoDialogViewsTest : public BrowserWithTestWindowTest,
   AppInfoDialog* dialog_ = nullptr;  // Owned by |widget_|'s views hierarchy.
   scoped_refptr<extensions::Extension> extension_;
   extensions::TestExtensionEnvironment extension_environment_;
+#if defined(OS_CHROMEOS)
+  std::unique_ptr<arc::FakeArcBridgeService> bridge_service_;
+  std::unique_ptr<arc::ArcAuthService> auth_service_;
+#endif
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(AppInfoDialogViewsTest);
 };
 
@@ -154,7 +186,7 @@ TEST_F(AppInfoDialogViewsTest, DestroyedProfileClosesDialog) {
 
 // Tests that the dialog does not close when a different profile is destroyed.
 TEST_F(AppInfoDialogViewsTest, DestroyedOtherProfileDoesNotCloseDialog) {
-  scoped_ptr<TestingProfile> other_profile(new TestingProfile);
+  std::unique_ptr<TestingProfile> other_profile(new TestingProfile);
   extension_environment_.CreateExtensionServiceForProfile(other_profile.get());
 
   scoped_refptr<const extensions::Extension> other_app =

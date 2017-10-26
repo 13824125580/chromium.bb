@@ -38,16 +38,16 @@ public class SnackbarTest extends ChromeTabbedActivityTestBase {
     @MediumTest
     public void testStackQueueOrder() throws InterruptedException {
         final Snackbar stackbar = Snackbar.make("stack", mDefaultController,
-                Snackbar.TYPE_ACTION);
+                Snackbar.TYPE_ACTION, Snackbar.UMA_TEST_SNACKBAR);
         final Snackbar queuebar = Snackbar.make("queue", mDefaultController,
-                Snackbar.TYPE_NOTIFICATION);
+                Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_TEST_SNACKBAR);
         ThreadUtils.runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 mManager.showSnackbar(stackbar);
             }
         });
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("First snackbar not shown") {
+        CriteriaHelper.pollUiThread(new Criteria("First snackbar not shown") {
             @Override
             public boolean isSatisfied() {
                 return mManager.isShowing() && mManager.getCurrentSnackbarForTesting() == stackbar;
@@ -62,13 +62,13 @@ public class SnackbarTest extends ChromeTabbedActivityTestBase {
                         stackbar, mManager.getCurrentSnackbarForTesting());
             }
         });
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("Snackbar on queue not shown") {
+        CriteriaHelper.pollUiThread(new Criteria("Snackbar on queue not shown") {
             @Override
             public boolean isSatisfied() {
                 return mManager.isShowing() && mManager.getCurrentSnackbarForTesting() == queuebar;
             }
         });
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("Snackbar did not time out") {
+        CriteriaHelper.pollUiThread(new Criteria("Snackbar did not time out") {
             @Override
             public boolean isSatisfied() {
                 return !mManager.isShowing();
@@ -79,16 +79,16 @@ public class SnackbarTest extends ChromeTabbedActivityTestBase {
     @SmallTest
     public void testQueueStackOrder() throws InterruptedException {
         final Snackbar stackbar = Snackbar.make("stack", mDefaultController,
-                Snackbar.TYPE_ACTION);
+                Snackbar.TYPE_ACTION, Snackbar.UMA_TEST_SNACKBAR);
         final Snackbar queuebar = Snackbar.make("queue", mDefaultController,
-                Snackbar.TYPE_NOTIFICATION);
+                Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_TEST_SNACKBAR);
         ThreadUtils.runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 mManager.showSnackbar(queuebar);
             }
         });
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("First snackbar not shown") {
+        CriteriaHelper.pollUiThread(new Criteria("First snackbar not shown") {
             @Override
             public boolean isSatisfied() {
                 return mManager.isShowing() && mManager.getCurrentSnackbarForTesting() == queuebar;
@@ -100,7 +100,7 @@ public class SnackbarTest extends ChromeTabbedActivityTestBase {
                 mManager.showSnackbar(stackbar);
             }
         });
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Snackbar on queue was not cleared by snackbar stack.") {
                     @Override
                     public boolean isSatisfied() {
@@ -108,7 +108,7 @@ public class SnackbarTest extends ChromeTabbedActivityTestBase {
                                 && mManager.getCurrentSnackbarForTesting() == stackbar;
                     }
                 });
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("Snackbar did not time out") {
+        CriteriaHelper.pollUiThread(new Criteria("Snackbar did not time out") {
             @Override
             public boolean isSatisfied() {
                 return !mManager.isShowing();

@@ -33,13 +33,13 @@
 
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
+#include "public/platform/WebScheduler.h"
 #include "wtf/Forward.h"
 #include "wtf/HashMap.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -49,24 +49,23 @@ class FormSubmission;
 class LocalFrame;
 class ScheduledNavigation;
 
-class CORE_EXPORT NavigationScheduler final : public NoBaseWillBeGarbageCollectedFinalized<NavigationScheduler> {
+class CORE_EXPORT NavigationScheduler final : public GarbageCollectedFinalized<NavigationScheduler> {
     WTF_MAKE_NONCOPYABLE(NavigationScheduler);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(NavigationScheduler);
 public:
-    static PassOwnPtrWillBeRawPtr<NavigationScheduler> create(LocalFrame* frame)
+    static NavigationScheduler* create(LocalFrame* frame)
     {
-        return adoptPtrWillBeNoop(new NavigationScheduler(frame));
+        return new NavigationScheduler(frame);
     }
 
     ~NavigationScheduler();
 
     bool locationChangePending();
-    bool isNavigationScheduled() const;
+    bool isNavigationScheduledWithin(double intervalInSeconds) const;
 
     void scheduleRedirect(double delay, const String& url);
     void scheduleLocationChange(Document*, const String& url, bool replacesCurrentItem = true);
     void schedulePageBlock(Document*);
-    void scheduleFormSubmission(Document*, PassRefPtrWillBeRawPtr<FormSubmission>);
+    void scheduleFormSubmission(Document*, FormSubmission*);
     void scheduleReload();
 
     void startTimer();
@@ -81,13 +80,14 @@ private:
     bool shouldScheduleNavigation(const String& url) const;
 
     void navigateTask();
-    void schedule(PassOwnPtrWillBeRawPtr<ScheduledNavigation>);
+    void schedule(ScheduledNavigation*);
 
     static bool mustReplaceCurrentItem(LocalFrame* targetFrame);
 
-    RawPtrWillBeMember<LocalFrame> m_frame;
-    OwnPtr<CancellableTaskFactory> m_navigateTaskFactory;
-    OwnPtrWillBeMember<ScheduledNavigation> m_redirect;
+    Member<LocalFrame> m_frame;
+    std::unique_ptr<CancellableTaskFactory> m_navigateTaskFactory;
+    Member<ScheduledNavigation> m_redirect;
+    WebScheduler::NavigatingFrameType m_frameType; // Exists because we can't deref m_frame in destructor.
 };
 
 class NavigationDisablerForBeforeUnload {
@@ -107,6 +107,25 @@ public:
 
 private:
     static unsigned s_navigationDisableCount;
+};
+
+class CORE_EXPORT NavigationCounterForUnload {
+    WTF_MAKE_NONCOPYABLE(NavigationCounterForUnload);
+    STACK_ALLOCATED();
+public:
+    NavigationCounterForUnload()
+    {
+        s_inUnloadHandler++;
+    }
+    ~NavigationCounterForUnload()
+    {
+        DCHECK(s_inUnloadHandler);
+        s_inUnloadHandler--;
+    }
+    static bool inUnloadHandler() { return !!s_inUnloadHandler; }
+
+private:
+    static unsigned s_inUnloadHandler;
 };
 
 } // namespace blink

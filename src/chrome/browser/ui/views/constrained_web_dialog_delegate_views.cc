@@ -154,6 +154,8 @@ class ConstrainedWebDialogDelegateViewViews
         max_size_(max_size) {
     SetWebContents(GetWebContents());
     AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+    if (!max_size_.IsEmpty())
+      EnableAutoResize();
   }
   ~ConstrainedWebDialogDelegateViewViews() override {}
 
@@ -235,13 +237,10 @@ class ConstrainedWebDialogDelegateViewViews
       EnableAutoResize();
   }
   void DocumentOnLoadCompletedInMainFrame() override {
-    if (!max_size_.IsEmpty()) {
-      EnableAutoResize();
-      if (initiator_observer_.web_contents()) {
-        web_modal::WebContentsModalDialogManager::FromWebContents(
-            initiator_observer_.web_contents())
-            ->ShowModalDialog(GetWidget()->GetNativeWindow());
-      }
+    if (!max_size_.IsEmpty() && initiator_observer_.web_contents()) {
+      web_modal::WebContentsModalDialogManager::FromWebContents(
+          initiator_observer_.web_contents())
+          ->ShowModalDialog(GetWidget()->GetNativeWindow());
     }
   }
 
@@ -254,7 +253,7 @@ class ConstrainedWebDialogDelegateViewViews
 
   InitiatorWebContentsObserver initiator_observer_;
 
-  scoped_ptr<ConstrainedWebDialogDelegateViews> impl_;
+  std::unique_ptr<ConstrainedWebDialogDelegateViews> impl_;
 
   // Minimum and maximum sizes to determine dialog bounds for auto-resizing.
   const gfx::Size min_size_;

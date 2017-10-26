@@ -25,7 +25,7 @@
 #include "components/certificate_reporting/error_reporter.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/variations_associated_data.h"
-#include "net/url_request/certificate_report_sender.h"
+#include "net/url_request/report_sender.h"
 #include "net/url_request/url_request_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -37,7 +37,7 @@ namespace {
 
 void SetMockReporter(
     SafeBrowsingService* safe_browsing_service,
-    scoped_ptr<certificate_reporting::ErrorReporter> reporter) {
+    std::unique_ptr<certificate_reporting::ErrorReporter> reporter) {
   safe_browsing_service->ping_manager()->SetCertificateErrorReporterForTesting(
       std::move(reporter));
 }
@@ -88,10 +88,9 @@ namespace certificate_reporting_test_utils {
 class CertificateReportingTest::MockReporter
     : public certificate_reporting::ErrorReporter {
  public:
-  MockReporter(
-      net::URLRequestContext* request_context,
-      const GURL& upload_url,
-      net::CertificateReportSender::CookiesPreference cookies_preference);
+  MockReporter(net::URLRequestContext* request_context,
+               const GURL& upload_url,
+               net::ReportSender::CookiesPreference cookies_preference);
 
   // ErrorReporter implementation.
   void SendExtendedReportingReport(
@@ -112,7 +111,7 @@ class CertificateReportingTest::MockReporter
 CertificateReportingTest::MockReporter::MockReporter(
     net::URLRequestContext* request_context,
     const GURL& upload_url,
-    net::CertificateReportSender::CookiesPreference cookies_preference)
+    net::ReportSender::CookiesPreference cookies_preference)
     : certificate_reporting::ErrorReporter(request_context,
                                            upload_url,
                                            cookies_preference) {}
@@ -132,7 +131,7 @@ void CertificateReportingTest::SetUpMockReporter() {
   // reporter would have to be constructed on the IO thread.)
   reporter_ = new CertificateReportingTest::MockReporter(
       nullptr, GURL("http://example.test"),
-      net::CertificateReportSender::DO_NOT_SEND_COOKIES);
+      net::ReportSender::DO_NOT_SEND_COOKIES);
 
   scoped_refptr<SafeBrowsingService> safe_browsing_service =
       g_browser_process->safe_browsing_service();
@@ -140,9 +139,10 @@ void CertificateReportingTest::SetUpMockReporter() {
 
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(SetMockReporter, safe_browsing_service,
-                 base::Passed(scoped_ptr<certificate_reporting::ErrorReporter>(
-                     reporter_))));
+      base::Bind(
+          SetMockReporter, base::RetainedRef(safe_browsing_service),
+          base::Passed(std::unique_ptr<certificate_reporting::ErrorReporter>(
+              reporter_))));
 }
 
 const std::string& CertificateReportingTest::GetLatestHostnameReported() const {
@@ -155,7 +155,7 @@ void SetCertReportingOptIn(Browser* browser, OptIn opt_in) {
       opt_in == EXTENDED_REPORTING_OPT_IN);
 }
 
-scoped_ptr<SSLCertReporter> SetUpMockSSLCertReporter(
+std::unique_ptr<SSLCertReporter> SetUpMockSSLCertReporter(
     base::RunLoop* run_loop,
     ExpectReport expect_report) {
   // Set up a MockSSLCertReporter to keep track of when the blocking
@@ -165,10 +165,11 @@ scoped_ptr<SSLCertReporter> SetUpMockSSLCertReporter(
   if (!sb_service)
     return nullptr;
 
-  scoped_ptr<MockSSLCertReporter> ssl_cert_reporter(new MockSSLCertReporter(
-      sb_service->ui_manager(), expect_report == CERT_REPORT_EXPECTED
-                                    ? run_loop->QuitClosure()
-                                    : base::Bind(&base::DoNothing)));
+  std::unique_ptr<MockSSLCertReporter> ssl_cert_reporter(
+      new MockSSLCertReporter(sb_service->ui_manager(),
+                              expect_report == CERT_REPORT_EXPECTED
+                                  ? run_loop->QuitClosure()
+                                  : base::Bind(&base::DoNothing)));
   ssl_cert_reporter->set_expect_report(expect_report == CERT_REPORT_EXPECTED);
   return std::move(ssl_cert_reporter);
 }

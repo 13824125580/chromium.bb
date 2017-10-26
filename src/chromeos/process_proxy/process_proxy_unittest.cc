@@ -5,16 +5,16 @@
 #include <gtest/gtest.h>
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/process_proxy/process_proxy_registry.h"
 
 namespace chromeos {
@@ -217,7 +217,7 @@ class ProcessProxyTest : public testing::Test {
     base::MessageLoop::current()->Run();
   }
 
-  scoped_ptr<TestRunner> test_runner_;
+  std::unique_ptr<TestRunner> test_runner_;
 
  private:
   ProcessProxyRegistry* registry_;

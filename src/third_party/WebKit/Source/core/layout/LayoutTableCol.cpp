@@ -35,7 +35,7 @@ namespace blink {
 using namespace HTMLNames;
 
 LayoutTableCol::LayoutTableCol(Element* element)
-    : LayoutBox(element)
+    : LayoutTableBoxComponent(element)
     , m_span(1)
 {
     // init LayoutObject attributes
@@ -45,14 +45,15 @@ LayoutTableCol::LayoutTableCol(Element* element)
 
 void LayoutTableCol::styleDidChange(StyleDifference diff, const ComputedStyle* oldStyle)
 {
-    LayoutBox::styleDidChange(diff, oldStyle);
+    LayoutTableBoxComponent::styleDidChange(diff, oldStyle);
 
-    // If border was changed, notify table.
-    if (parent()) {
-        LayoutTable* table = this->table();
-        if (table && !table->selfNeedsLayout() && !table->normalChildNeedsLayout() && oldStyle && oldStyle->border() != style()->border()) {
+    if (LayoutTable* table = this->table()) {
+        if (!oldStyle)
+            return;
+        if (!table->selfNeedsLayout() && !table->normalChildNeedsLayout() && oldStyle->border() != style()->border()) {
+            // If border was changed, notify table.
             table->invalidateCollapsedBorders();
-        } else if (oldStyle && oldStyle->logicalWidth() != style()->logicalWidth()) {
+        } else if (oldStyle->logicalWidth() != style()->logicalWidth()) {
             // FIXME : setPreferredLogicalWidthsDirty is done for all cells as of now.
             // Need to find a better way so that only the cells which are changed by
             // the col width should have preferred logical widths recomputed.
@@ -85,13 +86,13 @@ void LayoutTableCol::updateFromElement()
 
 void LayoutTableCol::insertedIntoTree()
 {
-    LayoutBox::insertedIntoTree();
+    LayoutTableBoxComponent::insertedIntoTree();
     table()->addColumn(this);
 }
 
 void LayoutTableCol::willBeRemovedFromTree()
 {
-    LayoutBox::willBeRemovedFromTree();
+    LayoutTableBoxComponent::willBeRemovedFromTree();
     table()->removeColumn(this);
 }
 
@@ -108,23 +109,21 @@ bool LayoutTableCol::canHaveChildren() const
     return isTableColumnGroup();
 }
 
-LayoutRect LayoutTableCol::clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* paintInvalidationState) const
+LayoutRect LayoutTableCol::localOverflowRectForPaintInvalidation() const
 {
-    // For now, just paint invalidate the whole table.
-    // FIXME: Find a better way to do this, e.g., need to paint invalidate all the cells that we
-    // might have propagated a background color or borders into.
-    // FIXME: check for paintInvalidationContainer each time here?
+    // Entire table gets invalidated, instead of invalidating
+    // every cell in the column.
+    // This is simpler, but suboptimal.
 
-    LayoutTable* parentTable = table();
-    if (!parentTable)
+    LayoutTable* table = this->table();
+    if (!table)
         return LayoutRect();
-    return parentTable->clippedOverflowRectForPaintInvalidation(paintInvalidationContainer, paintInvalidationState);
-}
 
-void LayoutTableCol::imageChanged(WrappedImagePtr, const IntRect*)
-{
-    // FIXME: Issue paint invalidation of only the rect the image paints in.
-    setShouldDoFullPaintInvalidation();
+    // The correctness of this method depends on the fact that LayoutTableCol's
+    // location is always zero.
+    ASSERT(this->location() == LayoutPoint());
+
+    return table->localOverflowRectForPaintInvalidation();
 }
 
 void LayoutTableCol::clearPreferredLogicalWidthsDirtyBits()

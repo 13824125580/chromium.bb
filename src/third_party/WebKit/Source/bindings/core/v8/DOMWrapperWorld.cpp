@@ -40,7 +40,9 @@
 #include "bindings/core/v8/WrapperTypeInfo.h"
 #include "core/dom/ExecutionContext.h"
 #include "wtf/HashTraits.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/StdLibExtras.h"
+#include <memory>
 
 namespace blink {
 
@@ -69,9 +71,9 @@ private:
 template<typename T>
 class DOMObjectHolder : public DOMObjectHolderBase {
 public:
-    static PassOwnPtr<DOMObjectHolder<T>> create(v8::Isolate* isolate, T* object, v8::Local<v8::Value> wrapper)
+    static std::unique_ptr<DOMObjectHolder<T>> create(v8::Isolate* isolate, T* object, v8::Local<v8::Value> wrapper)
     {
-        return adoptPtr(new DOMObjectHolder(isolate, object, wrapper));
+        return wrapUnique(new DOMObjectHolder(isolate, object, wrapper));
     }
 
 private:
@@ -85,7 +87,6 @@ private:
 };
 
 unsigned DOMWrapperWorld::isolatedWorldCount = 0;
-DOMWrapperWorld* DOMWrapperWorld::worldOfInitializingWindow = 0;
 
 PassRefPtr<DOMWrapperWorld> DOMWrapperWorld::create(v8::Isolate* isolate, int worldId, int extensionGroup)
 {
@@ -95,7 +96,7 @@ PassRefPtr<DOMWrapperWorld> DOMWrapperWorld::create(v8::Isolate* isolate, int wo
 DOMWrapperWorld::DOMWrapperWorld(v8::Isolate* isolate, int worldId, int extensionGroup)
     : m_worldId(worldId)
     , m_extensionGroup(extensionGroup)
-    , m_domDataStore(adoptPtr(new DOMDataStore(isolate, isMainWorld())))
+    , m_domDataStore(wrapUnique(new DOMDataStore(isolate, isMainWorld())))
 {
 }
 
@@ -137,6 +138,44 @@ void DOMWrapperWorld::allWorldsInMainThread(Vector<RefPtr<DOMWrapperWorld>>& wor
         worlds.append(it->value);
 }
 
+void DOMWrapperWorld::markWrappersInAllWorlds(ScriptWrappable* scriptWrappable, const WrapperVisitor* visitor)
+{
+    // TODO(hlopko): Currently wrapper in one world will keep wrappers in all
+    // worlds alive (possibly holding on entire documents). This is neither
+    // needed (there is no way to get from one wrapper to another), nor wanted
+    // (big performance and memory overhead).
+
+    // Marking for the main world
+    scriptWrappable->markWrapper(visitor);
+    if (!isMainThread())
+        return;
+    WorldMap& isolatedWorlds = isolatedWorldMap();
+    for (auto& world : isolatedWorlds.values()) {
+        DOMDataStore& dataStore = world->domDataStore();
+        if (dataStore.containsWrapper(scriptWrappable)) {
+            // Marking for the isolated worlds
+            dataStore.markWrapper(scriptWrappable);
+        }
+    }
+}
+
+void DOMWrapperWorld::setWrapperReferencesInAllWorlds(const v8::Persistent<v8::Object>& parent, ScriptWrappable* scriptWrappable, v8::Isolate* isolate)
+{
+    // Marking for the main world
+    if (scriptWrappable->containsWrapper())
+        scriptWrappable->setReference(parent, isolate);
+    if (!isMainThread())
+        return;
+    WorldMap& isolatedWorlds = isolatedWorldMap();
+    for (auto& world : isolatedWorlds.values()) {
+        DOMDataStore& dataStore = world->domDataStore();
+        if (dataStore.containsWrapper(scriptWrappable)) {
+            // Marking for the isolated worlds
+            dataStore.setReference(parent, scriptWrappable, isolate);
+        }
+    }
+}
+
 DOMWrapperWorld::~DOMWrapperWorld()
 {
     ASSERT(!isMainWorld());
@@ -161,7 +200,7 @@ DOMWrapperWorld::~DOMWrapperWorld()
 void DOMWrapperWorld::dispose()
 {
     m_domObjectHolders.clear();
-    m_domDataStore.clear();
+    m_domDataStore.reset();
 }
 
 #if ENABLE(ASSERT)
@@ -176,7 +215,7 @@ PassRefPtr<DOMWrapperWorld> DOMWrapperWorld::ensureIsolatedWorld(v8::Isolate* is
     ASSERT(isIsolatedWorldId(worldId));
 
     WorldMap& map = isolatedWorldMap();
-    WorldMap::AddResult result = map.add(worldId, 0);
+    WorldMap::AddResult result = map.add(worldId, nullptr);
     RefPtr<DOMWrapperWorld> world = result.storedValue->value;
     if (world) {
         ASSERT(world->worldId() == worldId);
@@ -268,7 +307,7 @@ void DOMWrapperWorld::registerDOMObjectHolder(v8::Isolate* isolate, T* object, v
 
 template void DOMWrapperWorld::registerDOMObjectHolder(v8::Isolate*, ScriptFunction*, v8::Local<v8::Value>);
 
-void DOMWrapperWorld::registerDOMObjectHolderInternal(PassOwnPtr<DOMObjectHolderBase> holderBase)
+void DOMWrapperWorld::registerDOMObjectHolderInternal(std::unique_ptr<DOMObjectHolderBase> holderBase)
 {
     ASSERT(!m_domObjectHolders.contains(holderBase.get()));
     holderBase->setWorld(this);

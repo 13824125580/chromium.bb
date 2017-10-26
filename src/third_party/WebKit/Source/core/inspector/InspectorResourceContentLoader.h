@@ -8,6 +8,7 @@
 #include "core/CoreExport.h"
 #include "core/fetch/Resource.h"
 #include "wtf/Functional.h"
+#include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/Vector.h"
@@ -17,19 +18,20 @@ namespace blink {
 class LocalFrame;
 class Resource;
 
-class CORE_EXPORT InspectorResourceContentLoader final : public NoBaseWillBeGarbageCollectedFinalized<InspectorResourceContentLoader> {
+class CORE_EXPORT InspectorResourceContentLoader final : public GarbageCollectedFinalized<InspectorResourceContentLoader> {
     WTF_MAKE_NONCOPYABLE(InspectorResourceContentLoader);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(InspectorResourceContentLoader);
 public:
-    static PassOwnPtrWillBeRawPtr<InspectorResourceContentLoader> create(LocalFrame* inspectedFrame)
+    static InspectorResourceContentLoader* create(LocalFrame* inspectedFrame)
     {
-        return adoptPtrWillBeNoop(new InspectorResourceContentLoader(inspectedFrame));
+        return new InspectorResourceContentLoader(inspectedFrame);
     }
     ~InspectorResourceContentLoader();
     void dispose();
     DECLARE_TRACE();
 
-    void ensureResourcesContentLoaded(PassOwnPtr<Closure> callback);
+    int createClientId();
+    void ensureResourcesContentLoaded(int clientId, std::unique_ptr<WTF::Closure> callback);
+    void cancel(int clientId);
     void didCommitLoadForLocalFrame(LocalFrame*);
 
 private:
@@ -42,12 +44,14 @@ private:
     void stop();
     bool hasFinished();
 
-    Vector<OwnPtr<Closure>> m_callbacks;
+    using Callbacks = Vector<std::unique_ptr<WTF::Closure>>;
+    HashMap<int, Callbacks> m_callbacks;
     bool m_allRequestsStarted;
     bool m_started;
-    RawPtrWillBeMember<LocalFrame> m_inspectedFrame;
-    WillBeHeapHashSet<RawPtrWillBeMember<ResourceClient>> m_pendingResourceClients;
-    WillBeHeapVector<RefPtrWillBeMember<Resource>> m_resources;
+    Member<LocalFrame> m_inspectedFrame;
+    HeapHashSet<Member<ResourceClient>> m_pendingResourceClients;
+    HeapVector<Member<Resource>> m_resources;
+    int m_lastClientId;
 
     friend class ResourceClient;
 };

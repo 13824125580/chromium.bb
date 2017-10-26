@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/single_thread_task_runner.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
@@ -15,14 +14,11 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "base/version.h"
 #include "build/build_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_client_config_parser.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
-#include "components/data_reduction_proxy/core/common/version.h"
 #include "components/variations/variations_associated_data.h"
 #include "crypto/random.h"
 #include "net/base/host_port_pair.h"
@@ -40,34 +36,6 @@ namespace {
 std::string FormatOption(const std::string& name, const std::string& value) {
   return name + "=" + value;
 }
-
-// Returns the version of Chromium that is being used, e.g. "1.2.3.4".
-const char* ChromiumVersion() {
-  return PRODUCT_VERSION;
-}
-
-// Returns the build and patch numbers of |version_string|. |version_string|
-// must be a properly formed Chromium version number, e.g. "1.2.3.4".
-void GetChromiumBuildAndPatch(const std::string& version_string,
-                              std::string* build,
-                              std::string* patch) {
-  base::Version version(version_string);
-  DCHECK(version.IsValid());
-  DCHECK_EQ(4U, version.components().size());
-
-  *build = base::Uint64ToString(version.components()[2]);
-  *patch = base::Uint64ToString(version.components()[3]);
-}
-
-#define CLIENT_ENUM(name, str_value) \
-  case name:                         \
-    return str_value;
-const char* GetString(Client client) {
-  switch (client) { CLIENT_ENUMS_LIST }
-  NOTREACHED();
-  return "";
-}
-#undef CLIENT_ENUM
 
 }  // namespace
 
@@ -96,17 +64,19 @@ bool DataReductionProxyRequestOptions::IsKeySetOnCommandLine() {
 DataReductionProxyRequestOptions::DataReductionProxyRequestOptions(
     Client client,
     DataReductionProxyConfig* config)
-    : DataReductionProxyRequestOptions(client, ChromiumVersion(), config) {}
+    : DataReductionProxyRequestOptions(client,
+                                       util::ChromiumVersion(),
+                                       config) {}
 
 DataReductionProxyRequestOptions::DataReductionProxyRequestOptions(
     Client client,
     const std::string& version,
     DataReductionProxyConfig* config)
-    : client_(GetString(client)),
+    : client_(util::GetStringForClient(client)),
       use_assigned_credentials_(false),
       data_reduction_proxy_config_(config) {
   DCHECK(data_reduction_proxy_config_);
-  GetChromiumBuildAndPatch(version, &build_, &patch_);
+  util::GetChromiumBuildAndPatch(version, &build_, &patch_);
   // Constructed on the UI thread, but should be checked on the IO thread.
   thread_checker_.DetachFromThread();
 }
@@ -132,14 +102,16 @@ void DataReductionProxyRequestOptions::UpdateExperiments() {
         experiments_.push_back(experiment_tokenizer.token());
     }
   } else {
-    AddExperimentFromFieldTrial();
+    AddServerExperimentFromFieldTrial();
   }
   RegenerateRequestHeaderValue();
 }
 
-void DataReductionProxyRequestOptions::AddExperimentFromFieldTrial() {
-  std::string server_experiment = variations::GetVariationParamValue(
-      params::GetServerExperimentsFieldTrialName(), "exp");
+void DataReductionProxyRequestOptions::AddServerExperimentFromFieldTrial() {
+  if (!params::IsIncludedInServerExperimentsFieldTrial())
+    return;
+  const std::string server_experiment = variations::GetVariationParamValue(
+      params::GetServerExperimentsFieldTrialName(), kExperimentsOption);
   if (!server_experiment.empty())
     experiments_.push_back(server_experiment);
 }
@@ -165,40 +137,21 @@ void DataReductionProxyRequestOptions::RandBytes(void* output,
   crypto::RandBytes(output, length);
 }
 
-void DataReductionProxyRequestOptions::MaybeAddRequestHeader(
-    const net::ProxyServer& proxy_server,
+void DataReductionProxyRequestOptions::AddRequestHeader(
     net::HttpRequestHeaders* request_headers) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!proxy_server.is_valid())
-    return;
-  if (proxy_server.is_direct())
-    return;
-  MaybeAddRequestHeaderImpl(proxy_server.host_port_pair(), false,
-                            request_headers);
-}
-
-void DataReductionProxyRequestOptions::MaybeAddProxyTunnelRequestHandler(
-    const net::HostPortPair& proxy_server,
-    net::HttpRequestHeaders* request_headers) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  MaybeAddRequestHeaderImpl(proxy_server, true, request_headers);
-}
-
-void DataReductionProxyRequestOptions::SetHeader(
-    net::HttpRequestHeaders* headers) {
   base::Time now = Now();
   // Authorization credentials must be regenerated if they are expired.
   if (!use_assigned_credentials_ && (now > credentials_expiration_time_))
     UpdateCredentials();
   const char kChromeProxyHeader[] = "Chrome-Proxy";
   std::string header_value;
-  if (headers->HasHeader(kChromeProxyHeader)) {
-    headers->GetHeader(kChromeProxyHeader, &header_value);
-    headers->RemoveHeader(kChromeProxyHeader);
+  if (request_headers->HasHeader(kChromeProxyHeader)) {
+    request_headers->GetHeader(kChromeProxyHeader, &header_value);
+    request_headers->RemoveHeader(kChromeProxyHeader);
     header_value += ", ";
   }
   header_value += header_value_;
-  headers->SetHeader(kChromeProxyHeader, header_value);
+  request_headers->SetHeader(kChromeProxyHeader, header_value);
 }
 
 void DataReductionProxyRequestOptions::ComputeCredentials(
@@ -276,19 +229,6 @@ std::string DataReductionProxyRequestOptions::GetDefaultKey() const {
 
 const std::string& DataReductionProxyRequestOptions::GetSecureSession() const {
   return secure_session_;
-}
-
-void DataReductionProxyRequestOptions::MaybeAddRequestHeaderImpl(
-    const net::HostPortPair& proxy_server,
-    bool expect_ssl,
-    net::HttpRequestHeaders* request_headers) {
-  if (proxy_server.IsEmpty())
-    return;
-  if (data_reduction_proxy_config_->IsDataReductionProxy(proxy_server, NULL) &&
-      data_reduction_proxy_config_->UsingHTTPTunnel(proxy_server) ==
-          expect_ssl) {
-    SetHeader(request_headers);
-  }
 }
 
 void DataReductionProxyRequestOptions::RegenerateRequestHeaderValue() {

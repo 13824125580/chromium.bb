@@ -6,33 +6,33 @@
 
 #include <cmath>
 
-#include "ash/ash_switches.h"
-#include "ash/display/display_info.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/display/display_info.h"
 #include "ash/display/display_manager.h"
 #include "ash/host/root_window_transformer.h"
 #include "ash/magnifier/magnification_controller.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_property.h"
 #include "ui/compositor/dip_util.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size_conversions.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/transform.h"
 #include "ui/gfx/transform.h"
 
-DECLARE_WINDOW_PROPERTY_TYPE(gfx::Display::Rotation);
+DECLARE_WINDOW_PROPERTY_TYPE(display::Display::Rotation);
 
 namespace ash {
 namespace {
 
 #if defined(OS_WIN)
-DEFINE_WINDOW_PROPERTY_KEY(gfx::Display::Rotation, kRotationPropertyKey,
-                           gfx::Display::ROTATE_0);
+DEFINE_WINDOW_PROPERTY_KEY(display::Display::Rotation,
+                           kRotationPropertyKey,
+                           display::Display::ROTATE_0);
 #endif
 
 // Round near zero value to zero.
@@ -52,11 +52,11 @@ void RoundNearZero(gfx::Transform* transform) {
 // precalculating the transform using fixed value.
 
 gfx::Transform CreateRotationTransform(aura::Window* root_window,
-                                       const gfx::Display& display) {
+                                       const display::Display& display) {
   DisplayInfo info =
       Shell::GetInstance()->display_manager()->GetDisplayInfo(display.id());
 
-  // TODO(oshima): Add animation. (crossfade+rotation, or just cross-fade)
+// TODO(oshima): Add animation. (crossfade+rotation, or just cross-fade)
 #if defined(OS_WIN)
   // Windows 8 bots refused to resize the host window, and
   // updating the transform results in incorrectly resizing
@@ -74,17 +74,17 @@ gfx::Transform CreateRotationTransform(aura::Window* root_window,
   // 1 pixel.
   float one_pixel = 1.0f / display.device_scale_factor();
   switch (info.GetActiveRotation()) {
-    case gfx::Display::ROTATE_0:
+    case display::Display::ROTATE_0:
       break;
-    case gfx::Display::ROTATE_90:
+    case display::Display::ROTATE_90:
       rotate.Translate(display.bounds().height() - one_pixel, 0);
       rotate.Rotate(90);
       break;
-    case gfx::Display::ROTATE_270:
+    case display::Display::ROTATE_270:
       rotate.Translate(0, display.bounds().width() - one_pixel);
       rotate.Rotate(270);
       break;
-    case gfx::Display::ROTATE_180:
+    case display::Display::ROTATE_180:
       rotate.Translate(display.bounds().width() - one_pixel,
                        display.bounds().height() - one_pixel);
       rotate.Rotate(180);
@@ -126,11 +126,9 @@ gfx::Transform CreateInsetsAndScaleTransform(const gfx::Insets& insets,
   return transform;
 }
 
-gfx::Transform CreateMirrorTransform(const gfx::Display& display) {
+gfx::Transform CreateMirrorTransform(const display::Display& display) {
   gfx::Transform transform;
-  transform.matrix().set3x3(-1, 0, 0,
-                            0, 1, 0,
-                            0, 0, 1);
+  transform.matrix().set3x3(-1, 0, 0, 0, 1, 0, 0, 0, 1);
   transform.Translate(-display.size().width(), 0);
   return transform;
 }
@@ -138,8 +136,7 @@ gfx::Transform CreateMirrorTransform(const gfx::Display& display) {
 // RootWindowTransformer for ash environment.
 class AshRootWindowTransformer : public RootWindowTransformer {
  public:
-  AshRootWindowTransformer(aura::Window* root,
-                           const gfx::Display& display)
+  AshRootWindowTransformer(aura::Window* root, const display::Display& display)
       : root_window_(root) {
     DisplayManager* display_manager = Shell::GetInstance()->display_manager();
     DisplayInfo info = display_manager->GetDisplayInfo(display.id());
@@ -225,27 +222,27 @@ class MirrorRootWindowTransformer : public RootWindowTransformer {
         gfx::Rect(mirror_display_info.bounds_in_native().size());
 
     bool letterbox = root_bounds_.width() * mirror_display_rect.height() >
-        root_bounds_.height() * mirror_display_rect.width();
+                     root_bounds_.height() * mirror_display_rect.width();
     if (letterbox) {
       float mirror_scale_ratio =
           (static_cast<float>(root_bounds_.width()) /
            static_cast<float>(mirror_display_rect.width()));
       float inverted_scale = 1.0f / mirror_scale_ratio;
-      int margin = static_cast<int>(
-          (mirror_display_rect.height() -
-           root_bounds_.height() * inverted_scale) / 2);
+      int margin = static_cast<int>((mirror_display_rect.height() -
+                                     root_bounds_.height() * inverted_scale) /
+                                    2);
       insets_.Set(0, margin, 0, margin);
 
-      transform_.Translate(0,  margin);
+      transform_.Translate(0, margin);
       transform_.Scale(inverted_scale, inverted_scale);
     } else {
       float mirror_scale_ratio =
           (static_cast<float>(root_bounds_.height()) /
            static_cast<float>(mirror_display_rect.height()));
       float inverted_scale = 1.0f / mirror_scale_ratio;
-      int margin = static_cast<int>(
-          (mirror_display_rect.width() -
-           root_bounds_.width() * inverted_scale) / 2);
+      int margin = static_cast<int>((mirror_display_rect.width() -
+                                     root_bounds_.width() * inverted_scale) /
+                                    2);
       insets_.Set(margin, 0, margin, 0);
 
       transform_.Translate(margin, 0);
@@ -278,9 +275,9 @@ class MirrorRootWindowTransformer : public RootWindowTransformer {
 class PartialBoundsRootWindowTransformer : public RootWindowTransformer {
  public:
   PartialBoundsRootWindowTransformer(const gfx::Rect& screen_bounds,
-                                     const gfx::Display& display) {
-    gfx::Display unified_display =
-        gfx::Screen::GetScreen()->GetPrimaryDisplay();
+                                     const display::Display& display) {
+    display::Display unified_display =
+        display::Screen::GetScreen()->GetPrimaryDisplay();
     DisplayInfo display_info =
         Shell::GetInstance()->display_manager()->GetDisplayInfo(display.id());
     root_bounds_ = gfx::Rect(display_info.bounds_in_native().size());
@@ -315,7 +312,7 @@ class PartialBoundsRootWindowTransformer : public RootWindowTransformer {
 
 RootWindowTransformer* CreateRootWindowTransformerForDisplay(
     aura::Window* root,
-    const gfx::Display& display) {
+    const display::Display& display) {
   return new AshRootWindowTransformer(root, display);
 }
 
@@ -328,7 +325,7 @@ RootWindowTransformer* CreateRootWindowTransformerForMirroredDisplay(
 
 RootWindowTransformer* CreateRootWindowTransformerForUnifiedDesktop(
     const gfx::Rect& screen_bounds,
-    const gfx::Display& display) {
+    const display::Display& display) {
   return new PartialBoundsRootWindowTransformer(screen_bounds, display);
 }
 

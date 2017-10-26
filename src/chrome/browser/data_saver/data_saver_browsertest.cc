@@ -63,20 +63,28 @@ class DataSaverWithServerBrowserTest : public InProcessBrowserTest {
     prefs->SetBoolean(prefs::kDataSaverEnabled, enabled);
   }
 
-  scoped_ptr<net::test_server::HttpResponse> VerifySaveDataHeader(
+  std::unique_ptr<net::test_server::HttpResponse> VerifySaveDataHeader(
       const net::test_server::HttpRequest& request) {
     auto save_data_header_it = request.headers.find("save-data");
 
-    if (!expected_save_data_header_.empty()) {
-      EXPECT_TRUE(save_data_header_it != request.headers.end());
-      EXPECT_EQ(expected_save_data_header_, save_data_header_it->second);
-    } else {
-      EXPECT_TRUE(save_data_header_it == request.headers.end());
+    if (request.relative_url == "/favicon.ico") {
+      // Favicon request could be received for the previous page load.
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
-    return scoped_ptr<net::test_server::HttpResponse>();
+
+    if (!expected_save_data_header_.empty()) {
+      EXPECT_TRUE(save_data_header_it != request.headers.end())
+          << request.relative_url;
+      EXPECT_EQ(expected_save_data_header_, save_data_header_it->second)
+          << request.relative_url;
+    } else {
+      EXPECT_TRUE(save_data_header_it == request.headers.end())
+          << request.relative_url;
+    }
+    return std::unique_ptr<net::test_server::HttpResponse>();
   }
 
-  scoped_ptr<net::EmbeddedTestServer> test_server_;
+  std::unique_ptr<net::EmbeddedTestServer> test_server_;
   std::string expected_save_data_header_;
 };
 

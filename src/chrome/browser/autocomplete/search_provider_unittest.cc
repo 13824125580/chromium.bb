@@ -10,6 +10,7 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -167,7 +168,7 @@ class SearchProviderTest : public testing::Test,
 
  protected:
   // Needed for AutocompleteFieldTrial::ActivateStaticTrials();
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   // Default values used for testing.
   static const std::string kNotApplicable;
@@ -219,16 +220,6 @@ class SearchProviderTest : public testing::Test,
   // Be sure and wrap calls to this in ASSERT_NO_FATAL_FAILURE.
   void FinishDefaultSuggestQuery();
 
-  // Runs SearchProvider on |input|, for which the suggest server replies
-  // with |json|, and expects that the resulting matches' contents equals
-  // that in |matches|.  An empty entry in |matches| means no match should
-  // be returned in that position.  Reports any errors with a message that
-  // includes |error_description|.
-  void ForcedQueryTestHelper(const std::string& input,
-                             const std::string& json,
-                             const std::string matches[3],
-                             const std::string& error_description);
-
   // Verifies that |matches| and |expected_matches| agree on the first
   // |num_expected_matches|, displaying an error message that includes
   // |description| for any disagreement.
@@ -257,7 +248,7 @@ class SearchProviderTest : public testing::Test,
 
   net::TestURLFetcherFactory test_factory_;
   TestingProfile profile_;
-  scoped_ptr<ChromeAutocompleteProviderClient> client_;
+  std::unique_ptr<ChromeAutocompleteProviderClient> client_;
   scoped_refptr<SearchProviderForTest> provider_;
 
   // If non-NULL, OnProviderUpdate quits the current |run_loop_|.
@@ -490,34 +481,6 @@ void SearchProviderTest::FinishDefaultSuggestQuery() {
   // Tell the SearchProvider the default suggest query is done.
   default_fetcher->set_response_code(200);
   default_fetcher->delegate()->OnURLFetchComplete(default_fetcher);
-}
-
-void SearchProviderTest::ForcedQueryTestHelper(
-    const std::string& input,
-    const std::string& json,
-    const std::string expected_matches[3],
-    const std::string& error_description) {
-  // Send the query twice in order to have a synchronous pass after the first
-  // response is received.  This is necessary because SearchProvider doesn't
-  // allow an asynchronous response to change the default match.
-  for (size_t i = 0; i < 2; ++i) {
-    QueryForInputAndWaitForFetcherResponses(
-        ASCIIToUTF16(input), false, json, std::string());
-  }
-
-  const ACMatches& matches = provider_->matches();
-  ASSERT_LE(matches.size(), 3u);
-  size_t i = 0;
-  // Ensure that the returned matches equal the expectations.
-  for (; i < matches.size(); ++i) {
-    EXPECT_EQ(ASCIIToUTF16(expected_matches[i]), matches[i].contents) <<
-        error_description;
-  }
-  // Ensure that no expected matches are missing.
-  for (; i < 3u; ++i) {
-    EXPECT_EQ(std::string(), expected_matches[i]) <<
-        "Case #" << i << ": " << error_description;
-  }
 }
 
 void SearchProviderTest::CheckMatches(const std::string& description,
@@ -807,54 +770,6 @@ TEST_F(SearchProviderTest, DontAutocompleteURLLikeTerms) {
   EXPECT_TRUE(term_match.allowed_to_be_default_match);
 }
 
-TEST_F(SearchProviderTest, DontGiveNavsuggestionsInForcedQueryMode) {
-  const std::string kEmptyMatch;
-  struct {
-    const std::string json;
-    const std::string matches_in_default_mode[3];
-    const std::string matches_in_forced_query_mode[3];
-  } cases[] = {
-    // Without suggested relevance scores.
-    { "[\"a\",[\"http://a1.com\", \"a2\"],[],[],"
-       "{\"google:suggesttype\":[\"NAVIGATION\", \"QUERY\"]}]",
-      { "a", "a1.com", "a2" },
-      { "a", "a2", kEmptyMatch } },
-
-    // With suggested relevance scores in a situation where navsuggest would
-    // go second.
-    { "[\"a\",[\"http://a1.com\", \"a2\"],[],[],"
-       "{\"google:suggesttype\":[\"NAVIGATION\", \"QUERY\"],"
-        "\"google:suggestrelevance\":[1250, 1200]}]",
-      { "a", "a1.com", "a2" },
-      { "a", "a2", kEmptyMatch } },
-
-    // With suggested relevance scores in a situation where navsuggest
-    // would go first.
-    { "[\"a\",[\"http://a1.com\", \"a2\"],[],[],"
-       "{\"google:suggesttype\":[\"NAVIGATION\", \"QUERY\"],"
-        "\"google:suggestrelevance\":[1350, 1250]}]",
-      { "a1.com", "a", "a2" },
-      { "a", "a2", kEmptyMatch } },
-
-    // With suggested relevance scores in a situation where navsuggest
-    // would go first only because verbatim has been demoted.
-    { "[\"a\",[\"http://a1.com\", \"a2\"],[],[],"
-       "{\"google:suggesttype\":[\"NAVIGATION\", \"QUERY\"],"
-        "\"google:suggestrelevance\":[1450, 1400],"
-        "\"google:verbatimrelevance\":1350}]",
-      { "a1.com", "a2", "a" },
-      { "a2", "a", kEmptyMatch } },
-  };
-
-  for (size_t i = 0; i < arraysize(cases); ++i) {
-    ForcedQueryTestHelper("a", cases[i].json, cases[i].matches_in_default_mode,
-                           "regular input with json=" + cases[i].json);
-    ForcedQueryTestHelper("?a", cases[i].json,
-                          cases[i].matches_in_forced_query_mode,
-                          "forced query input with json=" + cases[i].json);
-  }
-}
-
 // A multiword search with one visit should not autocomplete until multiple
 // words are typed.
 TEST_F(SearchProviderTest, DontAutocompleteUntilMultipleWordsTyped) {
@@ -1090,8 +1005,8 @@ TEST_F(SearchProviderTest, KeywordOrderingAndDescriptions) {
   profile_.BlockUntilHistoryProcessesPendingRequests();
 
   AutocompleteController controller(
-      make_scoped_ptr(new ChromeAutocompleteProviderClient(&profile_)), nullptr,
-      AutocompleteProvider::TYPE_SEARCH);
+      base::WrapUnique(new ChromeAutocompleteProviderClient(&profile_)),
+      nullptr, AutocompleteProvider::TYPE_SEARCH);
   controller.Start(AutocompleteInput(
       ASCIIToUTF16("k t"), base::string16::npos, std::string(), GURL(),
       metrics::OmniboxEventProto::INVALID_SPEC, false, false, true, true, false,
@@ -2209,6 +2124,21 @@ TEST_F(SearchProviderTest, DontInlineAutocompleteAsynchronously) {
       { { "ab", true }, { "ab1", true }, { "ab2", false },
         kEmptyExpectedMatch } },
 
+    // If a suggestion is equivalent to the verbatim suggestion, it should be
+    // collapsed into one.  Furthermore, it should be allowed to be the default
+    // match even if it was not previously displayed inlined.  This test is
+    // mainly for checking the first_async_matches.
+    { "[\"a\",[\"A\"],[],[],"
+       "{\"google:verbatimrelevance\":9000, "
+        "\"google:suggestrelevance\":[9001]}]",
+      { { "A", true }, kEmptyExpectedMatch, kEmptyExpectedMatch,
+        kEmptyExpectedMatch },
+      { { "ab", true }, { "A", false }, kEmptyExpectedMatch,
+        kEmptyExpectedMatch },
+      std::string(),
+      { { "ab", true }, { "A", false }, kEmptyExpectedMatch,
+        kEmptyExpectedMatch } },
+
     // Note: it's possible that the suggest server returns a suggestion with
     // an inline autocompletion (that as usual we delay in allowing it to
     // be displayed as an inline autocompletion until the next keystroke),
@@ -2575,7 +2505,7 @@ TEST_F(SearchProviderTest, FieldTrialTriggeredParsing) {
     ProvidersInfo providers_info;
     provider_->AddProviderInfo(&providers_info);
     ASSERT_EQ(1U, providers_info.size());
-    EXPECT_EQ(1, providers_info[0].field_trial_triggered_size());
+    EXPECT_EQ(0, providers_info[0].field_trial_triggered_size());
     EXPECT_EQ(0, providers_info[0].field_trial_triggered_in_session_size());
   }
 }
@@ -2732,15 +2662,6 @@ TEST_F(SearchProviderTest, NavigationInline) {
                      "https://abc.com/path/file.htm?q=x#foo",
                                "c.com/path/file.htm?q=x#foo",     true, false },
 
-    // Forced query input should inline and retain the "?" prefix.
-    { "?http://www.ab",  "http://www.abc.com",
-                        "?http://www.abc.com", "c.com",       true, false },
-    { "?www.ab",         "http://www.abc.com",
-                               "?www.abc.com", "c.com",       true, false },
-    { "?ab",             "http://www.abc.com",
-                               "?www.abc.com", "c.com",       true, false },
-    { "?abc.com",        "http://www.abc.com",
-                               "?www.abc.com", std::string(), true, true },
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
@@ -2749,7 +2670,7 @@ TEST_F(SearchProviderTest, NavigationInline) {
     SearchSuggestionParser::NavigationResult result(
         ChromeAutocompleteSchemeClassifier(&profile_), GURL(cases[i].url),
         AutocompleteMatchType::NAVSUGGEST, base::string16(), std::string(),
-        false, 0, false, ASCIIToUTF16(cases[i].input), std::string());
+        false, 0, false, ASCIIToUTF16(cases[i].input));
     result.set_received_after_last_keystroke(false);
     AutocompleteMatch match(provider_->NavigationToMatch(result));
     EXPECT_EQ(ASCIIToUTF16(cases[i].inline_autocompletion),
@@ -2763,7 +2684,7 @@ TEST_F(SearchProviderTest, NavigationInline) {
     SearchSuggestionParser::NavigationResult result_prevent_inline(
         ChromeAutocompleteSchemeClassifier(&profile_), GURL(cases[i].url),
         AutocompleteMatchType::NAVSUGGEST, base::string16(), std::string(),
-        false, 0, false, ASCIIToUTF16(cases[i].input), std::string());
+        false, 0, false, ASCIIToUTF16(cases[i].input));
     result_prevent_inline.set_received_after_last_keystroke(false);
     AutocompleteMatch match_prevent_inline(
         provider_->NavigationToMatch(result_prevent_inline));
@@ -2783,7 +2704,7 @@ TEST_F(SearchProviderTest, NavigationInlineSchemeSubstring) {
   SearchSuggestionParser::NavigationResult result(
       ChromeAutocompleteSchemeClassifier(&profile_), GURL(url),
       AutocompleteMatchType::NAVSUGGEST,
-      base::string16(), std::string(), false, 0, false, input, std::string());
+      base::string16(), std::string(), false, 0, false, input);
   result.set_received_after_last_keystroke(false);
 
   // Check the offset and strings when inline autocompletion is allowed.
@@ -2808,8 +2729,7 @@ TEST_F(SearchProviderTest, NavigationInlineDomainClassify) {
   SearchSuggestionParser::NavigationResult result(
       ChromeAutocompleteSchemeClassifier(&profile_),
       GURL("http://www.wow.com"), AutocompleteMatchType::NAVSUGGEST,
-      base::string16(), std::string(), false, 0, false, ASCIIToUTF16("w"),
-      std::string());
+      base::string16(), std::string(), false, 0, false, ASCIIToUTF16("w"));
   result.set_received_after_last_keystroke(false);
   AutocompleteMatch match(provider_->NavigationToMatch(result));
   EXPECT_EQ(ASCIIToUTF16("ow.com"), match.inline_autocompletion);

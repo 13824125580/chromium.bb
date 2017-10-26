@@ -5,12 +5,13 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 
+<link rel="import" href="/tracing/base/iteration_helpers.html">
 <link rel="import" href="/tracing/base/utils.html">
 <link rel="import" href="/tracing/model/event_set.html">
 <link rel="import" href="/tracing/ui/analysis/analysis_link.html">
 <link rel="import" href="/tracing/ui/analysis/analysis_sub_view.html">
-<link rel="import" href="/tracing/value/ui/time_duration_span.html">
-<link rel="import" href="/tracing/value/ui/time_stamp_span.html">
+<link rel="import" href="/tracing/value/ui/scalar_span.html">
+<link rel="import" href="/tracing/value/unit.html">
 
 <polymer-element name="tr-ui-a-single-cpu-slice-sub-view"
     extends="tr-ui-a-sub-view">
@@ -55,15 +56,15 @@ found in the LICENSE file.
       <tr>
         <td>Start:</td>
         <td>
-          <tr-v-ui-time-stamp-span id="start">
-          </tr-v-ui-time-stamp-span>
+          <tr-v-ui-scalar-span id="start">
+          </tr-v-ui-scalar-span>
         </td>
       </tr>
       <tr>
         <td>Duration:</td>
         <td>
-          <tr-v-ui-time-duration-span id="duration">
-          </tr-v-ui-time-duration-span>
+          <tr-v-ui-scalar-span id="duration">
+          </tr-v-ui-scalar-span>
         </td>
       </tr>
       <tr>
@@ -91,14 +92,12 @@ found in the LICENSE file.
     },
 
     set selection(selection) {
-      if (selection.length !== 1)
-        throw new Error('Only supports single slices');
-      if (!(selection[0] instanceof tr.model.CpuSlice))
+      var cpuSlice = tr.b.getOnlyElement(selection);
+      if (!(cpuSlice instanceof tr.model.CpuSlice))
         throw new Error('Only supports thread time slices');
 
       this.currentSelection_ = selection;
 
-      var cpuSlice = selection[0];
       var thread = cpuSlice.threadThatWasRunning;
 
       var shadowRoot = this.shadowRoot;
@@ -113,8 +112,10 @@ found in the LICENSE file.
         shadowRoot.querySelector('#thread-name').textContent = cpuSlice.title;
       }
 
-      shadowRoot.querySelector('#start').timestamp = cpuSlice.start;
-      shadowRoot.querySelector('#duration').duration = cpuSlice.duration;
+      shadowRoot.querySelector('#start').setValueAndUnit(
+          cpuSlice.start, tr.v.Unit.byName.timeStampInMs);
+      shadowRoot.querySelector('#duration').setValueAndUnit(
+          cpuSlice.duration, tr.v.Unit.byName.timeDurationInMs);
 
       var runningThreadEl = shadowRoot.querySelector('#running-thread');
 

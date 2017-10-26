@@ -11,8 +11,9 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "mojo/public/cpp/environment/async_waiter.h"
+#include "mojo/public/cpp/system/watcher.h"
 
 namespace extensions {
 namespace {
@@ -26,9 +27,7 @@ class StashServiceImpl : public StashService {
 
   // StashService overrides.
   void AddToStash(mojo::Array<StashedObjectPtr> stash) override;
-  void RetrieveStash(
-      const mojo::Callback<void(mojo::Array<StashedObjectPtr> stash)>& callback)
-      override;
+  void RetrieveStash(const RetrieveStashCallback& callback) override;
 
  private:
   mojo::StrongBinding<StashService> binding_;
@@ -51,8 +50,7 @@ void StashServiceImpl::AddToStash(
   backend_->AddToStash(std::move(stashed_objects));
 }
 
-void StashServiceImpl::RetrieveStash(
-    const mojo::Callback<void(mojo::Array<StashedObjectPtr>)>& callback) {
+void StashServiceImpl::RetrieveStash(const RetrieveStashCallback& callback) {
   if (!backend_) {
     callback.Run(mojo::Array<StashedObjectPtr>());
     return;
@@ -84,7 +82,7 @@ class StashBackend::StashEntry {
   void OnHandleReady(MojoResult result);
 
   // The waiters that are waiting for handles to be readable.
-  std::vector<scoped_ptr<mojo::AsyncWaiter>> waiters_;
+  std::vector<std::unique_ptr<mojo::Watcher>> waiters_;
 
   StashedObjectPtr stashed_object_;
 
@@ -104,7 +102,7 @@ StashBackend::~StashBackend() {
 
 void StashBackend::AddToStash(mojo::Array<StashedObjectPtr> stashed_objects) {
   for (size_t i = 0; i < stashed_objects.size(); i++) {
-    stashed_objects_.push_back(make_scoped_ptr(new StashEntry(
+    stashed_objects_.push_back(base::WrapUnique(new StashEntry(
         std::move(stashed_objects[i]),
         has_notified_ ? base::Closure()
                       : base::Bind(&StashBackend::OnHandleReady,
@@ -144,10 +142,12 @@ StashBackend::StashEntry::StashEntry(StashedObjectPtr stashed_object,
     return;
 
   for (size_t i = 0; i < stashed_object_->stashed_handles.size(); i++) {
-    waiters_.push_back(make_scoped_ptr(new mojo::AsyncWaiter(
-        stashed_object_->stashed_handles[i].get(), MOJO_HANDLE_SIGNAL_READABLE,
-        base::Bind(&StashBackend::StashEntry::OnHandleReady,
-                   base::Unretained(this)))));
+    std::unique_ptr<mojo::Watcher> watcher(new mojo::Watcher);
+    watcher->Start(stashed_object_->stashed_handles[i].get(),
+                   MOJO_HANDLE_SIGNAL_READABLE,
+                   base::Bind(&StashBackend::StashEntry::OnHandleReady,
+                              base::Unretained(this)));
+    waiters_.push_back(std::move(watcher));
   }
 }
 

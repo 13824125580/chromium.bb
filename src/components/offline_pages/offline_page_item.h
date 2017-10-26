@@ -16,6 +16,18 @@
 
 namespace offline_pages {
 
+struct ClientId {
+  // The namespace for the id (of course 'namespace' is a reserved word, so...)
+  std::string name_space;
+  // The id in the client's namespace.  Opaque to us.
+  std::string id;
+
+  ClientId();
+  ClientId(std::string name_space, std::string id);
+
+  bool operator==(const ClientId& client_id) const;
+};
+
 // Metadata of the offline page.
 struct OfflinePageItem {
  public:
@@ -27,11 +39,13 @@ struct OfflinePageItem {
 
   OfflinePageItem();
   OfflinePageItem(const GURL& url,
-                  int64_t bookmark_id,
+                  int64_t offline_id,
+                  const ClientId& client_id,
                   const base::FilePath& file_path,
                   int64_t file_size);
   OfflinePageItem(const GURL& url,
-                  int64_t bookmark_id,
+                  int64_t offline_id,
+                  const ClientId& client_id,
                   const base::FilePath& file_path,
                   int64_t file_size,
                   const base::Time& creation_time);
@@ -41,18 +55,19 @@ struct OfflinePageItem {
   // Gets a URL of the file under |file_path|.
   GURL GetOfflineURL() const;
 
-  // Returns true if the page has been marked for deletion. This allows an undo
-  // in a short time period. After that, the marked page will be deleted.
-  bool IsMarkedForDeletion() const;
-
-  // Sets/clears the mark for deletion.
-  void MarkForDeletion();
-  void ClearMarkForDeletion();
+  // Returns whether the offline page is expired.
+  bool IsExpired() const;
 
   // The URL of the page.
   GURL url;
-  // The Bookmark ID related to the offline page.
-  int64_t bookmark_id;
+  // The primary key/ID for this page in offline pages internal database.
+  int64_t offline_id;
+
+  // The Client ID (external) related to the offline page. This is opaque
+  // to our system, but useful for users of offline pages who want to map
+  // their ids to our saved pages.
+  ClientId client_id;
+
   // Version of the offline page item.
   int version;
   // The file path to the archive with a local copy of the page.
@@ -63,6 +78,8 @@ struct OfflinePageItem {
   base::Time creation_time;
   // The time when the offline archive was last accessed.
   base::Time last_access_time;
+  // The time when the offline page was expired.
+  base::Time expiration_time;
   // Number of times that the offline archive has been accessed.
   int access_count;
   // Flags about the state and behavior of the offline page.

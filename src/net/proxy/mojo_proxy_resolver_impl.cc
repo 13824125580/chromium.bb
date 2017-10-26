@@ -7,8 +7,8 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
-#include "mojo/common/url_type_converters.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log.h"
 #include "net/proxy/mojo_proxy_resolver_v8_tracing_bindings.h"
@@ -47,7 +47,7 @@ class MojoProxyResolverImpl::Job {
 };
 
 MojoProxyResolverImpl::MojoProxyResolverImpl(
-    scoped_ptr<ProxyResolverV8Tracing> resolver)
+    std::unique_ptr<ProxyResolverV8Tracing> resolver)
     : resolver_(std::move(resolver)) {}
 
 MojoProxyResolverImpl::~MojoProxyResolverImpl() {
@@ -55,10 +55,10 @@ MojoProxyResolverImpl::~MojoProxyResolverImpl() {
 }
 
 void MojoProxyResolverImpl::GetProxyForUrl(
-    const mojo::String& url,
+    const GURL& url,
     interfaces::ProxyResolverRequestClientPtr client) {
   DVLOG(1) << "GetProxyForUrl(" << url << ")";
-  Job* job = new Job(std::move(client), this, url.To<GURL>());
+  Job* job = new Job(std::move(client), this, url);
   bool inserted = resolve_jobs_.insert(job).second;
   DCHECK(inserted);
   job->Start();
@@ -89,8 +89,8 @@ void MojoProxyResolverImpl::Job::Start() {
   resolver_->resolver_->GetProxyForURL(
       url_, &result_, base::Bind(&Job::GetProxyDone, base::Unretained(this)),
       &request_handle_,
-      make_scoped_ptr(new MojoProxyResolverV8TracingBindings<
-                      interfaces::ProxyResolverRequestClient>(client_.get())));
+      base::WrapUnique(new MojoProxyResolverV8TracingBindings<
+                       interfaces::ProxyResolverRequestClient>(client_.get())));
   client_.set_connection_error_handler(base::Bind(
       &MojoProxyResolverImpl::Job::OnConnectionError, base::Unretained(this)));
 }

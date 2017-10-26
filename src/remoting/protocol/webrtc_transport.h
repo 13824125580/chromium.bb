@@ -5,15 +5,19 @@
 #ifndef REMOTING_PROTOCOL_WEBRTC_TRANSPORT_H_
 #define REMOTING_PROTOCOL_WEBRTC_TRANSPORT_H_
 
+#include <memory>
+#include <string>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
+#include "crypto/hmac.h"
 #include "remoting/protocol/transport.h"
 #include "remoting/protocol/webrtc_data_stream_adapter.h"
+#include "remoting/protocol/webrtc_video_encoder_factory.h"
 #include "remoting/signaling/signal_strategy.h"
 #include "third_party/webrtc/api/peerconnectioninterface.h"
 
@@ -64,6 +68,9 @@ class WebrtcTransport : public Transport,
   webrtc::PeerConnectionFactoryInterface* peer_connection_factory() {
     return peer_connection_factory_;
   }
+  remoting::WebrtcVideoEncoderFactory* video_encoder_factory() {
+    return video_encoder_factory_;
+  }
 
   // Factories for outgoing and incoming data channels. Must be used only after
   // the transport is connected.
@@ -78,10 +85,11 @@ class WebrtcTransport : public Transport,
   void Start(Authenticator* authenticator,
              SendTransportInfoCallback send_transport_info_callback) override;
   bool ProcessTransportInfo(buzz::XmlElement* transport_info) override;
+  void Close(ErrorCode error);
 
  private:
   void OnLocalSessionDescriptionCreated(
-      scoped_ptr<webrtc::SessionDescriptionInterface> description,
+      std::unique_ptr<webrtc::SessionDescriptionInterface> description,
       const std::string& error);
   void OnLocalDescriptionSet(bool success, const std::string& error);
   void OnRemoteDescriptionSet(bool send_answer,
@@ -91,9 +99,12 @@ class WebrtcTransport : public Transport,
   // webrtc::PeerConnectionObserver interface.
   void OnSignalingChange(
       webrtc::PeerConnectionInterface::SignalingState new_state) override;
-  void OnAddStream(webrtc::MediaStreamInterface* stream) override;
-  void OnRemoveStream(webrtc::MediaStreamInterface* stream) override;
-  void OnDataChannel(webrtc::DataChannelInterface* data_channel) override;
+  void OnAddStream(
+      rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+  void OnRemoveStream(
+      rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+  void OnDataChannel(
+      rtc::scoped_refptr<webrtc::DataChannelInterface> data_channel) override;
   void OnRenegotiationNeeded() override;
   void OnIceConnectionChange(
       webrtc::PeerConnectionInterface::IceConnectionState new_state) override;
@@ -107,8 +118,6 @@ class WebrtcTransport : public Transport,
   void SendTransportInfo();
   void AddPendingCandidatesIfPossible();
 
-  void Close(ErrorCode error);
-
   base::ThreadChecker thread_checker_;
 
   rtc::Thread* worker_thread_;
@@ -116,17 +125,21 @@ class WebrtcTransport : public Transport,
   EventHandler* event_handler_ = nullptr;
   SendTransportInfoCallback send_transport_info_callback_;
 
-  scoped_ptr<webrtc::FakeAudioDeviceModule> fake_audio_device_module_;
+  crypto::HMAC handshake_hmac_;
+
+  std::unique_ptr<webrtc::FakeAudioDeviceModule> fake_audio_device_module_;
 
   rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>
       peer_connection_factory_;
   rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
 
+  remoting::WebrtcVideoEncoderFactory* video_encoder_factory_;
+
   bool negotiation_pending_ = false;
 
   bool connected_ = false;
 
-  scoped_ptr<buzz::XmlElement> pending_transport_info_message_;
+  std::unique_ptr<buzz::XmlElement> pending_transport_info_message_;
   base::OneShotTimer transport_info_timer_;
 
   ScopedVector<webrtc::IceCandidateInterface> pending_incoming_candidates_;

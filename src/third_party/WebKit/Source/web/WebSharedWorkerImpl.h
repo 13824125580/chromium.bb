@@ -37,12 +37,13 @@
 #include "core/workers/WorkerLoaderProxy.h"
 #include "core/workers/WorkerReportingProxy.h"
 #include "core/workers/WorkerThread.h"
+#include "public/platform/WebAddressSpace.h"
 #include "public/web/WebContentSecurityPolicy.h"
 #include "public/web/WebDevToolsAgentClient.h"
 #include "public/web/WebFrameClient.h"
 #include "public/web/WebSharedWorkerClient.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -74,9 +75,8 @@ public:
     explicit WebSharedWorkerImpl(WebSharedWorkerClient*);
 
     // WorkerReportingProxy methods:
-    void reportException(
-        const WTF::String&, int, int, const WTF::String&, int) override;
-    void reportConsoleMessage(PassRefPtrWillBeRawPtr<ConsoleMessage>) override;
+    void reportException(const WTF::String&, std::unique_ptr<SourceLocation>) override;
+    void reportConsoleMessage(ConsoleMessage*) override;
     void postMessageToPageInspector(const WTF::String&) override;
     void postWorkerConsoleAgentEnabled() override { }
     void didEvaluateWorkerScript(bool success) override { }
@@ -95,9 +95,10 @@ public:
     // WebDevToolsAgentClient overrides.
     void sendProtocolMessage(int sessionId, int callId, const WebString&, const WebString&) override;
     void resumeStartup() override;
+    WebDevToolsAgentClient::WebKitClientMessageLoop* createClientMessageLoop() override;
 
     // WebSharedWorker methods:
-    void startWorkerContext(const WebURL&, const WebString& name, const WebString& contentSecurityPolicy, WebContentSecurityPolicyType) override;
+    void startWorkerContext(const WebURL&, const WebString& name, const WebString& contentSecurityPolicy, WebContentSecurityPolicyType, WebAddressSpace) override;
     void connect(WebMessagePortChannel*) override;
     void terminateWorkerContext() override;
 
@@ -105,12 +106,11 @@ public:
     void attachDevTools(const WebString& hostId, int sessionId) override;
     void reattachDevTools(const WebString& hostId, int sesionId, const WebString& savedState) override;
     void detachDevTools() override;
-    void dispatchDevToolsMessage(int sessionId, const WebString&) override;
+    void dispatchDevToolsMessage(int sessionId, int callId, const WebString& method, const WebString& message) override;
 
 private:
     ~WebSharedWorkerImpl() override;
 
-    void setWorkerThread(PassRefPtr<WorkerThread> thread) { m_workerThread = thread; }
     WorkerThread* workerThread() { return m_workerThread.get(); }
 
     // Shuts down the worker thread.
@@ -123,7 +123,7 @@ private:
     void didReceiveScriptLoaderResponse();
     void onScriptLoaderFinished();
 
-    static void connectTask(PassOwnPtr<WebMessagePortChannel>, ExecutionContext*);
+    static void connectTask(WebMessagePortChannelUniquePtr, ExecutionContext*);
     // Tasks that are run on the main thread.
     void workerGlobalScopeClosedOnMainThread();
     void workerThreadTerminatedOnMainThread();
@@ -131,21 +131,21 @@ private:
     void postMessageToPageInspectorOnMainThread(const String& message);
 
     // WorkerLoaderProxyProvider
-    void postTaskToLoader(PassOwnPtr<ExecutionContextTask>);
-    bool postTaskToWorkerGlobalScope(PassOwnPtr<ExecutionContextTask>);
+    void postTaskToLoader(std::unique_ptr<ExecutionContextTask>) override;
+    bool postTaskToWorkerGlobalScope(std::unique_ptr<ExecutionContextTask>) override;
 
     // 'shadow page' - created to proxy loading requests from the worker.
-    RefPtrWillBePersistent<ExecutionContext> m_loadingDocument;
+    Persistent<ExecutionContext> m_loadingDocument;
     WebView* m_webView;
-    RefPtrWillBePersistent<WebLocalFrameImpl> m_mainFrame;
+    Persistent<WebLocalFrameImpl> m_mainFrame;
     bool m_askedToTerminate;
 
     // This one is bound to and used only on the main thread.
-    OwnPtr<WebServiceWorkerNetworkProvider> m_networkProvider;
+    std::unique_ptr<WebServiceWorkerNetworkProvider> m_networkProvider;
 
-    OwnPtrWillBePersistent<WorkerInspectorProxy> m_workerInspectorProxy;
+    Persistent<WorkerInspectorProxy> m_workerInspectorProxy;
 
-    RefPtr<WorkerThread> m_workerThread;
+    std::unique_ptr<WorkerThread> m_workerThread;
 
     WebSharedWorkerClient* m_client;
 
@@ -159,6 +159,7 @@ private:
 
     WebURL m_url;
     WebString m_name;
+    WebAddressSpace m_creationAddressSpace;
 };
 
 } // namespace blink

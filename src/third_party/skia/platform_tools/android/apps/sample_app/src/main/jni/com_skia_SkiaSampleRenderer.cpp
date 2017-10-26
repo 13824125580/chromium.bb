@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2011 Skia
  *
@@ -62,7 +61,8 @@ SkOSWindow::SkOSWindow(void*) : fDestroyRequested(false) {
 SkOSWindow::~SkOSWindow() {
 }
 
-bool SkOSWindow::attach(SkBackEndTypes /* attachType */, int /*msaaSampleCount*/, AttachmentInfo* info)
+bool SkOSWindow::attach(SkBackEndTypes /* attachType */, int /*msaaSampleCount*/,
+                        bool /*deepColor*/, AttachmentInfo* info)
 {
     JNIEnv* env = gActivityGlue.m_env;
     if (!env || !gWindowGlue.m_getMSAASampleCount || !gWindowGlue.m_obj) {
@@ -79,7 +79,7 @@ bool SkOSWindow::attach(SkBackEndTypes /* attachType */, int /*msaaSampleCount*/
     return true;
 }
 
-void SkOSWindow::detach() {
+void SkOSWindow::release() {
 }
 
 void SkOSWindow::present() {

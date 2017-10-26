@@ -10,14 +10,17 @@
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_logging.h"
 #include "chrome/browser/search/search.h"
+#include "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_decoration.h"
+#import "chrome/browser/ui/cocoa/themed_window.h"
 #import "extensions/common/feature_switch.h"
 #include "grit/theme_resources.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #import "ui/base/cocoa/appkit_utils.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/cocoa/scoped_cg_context_smooth_fonts.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 using extensions::FeatureSwitch;
 
@@ -28,12 +31,24 @@ const CGFloat kCornerRadius = 3.0;
 
 // How far to inset the left- and right-hand decorations from the field's
 // bounds.
-const CGFloat kLeftDecorationXOffset = 5.0;
 const CGFloat kRightDecorationXOffset = 5.0;
+CGFloat LeftDecorationXOffset() {
+  const CGFloat kLeftDecorationXOffset = 5.0;
+  const CGFloat kLeftMaterialDecorationXOffset = 6.0;
+  return ui::MaterialDesignController::IsModeMaterial()
+             ? kLeftMaterialDecorationXOffset
+             : kLeftDecorationXOffset;
+}
 
 // The amount of padding on either side reserved for drawing
 // decorations.  [Views has |kItemPadding| == 3.]
-const CGFloat kDecorationHorizontalPad = 3.0;
+CGFloat DecorationsHorizontalPad() {
+  const CGFloat kDecorationHorizontalPad = 3.0;
+  const CGFloat kMaterialDecorationHorizontalPad = 4.0;
+  return ui::MaterialDesignController::IsModeMaterial()
+      ? kMaterialDecorationHorizontalPad
+      : kDecorationHorizontalPad;
+}
 
 const ui::NinePartImageIds kPopupBorderImageIds =
     IMAGE_GRID(IDR_OMNIBOX_POPUP_BORDER_AND_SHADOW);
@@ -68,6 +83,7 @@ void CalculatePositionsHelper(
   // The initial padding depends on whether the first visible decoration is
   // a button or not.
   bool is_first_visible_decoration = true;
+  const CGFloat kDecorationHorizontalPad = DecorationsHorizontalPad();
 
   for (size_t i = 0; i < all_decorations.size(); ++i) {
     if (all_decorations[i]->IsVisible()) {
@@ -131,7 +147,7 @@ size_t CalculatePositionsInFrame(
 
   // Layout |left_decorations| against the LHS.
   CalculatePositionsHelper(frame, left_decorations, NSMinXEdge,
-                           kLeftDecorationXOffset, decorations,
+                           LeftDecorationXOffset(), decorations,
                            decoration_frames, &frame);
   DCHECK_EQ(decorations->size(), decoration_frames->size());
 
@@ -159,6 +175,7 @@ size_t CalculatePositionsInFrame(
 @implementation AutocompleteTextFieldCell
 
 @synthesize isPopupMode = isPopupMode_;
+@synthesize singlePixelLineWidth = singlePixelLineWidth_;
 
 - (CGFloat)topTextFrameOffset {
   return 3.0;
@@ -240,6 +257,18 @@ size_t CalculatePositionsInFrame(
   CalculatePositionsInFrame(textFrame, leftDecorations_, rightDecorations_,
                             &decorations, &decorationFrames, &textFrame);
 
+  // The text needs to be slightly higher than its default position to match the
+  // Material Design spec. It turns out this adjustment is equal to the single
+  // pixel line width (so 1 on non-Retina, 0.5 on Retina). Make this adjustment
+  // after computing decoration positions because the decorations are already
+  // correctly positioned. The spec also calls for positioning the text 1pt to
+  // the right of its default position.
+  if (ui::MaterialDesignController::IsModeMaterial()) {
+    textFrame.origin.x += 1;
+    textFrame.size.width -= 1;
+    textFrame.origin.y -= singlePixelLineWidth_;
+  }
+
   // NOTE: This function must closely match the logic in
   // |-drawInteriorWithFrame:inView:|.
 
@@ -256,6 +285,7 @@ size_t CalculatePositionsInFrame(
 
   // Determine the left-most extent for the i-beam cursor.
   CGFloat minX = NSMinX(textFrame);
+  const CGFloat kDecorationHorizontalPad = DecorationsHorizontalPad();
   for (size_t index = left_count; index--; ) {
     if (decorations[index]->AcceptsMousePress())
       break;
@@ -287,41 +317,82 @@ size_t CalculatePositionsInFrame(
 }
 
 - (void)drawWithFrame:(NSRect)frame inView:(NSView*)controlView {
-  // Background color.
-  const CGFloat lineWidth = [controlView cr_lineWidth];
-  if (isPopupMode_) {
-    [[self backgroundColor] set];
-    NSRectFillUsingOperation(NSInsetRect(frame, 1, 1), NSCompositeSourceOver);
-  } else {
-    CGFloat insetSize = lineWidth == 0.5 ? 1.5 : 2.0;
-    NSRect fillRect = NSInsetRect(frame, insetSize, insetSize);
-    [[self backgroundColor] set];
-    [[NSBezierPath bezierPathWithRoundedRect:fillRect
-                                     xRadius:kCornerRadius
-                                     yRadius:kCornerRadius] fill];
+  BOOL isModeMaterial = ui::MaterialDesignController::IsModeMaterial();
+  BOOL inDarkMode = [[controlView window] inIncognitoModeWithSystemTheme];
+  BOOL showingFirstResponder = [self showsFirstResponder];
+  // Adjust the inset by 1/2 the line width to get a crisp line (screen pixels
+  // lay between cooridnate space lines).
+  CGFloat insetSize = 1 - singlePixelLineWidth_ / 2.;
+  if (isModeMaterial && showingFirstResponder && !inDarkMode) {
+    insetSize++;
+  } else if (!isModeMaterial) {
+    insetSize = singlePixelLineWidth_ == 0.5 ? 1.5 : 2.0;
   }
 
-  // Border.
-  ui::DrawNinePartImage(frame,
-                        isPopupMode_ ? kPopupBorderImageIds
-                                     : kNormalBorderImageIds,
-                        NSCompositeSourceOver,
-                        1.0,
-                        true);
+  // Compute the border's bezier path.
+  NSRect pathRect = NSInsetRect(frame, insetSize, insetSize);
+  NSBezierPath* path =
+      [NSBezierPath bezierPathWithRoundedRect:pathRect
+                                      xRadius:kCornerRadius
+                                      yRadius:kCornerRadius];
+  if (isModeMaterial) {
+    [path setLineWidth:showingFirstResponder ? singlePixelLineWidth_ * 2
+                                             : singlePixelLineWidth_];
+  }
 
-  // Interior contents. Drawn after the border as some of the interior controls
-  // draw over the border.
+  // Fill the background.
+  [[self backgroundColor] set];
+  if (isPopupMode_) {
+    NSRectFillUsingOperation(NSInsetRect(frame, 1, 1), NSCompositeSourceOver);
+  } else {
+    [path fill];
+  }
+
+  // Draw the border.
+  if (isModeMaterial) {
+    if (!inDarkMode) {
+      const CGFloat kNormalStrokeGray = 168 / 255.;
+      [[NSColor colorWithCalibratedWhite:kNormalStrokeGray alpha:1] set];
+    } else {
+      const CGFloat k30PercentAlpha = 0.3;
+      [[NSColor colorWithCalibratedWhite:0 alpha:k30PercentAlpha] set];
+    }
+    [path stroke];
+  } else {
+    ui::DrawNinePartImage(frame,
+                          isPopupMode_ ? kPopupBorderImageIds
+                                       : kNormalBorderImageIds,
+                          NSCompositeSourceOver,
+                          1.0,
+                          true);
+  }
+
+  // Draw the interior contents. We do this after drawing the border as some
+  // of the interior controls draw over it.
   [self drawInteriorWithFrame:frame inView:controlView];
 
-  // Focus ring.
-  if ([self showsFirstResponder]) {
-    NSRect focusRingRect = NSInsetRect(frame, lineWidth, lineWidth);
-    [[[NSColor keyboardFocusIndicatorColor]
-        colorWithAlphaComponent:0.5 / lineWidth] set];
-    NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:focusRingRect
-                                                         xRadius:kCornerRadius
-                                                         yRadius:kCornerRadius];
-    [path setLineWidth:lineWidth * 2.0];
+  // Draw the focus ring.
+  if (showingFirstResponder) {
+    if (!isModeMaterial) {
+      NSRect focusRingRect =
+          NSInsetRect(frame, singlePixelLineWidth_, singlePixelLineWidth_);
+      path = [NSBezierPath bezierPathWithRoundedRect:focusRingRect
+                                             xRadius:kCornerRadius
+                                             yRadius:kCornerRadius];
+      [path setLineWidth:singlePixelLineWidth_ * 2.0];
+    }
+
+    CGFloat alphaComponent = 0.5 / singlePixelLineWidth_;
+    if (isModeMaterial && inDarkMode) {
+      // Special focus color for Material Incognito.
+      [[NSColor colorWithSRGBRed:123 / 255.
+                           green:170 / 255.
+                            blue:247 / 255.
+                           alpha:1] set];
+    } else {
+      [[[NSColor keyboardFocusIndicatorColor]
+          colorWithAlphaComponent:alphaComponent] set];
+    }
     [path stroke];
   }
 }
@@ -335,6 +406,7 @@ size_t CalculatePositionsInFrame(
                             &decorations, &decorationFrames, &workingFrame);
 
   // Draw the decorations.
+  const CGFloat kDecorationHorizontalPad = DecorationsHorizontalPad();
   for (size_t i = 0; i < decorations.size(); ++i) {
     if (decorations[i]) {
       NSRect background_frame = NSInsetRect(
@@ -589,12 +661,15 @@ static NSString* UnusedLegalNameForNewDropFile(NSURL* saveLocation,
   NSPasteboard* pboard = [NSPasteboard pasteboardWithName:NSDragPboard];
   NSFileManager* fileManager = [NSFileManager defaultManager];
 
-  if (![pboard containsURLData])
+  if (![pboard containsURLDataConvertingTextToURL:YES])
     return NULL;
 
   NSArray *urls = NULL;
   NSArray* titles = NULL;
-  [pboard getURLs:&urls andTitles:&titles convertingFilenames:YES];
+  [pboard getURLs:&urls
+                andTitles:&titles
+      convertingFilenames:YES
+      convertingTextToURL:YES];
 
   NSString* urlStr = [urls objectAtIndex:0];
   NSString* nameStr = [titles objectAtIndex:0];

@@ -131,8 +131,8 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
     // Draw the backdrop with horizontal lanes.
     const int kLaneWidth = width;
     const int kLaneHeight = height / kCSSTestColorsCount;
-    skia::RefPtr<SkSurface> backing_store =
-        skia::AdoptRef(SkSurface::NewRasterN32Premul(width, height));
+    sk_sp<SkSurface> backing_store =
+        SkSurface::MakeRasterN32Premul(width, height);
     SkCanvas* canvas = backing_store->getCanvas();
     canvas->clear(SK_ColorTRANSPARENT);
     for (int i = 0; i < kCSSTestColorsCount; ++i) {
@@ -141,27 +141,23 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
       canvas->drawRect(
           SkRect::MakeXYWH(0, i * kLaneHeight, kLaneWidth, kLaneHeight), paint);
     }
-    scoped_refptr<PictureImageLayer> layer =
-        PictureImageLayer::Create(layer_settings());
+    scoped_refptr<PictureImageLayer> layer = PictureImageLayer::Create();
     layer->SetIsDrawable(true);
     layer->SetBounds(gfx::Size(width, height));
-    skia::RefPtr<const SkImage> image =
-        skia::AdoptRef(backing_store->newImageSnapshot());
-    layer->SetImage(std::move(image));
+    layer->SetImage(backing_store->makeImageSnapshot());
     return layer;
   }
 
   void SetupMaskLayer(scoped_refptr<Layer> layer) {
     const int kMaskOffset = 2;
     gfx::Size bounds = layer->bounds();
-    scoped_refptr<PictureImageLayer> mask =
-        PictureImageLayer::Create(layer_settings());
+    scoped_refptr<PictureImageLayer> mask = PictureImageLayer::Create();
     mask->SetIsDrawable(true);
     mask->SetIsMask(true);
     mask->SetBounds(bounds);
 
-    skia::RefPtr<SkSurface> surface = skia::AdoptRef(
-        SkSurface::NewRasterN32Premul(bounds.width(), bounds.height()));
+    sk_sp<SkSurface> surface =
+        SkSurface::MakeRasterN32Premul(bounds.width(), bounds.height());
     SkCanvas* canvas = surface->getCanvas();
     SkPaint paint;
     paint.setColor(SK_ColorWHITE);
@@ -170,9 +166,7 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
                                       bounds.width() - kMaskOffset * 2,
                                       bounds.height() - kMaskOffset * 2),
                      paint);
-    skia::RefPtr<const SkImage> image =
-        skia::AdoptRef(surface->newImageSnapshot());
-    mask->SetImage(std::move(image));
+    mask->SetImage(surface->makeImageSnapshot());
     layer->SetMaskLayer(mask.get());
   }
 
@@ -218,7 +212,7 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
           CreateSolidColorLayer(child_rect, color);
       lane->SetBlendMode(blend_mode);
       lane->SetOpacity(opacity);
-      lane->SetForceRenderSurface(true);
+      lane->SetForceRenderSurfaceForTesting(true);
       if (flags & kUseMasks)
         SetupMaskLayer(lane);
       if (flags & kUseColorMatrix) {

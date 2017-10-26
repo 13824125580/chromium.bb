@@ -5,6 +5,7 @@
 #include "chrome/app/chrome_main_delegate.h"
 
 #include <stddef.h>
+#include <string>
 
 #include "base/base_paths.h"
 #include "base/command_line.h"
@@ -23,7 +24,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event_impl.h"
 #include "build/build_config.h"
-#include "chrome/app/chrome_crash_reporter_client.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/common/channel_info.h"
@@ -40,7 +40,7 @@
 #include "chrome/common/switch_utils.h"
 #include "chrome/common/trace_event_args_whitelist.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/plugin/chrome_content_plugin_client.h"
+#include "chrome/gpu/chrome_content_gpu_client.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/utility/chrome_content_utility_client.h"
 #include "components/component_updater/component_updater_paths.h"
@@ -51,6 +51,7 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/common/constants.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 
@@ -59,6 +60,7 @@
 #include <malloc.h>
 #include <algorithm>
 #include "base/debug/close_handle_hook_win.h"
+#include "chrome/browser/downgrade/user_data_downgrade.h"
 #include "chrome/common/child_process_logging.h"
 #include "chrome/common/v8_breakpad_support_win.h"
 #include "components/crash/content/app/crashpad.h"
@@ -79,6 +81,7 @@
 #if defined(OS_POSIX)
 #include <locale.h>
 #include <signal.h>
+#include "chrome/app/chrome_crash_reporter_client.h"
 #endif
 
 #if !defined(DISABLE_NACL) && defined(OS_LINUX)
@@ -109,7 +112,7 @@
 #if defined(USE_X11)
 #include <stdlib.h>
 #include <string.h>
-#include "ui/base/x/x11_util.h"
+#include "ui/base/x/x11_util.h"  // nogncheck
 #endif
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
@@ -122,6 +125,10 @@
 
 #if defined(OS_MACOSX) || defined(OS_WIN)
 #include "chrome/browser/policy/policy_path_parser.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "components/metrics/leak_detector/leak_detector.h"
 #endif
 
 #if !defined(DISABLE_NACL)
@@ -141,12 +148,12 @@
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER)
 #include "chrome/child/pdf_child_init.h"
 
+base::LazyInstance<ChromeContentGpuClient> g_chrome_content_gpu_client =
+    LAZY_INSTANCE_INITIALIZER;
 base::LazyInstance<ChromeContentRendererClient>
     g_chrome_content_renderer_client = LAZY_INSTANCE_INITIALIZER;
 base::LazyInstance<ChromeContentUtilityClient>
     g_chrome_content_utility_client = LAZY_INSTANCE_INITIALIZER;
-base::LazyInstance<ChromeContentPluginClient>
-    g_chrome_content_plugin_client = LAZY_INSTANCE_INITIALIZER;
 #endif
 
 #if !defined(CHROME_MULTIPLE_DLL_CHILD)
@@ -230,11 +237,10 @@ static void AdjustLinuxOOMScore(const std::string& process_type) {
   const int kPluginScore = kMiscScore - kScoreBump;
   int score = -1;
 
-  DCHECK(kMiscScore > 0);
-  DCHECK(kPluginScore > 0);
+  DCHECK_GT(kMiscScore, 0);
+  DCHECK_GT(kPluginScore, 0);
 
-  if (process_type == switches::kPluginProcess ||
-      process_type == switches::kPpapiPluginProcess) {
+  if (process_type == switches::kPpapiPluginProcess) {
     score = kPluginScore;
   } else if (process_type == switches::kPpapiBrokerProcess) {
     // The broker should be killed before the PPAPI plugin.
@@ -272,11 +278,6 @@ static void AdjustLinuxOOMScore(const std::string& process_type) {
 // and resources loaded.
 bool SubprocessNeedsResourceBundle(const std::string& process_type) {
   return
-#if defined(OS_WIN) || defined(OS_MACOSX)
-      // Windows needs resources for the default/null plugin.
-      // Mac needs them for the plugin process name.
-      process_type == switches::kPluginProcess ||
-#endif
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
       // The zygote process opens the resources for the renderers.
       process_type == switches::kZygoteProcess ||
@@ -335,7 +336,7 @@ void SIGTERMProfilingShutdown(int signal) {
   struct sigaction sigact;
   memset(&sigact, 0, sizeof(sigact));
   sigact.sa_handler = SIG_DFL;
-  CHECK(sigaction(SIGTERM, &sigact, NULL) == 0);
+  CHECK_EQ(sigaction(SIGTERM, &sigact, NULL), 0);
   raise(signal);
 }
 
@@ -344,7 +345,7 @@ void SetUpProfilingShutdownHandler() {
   sigact.sa_handler = SIGTERMProfilingShutdown;
   sigact.sa_flags = SA_RESETHAND;
   sigemptyset(&sigact.sa_mask);
-  CHECK(sigaction(SIGTERM, &sigact, NULL) == 0);
+  CHECK_EQ(sigaction(SIGTERM, &sigact, NULL), 0);
 }
 #endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
@@ -369,7 +370,7 @@ void InitializeUserDataDir() {
   // support the virtual desktop use-case.
   if (user_data_dir.empty()) {
     std::string user_data_dir_string;
-    scoped_ptr<base::Environment> environment(base::Environment::Create());
+    std::unique_ptr<base::Environment> environment(base::Environment::Create());
     if (environment->GetVar("CHROME_USER_DATA_DIR", &user_data_dir_string) &&
         base::IsStringUTF8(user_data_dir_string)) {
       user_data_dir = base::FilePath::FromUTF8Unsafe(user_data_dir_string);
@@ -637,6 +638,15 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
 
   content::SetContentClient(&chrome_content_client_);
 
+#if defined (OS_CHROMEOS)
+  // The TLS slot used by metrics::LeakDetector needs to be initialized early to
+  // ensure that it gets assigned a low slow number. If it gets initialized too
+  // late, the glibc TLS system will require a malloc call in order to allocate
+  // storage for a higher slot number. Normally that's not a problem, but in
+  // LeakDetector it will result in recursive alloc hook function calls.
+  metrics::LeakDetector::InitTLSSlot();
+#endif
+
   return false;
 }
 
@@ -717,12 +727,23 @@ void ChromeMainDelegate::PreSandboxStartup() {
 #endif
 
   // Initialize the user data dir for any process type that needs it.
-  if (chrome::ProcessNeedsProfileDir(process_type))
+  if (chrome::ProcessNeedsProfileDir(process_type)) {
     InitializeUserDataDir();
+#if defined(OS_WIN) && !defined(CHROME_MULTIPLE_DLL_CHILD)
+    if (downgrade::IsMSIInstall()) {
+      downgrade::MoveUserDataForFirstRunAfterDowngrade();
+      base::FilePath user_data_dir;
+      if (PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+        downgrade::UpdateLastVersion(user_data_dir);
+    }
+#endif
+  }
 
   // Register component_updater PathProvider after DIR_USER_DATA overidden by
   // command line flags. Maybe move the chrome PathProvider down here also?
-  component_updater::RegisterPathProvider(chrome::DIR_USER_DATA);
+  component_updater::RegisterPathProvider(chrome::DIR_COMPONENTS,
+                                          chrome::DIR_INTERNAL_PLUGINS,
+                                          chrome::DIR_USER_DATA);
 
   // Enable Message Loop related state asap.
   if (command_line.HasSwitch(switches::kMessageLoopHistogrammer))
@@ -792,6 +813,7 @@ void ChromeMainDelegate::PreSandboxStartup() {
     base::i18n::SetICUDefaultLocale(locale);
     const std::string loaded_locale = locale;
 #else
+    ui::MaterialDesignController::Initialize();
     const std::string loaded_locale =
         ui::ResourceBundle::InitSharedInstanceWithLocale(
             locale, NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
@@ -984,11 +1006,11 @@ ChromeMainDelegate::CreateContentBrowserClient() {
 #endif
 }
 
-content::ContentPluginClient* ChromeMainDelegate::CreateContentPluginClient() {
+content::ContentGpuClient* ChromeMainDelegate::CreateContentGpuClient() {
 #if defined(CHROME_MULTIPLE_DLL_BROWSER)
-  return NULL;
+  return nullptr;
 #else
-  return g_chrome_content_plugin_client.Pointer();
+  return g_chrome_content_gpu_client.Pointer();
 #endif
 }
 

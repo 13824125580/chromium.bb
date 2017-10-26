@@ -10,6 +10,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
@@ -46,15 +47,18 @@ const char kSyntheticDelayCategoryFilterPrefix[] = "DELAY(";
 // String parameters that is used to parse memory dump config in trace config
 // string.
 const char kMemoryDumpConfigParam[] = "memory_dump_config";
+const char kAllowedDumpModesParam[] = "allowed_dump_modes";
 const char kTriggersParam[] = "triggers";
 const char kPeriodicIntervalParam[] = "periodic_interval_ms";
 const char kModeParam[] = "mode";
+const char kHeapProfilerOptions[] = "heap_profiler_options";
+const char kBreakdownThresholdBytes[] = "breakdown_threshold_bytes";
 
 // Default configuration of memory dumps.
-const TraceConfig::MemoryDumpTriggerConfig kDefaultHeavyMemoryDumpTrigger = {
+const TraceConfig::MemoryDumpConfig::Trigger kDefaultHeavyMemoryDumpTrigger = {
     2000,  // periodic_interval_ms
     MemoryDumpLevelOfDetail::DETAILED};
-const TraceConfig::MemoryDumpTriggerConfig kDefaultLightMemoryDumpTrigger = {
+const TraceConfig::MemoryDumpConfig::Trigger kDefaultLightMemoryDumpTrigger = {
     250,  // periodic_interval_ms
     MemoryDumpLevelOfDetail::LIGHT};
 
@@ -63,18 +67,52 @@ class ConvertableTraceConfigToTraceFormat
  public:
   explicit ConvertableTraceConfigToTraceFormat(const TraceConfig& trace_config)
       : trace_config_(trace_config) {}
+  ~ConvertableTraceConfigToTraceFormat() override {}
   void AppendAsTraceFormat(std::string* out) const override {
     out->append(trace_config_.ToString());
   }
-
- protected:
-  ~ConvertableTraceConfigToTraceFormat() override {}
 
  private:
   const TraceConfig trace_config_;
 };
 
+std::set<MemoryDumpLevelOfDetail> GetDefaultAllowedMemoryDumpModes() {
+  std::set<MemoryDumpLevelOfDetail> all_modes;
+  for (uint32_t mode = static_cast<uint32_t>(MemoryDumpLevelOfDetail::FIRST);
+       mode <= static_cast<uint32_t>(MemoryDumpLevelOfDetail::LAST); mode++) {
+    all_modes.insert(static_cast<MemoryDumpLevelOfDetail>(mode));
+  }
+  return all_modes;
+}
+
 }  // namespace
+
+
+TraceConfig::MemoryDumpConfig::HeapProfiler::HeapProfiler() :
+    breakdown_threshold_bytes(kDefaultBreakdownThresholdBytes) {};
+
+void TraceConfig::MemoryDumpConfig::HeapProfiler::Clear() {
+  breakdown_threshold_bytes = kDefaultBreakdownThresholdBytes;
+}
+
+void TraceConfig::ResetMemoryDumpConfig(
+    const TraceConfig::MemoryDumpConfig& memory_dump_config) {
+  memory_dump_config_.Clear();
+  memory_dump_config_ = memory_dump_config;
+}
+
+TraceConfig::MemoryDumpConfig::MemoryDumpConfig() {};
+
+TraceConfig::MemoryDumpConfig::MemoryDumpConfig(
+    const MemoryDumpConfig& other) = default;
+
+TraceConfig::MemoryDumpConfig::~MemoryDumpConfig() {};
+
+void TraceConfig::MemoryDumpConfig::Clear() {
+  allowed_dump_modes.clear();
+  triggers.clear();
+  heap_profiler_options.Clear();
+}
 
 TraceConfig::TraceConfig() {
   InitializeDefault();
@@ -105,6 +143,10 @@ TraceConfig::TraceConfig(const std::string& category_filter_string,
       NOTREACHED();
   }
   InitializeFromStrings(category_filter_string, trace_options_string);
+}
+
+TraceConfig::TraceConfig(const DictionaryValue& config) {
+  InitializeFromConfigDict(config);
 }
 
 TraceConfig::TraceConfig(const std::string& config_string) {
@@ -158,9 +200,9 @@ std::string TraceConfig::ToString() const {
   return json;
 }
 
-scoped_refptr<ConvertableToTraceFormat>
+std::unique_ptr<ConvertableToTraceFormat>
 TraceConfig::AsConvertableToTraceFormat() const {
-  return new ConvertableTraceConfigToTraceFormat(*this);
+  return WrapUnique(new ConvertableTraceConfigToTraceFormat(*this));
 }
 
 std::string TraceConfig::ToCategoryFilterString() const {
@@ -254,9 +296,9 @@ void TraceConfig::Merge(const TraceConfig& config) {
     included_categories_.clear();
   }
 
-  memory_dump_config_.insert(memory_dump_config_.end(),
-                             config.memory_dump_config_.begin(),
-                             config.memory_dump_config_.end());
+  memory_dump_config_.triggers.insert(memory_dump_config_.triggers.end(),
+                             config.memory_dump_config_.triggers.begin(),
+                             config.memory_dump_config_.triggers.end());
 
   disabled_categories_.insert(disabled_categories_.end(),
                               config.disabled_categories_.begin(),
@@ -278,7 +320,7 @@ void TraceConfig::Clear() {
   disabled_categories_.clear();
   excluded_categories_.clear();
   synthetic_delays_.clear();
-  memory_dump_config_.clear();
+  memory_dump_config_.Clear();
 }
 
 void TraceConfig::InitializeDefault() {
@@ -286,22 +328,12 @@ void TraceConfig::InitializeDefault() {
   enable_sampling_ = false;
   enable_systrace_ = false;
   enable_argument_filter_ = false;
-  excluded_categories_.push_back("*Debug");
-  excluded_categories_.push_back("*Test");
 }
 
-void TraceConfig::InitializeFromConfigString(const std::string& config_string) {
-  scoped_ptr<base::Value> value(base::JSONReader::Read(config_string));
-  if (!value || !value->IsType(base::Value::TYPE_DICTIONARY)) {
-    InitializeDefault();
-    return;
-  }
-  scoped_ptr<base::DictionaryValue> dict(
-        static_cast<base::DictionaryValue*>(value.release()));
-
+void TraceConfig::InitializeFromConfigDict(const DictionaryValue& dict) {
   record_mode_ = RECORD_UNTIL_FULL;
   std::string record_mode;
-  if (dict->GetString(kRecordModeParam, &record_mode)) {
+  if (dict.GetString(kRecordModeParam, &record_mode)) {
     if (record_mode == kRecordUntilFull) {
       record_mode_ = RECORD_UNTIL_FULL;
     } else if (record_mode == kRecordContinuously) {
@@ -314,40 +346,55 @@ void TraceConfig::InitializeFromConfigString(const std::string& config_string) {
   }
 
   bool enable_sampling;
-  if (!dict->GetBoolean(kEnableSamplingParam, &enable_sampling))
+  if (!dict.GetBoolean(kEnableSamplingParam, &enable_sampling))
     enable_sampling_ = false;
   else
     enable_sampling_ = enable_sampling;
 
   bool enable_systrace;
-  if (!dict->GetBoolean(kEnableSystraceParam, &enable_systrace))
+  if (!dict.GetBoolean(kEnableSystraceParam, &enable_systrace))
     enable_systrace_ = false;
   else
     enable_systrace_ = enable_systrace;
 
   bool enable_argument_filter;
-  if (!dict->GetBoolean(kEnableArgumentFilterParam, &enable_argument_filter))
+  if (!dict.GetBoolean(kEnableArgumentFilterParam, &enable_argument_filter))
     enable_argument_filter_ = false;
   else
     enable_argument_filter_ = enable_argument_filter;
 
-  base::ListValue* category_list = nullptr;
-  if (dict->GetList(kIncludedCategoriesParam, &category_list))
+  const base::ListValue* category_list = nullptr;
+  if (dict.GetList(kIncludedCategoriesParam, &category_list))
     SetCategoriesFromIncludedList(*category_list);
-  if (dict->GetList(kExcludedCategoriesParam, &category_list))
+  if (dict.GetList(kExcludedCategoriesParam, &category_list))
     SetCategoriesFromExcludedList(*category_list);
-  if (dict->GetList(kSyntheticDelaysParam, &category_list))
+  if (dict.GetList(kSyntheticDelaysParam, &category_list))
     SetSyntheticDelaysFromList(*category_list);
 
   if (IsCategoryEnabled(MemoryDumpManager::kTraceCategory)) {
     // If dump triggers not set, the client is using the legacy with just
     // category enabled. So, use the default periodic dump config.
-    base::DictionaryValue* memory_dump_config = nullptr;
-    if (dict->GetDictionary(kMemoryDumpConfigParam, &memory_dump_config))
-      SetMemoryDumpConfig(*memory_dump_config);
+    const base::DictionaryValue* memory_dump_config = nullptr;
+    if (dict.GetDictionary(kMemoryDumpConfigParam, &memory_dump_config))
+      SetMemoryDumpConfigFromConfigDict(*memory_dump_config);
     else
       SetDefaultMemoryDumpConfig();
   }
+}
+
+void TraceConfig::InitializeFromConfigString(const std::string& config_string) {
+  std::unique_ptr<Value> value(JSONReader::Read(config_string));
+  if (!value)
+    return InitializeDefault();
+
+  const DictionaryValue* dict = nullptr;
+  bool is_dict = value->GetAsDictionary(&dict);
+
+  if (!is_dict)
+    return InitializeDefault();
+
+  DCHECK(dict);
+  InitializeFromConfigDict(*dict);
 }
 
 void TraceConfig::InitializeFromStrings(
@@ -467,7 +514,7 @@ void TraceConfig::AddCategoryToDict(base::DictionaryValue& dict,
   if (categories.empty())
     return;
 
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   for (StringList::const_iterator ci = categories.begin();
        ci != categories.end();
        ++ci) {
@@ -477,41 +524,71 @@ void TraceConfig::AddCategoryToDict(base::DictionaryValue& dict,
   dict.Set(param, std::move(list));
 }
 
-void TraceConfig::SetMemoryDumpConfig(
+void TraceConfig::SetMemoryDumpConfigFromConfigDict(
     const base::DictionaryValue& memory_dump_config) {
-  memory_dump_config_.clear();
-
-  const base::ListValue* trigger_list = nullptr;
-  if (!memory_dump_config.GetList(kTriggersParam, &trigger_list) ||
-      trigger_list->GetSize() == 0) {
-    return;
+  // Set allowed dump modes.
+  memory_dump_config_.allowed_dump_modes.clear();
+  const base::ListValue* allowed_modes_list;
+  if (memory_dump_config.GetList(kAllowedDumpModesParam, &allowed_modes_list)) {
+    for (size_t i = 0; i < allowed_modes_list->GetSize(); ++i) {
+      std::string level_of_detail_str;
+      allowed_modes_list->GetString(i, &level_of_detail_str);
+      memory_dump_config_.allowed_dump_modes.insert(
+          StringToMemoryDumpLevelOfDetail(level_of_detail_str));
+    }
+  } else {
+    // If allowed modes param is not given then allow all modes by default.
+    memory_dump_config_.allowed_dump_modes = GetDefaultAllowedMemoryDumpModes();
   }
 
-  for (size_t i = 0; i < trigger_list->GetSize(); ++i) {
-    const base::DictionaryValue* trigger = nullptr;
-    if (!trigger_list->GetDictionary(i, &trigger))
-      continue;
+  // Set triggers
+  memory_dump_config_.triggers.clear();
+  const base::ListValue* trigger_list = nullptr;
+  if (memory_dump_config.GetList(kTriggersParam, &trigger_list) &&
+      trigger_list->GetSize() > 0) {
+    for (size_t i = 0; i < trigger_list->GetSize(); ++i) {
+      const base::DictionaryValue* trigger = nullptr;
+      if (!trigger_list->GetDictionary(i, &trigger))
+        continue;
 
-    MemoryDumpTriggerConfig dump_config;
-    int interval = 0;
+      MemoryDumpConfig::Trigger dump_config;
+      int interval = 0;
 
-    if (!trigger->GetInteger(kPeriodicIntervalParam, &interval)) {
-      continue;
+      if (!trigger->GetInteger(kPeriodicIntervalParam, &interval)) {
+        continue;
+      }
+      DCHECK_GT(interval, 0);
+      dump_config.periodic_interval_ms = static_cast<uint32_t>(interval);
+      std::string level_of_detail_str;
+      trigger->GetString(kModeParam, &level_of_detail_str);
+      dump_config.level_of_detail =
+          StringToMemoryDumpLevelOfDetail(level_of_detail_str);
+      memory_dump_config_.triggers.push_back(dump_config);
     }
-    DCHECK_GT(interval, 0);
-    dump_config.periodic_interval_ms = static_cast<uint32_t>(interval);
-    std::string level_of_detail_str;
-    trigger->GetString(kModeParam, &level_of_detail_str);
-    dump_config.level_of_detail =
-        StringToMemoryDumpLevelOfDetail(level_of_detail_str);
-    memory_dump_config_.push_back(dump_config);
+  }
+
+  // Set heap profiler options
+  const base::DictionaryValue* heap_profiler_options = nullptr;
+  if (memory_dump_config.GetDictionary(kHeapProfilerOptions,
+                                       &heap_profiler_options)) {
+    int min_size_bytes = 0;
+    if (heap_profiler_options->GetInteger(kBreakdownThresholdBytes,
+                                         &min_size_bytes)
+        && min_size_bytes >= 0) {
+      memory_dump_config_.heap_profiler_options.breakdown_threshold_bytes =
+          static_cast<size_t>(min_size_bytes);
+    } else {
+      memory_dump_config_.heap_profiler_options.breakdown_threshold_bytes =
+          MemoryDumpConfig::HeapProfiler::kDefaultBreakdownThresholdBytes;
+    }
   }
 }
 
 void TraceConfig::SetDefaultMemoryDumpConfig() {
-  memory_dump_config_.clear();
-  memory_dump_config_.push_back(kDefaultHeavyMemoryDumpTrigger);
-  memory_dump_config_.push_back(kDefaultLightMemoryDumpTrigger);
+  memory_dump_config_.Clear();
+  memory_dump_config_.triggers.push_back(kDefaultHeavyMemoryDumpTrigger);
+  memory_dump_config_.triggers.push_back(kDefaultLightMemoryDumpTrigger);
+  memory_dump_config_.allowed_dump_modes = GetDefaultAllowedMemoryDumpModes();
 }
 
 void TraceConfig::ToDict(base::DictionaryValue& dict) const {
@@ -556,11 +633,21 @@ void TraceConfig::ToDict(base::DictionaryValue& dict) const {
   AddCategoryToDict(dict, kSyntheticDelaysParam, synthetic_delays_);
 
   if (IsCategoryEnabled(MemoryDumpManager::kTraceCategory)) {
-    scoped_ptr<base::DictionaryValue> memory_dump_config(
+    std::unique_ptr<base::DictionaryValue> memory_dump_config(
         new base::DictionaryValue());
-    scoped_ptr<base::ListValue> triggers_list(new base::ListValue());
-    for (const MemoryDumpTriggerConfig& config : memory_dump_config_) {
-      scoped_ptr<base::DictionaryValue> trigger_dict(
+    std::unique_ptr<base::ListValue> allowed_modes_list(new base::ListValue());
+    for (MemoryDumpLevelOfDetail dump_mode :
+         memory_dump_config_.allowed_dump_modes) {
+      allowed_modes_list->AppendString(
+          MemoryDumpLevelOfDetailToString(dump_mode));
+    }
+    memory_dump_config->Set(kAllowedDumpModesParam,
+                            std::move(allowed_modes_list));
+
+    std::unique_ptr<base::ListValue> triggers_list(new base::ListValue());
+    for (const MemoryDumpConfig::Trigger& config
+        : memory_dump_config_.triggers) {
+      std::unique_ptr<base::DictionaryValue> trigger_dict(
           new base::DictionaryValue());
       trigger_dict->SetInteger(kPeriodicIntervalParam,
                                static_cast<int>(config.periodic_interval_ms));
@@ -572,6 +659,17 @@ void TraceConfig::ToDict(base::DictionaryValue& dict) const {
     // Empty triggers will still be specified explicitly since it means that
     // the periodic dumps are not enabled.
     memory_dump_config->Set(kTriggersParam, std::move(triggers_list));
+
+    if (memory_dump_config_.heap_profiler_options.breakdown_threshold_bytes !=
+        MemoryDumpConfig::HeapProfiler::kDefaultBreakdownThresholdBytes) {
+      std::unique_ptr<base::DictionaryValue> heap_profiler_options(
+          new base::DictionaryValue());
+      heap_profiler_options->SetInteger(
+          kBreakdownThresholdBytes,
+          memory_dump_config_.heap_profiler_options.breakdown_threshold_bytes);
+      memory_dump_config->Set(kHeapProfilerOptions,
+                              std::move(heap_profiler_options));
+    }
     dict.Set(kMemoryDumpConfigParam, std::move(memory_dump_config));
   }
 }

@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
+#include "net/base/net_errors.h"
 #include "net/dns/dns_client.h"
 #include "net/dns/dns_config_service.h"
 #include "net/dns/host_cache.h"
@@ -103,24 +104,31 @@ HostResolver::~HostResolver() {
 void HostResolver::SetDnsClientEnabled(bool enabled) {
 }
 
-HostCache* HostResolver::GetHostCache() {
-  return NULL;
+void HostResolver::ChangeRequestPriority(RequestHandle req,
+                                         RequestPriority priority) {
+  NOTIMPLEMENTED();
 }
 
-scoped_ptr<base::Value> HostResolver::GetDnsConfigAsValue() const {
+HostCache* HostResolver::GetHostCache() {
+  return nullptr;
+}
+
+std::unique_ptr<base::Value> HostResolver::GetDnsConfigAsValue() const {
   return nullptr;
 }
 
 // static
-scoped_ptr<HostResolver> HostResolver::CreateSystemResolver(
+std::unique_ptr<HostResolver> HostResolver::CreateSystemResolver(
     const Options& options,
     NetLog* net_log) {
-  return scoped_ptr<HostResolver>(new HostResolverImpl(options, net_log));
+  return std::unique_ptr<HostResolver>(new HostResolverImpl(options, net_log));
 }
 
 // static
-scoped_ptr<HostResolver> HostResolver::CreateDefaultResolver(NetLog* net_log) {
-  return scoped_ptr<HostResolver>(new HostResolverImpl(Options(), net_log));
+std::unique_ptr<HostResolver> HostResolver::CreateDefaultResolver(
+    NetLog* net_log) {
+  return std::unique_ptr<HostResolver>(
+      new HostResolverImpl(Options(), net_log));
 }
 
 HostResolver::HostResolver() {

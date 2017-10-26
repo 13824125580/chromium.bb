@@ -15,18 +15,18 @@
 #include <set>
 #include <vector>
 
+#include "webrtc/base/criticalsection.h"
 #include "webrtc/base/thread_annotations.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_receiver_help.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_utility.h"
 #include "webrtc/modules/rtp_rtcp/source/rtp_utility.h"
-#include "webrtc/modules/rtp_rtcp/source/tmmbr_help.h"
 #include "webrtc/typedefs.h"
 
 namespace webrtc {
 class ModuleRtpRtcpImpl;
 
-class RTCPReceiver : public TMMBRHelp
+class RTCPReceiver
 {
 public:
  RTCPReceiver(Clock* clock,
@@ -38,19 +38,13 @@ public:
               ModuleRtpRtcpImpl* owner);
     virtual ~RTCPReceiver();
 
-    RtcpMode Status() const;
-    void SetRTCPStatus(RtcpMode method);
-
     int64_t LastReceived();
     int64_t LastReceivedReceiverReport() const;
 
     void SetSsrcs(uint32_t main_ssrc,
                   const std::set<uint32_t>& registered_ssrcs);
-    void SetRelaySSRC(uint32_t ssrc);
     void SetRemoteSSRC(uint32_t ssrc);
     uint32_t RemoteSSRC() const;
-
-    uint32_t RelaySSRC() const;
 
     int32_t IncomingRTCPPacket(
         RTCPHelp::RTCPPacketInformation& rtcpPacketInformation,
@@ -270,16 +264,15 @@ protected:
 
   Clock* const _clock;
   const bool receiver_only_;
-  RtcpMode _method;
   int64_t _lastReceived;
   ModuleRtpRtcpImpl& _rtpRtcp;
 
-  CriticalSectionWrapper* _criticalSectionFeedbacks;
+  rtc::CriticalSection _criticalSectionFeedbacks;
   RtcpBandwidthObserver* const _cbRtcpBandwidthObserver;
   RtcpIntraFrameObserver* const _cbRtcpIntraFrameObserver;
   TransportFeedbackObserver* const _cbTransportFeedbackObserver;
 
-  CriticalSectionWrapper* _criticalSectionRTCPReceiver;
+  rtc::CriticalSection _criticalSectionRTCPReceiver;
   uint32_t main_ssrc_ GUARDED_BY(_criticalSectionRTCPReceiver);
   uint32_t _remoteSSRC GUARDED_BY(_criticalSectionRTCPReceiver);
   std::set<uint32_t> registered_ssrcs_ GUARDED_BY(_criticalSectionRTCPReceiver);
@@ -304,8 +297,6 @@ protected:
       GUARDED_BY(_criticalSectionRTCPReceiver);
   ReceivedInfoMap _receivedInfoMap;
   std::map<uint32_t, RTCPUtility::RTCPCnameInformation*> _receivedCnameMap;
-
-  uint32_t _packetTimeOutMS;
 
   // The last time we received an RTCP RR.
   int64_t _lastReceivedRrMs;

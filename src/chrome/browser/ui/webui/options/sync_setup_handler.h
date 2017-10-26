@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_SYNC_SETUP_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_SYNC_SETUP_HANDLER_H_
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/sync/sync_startup_tracker.h"
@@ -24,6 +25,10 @@ class WebContents;
 
 namespace signin_metrics {
 enum class AccessPoint;
+}
+
+namespace sync_driver {
+class SyncSetupInProgressHandle;
 }
 
 class SyncSetupHandler : public options::OptionsPageUIHandler,
@@ -43,7 +48,6 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
 
   // LoginUIService::LoginUI implementation.
   void FocusUI() override;
-  void CloseUI() override;
 
   static void GetStaticLocalizedValues(
       base::DictionaryValue* localized_strings,
@@ -136,6 +140,9 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
   // Displays an error dialog which shows timeout of starting the sync backend.
   void DisplayTimeout();
 
+  // Closes the associated sync settings page.
+  void CloseUI();
+
   // Returns true if this object is the active login object.
   bool IsActiveLogin() const;
 
@@ -150,7 +157,10 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
   void DisplayConfigureSync(bool passphrase_failed);
 
   // Helper object used to wait for the sync backend to startup.
-  scoped_ptr<SyncStartupTracker> sync_startup_tracker_;
+  std::unique_ptr<SyncStartupTracker> sync_startup_tracker_;
+
+  // Prevents Sync from running until configuration is complete.
+  std::unique_ptr<sync_driver::SyncSetupInProgressHandle> sync_blocker_;
 
   // Set to true whenever the sync configure UI is visible. This is used to tell
   // what stage of the setup wizard the user was in and to update the UMA
@@ -159,7 +169,7 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
 
   // The OneShotTimer object used to timeout of starting the sync backend
   // service.
-  scoped_ptr<base::OneShotTimer> backend_start_timer_;
+  std::unique_ptr<base::OneShotTimer> backend_start_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncSetupHandler);
 };

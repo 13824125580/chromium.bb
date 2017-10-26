@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
 #include "content/browser/indexed_db/indexed_db_connection.h"
@@ -18,13 +19,14 @@
 #include "content/browser/indexed_db/mock_indexed_db_callbacks.h"
 #include "content/browser/indexed_db/mock_indexed_db_database_callbacks.h"
 #include "content/browser/quota/mock_quota_manager_proxy.h"
-#include "storage/common/database/database_identifier.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseException.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 using base::ASCIIToUTF16;
+using url::Origin;
 
 namespace content {
 
@@ -35,7 +37,7 @@ class MockIDBFactory : public IndexedDBFactoryImpl {
   explicit MockIDBFactory(IndexedDBContextImpl* context)
       : IndexedDBFactoryImpl(context) {}
   scoped_refptr<IndexedDBBackingStore> TestOpenBackingStore(
-      const GURL& origin,
+      const Origin& origin,
       const base::FilePath& data_directory) {
     blink::WebIDBDataLoss data_loss =
         blink::WebIDBDataLossNone;
@@ -55,12 +57,12 @@ class MockIDBFactory : public IndexedDBFactoryImpl {
   }
 
   void TestCloseBackingStore(IndexedDBBackingStore* backing_store) {
-    CloseBackingStore(backing_store->origin_url());
+    CloseBackingStore(backing_store->origin());
   }
 
   void TestReleaseBackingStore(IndexedDBBackingStore* backing_store,
                                bool immediate) {
-    ReleaseBackingStore(backing_store->origin_url(), immediate);
+    ReleaseBackingStore(backing_store->origin(), immediate);
   }
 
  private:
@@ -102,8 +104,8 @@ class IndexedDBFactoryTest : public testing::Test {
 };
 
 TEST_F(IndexedDBFactoryTest, BackingStoreLifetime) {
-  GURL origin1("http://localhost:81");
-  GURL origin2("http://localhost:82");
+  const Origin origin1(GURL("http://localhost:81"));
+  const Origin origin2(GURL("http://localhost:82"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -129,7 +131,7 @@ TEST_F(IndexedDBFactoryTest, BackingStoreLifetime) {
 }
 
 TEST_F(IndexedDBFactoryTest, BackingStoreLazyClose) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -157,8 +159,8 @@ TEST_F(IndexedDBFactoryTest, BackingStoreLazyClose) {
 }
 
 TEST_F(IndexedDBFactoryTest, MemoryBackingStoreLifetime) {
-  GURL origin1("http://localhost:81");
-  GURL origin2("http://localhost:82");
+  const Origin origin1(GURL("http://localhost:81"));
+  const Origin origin2(GURL("http://localhost:82"));
 
   scoped_refptr<IndexedDBBackingStore> mem_store1 =
       factory()->TestOpenBackingStore(origin1, base::FilePath());
@@ -195,12 +197,12 @@ TEST_F(IndexedDBFactoryTest, RejectLongOrigins) {
   EXPECT_GT(limit, 0);
 
   std::string origin(limit + 1, 'x');
-  GURL too_long_origin("http://" + origin + ":81/");
+  Origin too_long_origin(GURL("http://" + origin + ":81/"));
   scoped_refptr<IndexedDBBackingStore> diskStore1 =
       factory()->TestOpenBackingStore(too_long_origin, base_path);
   EXPECT_FALSE(diskStore1.get());
 
-  GURL ok_origin("http://someorigin.com:82/");
+  Origin ok_origin(GURL("http://someorigin.com:82/"));
   scoped_refptr<IndexedDBBackingStore> diskStore2 =
       factory()->TestOpenBackingStore(ok_origin, base_path);
   EXPECT_TRUE(diskStore2.get());
@@ -216,7 +218,7 @@ class DiskFullFactory : public IndexedDBFactoryImpl {
  private:
   ~DiskFullFactory() override {}
   scoped_refptr<IndexedDBBackingStore> OpenBackingStore(
-      const GURL& origin_url,
+      const Origin& origin,
       const base::FilePath& data_directory,
       net::URLRequestContext* request_context,
       blink::WebIDBDataLoss* data_loss,
@@ -249,7 +251,7 @@ class LookingForQuotaErrorMockCallbacks : public IndexedDBCallbacks {
 };
 
 TEST_F(IndexedDBFactoryTest, QuotaErrorOnDiskFull) {
-  const GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
 
@@ -264,16 +266,13 @@ TEST_F(IndexedDBFactoryTest, QuotaErrorOnDiskFull) {
                                         0, /* child_process_id */
                                         2, /* transaction_id */
                                         1 /* version */);
-  factory->Open(name,
-                connection,
-                NULL /* request_context */,
-                origin,
+  factory->Open(name, connection, NULL /* request_context */, origin,
                 temp_directory.path());
   EXPECT_TRUE(callbacks->error_called());
 }
 
 TEST_F(IndexedDBFactoryTest, BackingStoreReleasedOnForcedClose) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -285,11 +284,8 @@ TEST_F(IndexedDBFactoryTest, BackingStoreReleasedOnForcedClose) {
   IndexedDBPendingConnection connection(
       callbacks, db_callbacks, 0, /* child_process_id */
       transaction_id, IndexedDBDatabaseMetadata::DEFAULT_VERSION);
-  factory()->Open(ASCIIToUTF16("db"),
-                  connection,
-                  NULL /* request_context */,
-                  origin,
-                  temp_directory.path());
+  factory()->Open(ASCIIToUTF16("db"), connection, NULL /* request_context */,
+                  origin, temp_directory.path());
 
   EXPECT_TRUE(callbacks->connection());
 
@@ -303,7 +299,7 @@ TEST_F(IndexedDBFactoryTest, BackingStoreReleasedOnForcedClose) {
 }
 
 TEST_F(IndexedDBFactoryTest, BackingStoreReleaseDelayedOnClose) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -315,11 +311,8 @@ TEST_F(IndexedDBFactoryTest, BackingStoreReleaseDelayedOnClose) {
   IndexedDBPendingConnection connection(
       callbacks, db_callbacks, 0, /* child_process_id */
       transaction_id, IndexedDBDatabaseMetadata::DEFAULT_VERSION);
-  factory()->Open(ASCIIToUTF16("db"),
-                  connection,
-                  NULL /* request_context */,
-                  origin,
-                  temp_directory.path());
+  factory()->Open(ASCIIToUTF16("db"), connection, NULL /* request_context */,
+                  origin, temp_directory.path());
 
   EXPECT_TRUE(callbacks->connection());
   IndexedDBBackingStore* store =
@@ -344,7 +337,7 @@ TEST_F(IndexedDBFactoryTest, BackingStoreReleaseDelayedOnClose) {
 }
 
 TEST_F(IndexedDBFactoryTest, DeleteDatabaseClosesBackingStore) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -354,11 +347,8 @@ TEST_F(IndexedDBFactoryTest, DeleteDatabaseClosesBackingStore) {
   const bool expect_connection = false;
   scoped_refptr<MockIndexedDBCallbacks> callbacks(
       new MockIndexedDBCallbacks(expect_connection));
-  factory()->DeleteDatabase(ASCIIToUTF16("db"),
-                            NULL /* request_context */,
-                            callbacks,
-                            origin,
-                            temp_directory.path());
+  factory()->DeleteDatabase(ASCIIToUTF16("db"), NULL /* request_context */,
+                            callbacks, origin, temp_directory.path());
 
   EXPECT_TRUE(factory()->IsBackingStoreOpen(origin));
   EXPECT_TRUE(factory()->IsBackingStorePendingClose(origin));
@@ -371,7 +361,7 @@ TEST_F(IndexedDBFactoryTest, DeleteDatabaseClosesBackingStore) {
 }
 
 TEST_F(IndexedDBFactoryTest, GetDatabaseNamesClosesBackingStore) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -381,8 +371,8 @@ TEST_F(IndexedDBFactoryTest, GetDatabaseNamesClosesBackingStore) {
   const bool expect_connection = false;
   scoped_refptr<MockIndexedDBCallbacks> callbacks(
       new MockIndexedDBCallbacks(expect_connection));
-  factory()->GetDatabaseNames(
-      callbacks, origin, temp_directory.path(), NULL /* request_context */);
+  factory()->GetDatabaseNames(callbacks, origin, temp_directory.path(),
+                              NULL /* request_context */);
 
   EXPECT_TRUE(factory()->IsBackingStoreOpen(origin));
   EXPECT_TRUE(factory()->IsBackingStorePendingClose(origin));
@@ -395,7 +385,7 @@ TEST_F(IndexedDBFactoryTest, GetDatabaseNamesClosesBackingStore) {
 }
 
 TEST_F(IndexedDBFactoryTest, ForceCloseReleasesBackingStore) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -407,11 +397,8 @@ TEST_F(IndexedDBFactoryTest, ForceCloseReleasesBackingStore) {
   IndexedDBPendingConnection connection(
       callbacks, db_callbacks, 0, /* child_process_id */
       transaction_id, IndexedDBDatabaseMetadata::DEFAULT_VERSION);
-  factory()->Open(ASCIIToUTF16("db"),
-                  connection,
-                  NULL /* request_context */,
-                  origin,
-                  temp_directory.path());
+  factory()->Open(ASCIIToUTF16("db"), connection, NULL /* request_context */,
+                  origin, temp_directory.path());
 
   EXPECT_TRUE(callbacks->connection());
   EXPECT_TRUE(factory()->IsBackingStoreOpen(origin));
@@ -435,7 +422,7 @@ class UpgradeNeededCallbacks : public MockIndexedDBCallbacks {
  public:
   UpgradeNeededCallbacks() {}
 
-  void OnSuccess(scoped_ptr<IndexedDBConnection> connection,
+  void OnSuccess(std::unique_ptr<IndexedDBConnection> connection,
                  const IndexedDBDatabaseMetadata& metadata) override {
     EXPECT_TRUE(connection_.get());
     EXPECT_FALSE(connection.get());
@@ -443,7 +430,7 @@ class UpgradeNeededCallbacks : public MockIndexedDBCallbacks {
 
   void OnUpgradeNeeded(
       int64_t old_version,
-      scoped_ptr<IndexedDBConnection> connection,
+      std::unique_ptr<IndexedDBConnection> connection,
       const content::IndexedDBDatabaseMetadata& metadata) override {
     connection_ = std::move(connection);
   }
@@ -472,7 +459,7 @@ class ErrorCallbacks : public MockIndexedDBCallbacks {
 };
 
 TEST_F(IndexedDBFactoryTest, DatabaseFailedOpen) {
-  GURL origin("http://localhost:81");
+  const Origin origin(GURL("http://localhost:81"));
 
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
@@ -492,15 +479,12 @@ TEST_F(IndexedDBFactoryTest, DatabaseFailedOpen) {
                                           0, /* child_process_id */
                                           transaction_id,
                                           db_version);
-    factory()->Open(db_name,
-                    connection,
-                    NULL /* request_context */,
-                    origin,
+    factory()->Open(db_name, connection, NULL /* request_context */, origin,
                     temp_directory.path());
     EXPECT_TRUE(factory()->IsDatabaseOpen(origin, db_name));
 
     // Pump the message loop so the upgrade transaction can run.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(callbacks->connection());
     callbacks->connection()->database()->Commit(transaction_id);
 
@@ -517,10 +501,7 @@ TEST_F(IndexedDBFactoryTest, DatabaseFailedOpen) {
                                           0, /* child_process_id */
                                           transaction_id,
                                           db_version - 1);
-    factory()->Open(db_name,
-                    connection,
-                    NULL /* request_context */,
-                    origin,
+    factory()->Open(db_name, connection, NULL /* request_context */, origin,
                     temp_directory.path());
     EXPECT_TRUE(callbacks->saw_error());
     EXPECT_FALSE(factory()->IsDatabaseOpen(origin, db_name));

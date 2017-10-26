@@ -4,9 +4,9 @@
 
 #include "blimp/client/feature/compositor/blimp_compositor.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "blimp/client/feature/compositor/blimp_gpu_memory_buffer_manager.h"
-#include "blimp/common/compositor/blimp_image_serialization_processor.h"
+#include "blimp/client/feature/compositor/blob_image_serialization_processor.h"
 #include "blimp/common/compositor/blimp_task_graph_runner.h"
 #include "cc/proto/compositor_message.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -19,10 +19,7 @@ namespace client {
 
 class MockBlimpCompositorClient : public BlimpCompositorClient {
  public:
-  MockBlimpCompositorClient()
-  : compositor_thread_("Compositor"),
-    image_serialization_processor_(
-       BlimpImageSerializationProcessor::Mode::DESERIALIZATION) {
+  MockBlimpCompositorClient() : compositor_thread_("Compositor") {
     compositor_thread_.Start();
   }
   ~MockBlimpCompositorClient() override { compositor_thread_.Stop(); }
@@ -36,8 +33,10 @@ class MockBlimpCompositorClient : public BlimpCompositorClient {
     return &gpu_memory_buffer_manager_;
   }
   cc::ImageSerializationProcessor* GetImageSerializationProcessor() override {
-    return &image_serialization_processor_;
+    return BlobImageSerializationProcessor::current();
   }
+  void DidCompleteSwapBuffers() override {}
+  void DidCommitAndDrawFrame() override {}
 
   void SendWebGestureEvent(
       int render_widget_id,
@@ -57,7 +56,10 @@ class MockBlimpCompositorClient : public BlimpCompositorClient {
   base::Thread compositor_thread_;
   BlimpTaskGraphRunner task_graph_runner_;
   BlimpGpuMemoryBufferManager gpu_memory_buffer_manager_;
-  BlimpImageSerializationProcessor image_serialization_processor_;
+  BlobImageSerializationProcessor serialization_processor_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockBlimpCompositorClient);
 };
 
 class BlimpCompositorForTesting : public BlimpCompositor {
@@ -96,7 +98,7 @@ class BlimpCompositorTest : public testing::Test {
   ~BlimpCompositorTest() override {}
 
   void SendInitializeMessage() {
-    scoped_ptr<cc::proto::CompositorMessage> message;
+    std::unique_ptr<cc::proto::CompositorMessage> message;
     message.reset(new cc::proto::CompositorMessage);
     cc::proto::CompositorMessageToImpl* to_impl =
         message->mutable_to_impl();
@@ -110,7 +112,7 @@ class BlimpCompositorTest : public testing::Test {
   }
 
   void SendShutdownMessage() {
-    scoped_ptr<cc::proto::CompositorMessage> message;
+    std::unique_ptr<cc::proto::CompositorMessage> message;
     message.reset(new cc::proto::CompositorMessage);
     cc::proto::CompositorMessageToImpl* to_impl =
         message->mutable_to_impl();
@@ -119,9 +121,9 @@ class BlimpCompositorTest : public testing::Test {
   }
 
   int render_widget_id_;
-  scoped_ptr<base::MessageLoop> loop_;
+  std::unique_ptr<base::MessageLoop> loop_;
   MockBlimpCompositorClient compositor_client_;
-  scoped_ptr<BlimpCompositorForTesting> compositor_;
+  std::unique_ptr<BlimpCompositorForTesting> compositor_;
   gfx::AcceleratedWidget window_;
 };
 

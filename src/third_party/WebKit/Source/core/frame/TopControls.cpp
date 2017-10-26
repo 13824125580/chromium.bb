@@ -5,6 +5,7 @@
 #include "core/frame/TopControls.h"
 
 #include "core/frame/FrameHost.h"
+#include "core/frame/VisualViewport.h"
 #include "core/page/ChromeClient.h"
 #include "platform/geometry/FloatSize.h"
 #include <algorithm> // for std::min and std::max
@@ -22,10 +23,6 @@ TopControls::TopControls(const FrameHost& frameHost)
 {
 }
 
-TopControls::~TopControls()
-{
-}
-
 DEFINE_TRACE(TopControls)
 {
     visitor->trace(m_frameHost);
@@ -38,7 +35,7 @@ void TopControls::scrollBegin()
 
 FloatSize TopControls::scrollBy(FloatSize pendingDelta)
 {
-    if ((m_permittedState == WebTopControlsShown && pendingDelta.height() < 0) || (m_permittedState == WebTopControlsHidden && pendingDelta.height() > 0))
+    if ((m_permittedState == WebTopControlsShown && pendingDelta.height() > 0) || (m_permittedState == WebTopControlsHidden && pendingDelta.height() < 0))
         return pendingDelta;
 
     if (m_height == 0)
@@ -51,7 +48,7 @@ FloatSize TopControls::scrollBy(FloatSize pendingDelta)
     // Compute scroll delta in viewport space by applying page scale
     m_accumulatedScrollDelta += pendingDelta.height() * pageScale;
 
-    float newContentOffset = m_baselineContentOffset + m_accumulatedScrollDelta;
+    float newContentOffset = m_baselineContentOffset - m_accumulatedScrollDelta;
 
     setShownRatio(newContentOffset / m_height);
 
@@ -64,7 +61,9 @@ FloatSize TopControls::scrollBy(FloatSize pendingDelta)
     newContentOffset = std::min(newContentOffset, m_height);
     newContentOffset = std::max(newContentOffset, 0.f);
 
-    FloatSize appliedDelta(0, (newContentOffset - oldOffset) / pageScale);
+    // We negate the difference because scrolling down (positive delta) causes
+    // top controls to hide (negative offset difference).
+    FloatSize appliedDelta(0, (oldOffset - newContentOffset) / pageScale);
     return pendingDelta - appliedDelta;
 }
 
@@ -96,9 +95,29 @@ void TopControls::setShownRatio(float shownRatio)
     m_frameHost->chromeClient().didUpdateTopControls();
 }
 
-void TopControls::updateConstraints(WebTopControlsState constraints)
+void TopControls::updateConstraintsAndState(
+    WebTopControlsState constraints,
+    WebTopControlsState current,
+    bool animate)
 {
     m_permittedState = constraints;
+
+    DCHECK(!(constraints == WebTopControlsShown && current == WebTopControlsHidden));
+    DCHECK(!(constraints == WebTopControlsHidden && current == WebTopControlsShown));
+
+    // If the change should be animated, let the impl thread drive the change.
+    // Otherwise, immediately set the shown ratio so we don't have to wait for
+    // a commit from the impl thread.
+    if (animate)
+        return;
+
+    if (constraints == WebTopControlsBoth && current == WebTopControlsBoth)
+        return;
+
+    if (constraints == WebTopControlsHidden || current == WebTopControlsHidden)
+        setShownRatio(0.f);
+    else
+        setShownRatio(1.f);
 }
 
 void TopControls::setHeight(float height, bool shrinkViewport)

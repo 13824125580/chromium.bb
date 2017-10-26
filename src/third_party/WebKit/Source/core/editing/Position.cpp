@@ -30,15 +30,14 @@
 #include "core/editing/TextAffinity.h"
 #include "wtf/text/CString.h"
 #include <stdio.h>
+#include <ostream> // NOLINT
 
 namespace blink {
 
-#if ENABLE(ASSERT)
+#if DCHECK_IS_ON()
 static bool canBeAnchorNode(Node* node)
 {
-    if (!node || node->isFirstLetterPseudoElement())
-        return true;
-    return !node->isPseudoElement();
+    return !node || !node->isPseudoElement();
 }
 #endif
 
@@ -52,12 +51,12 @@ const TreeScope* PositionTemplate<Strategy>::commonAncestorTreeScope(const Posit
 
 
 template <typename Strategy>
-PositionTemplate<Strategy> PositionTemplate<Strategy>::editingPositionOf(PassRefPtrWillBeRawPtr<Node> anchorNode, int offset)
+PositionTemplate<Strategy> PositionTemplate<Strategy>::editingPositionOf(Node* anchorNode, int offset)
 {
     if (!anchorNode || anchorNode->isTextNode())
         return PositionTemplate<Strategy>(anchorNode, offset);
 
-    if (!Strategy::editingIgnoresContent(anchorNode.get()))
+    if (!Strategy::editingIgnoresContent(anchorNode))
         return PositionTemplate<Strategy>(anchorNode, offset);
 
     if (offset == 0)
@@ -65,12 +64,12 @@ PositionTemplate<Strategy> PositionTemplate<Strategy>::editingPositionOf(PassRef
 
     // Note: |offset| can be >= 1, if |anchorNode| have child nodes, e.g.
     // using Node.appendChild() to add a child node TEXTAREA.
-    ASSERT(offset >= 1);
+    DCHECK_GE(offset, 1);
     return PositionTemplate<Strategy>(anchorNode, PositionAnchorType::AfterAnchor);
 }
 
 template <typename Strategy>
-PositionTemplate<Strategy>::PositionTemplate(PassRefPtrWillBeRawPtr<Node> anchorNode, PositionAnchorType anchorType)
+PositionTemplate<Strategy>::PositionTemplate(Node* anchorNode, PositionAnchorType anchorType)
     : m_anchorNode(anchorNode)
     , m_offset(0)
     , m_anchorType(anchorType)
@@ -80,24 +79,34 @@ PositionTemplate<Strategy>::PositionTemplate(PassRefPtrWillBeRawPtr<Node> anchor
         return;
     }
     if (m_anchorNode->isTextNode()) {
-        ASSERT(m_anchorType == PositionAnchorType::BeforeAnchor || m_anchorType == PositionAnchorType::AfterAnchor);
+        DCHECK(m_anchorType == PositionAnchorType::BeforeAnchor || m_anchorType == PositionAnchorType::AfterAnchor);
         return;
     }
-    ASSERT(canBeAnchorNode(m_anchorNode.get()));
-    ASSERT(m_anchorType != PositionAnchorType::OffsetInAnchor);
+    if (m_anchorNode->isDocumentNode()) {
+        // Since |RangeBoundaryPoint| can't represent before/after Document, we
+        // should not use them.
+        DCHECK(isBeforeChildren() || isAfterChildren()) << m_anchorType;
+        return;
+    }
+#if DCHECK_IS_ON()
+    DCHECK(canBeAnchorNode(m_anchorNode.get()));
+#endif
+    DCHECK_NE(m_anchorType, PositionAnchorType::OffsetInAnchor);
 }
 
 template <typename Strategy>
-PositionTemplate<Strategy>::PositionTemplate(PassRefPtrWillBeRawPtr<Node> anchorNode, int offset)
+PositionTemplate<Strategy>::PositionTemplate(Node* anchorNode, int offset)
     : m_anchorNode(anchorNode)
     , m_offset(offset)
     , m_anchorType(PositionAnchorType::OffsetInAnchor)
 {
     if (m_anchorNode)
-        ASSERT(offset >= 0);
+        DCHECK_GE(offset, 0);
     else
-        ASSERT(offset == 0);
-    ASSERT(canBeAnchorNode(m_anchorNode.get()));
+        DCHECK_EQ(offset, 0);
+#if DCHECK_IS_ON()
+    DCHECK(canBeAnchorNode(m_anchorNode.get()));
+#endif
 }
 
 template <typename Strategy>
@@ -125,7 +134,7 @@ Node* PositionTemplate<Strategy>::computeContainerNode() const
     case PositionAnchorType::AfterAnchor:
         return Strategy::parent(*m_anchorNode);
     }
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return 0;
 }
 
@@ -147,7 +156,7 @@ int PositionTemplate<Strategy>::computeOffsetInContainerNode() const
     case PositionAnchorType::AfterAnchor:
         return Strategy::index(*m_anchorNode) + 1;
     }
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return 0;
 }
 
@@ -209,7 +218,7 @@ Node* PositionTemplate<Strategy>::computeNodeBeforePosition() const
     case PositionAnchorType::AfterAnchor:
         return m_anchorNode.get();
     }
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return 0;
 }
 
@@ -231,7 +240,7 @@ Node* PositionTemplate<Strategy>::computeNodeAfterPosition() const
     case PositionAnchorType::AfterAnchor:
         return Strategy::nextSibling(*m_anchorNode);
     }
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return 0;
 }
 
@@ -285,8 +294,8 @@ Node* PositionTemplate<Strategy>::commonAncestorContainer(const PositionTemplate
 
 int comparePositions(const PositionInFlatTree& positionA, const PositionInFlatTree& positionB)
 {
-    ASSERT(positionA.isNotNull());
-    ASSERT(positionB.isNotNull());
+    DCHECK(positionA.isNotNull());
+    DCHECK(positionB.isNotNull());
 
     positionA.anchorNode()->updateDistribution();
     Node* containerA = positionA.computeContainerNode();
@@ -301,6 +310,30 @@ template <typename Strategy>
 int PositionTemplate<Strategy>::compareTo(const PositionTemplate<Strategy>& other) const
 {
     return comparePositions(*this, other);
+}
+
+template <typename Strategy>
+bool PositionTemplate<Strategy>::operator<(const PositionTemplate<Strategy>& other) const
+{
+    return comparePositions(*this, other) < 0;
+}
+
+template <typename Strategy>
+bool PositionTemplate<Strategy>::operator<=(const PositionTemplate<Strategy>& other) const
+{
+    return comparePositions(*this, other) <= 0;
+}
+
+template <typename Strategy>
+bool PositionTemplate<Strategy>::operator>(const PositionTemplate<Strategy>& other) const
+{
+    return comparePositions(*this, other) > 0;
+}
+
+template <typename Strategy>
+bool PositionTemplate<Strategy>::operator>=(const PositionTemplate<Strategy>& other) const
+{
+    return comparePositions(*this, other) >= 0;
 }
 
 template <typename Strategy>
@@ -322,7 +355,7 @@ bool PositionTemplate<Strategy>::atFirstEditingPositionForNode() const
         // of DOM tree version.
         return !EditingStrategy::lastOffsetForEditing(anchorNode());
     }
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return false;
 }
 
@@ -355,6 +388,98 @@ bool PositionTemplate<Strategy>::atEndOfTree() const
     // TODO(yosin) We should use |Strategy::lastOffsetForEditing()| instead of
     // DOM tree version.
     return !Strategy::parent(*anchorNode()) && m_offset >= EditingStrategy::lastOffsetForEditing(anchorNode());
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::inParentBeforeNode(const Node& node)
+{
+    // FIXME: This should DCHECK(node.parentNode())
+    // At least one caller currently hits this ASSERT though, which indicates
+    // that the caller is trying to make a position relative to a disconnected node (which is likely an error)
+    // Specifically, editing/deleting/delete-ligature-001.html crashes with DCHECK(node->parentNode())
+    return PositionTemplate<Strategy>(Strategy::parent(node), Strategy::index(node));
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::inParentAfterNode(const Node& node)
+{
+    DCHECK(node.parentNode()) << node;
+    return PositionTemplate<Strategy>(Strategy::parent(node), Strategy::index(node) + 1);
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::beforeNode(Node* anchorNode)
+{
+    DCHECK(anchorNode);
+    return PositionTemplate<Strategy>(anchorNode, PositionAnchorType::BeforeAnchor);
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::afterNode(Node* anchorNode)
+{
+    DCHECK(anchorNode);
+    return PositionTemplate<Strategy>(anchorNode, PositionAnchorType::AfterAnchor);
+}
+
+// static
+template <typename Strategy>
+int PositionTemplate<Strategy>::lastOffsetInNode(Node* node)
+{
+    return node->offsetInCharacters() ? node->maxCharacterOffset() : static_cast<int>(Strategy::countChildren(*node));
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::firstPositionInNode(Node* anchorNode)
+{
+    if (anchorNode->isTextNode())
+        return PositionTemplate<Strategy>(anchorNode, 0);
+    return PositionTemplate<Strategy>(anchorNode, PositionAnchorType::BeforeChildren);
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::lastPositionInNode(Node* anchorNode)
+{
+    if (anchorNode->isTextNode())
+        return PositionTemplate<Strategy>(anchorNode, lastOffsetInNode(anchorNode));
+    return PositionTemplate<Strategy>(anchorNode, PositionAnchorType::AfterChildren);
+}
+
+// static
+template <typename Strategy>
+int PositionTemplate<Strategy>::minOffsetForNode(Node* anchorNode, int offset)
+{
+    if (anchorNode->offsetInCharacters())
+        return std::min(offset, anchorNode->maxCharacterOffset());
+
+    int newOffset = 0;
+    for (Node* node = Strategy::firstChild(*anchorNode); node && newOffset < offset; node = Strategy::nextSibling(*node))
+        newOffset++;
+
+    return newOffset;
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::firstPositionInOrBeforeNode(Node* node)
+{
+    if (!node)
+        return PositionTemplate<Strategy>();
+    return Strategy::editingIgnoresContent(node) ? beforeNode(node) : firstPositionInNode(node);
+}
+
+// static
+template <typename Strategy>
+PositionTemplate<Strategy> PositionTemplate<Strategy>::lastPositionInOrAfterNode(Node* node)
+{
+    if (!node)
+        return PositionTemplate<Strategy>();
+    return Strategy::editingIgnoresContent(node) ? afterNode(node) : lastPositionInNode(node);
 }
 
 template <typename Strategy>
@@ -392,7 +517,7 @@ PositionInFlatTree toPositionInFlatTree(const Position& pos)
         Node* anchor = pos.anchorNode();
         if (anchor->offsetInCharacters())
             return PositionInFlatTree(anchor, pos.computeOffsetInContainerNode());
-        ASSERT(!anchor->isSlotOrActiveInsertionPoint());
+        DCHECK(!anchor->isSlotOrActiveInsertionPoint());
         int offset = pos.computeOffsetInContainerNode();
         Node* child = NodeTraversal::childAt(*anchor, offset);
         if (!child) {
@@ -436,11 +561,11 @@ Position toPositionInDOMTree(const PositionInFlatTree& position)
         // FIXME: When anchorNode is <img>, assertion fails in the constructor.
         return Position(anchorNode, PositionAnchorType::AfterChildren);
     case PositionAnchorType::AfterAnchor:
-        return positionAfterNode(anchorNode);
+        return Position::afterNode(anchorNode);
     case PositionAnchorType::BeforeChildren:
         return Position(anchorNode, PositionAnchorType::BeforeChildren);
     case PositionAnchorType::BeforeAnchor:
-        return positionBeforeNode(anchorNode);
+        return Position::beforeNode(anchorNode);
     case PositionAnchorType::OffsetInAnchor: {
         int offset = position.offsetInContainerNode();
         if (anchorNode->offsetInCharacters())
@@ -456,7 +581,7 @@ Position toPositionInDOMTree(const PositionInFlatTree& position)
         return Position(anchorNode, PositionAnchorType::AfterChildren);
     }
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return Position();
     }
 }
@@ -469,12 +594,12 @@ void PositionTemplate<Strategy>::formatForDebugger(char* buffer, unsigned length
     StringBuilder result;
 
     if (isNull()) {
-        result.appendLiteral("<null>");
+        result.append("<null>");
     } else {
         char s[1024];
-        result.appendLiteral("offset ");
+        result.append("offset ");
         result.appendNumber(m_offset);
-        result.appendLiteral(" of ");
+        result.append(" of ");
         anchorNode()->formatForDebugger(s, sizeof(s));
         result.append(s);
     }
@@ -524,6 +649,45 @@ void PositionTemplate<Strategy>::showTreeForThisInFlatTree() const
 }
 
 #endif
+
+template <typename PositionType>
+static std::ostream& printPosition(std::ostream& ostream, const PositionType& position)
+{
+    if (position.isNull())
+        return ostream << "null";
+    ostream << position.anchorNode() << "@";
+    if (position.isOffsetInAnchor())
+        return ostream << position.offsetInContainerNode();
+    return ostream << position.anchorType();
+}
+
+std::ostream& operator<<(std::ostream& ostream, PositionAnchorType anchorType)
+{
+    switch (anchorType) {
+    case PositionAnchorType::AfterAnchor:
+        return ostream << "afterAnchor";
+    case PositionAnchorType::AfterChildren:
+        return ostream << "afterChildren";
+    case PositionAnchorType::BeforeAnchor:
+        return ostream << "beforeAnchor";
+    case PositionAnchorType::BeforeChildren:
+        return ostream << "beforeChildren";
+    case PositionAnchorType::OffsetInAnchor:
+        return ostream << "offsetInAnchor";
+    }
+    NOTREACHED();
+    return ostream << "anchorType=" << static_cast<int>(anchorType);
+}
+
+std::ostream& operator<<(std::ostream& ostream, const Position& position)
+{
+    return printPosition(ostream, position);
+}
+
+std::ostream& operator<<(std::ostream& ostream, const PositionInFlatTree& position)
+{
+    return printPosition(ostream, position);
+}
 
 template class CORE_TEMPLATE_EXPORT PositionTemplate<EditingStrategy>;
 template class CORE_TEMPLATE_EXPORT PositionTemplate<EditingInFlatTreeStrategy>;

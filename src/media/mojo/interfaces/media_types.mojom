@@ -2,15 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-module media.interfaces;
+module media.mojom;
 
-import "ui/mojo/geometry/geometry.mojom";
+import "ui/gfx/geometry/mojo/geometry.mojom";
 
 // See media/base/buffering_state.h for descriptions.
 // Kept in sync with media::BufferingState via static_asserts.
 enum BufferingState {
   HAVE_NOTHING,
   HAVE_ENOUGH,
+};
+
+// See media/base/decode_status.h for descriptions.
+// Kept in sync with media::DecodeStatus via static_asserts.
+enum DecodeStatus {
+  OK,
+  ABORTED,
+  DECODE_ERROR,
 };
 
 // See media/base/audio_decoder_config.h for descriptions.
@@ -148,24 +156,55 @@ enum VideoCodecProfile {
   VIDEO_CODEC_PROFILE_MIN = VIDEO_CODEC_PROFILE_UNKNOWN,
   H264PROFILE_MIN = 0,
   H264PROFILE_BASELINE = H264PROFILE_MIN,
-  H264PROFILE_MAIN = 1,
-  H264PROFILE_EXTENDED = 2,
-  H264PROFILE_HIGH = 3,
-  H264PROFILE_HIGH10PROFILE = 4,
-  H264PROFILE_HIGH422PROFILE = 5,
-  H264PROFILE_HIGH444PREDICTIVEPROFILE = 6,
-  H264PROFILE_SCALABLEBASELINE = 7,
-  H264PROFILE_SCALABLEHIGH = 8,
-  H264PROFILE_STEREOHIGH = 9,
-  H264PROFILE_MULTIVIEWHIGH = 10,
+  H264PROFILE_MAIN,
+  H264PROFILE_EXTENDED,
+  H264PROFILE_HIGH,
+  H264PROFILE_HIGH10PROFILE,
+  H264PROFILE_HIGH422PROFILE,
+  H264PROFILE_HIGH444PREDICTIVEPROFILE,
+  H264PROFILE_SCALABLEBASELINE,
+  H264PROFILE_SCALABLEHIGH,
+  H264PROFILE_STEREOHIGH,
+  H264PROFILE_MULTIVIEWHIGH,
   H264PROFILE_MAX = H264PROFILE_MULTIVIEWHIGH,
-  VP8PROFILE_MIN = 11,
+  VP8PROFILE_MIN,
   VP8PROFILE_ANY = VP8PROFILE_MIN,
   VP8PROFILE_MAX = VP8PROFILE_ANY,
-  VP9PROFILE_MIN = 12,
-  VP9PROFILE_ANY = VP9PROFILE_MIN,
-  VP9PROFILE_MAX = VP9PROFILE_ANY,
-  VIDEO_CODEC_PROFILE_MAX = VP9PROFILE_MAX,
+  VP9PROFILE_MIN,
+  VP9PROFILE_PROFILE0 = VP9PROFILE_MIN,
+  VP9PROFILE_PROFILE1,
+  VP9PROFILE_PROFILE2,
+  VP9PROFILE_PROFILE3,
+  VP9PROFILE_MAX = VP9PROFILE_PROFILE3,
+  HEVCPROFILE_MIN,
+  HEVCPROFILE_MAIN = HEVCPROFILE_MIN,
+  HEVCPROFILE_MAIN10,
+  HEVCPROFILE_MAIN_STILL_PICTURE,
+  HEVCPROFILE_MAX = HEVCPROFILE_MAIN_STILL_PICTURE,
+  VIDEO_CODEC_PROFILE_MAX = HEVCPROFILE_MAX,
+};
+
+// See media/base/encryption_scheme.h.
+// Kept in sync with media::CipherMode via static_asserts.
+enum CipherMode {
+  UNENCRYPTED = 0,
+  AES_CTR,
+  AES_CBC,
+  MAX = AES_CBC
+};
+
+// This defines a mojo transport format for media::EncryptionScheme::Pattern
+// See media/base/encryption_scheme.h for description.
+struct Pattern {
+  uint32 encrypt_blocks;
+  uint32 skip_blocks;
+};
+
+// This defines a mojo transport format for media::EncryptionScheme.
+// See media/base/encryption_scheme.h for description.
+struct EncryptionScheme {
+  CipherMode mode;
+  Pattern pattern;
 };
 
 // This defines a mojo transport format for media::AudioDecoderConfig.
@@ -178,7 +217,7 @@ struct AudioDecoderConfig {
   array<uint8>? extra_data;
   int64 seek_preroll_usec;
   int32 codec_delay;
-  bool is_encrypted;
+  EncryptionScheme encryption_scheme;
 };
 
 // This defines a mojo transport format for media::VideoDecoderConfig.
@@ -188,11 +227,11 @@ struct VideoDecoderConfig {
   VideoCodecProfile profile;
   VideoFormat format;
   ColorSpace color_space;
-  mojo.Size coded_size;
-  mojo.Rect visible_rect;
-  mojo.Size natural_size;
+  gfx.mojom.Size coded_size;
+  gfx.mojom.Rect visible_rect;
+  gfx.mojom.Size natural_size;
   array<uint8>? extra_data;
-  bool is_encrypted;
+  EncryptionScheme encryption_scheme;
 };
 
 // This defines a mojo transport format for media::SubsampleEntry.
@@ -225,7 +264,6 @@ struct DecoderBuffer {
   // This is backed by an std::vector and results in a few copies.
   // Into the vector, onto and off the MessagePipe, back into a vector.
   array<uint8>? side_data;
-  uint32 side_data_size;
 
   // DecryptConfig for a encrypted buffer. NULL if the buffer is not encrypted.
   DecryptConfig? decrypt_config;
@@ -266,20 +304,18 @@ struct AudioBuffer {
 };
 
 // This defines a mojo transport format for media::VideoFrame.
-// TODO(jrummell): Support shared memory based VideoFrame to avoid copying
-// the data multiple times.
 struct VideoFrame {
   // Format of the frame.
   VideoFormat format;
 
   // Width and height of the video frame, in pixels.
-  mojo.Size coded_size;
+  gfx.mojom.Size coded_size;
 
   // Visible size of the frame.
-  mojo.Rect visible_rect;
+  gfx.mojom.Rect visible_rect;
 
   // Natural size of the frame.
-  mojo.Size natural_size;
+  gfx.mojom.Size natural_size;
 
   // True if end of stream.
   bool end_of_stream;
@@ -287,8 +323,16 @@ struct VideoFrame {
   // Timestamp in microseconds of the associated frame.
   int64 timestamp_usec;
 
-  // Frame data for each plane. Will be null for EOS buffers.
-  array<uint8>? y_data;
-  array<uint8>? u_data;
-  array<uint8>? v_data;
+  // Reference to the shared memory containing the frame's data.
+  handle<shared_buffer> frame_data;
+  uint64 frame_data_size;
+
+  // Stride and offsets for each plane. Offsets are relative to the start
+  // of |frame_data|.
+  int32 y_stride;
+  int32 u_stride;
+  int32 v_stride;
+  uint64 y_offset;
+  uint64 u_offset;
+  uint64 v_offset;
 };

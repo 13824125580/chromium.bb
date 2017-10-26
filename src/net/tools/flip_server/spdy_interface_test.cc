@@ -5,8 +5,8 @@
 #include "net/tools/flip_server/spdy_interface.h"
 
 #include <list>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/tools/balsa/balsa_enums.h"
@@ -49,27 +49,54 @@ class SpdyFramerVisitor : public BufferedSpdyFramerVisitorInterface {
   virtual ~SpdyFramerVisitor() {}
   MOCK_METHOD1(OnError, void(SpdyFramer::SpdyError));
   MOCK_METHOD2(OnStreamError, void(SpdyStreamId, const std::string&));
-  MOCK_METHOD6(OnSynStream,
+  // SaveArg cannot be used on non-copyable types like SpdyHeaderBlock.
+  void OnSynStream(SpdyStreamId stream_id,
+                   SpdyStreamId associated_stream_id,
+                   SpdyPriority priority,
+                   bool fin,
+                   bool unidirectional,
+                   const SpdyHeaderBlock& headers) override {
+    actual_header_block_ = headers.Clone();
+    OnSynStreamMock(stream_id, associated_stream_id, priority, fin,
+                    unidirectional, headers);
+  }
+  MOCK_METHOD6(OnSynStreamMock,
                void(SpdyStreamId,
                     SpdyStreamId,
                     SpdyPriority,
                     bool,
                     bool,
                     const SpdyHeaderBlock&));
-  MOCK_METHOD3(OnSynReply, void(SpdyStreamId, bool, const SpdyHeaderBlock&));
-  MOCK_METHOD7(OnHeaders,
+  void OnSynReply(SpdyStreamId stream_id,
+                  bool fin,
+                  const SpdyHeaderBlock& headers) override {
+    actual_header_block_ = headers.Clone();
+    OnSynReplyMock(stream_id, fin, headers);
+  }
+  MOCK_METHOD3(OnSynReplyMock,
+               void(SpdyStreamId, bool, const SpdyHeaderBlock&));
+  void OnHeaders(SpdyStreamId stream_id,
+                 bool has_priority,
+                 int weight,
+                 SpdyStreamId parent_stream_id,
+                 bool exclusive,
+                 bool fin,
+                 const SpdyHeaderBlock& headers) override {
+    actual_header_block_ = headers.Clone();
+    OnHeadersMock(stream_id, has_priority, weight, parent_stream_id, exclusive,
+                  fin, headers);
+  }
+  MOCK_METHOD7(OnHeadersMock,
                void(SpdyStreamId stream_id,
                     bool has_priority,
-                    SpdyPriority priority,
+                    int weight,
                     SpdyStreamId parent_stream_id,
                     bool exclusive,
                     bool fin,
                     const SpdyHeaderBlock& headers));
   MOCK_METHOD3(OnDataFrameHeader, void(SpdyStreamId, size_t, bool));
-  MOCK_METHOD4(OnStreamFrameData, void(SpdyStreamId,
-                                       const char*,
-                                       size_t,
-                                       bool));
+  MOCK_METHOD3(OnStreamFrameData, void(SpdyStreamId, const char*, size_t));
+  MOCK_METHOD1(OnStreamEnd, void(SpdyStreamId));
   MOCK_METHOD2(OnStreamPadding, void(SpdyStreamId, size_t));
   MOCK_METHOD1(OnHeaderFrameStart,
                SpdyHeadersHandlerInterface*(SpdyStreamId stream_id));
@@ -83,7 +110,13 @@ class SpdyFramerVisitor : public BufferedSpdyFramerVisitorInterface {
   MOCK_METHOD2(OnWindowUpdate, void(SpdyStreamId, int));
   MOCK_METHOD3(OnPushPromise,
                void(SpdyStreamId, SpdyStreamId, const SpdyHeaderBlock&));
+  MOCK_METHOD3(OnAltSvc,
+               void(SpdyStreamId,
+                    base::StringPiece,
+                    const SpdyAltSvcWireFormat::AlternativeServiceVector&));
   MOCK_METHOD2(OnUnknownFrame, bool(SpdyStreamId stream_id, int frame_type));
+
+  SpdyHeaderBlock actual_header_block_;
 };
 
 class FakeSMConnection : public SMConnection {
@@ -194,14 +227,14 @@ class SpdySMTestBase : public ::testing::TestWithParam<SpdyMajorVersion> {
   }
 
  protected:
-  scoped_ptr<MockSMInterface> mock_another_interface_;
-  scoped_ptr<MemoryCache> memory_cache_;
-  scoped_ptr<FlipAcceptor> acceptor_;
-  scoped_ptr<EpollServer> epoll_server_;
-  scoped_ptr<FakeSMConnection> connection_;
-  scoped_ptr<TestSpdySM> interface_;
-  scoped_ptr<BufferedSpdyFramer> spdy_framer_;
-  scoped_ptr<SpdyFramerVisitor> spdy_framer_visitor_;
+  std::unique_ptr<MockSMInterface> mock_another_interface_;
+  std::unique_ptr<MemoryCache> memory_cache_;
+  std::unique_ptr<FlipAcceptor> acceptor_;
+  std::unique_ptr<EpollServer> epoll_server_;
+  std::unique_ptr<FakeSMConnection> connection_;
+  std::unique_ptr<TestSpdySM> interface_;
+  std::unique_ptr<BufferedSpdyFramer> spdy_framer_;
+  std::unique_ptr<SpdyFramerVisitor> spdy_framer_visitor_;
 };
 
 class SpdySMProxyTest : public SpdySMTestBase {
@@ -230,13 +263,14 @@ TEST_P(SpdySMProxyTest, InitSMConnection) {
 
 TEST_P(SpdySMProxyTest, OnStreamFrameData) {
   BufferedSpdyFramerVisitorInterface* visitor = interface_.get();
-  scoped_ptr<MockSMInterface> mock_interface(new MockSMInterface);
+  std::unique_ptr<MockSMInterface> mock_interface(new MockSMInterface);
   uint32_t stream_id = 92;
   uint32_t associated_id = 43;
   SpdyHeaderBlock block;
   testing::MockFunction<void(int)> checkpoint;  // NOLINT
 
-  scoped_ptr<SpdyFrame> frame(spdy_framer_->CreatePingFrame(12, false));
+  std::unique_ptr<SpdySerializedFrame> frame(
+      spdy_framer_->CreatePingFrame(12, false));
   block[":method"] = "GET";
   block[":host"] = "www.example.com";
   block[":path"] = "/path";
@@ -256,7 +290,7 @@ TEST_P(SpdySMProxyTest, OnStreamFrameData) {
 
   visitor->OnSynStream(stream_id, associated_id, 0, false, false, block);
   checkpoint.Call(0);
-  visitor->OnStreamFrameData(stream_id, frame->data(), frame->size(), true);
+  visitor->OnStreamFrameData(stream_id, frame->data(), frame->size());
 }
 
 TEST_P(SpdySMProxyTest, OnRstStream) {
@@ -363,7 +397,6 @@ TEST_P(SpdySMProxyTest, AddToOutputOrder) {
 
 TEST_P(SpdySMProxyTest, SendErrorNotFound) {
   uint32_t stream_id = 82;
-  SpdyHeaderBlock actual_header_block;
   const char* actual_data;
   size_t actual_size;
   testing::MockFunction<void(int)> checkpoint;  // NOLINT
@@ -375,24 +408,20 @@ TEST_P(SpdySMProxyTest, SendErrorNotFound) {
   {
     InSequence s;
     if (GetParam() < HTTP2) {
-      EXPECT_CALL(*spdy_framer_visitor_,
-                  OnSynReply(stream_id, false, _))
-          .WillOnce(SaveArg<2>(&actual_header_block));
+      EXPECT_CALL(*spdy_framer_visitor_, OnSynReplyMock(stream_id, false, _));
     } else {
       EXPECT_CALL(*spdy_framer_visitor_,
-                  OnHeaders(stream_id, /*has_priority=*/false, _, _, _,
-                            /*fin=*/false, _))
-          .WillOnce(SaveArg<6>(&actual_header_block));
+                  OnHeadersMock(stream_id, /*has_priority=*/false, _, _, _,
+                                /*fin=*/false, _));
     }
     EXPECT_CALL(checkpoint, Call(0));
     EXPECT_CALL(*spdy_framer_visitor_,
                 OnDataFrameHeader(stream_id, _, true));
-    EXPECT_CALL(*spdy_framer_visitor_,
-                OnStreamFrameData(stream_id, _, _, false)).Times(1)
-        .WillOnce(DoAll(SaveArg<1>(&actual_data),
-                        SaveArg<2>(&actual_size)));
-    EXPECT_CALL(*spdy_framer_visitor_,
-                OnStreamFrameData(stream_id, NULL, 0, true)).Times(1);
+    EXPECT_CALL(*spdy_framer_visitor_, OnStreamFrameData(stream_id, _, _))
+        .Times(1)
+        .WillOnce(DoAll(SaveArg<1>(&actual_data), SaveArg<2>(&actual_size)));
+    EXPECT_CALL(*spdy_framer_visitor_, OnStreamFrameData(stream_id, NULL, 0))
+        .Times(1);
   }
 
   std::list<DataFrame*>::const_iterator i = connection_->output_list()->begin();
@@ -403,16 +432,16 @@ TEST_P(SpdySMProxyTest, SendErrorNotFound) {
   spdy_framer_->ProcessInput(df->data, df->size);
 
   ASSERT_EQ(2, spdy_framer_->frames_received());
-  ASSERT_EQ(2u, actual_header_block.size());
-  ASSERT_EQ("404 Not Found", actual_header_block[":status"]);
-  ASSERT_EQ("HTTP/1.1", actual_header_block[":version"]);
+  ASSERT_EQ(2u, spdy_framer_visitor_->actual_header_block_.size());
+  ASSERT_EQ("404 Not Found",
+            spdy_framer_visitor_->actual_header_block_[":status"]);
+  ASSERT_EQ("HTTP/1.1", spdy_framer_visitor_->actual_header_block_[":version"]);
   ASSERT_EQ("wtf?", StringPiece(actual_data, actual_size));
 }
 
 TEST_P(SpdySMProxyTest, SendSynStream) {
   uint32_t stream_id = 82;
   BalsaHeaders headers;
-  SpdyHeaderBlock actual_header_block;
   headers.AppendHeader("key1", "value1");
   headers.AppendHeader("Host", "www.example.com");
   headers.SetRequestFirstlineFromStringPieces("GET", "/path", "HTTP/1.1");
@@ -426,24 +455,23 @@ TEST_P(SpdySMProxyTest, SendSynStream) {
   {
     InSequence s;
     EXPECT_CALL(*spdy_framer_visitor_,
-                OnSynStream(stream_id, 0, _, false, false, _))
-        .WillOnce(SaveArg<5>(&actual_header_block));
+                OnSynStreamMock(stream_id, 0, _, false, false, _));
   }
 
   spdy_framer_->ProcessInput(df->data, df->size);
   ASSERT_EQ(1, spdy_framer_->frames_received());
-  ASSERT_EQ(5u, actual_header_block.size());
-  ASSERT_EQ("GET", actual_header_block[":method"]);
-  ASSERT_EQ("HTTP/1.1", actual_header_block[":version"]);
-  ASSERT_EQ("/path", actual_header_block[":path"]);
-  ASSERT_EQ("www.example.com", actual_header_block[":host"]);
-  ASSERT_EQ("value1", actual_header_block["key1"]);
+  ASSERT_EQ(5u, spdy_framer_visitor_->actual_header_block_.size());
+  ASSERT_EQ("GET", spdy_framer_visitor_->actual_header_block_[":method"]);
+  ASSERT_EQ("HTTP/1.1", spdy_framer_visitor_->actual_header_block_[":version"]);
+  ASSERT_EQ("/path", spdy_framer_visitor_->actual_header_block_[":path"]);
+  ASSERT_EQ("www.example.com",
+            spdy_framer_visitor_->actual_header_block_[":host"]);
+  ASSERT_EQ("value1", spdy_framer_visitor_->actual_header_block_["key1"]);
 }
 
 TEST_P(SpdySMProxyTest, SendSynReply) {
   uint32_t stream_id = 82;
   BalsaHeaders headers;
-  SpdyHeaderBlock actual_header_block;
   headers.AppendHeader("key1", "value1");
   headers.SetResponseFirstlineFromStringPieces("HTTP/1.1", "200", "OK");
 
@@ -456,22 +484,20 @@ TEST_P(SpdySMProxyTest, SendSynReply) {
   {
     InSequence s;
     if (GetParam() < HTTP2) {
-      EXPECT_CALL(*spdy_framer_visitor_, OnSynReply(stream_id, false, _))
-          .WillOnce(SaveArg<2>(&actual_header_block));
+      EXPECT_CALL(*spdy_framer_visitor_, OnSynReplyMock(stream_id, false, _));
     } else {
       EXPECT_CALL(*spdy_framer_visitor_,
-                  OnHeaders(stream_id, /*has_priority=*/false, _, _, _,
-                            /*fin=*/false, _))
-          .WillOnce(SaveArg<6>(&actual_header_block));
+                  OnHeadersMock(stream_id, /*has_priority=*/false, _, _, _,
+                                /*fin=*/false, _));
     }
   }
 
   spdy_framer_->ProcessInput(df->data, df->size);
   ASSERT_EQ(1, spdy_framer_->frames_received());
-  ASSERT_EQ(3u, actual_header_block.size());
-  ASSERT_EQ("200 OK", actual_header_block[":status"]);
-  ASSERT_EQ("HTTP/1.1", actual_header_block[":version"]);
-  ASSERT_EQ("value1", actual_header_block["key1"]);
+  ASSERT_EQ(3u, spdy_framer_visitor_->actual_header_block_.size());
+  ASSERT_EQ("200 OK", spdy_framer_visitor_->actual_header_block_[":status"]);
+  ASSERT_EQ("HTTP/1.1", spdy_framer_visitor_->actual_header_block_[":version"]);
+  ASSERT_EQ("value1", spdy_framer_visitor_->actual_header_block_["key1"]);
 }
 
 TEST_P(SpdySMProxyTest, SendDataFrame) {
@@ -490,8 +516,7 @@ TEST_P(SpdySMProxyTest, SendDataFrame) {
     InSequence s;
     EXPECT_CALL(*spdy_framer_visitor_,
                 OnDataFrameHeader(stream_id, _, false));
-    EXPECT_CALL(*spdy_framer_visitor_,
-                OnStreamFrameData(stream_id, _, _, false))
+    EXPECT_CALL(*spdy_framer_visitor_, OnStreamFrameData(stream_id, _, _))
         .WillOnce(DoAll(SaveArg<1>(&actual_data), SaveArg<2>(&actual_size)));
   }
 
@@ -515,10 +540,9 @@ TEST_P(SpdySMProxyTest, SendLongDataFrame) {
     for (int i = 0; i < 3; ++i) {
         EXPECT_CALL(*spdy_framer_visitor_,
                     OnDataFrameHeader(stream_id, _, false));
-        EXPECT_CALL(*spdy_framer_visitor_,
-                    OnStreamFrameData(stream_id, _, _, false))
-            .WillOnce(DoAll(SaveArg<1>(&actual_data),
-                            SaveArg<2>(&actual_size)));
+        EXPECT_CALL(*spdy_framer_visitor_, OnStreamFrameData(stream_id, _, _))
+            .WillOnce(
+                DoAll(SaveArg<1>(&actual_data), SaveArg<2>(&actual_size)));
     }
   }
 
@@ -571,7 +595,6 @@ TEST_P(SpdySMServerTest, NewStream) {
 
 TEST_P(SpdySMServerTest, NewStreamError) {
   uint32_t stream_id = 82;
-  SpdyHeaderBlock actual_header_block;
   const char* actual_data;
   size_t actual_size;
   testing::MockFunction<void(int)> checkpoint;  // NOLINT
@@ -583,23 +606,20 @@ TEST_P(SpdySMServerTest, NewStreamError) {
   {
     InSequence s;
     if (GetParam() < HTTP2) {
-      EXPECT_CALL(*spdy_framer_visitor_, OnSynReply(stream_id, false, _))
-          .WillOnce(SaveArg<2>(&actual_header_block));
+      EXPECT_CALL(*spdy_framer_visitor_, OnSynReplyMock(stream_id, false, _));
     } else {
       EXPECT_CALL(*spdy_framer_visitor_,
-                  OnHeaders(stream_id, /*has_priority=*/false, _, _, _,
-                            /*fin=*/false, _))
-          .WillOnce(SaveArg<6>(&actual_header_block));
+                  OnHeadersMock(stream_id, /*has_priority=*/false, _, _, _,
+                                /*fin=*/false, _));
     }
     EXPECT_CALL(checkpoint, Call(0));
     EXPECT_CALL(*spdy_framer_visitor_,
                 OnDataFrameHeader(stream_id, _, true));
-    EXPECT_CALL(*spdy_framer_visitor_,
-                OnStreamFrameData(stream_id, _, _, false)).Times(1)
-        .WillOnce(DoAll(SaveArg<1>(&actual_data),
-                        SaveArg<2>(&actual_size)));
-    EXPECT_CALL(*spdy_framer_visitor_,
-                OnStreamFrameData(stream_id, NULL, 0, true)).Times(1);
+    EXPECT_CALL(*spdy_framer_visitor_, OnStreamFrameData(stream_id, _, _))
+        .Times(1)
+        .WillOnce(DoAll(SaveArg<1>(&actual_data), SaveArg<2>(&actual_size)));
+    EXPECT_CALL(*spdy_framer_visitor_, OnStreamFrameData(stream_id, NULL, 0))
+        .Times(1);
   }
 
   std::list<DataFrame*>::const_iterator i = connection_->output_list()->begin();
@@ -610,9 +630,10 @@ TEST_P(SpdySMServerTest, NewStreamError) {
   spdy_framer_->ProcessInput(df->data, df->size);
 
   ASSERT_EQ(2, spdy_framer_->frames_received());
-  ASSERT_EQ(2u, actual_header_block.size());
-  ASSERT_EQ("404 Not Found", actual_header_block["status"]);
-  ASSERT_EQ("HTTP/1.1", actual_header_block["version"]);
+  ASSERT_EQ(2u, spdy_framer_visitor_->actual_header_block_.size());
+  ASSERT_EQ("404 Not Found",
+            spdy_framer_visitor_->actual_header_block_["status"]);
+  ASSERT_EQ("HTTP/1.1", spdy_framer_visitor_->actual_header_block_["version"]);
   ASSERT_EQ("wtf?", StringPiece(actual_data, actual_size));
 }
 

@@ -7,7 +7,7 @@
 //    and sizes must always be non-negative)
 //  - buffer size parameters (for read/write) are uint32
 
-module filesystem;
+module filesystem.mojom;
 
 import "components/filesystem/public/interfaces/types.mojom";
 
@@ -65,9 +65,11 @@ interface File {
   // Attempts to take an exclusive write lock on the file. This both takes a
   // native OS file lock (so that non-chrome, non-mojo processes can't write to
   // this file).
+  [Sync]
   Lock() => (FileError error);
 
   // Unlocks a previously locked file.
+  [Sync]
   Unlock() => (FileError error);
 
   // Returns a handle to the file for raw access.

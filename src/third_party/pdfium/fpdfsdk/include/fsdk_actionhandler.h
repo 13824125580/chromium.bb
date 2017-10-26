@@ -10,8 +10,8 @@
 #include <memory>
 #include <set>
 
-#include "core/include/fpdfdoc/fpdf_doc.h"
-#include "core/include/fxcrt/fx_string.h"
+#include "core/fpdfdoc/include/fpdf_doc.h"
+#include "core/fxcrt/include/fx_string.h"
 #include "fpdfsdk/include/fsdk_baseform.h"
 
 class CPDFSDK_Annot;
@@ -33,6 +33,7 @@ class CPDFSDK_FormActionHandler {
 class CPDFSDK_ActionHandler {
  public:
   CPDFSDK_ActionHandler();
+  ~CPDFSDK_ActionHandler();
 
   FX_BOOL DoAction_DocOpen(const CPDF_Action& action,
                            CPDFSDK_Document* pDocument);

@@ -32,17 +32,16 @@
 #define FileWriterBase_h
 
 #include "platform/heap/Handle.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
 class WebFileWriter;
 
-class FileWriterBase : public RefCountedGarbageCollectedWillBeNoBase<FileWriterBase>, public WillBeGarbageCollectedMixin {
+class FileWriterBase : public GarbageCollectedMixin {
 public:
     virtual ~FileWriterBase();
-    void initialize(PassOwnPtr<WebFileWriter>, long long length);
+    void initialize(std::unique_ptr<WebFileWriter>, long long length);
 
     long long position() const
     {
@@ -76,7 +75,7 @@ protected:
     void seekInternal(long long position);
 
 private:
-    OwnPtr<WebFileWriter> m_writer;
+    std::unique_ptr<WebFileWriter> m_writer;
     long long m_position;
     long long m_length;
 };

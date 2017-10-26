@@ -87,8 +87,8 @@ void SessionSyncTestHelper::VerifySyncedSession(
       ASSERT_EQ(tab->navigations[0].referrer_url(), GURL(kReferrer));
       ASSERT_EQ(tab->navigations[0].title(),
                 base::ASCIIToUTF16(kTitle));
-      ASSERT_EQ(tab->navigations[0].transition_type(),
-                ui::PAGE_TRANSITION_TYPED);
+      ASSERT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+          tab->navigations[0].transition_type(), ui::PAGE_TRANSITION_TYPED));
     }
   }
 }
@@ -98,8 +98,17 @@ void SessionSyncTestHelper::BuildTabSpecifics(
     int window_id,
     int tab_id,
     sync_pb::SessionSpecifics* tab_base) {
+  BuildTabSpecifics(tag, window_id, tab_id, ++max_tab_node_id_, tab_base);
+}
+
+void SessionSyncTestHelper::BuildTabSpecifics(
+    const std::string& tag,
+    int window_id,
+    int tab_id,
+    int tab_node_id,
+    sync_pb::SessionSpecifics* tab_base) {
   tab_base->set_session_tag(tag);
-  tab_base->set_tab_node_id(++max_tab_node_id_);
+  tab_base->set_tab_node_id(tab_node_id);
   sync_pb::SessionTab* tab = tab_base->mutable_tab();
   tab->set_tab_id(tab_id);
   tab->set_tab_visual_index(1);

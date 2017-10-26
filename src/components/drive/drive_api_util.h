@@ -5,10 +5,10 @@
 #ifndef COMPONENTS_DRIVE_DRIVE_API_UTIL_H_
 #define COMPONENTS_DRIVE_DRIVE_API_UTIL_H_
 
+#include <memory>
 #include <string>
 
 #include "base/md5.h"
-#include "base/memory/scoped_ptr.h"
 #include "google_apis/drive/drive_api_error_codes.h"
 #include "google_apis/drive/drive_common_callbacks.h"
 
@@ -41,6 +41,7 @@ const char kGoogleSpreadsheetMimeType[] =
 const char kGoogleTableMimeType[] = "application/vnd.google-apps.table";
 const char kGoogleFormMimeType[] = "application/vnd.google-apps.form";
 const char kGoogleMapMimeType[] = "application/vnd.google-apps.map";
+const char kGoogleSiteMimeType[] = "application/vnd.google-apps.site";
 const char kDriveFolderMimeType[] = "application/vnd.google-apps.folder";
 
 // Escapes ' to \' in the |str|. This is designed to use for string value of

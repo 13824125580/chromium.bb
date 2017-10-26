@@ -15,6 +15,7 @@
 #include "third_party/WebKit/public/web/WebInputEvent.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #include "ui/base/clipboard/custom_data_helper.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/dragdrop/cocoa_dnd_util.h"
 #include "ui/base/window_open_disposition.h"
 
@@ -98,7 +99,8 @@ int GetModifierFlags() {
 - (NSPoint)flipWindowPointToScreen:(const NSPoint&)windowPoint
                               view:(NSView*)view {
   DCHECK(view);
-  NSPoint screenPoint = [[view window] convertBaseToScreen:windowPoint];
+  NSPoint screenPoint =
+      ui::ConvertPointFromWindowToScreen([view window], windowPoint);
   NSScreen* screen = [[view window] screen];
   NSRect screenFrame = [screen frame];
   screenPoint.y = screenFrame.size.height - screenPoint.y;
@@ -124,10 +126,11 @@ int GetModifierFlags() {
   currentRVH_ = webContents_->GetRenderViewHost();
 
   // Fill out a DropData from pasteboard.
-  scoped_ptr<DropData> dropData;
+  std::unique_ptr<DropData> dropData;
   dropData.reset(new DropData());
   [self populateDropData:dropData.get()
              fromPasteboard:[info draggingPasteboard]];
+  currentRVH_->FilterDropData(dropData.get());
 
   NSDragOperation mask = [info draggingSourceOperationMask];
 
@@ -140,7 +143,7 @@ int GetModifierFlags() {
     return NSDragOperationNone;
 
   if ([self onlyAllowsNavigation]) {
-    if ([[info draggingPasteboard] containsURLData])
+    if ([[info draggingPasteboard] containsURLDataConvertingTextToURL:YES])
       return NSDragOperationCopy;
     return NSDragOperationNone;
   }
@@ -198,7 +201,7 @@ int GetModifierFlags() {
     return NSDragOperationNone;
 
   if ([self onlyAllowsNavigation]) {
-    if ([[info draggingPasteboard] containsURLData])
+    if ([[info draggingPasteboard] containsURLDataConvertingTextToURL:YES])
       return NSDragOperationCopy;
     return NSDragOperationNone;
   }
@@ -229,7 +232,7 @@ int GetModifierFlags() {
   // Check if we only allow navigation and navigate to a url on the pasteboard.
   if ([self onlyAllowsNavigation]) {
     NSPasteboard* pboard = [info draggingPasteboard];
-    if ([pboard containsURLData]) {
+    if ([pboard containsURLDataConvertingTextToURL:YES]) {
       GURL url;
       ui::PopulateURLAndTitleFromPasteboard(&url, NULL, pboard, YES);
       webContents_->OpenURL(OpenURLParams(
@@ -252,9 +255,8 @@ int GetModifierFlags() {
   NSPoint viewPoint = [self flipWindowPointToView:windowPoint view:view];
   NSPoint screenPoint = [self flipWindowPointToScreen:windowPoint view:view];
   webContents_->GetRenderViewHost()->DragTargetDrop(
-      gfx::Point(viewPoint.x, viewPoint.y),
-      gfx::Point(screenPoint.x, screenPoint.y),
-      GetModifierFlags());
+      *dropData_, gfx::Point(viewPoint.x, viewPoint.y),
+      gfx::Point(screenPoint.x, screenPoint.y), GetModifierFlags());
 
   dropData_.reset();
 

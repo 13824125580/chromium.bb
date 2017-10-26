@@ -30,7 +30,7 @@ class ManagePasswordsBubbleView : public LocationBarBubbleDelegateView {
                          DisplayReason reason);
 
   // Closes the existing bubble.
-  static void CloseBubble();
+  static void CloseCurrentBubble();
 
   // Makes the bubble the foreground window.
   static void ActivateBubble();
@@ -56,12 +56,11 @@ class ManagePasswordsBubbleView : public LocationBarBubbleDelegateView {
 
  private:
   class AutoSigninView;
-  class BlacklistedView;
   class ManageView;
   class PendingView;
   class SaveConfirmationView;
+  class SignInPromoView;
   class UpdatePendingView;
-  class WebContentMouseHandler;
 
   ManagePasswordsBubbleView(content::WebContents* web_contents,
                             views::View* anchor_view,
@@ -71,16 +70,18 @@ class ManagePasswordsBubbleView : public LocationBarBubbleDelegateView {
   // LocationBarBubbleDelegateView:
   views::View* GetInitiallyFocusedView() override;
   void Init() override;
-  void Close() override;
+  void CloseBubble() override;
 
   // WidgetDelegate:
   base::string16 GetWindowTitle() const override;
   bool ShouldShowWindowTitle() const override;
   bool ShouldShowCloseButton() const override;
 
-  // Refreshes the bubble's state: called to display a confirmation screen after
-  // a user selects "Never for this site", for instance.
+  // Refreshes the bubble's state.
   void Refresh();
+
+  // Sets up a child view according to the model state.
+  void CreateChild();
 
   void set_initially_focused_view(views::View* view) {
     DCHECK(!initially_focused_view_);
@@ -100,8 +101,7 @@ class ManagePasswordsBubbleView : public LocationBarBubbleDelegateView {
 
   views::View* initially_focused_view_;
 
-  // A helper to intercept mouse click events on the web contents.
-  scoped_ptr<WebContentMouseHandler> mouse_handler_;
+  std::unique_ptr<WebContentMouseHandler> mouse_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagePasswordsBubbleView);
 };

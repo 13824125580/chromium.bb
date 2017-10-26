@@ -50,10 +50,6 @@ CSSImageSetValue::CSSImageSetValue()
 
 CSSImageSetValue::~CSSImageSetValue()
 {
-#if !ENABLE(OILPAN)
-    if (m_cachedImage && m_cachedImage->isImageResourceSet())
-        toStyleFetchedImageSet(*m_cachedImage).clearImageSetValue();
-#endif
 }
 
 void CSSImageSetValue::fillImageSet()
@@ -61,17 +57,17 @@ void CSSImageSetValue::fillImageSet()
     size_t length = this->length();
     size_t i = 0;
     while (i < length) {
-        CSSImageValue* imageValue = toCSSImageValue(item(i));
-        String imageURL = imageValue->url();
+        const CSSImageValue& imageValue = toCSSImageValue(item(i));
+        String imageURL = imageValue.url();
 
         ++i;
         ASSERT_WITH_SECURITY_IMPLICATION(i < length);
-        CSSValue* scaleFactorValue = item(i);
-        float scaleFactor = toCSSPrimitiveValue(scaleFactorValue)->getFloatValue();
+        const CSSValue& scaleFactorValue = item(i);
+        float scaleFactor = toCSSPrimitiveValue(scaleFactorValue).getFloatValue();
 
         ImageWithScale image;
         image.imageURL = imageURL;
-        image.referrer = SecurityPolicy::generateReferrer(imageValue->referrer().referrerPolicy, KURL(ParsedURLString, imageURL), imageValue->referrer().referrer);
+        image.referrer = SecurityPolicy::generateReferrer(imageValue.referrer().referrerPolicy, KURL(ParsedURLString, imageURL), imageValue.referrer().referrer);
         image.scaleFactor = scaleFactor;
         m_imagesInSet.append(image);
         ++i;
@@ -120,10 +116,10 @@ StyleImage* CSSImageSetValue::cacheImage(Document* document, float deviceScaleFa
         request.mutableResourceRequest().setHTTPReferrer(image.referrer);
 
         if (crossOrigin != CrossOriginAttributeNotSet)
-            request.setCrossOriginAccessControl(document->securityOrigin(), crossOrigin);
+            request.setCrossOriginAccessControl(document->getSecurityOrigin(), crossOrigin);
 
-        if (RefPtrWillBeRawPtr<ImageResource> cachedImage = ImageResource::fetch(request, document->fetcher()))
-            m_cachedImage = StyleFetchedImageSet::create(cachedImage.get(), image.scaleFactor, this, request.url());
+        if (ImageResource* cachedImage = ImageResource::fetch(request, document->fetcher()))
+            m_cachedImage = StyleFetchedImageSet::create(cachedImage, image.scaleFactor, this, request.url());
         else
             m_cachedImage = StyleInvalidImage::create(image.imageURL);
         m_cachedScaleFactor = deviceScaleFactor;
@@ -141,16 +137,16 @@ String CSSImageSetValue::customCSSText() const
     size_t i = 0;
     while (i < length) {
         if (i > 0)
-            result.appendLiteral(", ");
+            result.append(", ");
 
-        const CSSValue* imageValue = item(i);
-        result.append(imageValue->cssText());
+        const CSSValue& imageValue = item(i);
+        result.append(imageValue.cssText());
         result.append(' ');
 
         ++i;
         ASSERT_WITH_SECURITY_IMPLICATION(i < length);
-        const CSSValue* scaleFactorValue = item(i);
-        result.append(scaleFactorValue->cssText());
+        const CSSValue& scaleFactorValue = item(i);
+        result.append(scaleFactorValue.cssText());
         // FIXME: Eventually the scale factor should contain it's own unit http://wkb.ug/100120.
         // For now 'x' is hard-coded in the parser, so we hard-code it here too.
         result.append('x');
@@ -177,12 +173,12 @@ DEFINE_TRACE_AFTER_DISPATCH(CSSImageSetValue)
     CSSValueList::traceAfterDispatch(visitor);
 }
 
-PassRefPtrWillBeRawPtr<CSSImageSetValue> CSSImageSetValue::valueWithURLsMadeAbsolute()
+CSSImageSetValue* CSSImageSetValue::valueWithURLsMadeAbsolute()
 {
-    RefPtrWillBeRawPtr<CSSImageSetValue> value = CSSImageSetValue::create();
+    CSSImageSetValue* value = CSSImageSetValue::create();
     for (auto& item : *this)
-        item->isImageValue() ? value->append(toCSSImageValue(*item).valueWithURLMadeAbsolute()) : value->append(item);
-    return value.release();
+        item->isImageValue() ? value->append(*toCSSImageValue(*item).valueWithURLMadeAbsolute()) : value->append(*item);
+    return value;
 }
 
 

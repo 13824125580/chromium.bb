@@ -11,15 +11,14 @@ import android.content.Intent;
 import android.net.Uri;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.view.View;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
 import org.chromium.chrome.browser.webapps.FullScreenActivity;
+import org.chromium.chrome.browser.widget.ControlContainer;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.PageTransition;
 
@@ -83,7 +82,8 @@ public class EmbedContentViewActivity extends FullScreenActivity {
     }
 
     @Override
-    protected final ChromeFullscreenManager createFullscreenManager(View controlContainer) {
+    protected final ChromeFullscreenManager createFullscreenManager(
+            ControlContainer controlContainer) {
         return null;
     }
 
@@ -125,12 +125,6 @@ public class EmbedContentViewActivity extends FullScreenActivity {
 
     @Override
     protected TabDelegate createTabDelegate(boolean incognito) {
-        return new TabDelegate(incognito) {
-            @Override
-            protected boolean isAllowedToLaunchDocumentActivity(Context context) {
-                // Catch a corner case where the user can bypass the ToS.  crbug.com/516645
-                return FirstRunFlowSequencer.checkIfFirstRunIsNecessary(context, false) == null;
-            }
-        };
+        return new TabDelegate(incognito);
     }
 }

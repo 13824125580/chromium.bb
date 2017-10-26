@@ -4,10 +4,13 @@
 
 #include "components/policy/core/common/preg_parser_win.h"
 
+#include <utility>
+
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/values.h"
 #include "components/policy/core/common/policy_load_status.h"
@@ -56,16 +59,14 @@ void SetInteger(RegistryDict* dict,
                 const std::string& name,
                 int value) {
   dict->SetValue(
-      name,
-      make_scoped_ptr<base::Value>(new base::FundamentalValue(value)));
+      name, base::WrapUnique<base::Value>(new base::FundamentalValue(value)));
 }
 
 void SetString(RegistryDict* dict,
                const std::string& name,
                const std::string&  value) {
-  dict->SetValue(
-      name,
-      make_scoped_ptr<base::Value>(new base::StringValue(value)));
+  dict->SetValue(name,
+                 base::WrapUnique<base::Value>(new base::StringValue(value)));
 }
 
 TEST(PRegParserWinTest, TestParseFile) {
@@ -77,16 +78,16 @@ TEST(PRegParserWinTest, TestParseFile) {
   RegistryDict dict;
   SetInteger(&dict, "DeleteValuesTest1", 1);
   SetString(&dict, "DeleteValuesTest2", "2");
-  dict.SetKey("DeleteKeysTest1", make_scoped_ptr(new RegistryDict()));
-  scoped_ptr<RegistryDict> delete_keys_test(new RegistryDict());
+  dict.SetKey("DeleteKeysTest1", base::WrapUnique(new RegistryDict()));
+  std::unique_ptr<RegistryDict> delete_keys_test(new RegistryDict());
   SetInteger(delete_keys_test.get(), "DeleteKeysTest2Entry", 1);
-  dict.SetKey("DeleteKeysTest2", delete_keys_test.Pass());
+  dict.SetKey("DeleteKeysTest2", std::move(delete_keys_test));
   SetInteger(&dict, "DelTest", 1);
-  scoped_ptr<RegistryDict> subdict(new RegistryDict());
+  std::unique_ptr<RegistryDict> subdict(new RegistryDict());
   SetInteger(subdict.get(), "DelValsTest1", 1);
   SetString(subdict.get(), "DelValsTest2", "2");
-  subdict->SetKey("DelValsTest3", make_scoped_ptr(new RegistryDict()));
-  dict.SetKey("DelValsTest", subdict.Pass());
+  subdict->SetKey("DelValsTest3", base::WrapUnique(new RegistryDict()));
+  dict.SetKey("DelValsTest", std::move(subdict));
 
   // Run the parser.
   base::FilePath test_file(
@@ -97,16 +98,16 @@ TEST(PRegParserWinTest, TestParseFile) {
 
   // Build the expected output dictionary.
   RegistryDict expected;
-  scoped_ptr<RegistryDict> del_vals_dict(new RegistryDict());
-  del_vals_dict->SetKey("DelValsTest3", make_scoped_ptr(new RegistryDict()));
-  expected.SetKey("DelValsTest", del_vals_dict.Pass());
+  std::unique_ptr<RegistryDict> del_vals_dict(new RegistryDict());
+  del_vals_dict->SetKey("DelValsTest3", base::WrapUnique(new RegistryDict()));
+  expected.SetKey("DelValsTest", std::move(del_vals_dict));
   SetInteger(&expected, "HomepageIsNewTabPage", 1);
   SetString(&expected, "HomepageLocation", "http://www.example.com");
   SetInteger(&expected, "RestoreOnStartup", 4);
-  scoped_ptr<RegistryDict> startup_urls(new RegistryDict());
+  std::unique_ptr<RegistryDict> startup_urls(new RegistryDict());
   SetString(startup_urls.get(), "1", "http://www.chromium.org");
   SetString(startup_urls.get(), "2", "http://www.example.com");
-  expected.SetKey("RestoreOnStartupURLs", startup_urls.Pass());
+  expected.SetKey("RestoreOnStartupURLs", std::move(startup_urls));
   SetInteger(&expected, "ShowHomeButton", 1);
   SetString(&expected, "Snowman", "\xE2\x98\x83");
   SetString(&expected, "Empty", "");

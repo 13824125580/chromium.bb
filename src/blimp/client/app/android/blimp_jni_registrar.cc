@@ -10,17 +10,30 @@
 #include "blimp/client/app/android/blimp_view.h"
 #include "blimp/client/app/android/tab_control_feature_android.h"
 #include "blimp/client/app/android/toolbar.h"
+#include "blimp/client/app/android/web_input_box.h"
+#include "blimp/client/core/android/blimp_contents_factory.h"
+#include "blimp/client/core/android/blimp_contents_impl_android.h"
+#include "blimp/client/core/android/blimp_contents_observer_proxy.h"
+#include "blimp/client/core/android/blimp_navigation_controller_impl_android.h"
+#include "components/safe_json/android/component_jni_registrar.h"
 
 namespace blimp {
 namespace client {
 namespace {
 
 base::android::RegistrationMethod kBlimpRegistrationMethods[] = {
-    {"BlimpLibraryLoader", RegisterBlimpLibraryLoaderJni},
-    {"Toolbar", Toolbar::RegisterJni},
-    {"BlimpView", BlimpView::RegisterJni},
     {"BlimpClientSessionAndroid", BlimpClientSessionAndroid::RegisterJni},
+    {"BlimpContentsFactory", RegisterBlimpContentsFactoryJni},
+    {"BlimpContentsImpl", BlimpContentsImplAndroid::RegisterJni},
+    {"BlimpContentsObserverProxy", BlimpContentsObserverProxy::RegisterJni},
+    {"BlimpLibraryLoader", RegisterBlimpLibraryLoaderJni},
+    {"BlimpNavigationControllerImplAndroid",
+     BlimpNavigationControllerImplAndroid::RegisterJni},
+    {"BlimpView", BlimpView::RegisterJni},
+    {"SafeJson", safe_json::android::RegisterSafeJsonJni},
     {"TabControlFeatureAndroid", TabControlFeatureAndroid::RegisterJni},
+    {"Toolbar", Toolbar::RegisterJni},
+    {"WebInputBox", WebInputBox::RegisterJni},
 };
 
 }  // namespace

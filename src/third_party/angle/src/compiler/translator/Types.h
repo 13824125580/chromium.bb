@@ -16,6 +16,7 @@
 struct TPublicType;
 class TType;
 class TSymbol;
+class TIntermSymbol;
 
 class TField : angle::NonCopyable
 {
@@ -119,6 +120,12 @@ class TStructure : public TFieldListCollection
     bool containsArrays() const;
     bool containsType(TBasicType t) const;
     bool containsSamplers() const;
+
+    void createSamplerSymbols(const TString &structName,
+                              const TString &structAPIName,
+                              const int arrayOfStructsSize,
+                              TVector<TIntermSymbol *> *outputSymbols,
+                              TMap<TIntermSymbol *, TString> *outputSymbolsToAPINames) const;
 
     bool equals(const TStructure &other) const;
 
@@ -234,11 +241,18 @@ class TType
           interfaceBlock(nullptr), structure(nullptr)
     {
     }
-    TType(TBasicType t, unsigned char ps = 1, unsigned char ss = 1)
-        : type(t), precision(EbpUndefined), qualifier(EvqGlobal), invariant(false),
+    explicit TType(TBasicType t, unsigned char ps = 1, unsigned char ss = 1)
+        : type(t),
+          precision(EbpUndefined),
+          qualifier(EvqGlobal),
+          invariant(false),
           layoutQualifier(TLayoutQualifier::create()),
-          primarySize(ps), secondarySize(ss), array(false), arraySize(0),
-          interfaceBlock(0), structure(0)
+          primarySize(ps),
+          secondarySize(ss),
+          array(false),
+          arraySize(0),
+          interfaceBlock(0),
+          structure(0)
     {
     }
     TType(TBasicType t, TPrecision p, TQualifier q = EvqTemporary,
@@ -250,11 +264,18 @@ class TType
     {
     }
     explicit TType(const TPublicType &p);
-    TType(TStructure *userDef, TPrecision p = EbpUndefined)
-        : type(EbtStruct), precision(p), qualifier(EvqTemporary), invariant(false),
+    explicit TType(TStructure *userDef, TPrecision p = EbpUndefined)
+        : type(EbtStruct),
+          precision(p),
+          qualifier(EvqTemporary),
+          invariant(false),
           layoutQualifier(TLayoutQualifier::create()),
-          primarySize(1), secondarySize(1), array(false), arraySize(0),
-          interfaceBlock(0), structure(userDef)
+          primarySize(1),
+          secondarySize(1),
+          array(false),
+          arraySize(0),
+          interfaceBlock(0),
+          structure(userDef)
     {
     }
     TType(TInterfaceBlock *interfaceBlockIn, TQualifier qualifierIn,
@@ -527,6 +548,17 @@ class TType
     bool isStructureContainingSamplers() const
     {
         return structure ? structure->containsSamplers() : false;
+    }
+
+    void createSamplerSymbols(const TString &structName,
+                              const TString &structAPIName,
+                              const int arrayOfStructsSize,
+                              TVector<TIntermSymbol *> *outputSymbols,
+                              TMap<TIntermSymbol *, TString> *outputSymbolsToAPINames) const
+    {
+        ASSERT(structure != nullptr && structure->containsSamplers());
+        structure->createSamplerSymbols(structName, structAPIName, arrayOfStructsSize,
+                                        outputSymbols, outputSymbolsToAPINames);
     }
 
     // Initializes all lazily-initialized members.

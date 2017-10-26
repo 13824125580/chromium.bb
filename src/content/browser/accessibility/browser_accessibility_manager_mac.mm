@@ -4,19 +4,19 @@
 
 #include "content/browser/accessibility/browser_accessibility_manager_mac.h"
 
-#include <stddef.h>
-
 #import "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
 #include "base/logging.h"
+#include "base/strings/sys_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #import "content/browser/accessibility/browser_accessibility_cocoa.h"
 #import "content/browser/accessibility/browser_accessibility_mac.h"
 #include "content/common/accessibility_messages.h"
 
-
 namespace {
 
-// Declare accessibility constants and enums only present in WebKit.
+// Declare undocumented accessibility constants and enums only present in
+// WebKit.
 
 enum AXTextStateChangeType {
   AXTextStateChangeTypeUnknown,
@@ -46,6 +46,17 @@ enum AXTextSelectionGranularity {
   AXTextSelectionGranularityAll
 };
 
+enum AXTextEditType {
+  AXTextEditTypeUnknown,
+  AXTextEditTypeDelete,
+  AXTextEditTypeInsert,
+  AXTextEditTypeTyping,
+  AXTextEditTypeDictation,
+  AXTextEditTypeCut,
+  AXTextEditTypePaste,
+  AXTextEditTypeAttributesChange
+};
+
 NSString* const NSAccessibilityAutocorrectionOccurredNotification =
     @"AXAutocorrectionOccurred";
 NSString* const NSAccessibilityLayoutCompleteNotification =
@@ -56,10 +67,13 @@ NSString* const NSAccessibilityInvalidStatusChangedNotification =
     @"AXInvalidStatusChanged";
 NSString* const NSAccessibilityLiveRegionChangedNotification =
     @"AXLiveRegionChanged";
+NSString* const NSAccessibilityExpandedChanged =
+    @"AXExpandedChanged";
 NSString* const NSAccessibilityMenuItemSelectedNotification =
     @"AXMenuItemSelected";
 
-// Attributes used for NSAccessibilitySelectedTextChangedNotification.
+// Attributes used for NSAccessibilitySelectedTextChangedNotification and
+// NSAccessibilityValueChangedNotification.
 NSString* const NSAccessibilityTextStateChangeTypeKey =
     @"AXTextStateChangeType";
 NSString* const NSAccessibilityTextStateSyncKey = @"AXTextStateSync";
@@ -72,6 +86,11 @@ NSString* const NSAccessibilityTextSelectionChangedFocus =
 NSString* const NSAccessibilitySelectedTextMarkerRangeAttribute =
     @"AXSelectedTextMarkerRange";
 NSString* const NSAccessibilityTextChangeElement = @"AXTextChangeElement";
+NSString* const NSAccessibilityTextEditType = @"AXTextEditType";
+NSString* const NSAccessibilityTextChangeValue = @"AXTextChangeValue";
+NSString* const NSAccessibilityTextChangeValueLength =
+    @"AXTextChangeValueLength";
+NSString* const NSAccessibilityTextChangeValues = @"AXTextChangeValues";
 
 }  // namespace
 
@@ -86,6 +105,11 @@ BrowserAccessibilityManager* BrowserAccessibilityManager::Create(
       NULL, initial_tree, delegate, factory);
 }
 
+BrowserAccessibilityManagerMac*
+BrowserAccessibilityManager::ToBrowserAccessibilityManagerMac() {
+  return static_cast<BrowserAccessibilityManagerMac*>(this);
+}
+
 BrowserAccessibilityManagerMac::BrowserAccessibilityManagerMac(
     NSView* parent_view,
     const ui::AXTreeUpdate& initial_tree,
@@ -96,6 +120,8 @@ BrowserAccessibilityManagerMac::BrowserAccessibilityManagerMac(
   Initialize(initial_tree);
 }
 
+BrowserAccessibilityManagerMac::~BrowserAccessibilityManagerMac() {}
+
 // static
 ui::AXTreeUpdate
     BrowserAccessibilityManagerMac::GetEmptyDocument() {
@@ -105,42 +131,36 @@ ui::AXTreeUpdate
   empty_document.state =
       1 << ui::AX_STATE_READ_ONLY;
   ui::AXTreeUpdate update;
+  update.root_id = empty_document.id;
   update.nodes.push_back(empty_document);
   return update;
 }
 
 BrowserAccessibility* BrowserAccessibilityManagerMac::GetFocus() {
+  BrowserAccessibility* focus = BrowserAccessibilityManager::GetFocus();
+
   // On Mac, list boxes should always get focus on the whole list, otherwise
   // information about the number of selected items will never be reported.
-  BrowserAccessibility* node = BrowserAccessibilityManager::GetFocus();
-  if (node && node->GetRole() == ui::AX_ROLE_LIST_BOX)
-    return node;
+  // For editable combo boxes, focus should stay on the combo box so the user
+  // will not be taken out of the combo box while typing.
+  if (focus && (focus->GetRole() == ui::AX_ROLE_LIST_BOX ||
+                (focus->GetRole() == ui::AX_ROLE_COMBO_BOX &&
+                 focus->HasState(ui::AX_STATE_EDITABLE)))) {
+    return focus;
+  }
 
   // For other roles, follow the active descendant.
-  return GetActiveDescendantFocus(node);
+  return GetActiveDescendant(focus);
 }
 
 void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
+    BrowserAccessibilityEvent::Source source,
     ui::AXEvent event_type,
     BrowserAccessibility* node) {
   if (!node->IsNative())
     return;
 
-  if (event_type == ui::AX_EVENT_FOCUS) {
-    BrowserAccessibility* active_descendant = GetActiveDescendantFocus(node);
-    if (active_descendant)
-      node = active_descendant;
-
-    if (node->GetRole() == ui::AX_ROLE_LIST_BOX_OPTION &&
-        node->HasState(ui::AX_STATE_SELECTED) &&
-        node->GetParent() &&
-        node->GetParent()->GetRole() == ui::AX_ROLE_LIST_BOX) {
-      node = node->GetParent();
-      SetFocus(*node);
-    }
-  }
-
-  auto native_node = node->ToBrowserAccessibilityCocoa();
+  auto native_node = ToBrowserAccessibilityCocoa(node);
   DCHECK(native_node);
 
   // Refer to |AXObjectCache::postPlatformNotification| in WebKit source code.
@@ -155,7 +175,10 @@ void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
         // the combo box where the user might be typing.
         mac_notification = NSAccessibilitySelectedChildrenChangedNotification;
       } else {
-        mac_notification = NSAccessibilityFocusedUIElementChangedNotification;
+        // In all other cases we should post
+        // |NSAccessibilityFocusedUIElementChangedNotification|, but this is
+        // handled elsewhere.
+        return;
       }
       break;
     case ui::AX_EVENT_AUTOCORRECTION_OCCURED:
@@ -168,7 +191,14 @@ void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
       mac_notification = NSAccessibilityLayoutCompleteNotification;
       break;
     case ui::AX_EVENT_LOAD_COMPLETE:
-      mac_notification = NSAccessibilityLoadCompleteNotification;
+      // This notification should only be fired on the top document.
+      // Iframes should use |AX_EVENT_LAYOUT_COMPLETE| to signify that they have
+      // finished loading.
+      if (IsRootTree()) {
+        mac_notification = NSAccessibilityLoadCompleteNotification;
+      } else {
+        mac_notification = NSAccessibilityLayoutCompleteNotification;
+      }
       break;
     case ui::AX_EVENT_INVALID_STATUS_CHANGED:
       mac_notification = NSAccessibilityInvalidStatusChangedNotification;
@@ -186,8 +216,8 @@ void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
       // WebKit fires a notification both on the focused object and the root.
       BrowserAccessibility* focus = GetFocus();
       if (!focus)
-        break;
-      NSAccessibilityPostNotification(focus->ToBrowserAccessibilityCocoa(),
+        break;  // Just fire a notification on the root.
+      NSAccessibilityPostNotification(ToBrowserAccessibilityCocoa(focus),
                                       mac_notification);
 
       if (base::mac::IsOSElCapitanOrLater()) {
@@ -203,16 +233,40 @@ void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
           return;
 
         NSAccessibilityPostNotificationWithUserInfo(
-            focus->ToBrowserAccessibilityCocoa(), mac_notification, user_info);
+            ToBrowserAccessibilityCocoa(focus), mac_notification, user_info);
         NSAccessibilityPostNotificationWithUserInfo(
-            root->ToBrowserAccessibilityCocoa(), mac_notification, user_info);
+            ToBrowserAccessibilityCocoa(root), mac_notification, user_info);
         return;
       }
       break;
     }
     case ui::AX_EVENT_CHECKED_STATE_CHANGED:
+      mac_notification = NSAccessibilityValueChangedNotification;
+      break;
     case ui::AX_EVENT_VALUE_CHANGED:
       mac_notification = NSAccessibilityValueChangedNotification;
+      if (base::mac::IsOSElCapitanOrLater() && text_edits_.size()) {
+        // It seems that we don't need to distinguish between deleted and
+        // inserted text for now.
+        base::string16 deleted_text;
+        base::string16 inserted_text;
+        int32_t id = node->GetId();
+        const auto iterator = text_edits_.find(id);
+        if (iterator != text_edits_.end())
+          inserted_text = iterator->second;
+        NSDictionary* user_info = GetUserInfoForValueChangedNotification(
+            native_node, deleted_text, inserted_text);
+
+        BrowserAccessibility* root = GetRoot();
+        if (!root)
+          return;
+
+        NSAccessibilityPostNotificationWithUserInfo(
+            native_node, mac_notification, user_info);
+        NSAccessibilityPostNotificationWithUserInfo(
+            ToBrowserAccessibilityCocoa(root), mac_notification, user_info);
+        return;
+      }
       break;
     // TODO(nektar): Need to add an event for live region created.
     case ui::AX_EVENT_LIVE_REGION_CHANGED:
@@ -227,7 +281,10 @@ void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
     case ui::AX_EVENT_ROW_COLLAPSED:
       mac_notification = NSAccessibilityRowCollapsedNotification;
       break;
-    // TODO(nektar): Add events for busy and expanded changed.
+    // TODO(nektar): Add events for busy.
+    case ui::AX_EVENT_EXPANDED_CHANGED:
+      mac_notification = NSAccessibilityExpandedChanged;
+      break;
     // TODO(nektar): Support menu open/close notifications.
     case ui::AX_EVENT_MENU_LIST_ITEM_SELECTED:
       mac_notification = NSAccessibilityMenuItemSelectedNotification;
@@ -257,6 +314,63 @@ void BrowserAccessibilityManagerMac::NotifyAccessibilityEvent(
   }
 
   NSAccessibilityPostNotification(native_node, mac_notification);
+}
+
+void BrowserAccessibilityManagerMac::OnAccessibilityEvents(
+    const std::vector<AXEventNotificationDetails>& details) {
+  text_edits_.clear();
+  // Call the base method last as it might delete the tree if it receives an
+  // invalid message.
+  BrowserAccessibilityManager::OnAccessibilityEvents(details);
+}
+
+void BrowserAccessibilityManagerMac::OnNodeDataWillChange(
+    ui::AXTree* tree,
+    const ui::AXNodeData& old_node_data,
+    const ui::AXNodeData& new_node_data) {
+  BrowserAccessibilityManager::OnNodeDataWillChange(tree, old_node_data,
+                                                    new_node_data);
+
+  // Starting from OS X 10.11, if the user has edited some text we need to
+  // dispatch the actual text that changed on the value changed notification.
+  // We run this code on all OS X versions to get the highest test coverage.
+  base::string16 old_text, new_text;
+  ui::AXRole role = new_node_data.role;
+  if (role == ui::AX_ROLE_COMBO_BOX || role == ui::AX_ROLE_SEARCH_BOX ||
+      role == ui::AX_ROLE_TEXT_FIELD) {
+    old_text = old_node_data.GetString16Attribute(ui::AX_ATTR_VALUE);
+    new_text = new_node_data.GetString16Attribute(ui::AX_ATTR_VALUE);
+  } else if (new_node_data.state & (1 << ui::AX_STATE_EDITABLE)) {
+    old_text = old_node_data.GetString16Attribute(ui::AX_ATTR_NAME);
+    new_text = new_node_data.GetString16Attribute(ui::AX_ATTR_NAME);
+  }
+
+  if ((old_text.empty() && new_text.empty()) ||
+      old_text.length() == new_text.length()) {
+    return;
+  }
+
+  if (old_text.length() < new_text.length()) {
+    // Insertion.
+    size_t i = 0;
+    while (i < old_text.length() && i < new_text.length() &&
+           old_text[i] == new_text[i]) {
+      ++i;
+    }
+    size_t length = (new_text.length() - i) - (old_text.length() - i);
+    base::string16 inserted_text = new_text.substr(i, length);
+    text_edits_[new_node_data.id] = inserted_text;
+  } else {
+    // Deletion.
+    size_t i = 0;
+    while (i < old_text.length() && i < new_text.length() &&
+           old_text[i] == new_text[i]) {
+      ++i;
+    }
+    size_t length = (old_text.length() - i) - (new_text.length() - i);
+    base::string16 deleted_text = old_text.substr(i, length);
+    text_edits_[new_node_data.id] = deleted_text;
+  }
 }
 
 void BrowserAccessibilityManagerMac::OnAtomicUpdateFinished(
@@ -292,34 +406,32 @@ void BrowserAccessibilityManagerMac::OnAtomicUpdateFinished(
       static_cast<BrowserAccessibilityMac*>(GetRoot());
   if (root) {
     root->RecreateNativeObject();
-    NotifyAccessibilityEvent(ui::AX_EVENT_CHILDREN_CHANGED, root);
+    NotifyAccessibilityEvent(
+        BrowserAccessibilityEvent::FromTreeChange,
+        ui::AX_EVENT_CHILDREN_CHANGED,
+        root);
   }
 }
 
-// Returns an autoreleased object.
 NSDictionary* BrowserAccessibilityManagerMac::
     GetUserInfoForSelectedTextChangedNotification() {
   NSMutableDictionary* user_info = [[[NSMutableDictionary alloc] init]
       autorelease];
-  [user_info setObject:[NSNumber numberWithBool:YES]
-                forKey:NSAccessibilityTextStateSyncKey];
-  [user_info setObject:[NSNumber numberWithInt:AXTextStateChangeTypeUnknown]
+  [user_info setObject:@YES forKey:NSAccessibilityTextStateSyncKey];
+  [user_info setObject:@(AXTextStateChangeTypeUnknown)
                 forKey:NSAccessibilityTextStateChangeTypeKey];
-  [user_info
-      setObject:[NSNumber numberWithInt:AXTextSelectionDirectionUnknown]
-         forKey:NSAccessibilityTextSelectionDirection];
-  [user_info
-      setObject:[NSNumber numberWithInt:AXTextSelectionGranularityUnknown]
-         forKey:NSAccessibilityTextSelectionGranularity];
-  [user_info setObject:[NSNumber numberWithBool:YES]
-                forKey:NSAccessibilityTextSelectionChangedFocus];
+  [user_info setObject:@(AXTextSelectionDirectionUnknown)
+                forKey:NSAccessibilityTextSelectionDirection];
+  [user_info setObject:@(AXTextSelectionGranularityUnknown)
+                forKey:NSAccessibilityTextSelectionGranularity];
+  [user_info setObject:@YES forKey:NSAccessibilityTextSelectionChangedFocus];
 
   int32_t focus_id = GetTreeData().sel_focus_object_id;
   BrowserAccessibility* focus_object = GetFromID(focus_id);
   if (focus_object) {
     focus_object = focus_object->GetClosestPlatformObject();
-    auto native_focus_object = focus_object->ToBrowserAccessibilityCocoa();
-    if (native_focus_object) {
+    auto native_focus_object = ToBrowserAccessibilityCocoa(focus_object);
+    if (native_focus_object && [native_focus_object instanceActive]) {
       [user_info setObject:[native_focus_object selectedTextMarkerRange]
                     forKey:NSAccessibilitySelectedTextMarkerRangeAttribute];
       [user_info setObject:native_focus_object
@@ -328,6 +440,38 @@ NSDictionary* BrowserAccessibilityManagerMac::
   }
 
   return user_info;
+}
+
+NSDictionary*
+BrowserAccessibilityManagerMac::GetUserInfoForValueChangedNotification(
+    const BrowserAccessibilityCocoa* native_node,
+    const base::string16& deleted_text,
+    const base::string16& inserted_text) const {
+  DCHECK(native_node);
+  if (deleted_text.empty() && inserted_text.empty())
+    return nil;
+
+  NSMutableArray* changes = [[[NSMutableArray alloc] init] autorelease];
+  if (!deleted_text.empty()) {
+    [changes addObject:@{
+      NSAccessibilityTextEditType : @(AXTextEditTypeUnknown),
+      NSAccessibilityTextChangeValueLength : @(deleted_text.length()),
+      NSAccessibilityTextChangeValue : base::SysUTF16ToNSString(deleted_text)
+    }];
+  }
+  if (!inserted_text.empty()) {
+    [changes addObject:@{
+      NSAccessibilityTextEditType : @(AXTextEditTypeUnknown),
+      NSAccessibilityTextChangeValueLength : @(inserted_text.length()),
+      NSAccessibilityTextChangeValue : base::SysUTF16ToNSString(inserted_text)
+    }];
+  }
+
+  return @{
+    NSAccessibilityTextStateChangeTypeKey : @(AXTextStateChangeTypeEdit),
+    NSAccessibilityTextChangeValues : changes,
+    NSAccessibilityTextChangeElement : native_node
+  };
 }
 
 }  // namespace content

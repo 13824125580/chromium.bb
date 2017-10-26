@@ -31,7 +31,6 @@
 #include "modules/ModulesExport.h"
 #include "modules/mediastream/MediaDeviceInfo.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -42,7 +41,7 @@ class ScriptState;
 class ScriptPromiseResolver;
 
 class MODULES_EXPORT MediaDevicesRequest final : public GarbageCollectedFinalized<MediaDevicesRequest>, public ActiveDOMObject {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MediaDevicesRequest);
+    USING_GARBAGE_COLLECTED_MIXIN(MediaDevicesRequest);
 public:
     static MediaDevicesRequest* create(ScriptState*, UserMediaController*);
     ~MediaDevicesRequest() override;
@@ -61,7 +60,7 @@ public:
 private:
     MediaDevicesRequest(ScriptState*, UserMediaController*);
 
-    RawPtrWillBeMember<UserMediaController> m_controller;
+    Member<UserMediaController> m_controller;
     Member<ScriptPromiseResolver> m_resolver;
 };
 

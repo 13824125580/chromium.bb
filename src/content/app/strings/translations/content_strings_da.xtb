@@ -25,7 +25,7 @@
 <translation id="1822429046913737220">f.m./e.m.</translation>
 <translation id="1832974991323546415">afspil på en enhed via fjernadgang</translation>
 <translation id="1842960171412779397">vælg</translation>
-<translation id="1880518467580572141">kontur</translation>
+<translation id="1880518467580572141">Oversigt</translation>
 <translation id="1921819250265091946">dd</translation>
 <translation id="1930711995431081526">status</translation>
 <translation id="1938124657309484470">Værdien må ikke være senere end <ph name="MAXIMUM_DATE_OR_TIME" />.</translation>
@@ -51,6 +51,7 @@
 <translation id="2896972712917208084">gruppe af alternativknapper</translation>
 <translation id="2901282870647571346">aktuel filmstatus</translation>
 <translation id="2908441821576996758">Angiv en kommasepareret liste over e-mailadresser.</translation>
+<translation id="2931838996092594335">klik</translation>
 <translation id="2940813599313844715">objekt</translation>
 <translation id="2942448076852699108">fremhævet indhold</translation>
 <translation id="3040011195152428237">link</translation>
@@ -97,6 +98,7 @@
 <translation id="512758898067543763">rækkeoverskrift</translation>
 <translation id="5164977714490026579">Værdien skal være større end eller lig med <ph name="MINIMUM" />.</translation>
 <translation id="5307600278924710095">Angiv den del, der kommer før "<ph name="ATSIGN" />". "<ph name="INVALIDADDRESS" />" er ufuldstændig.</translation>
+<translation id="5317780077021120954">Gem</translation>
 <translation id="5406322316791861025">tal</translation>
 <translation id="5453733299334684579">træelement</translation>
 <translation id="5466621249238537318">Vælg en eller flere filer.</translation>
@@ -107,7 +109,9 @@
 <translation id="561939826962581046">tidspunkt</translation>
 <translation id="5641012560118721995">pause</translation>
 <translation id="5643186887447432888">knap</translation>
+<translation id="583281660410589416">Ukendt</translation>
 <translation id="5843503607508392247">Andet...</translation>
+<translation id="5860033963881614850">Fra</translation>
 <translation id="5939518447894949180">Nulstil</translation>
 <translation id="5944544982112848342">2048 (Høj klasse)</translation>
 <translation id="5966707198760109579">Uge</translation>
@@ -176,6 +180,7 @@
 <translation id="8785498733064193001">start afspilning</translation>
 <translation id="8851136666856101339">hovd</translation>
 <translation id="8987927404178983737">Måned</translation>
+<translation id="9002566407876343676">åbn</translation>
 <translation id="901493112792887934">aktuel tid i sekunder</translation>
 <translation id="9048119486235211610">navigation</translation>
 <translation id="9050748414552849310">vis undertekster</translation>

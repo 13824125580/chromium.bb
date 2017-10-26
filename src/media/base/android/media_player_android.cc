@@ -9,7 +9,7 @@
 #include "base/android/context_utils.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/android/media_drm_bridge.h"
 #include "media/base/android/media_player_manager.h"
 
@@ -27,13 +27,15 @@ MediaPlayerAndroid::MediaPlayerAndroid(
     int player_id,
     MediaPlayerManager* manager,
     const OnDecoderResourcesReleasedCB& on_decoder_resources_released_cb,
-    const GURL& frame_url)
+    const GURL& frame_url,
+    int media_session_id)
     : on_decoder_resources_released_cb_(on_decoder_resources_released_cb),
       player_id_(player_id),
       volume_(kDefaultVolume),
       volume_multiplier_(kDefaultVolumeMultiplier),
       manager_(manager),
       frame_url_(frame_url),
+      media_session_id_(media_session_id),
       weak_factory_(this) {
   listener_.reset(new MediaPlayerListener(base::ThreadTaskRunnerHandle::Get(),
                                           weak_factory_.GetWeakPtr()));

@@ -22,15 +22,13 @@
 #include "core/layout/HitTestResult.h"
 
 #include "core/HTMLNames.h"
+#include "core/InputTypeNames.h"
 #include "core/dom/PseudoElement.h"
 #include "core/dom/shadow/FlatTreeTraversal.h"
 #include "core/dom/shadow/ShadowRoot.h"
 #include "core/editing/FrameSelection.h"
-#include "core/editing/VisibleUnits.h"
 #include "core/editing/markers/DocumentMarkerController.h"
-#include "core/fetch/ImageResource.h"
 #include "core/frame/LocalFrame.h"
-#include "core/html/HTMLAnchorElement.h"
 #include "core/html/HTMLAreaElement.h"
 #include "core/html/HTMLImageElement.h"
 #include "core/html/HTMLInputElement.h"
@@ -39,8 +37,6 @@
 #include "core/html/HTMLTextAreaElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/layout/LayoutImage.h"
-#include "core/layout/LayoutTextFragment.h"
-#include "core/page/FrameTree.h"
 #include "core/svg/SVGElement.h"
 #include "platform/geometry/Region.h"
 #include "platform/scroll/Scrollbar.h"
@@ -96,7 +92,7 @@ HitTestResult::HitTestResult(const HitTestResult& other)
     , m_isOverWidget(other.isOverWidget())
 {
     // Only copy the NodeSet in case of list hit test.
-    m_listBasedTestResult = adoptPtrWillBeNoop(other.m_listBasedTestResult ? new NodeSet(*other.m_listBasedTestResult) : 0);
+    m_listBasedTestResult = other.m_listBasedTestResult ? new NodeSet(*other.m_listBasedTestResult) : nullptr;
 }
 
 HitTestResult::~HitTestResult()
@@ -142,7 +138,7 @@ void HitTestResult::populateFromCachedResult(const HitTestResult& other)
     m_cacheable = other.m_cacheable;
 
     // Only copy the NodeSet in case of list hit test.
-    m_listBasedTestResult = adoptPtrWillBeNoop(other.m_listBasedTestResult ? new NodeSet(*other.m_listBasedTestResult) : 0);
+    m_listBasedTestResult = other.m_listBasedTestResult ? new NodeSet(*other.m_listBasedTestResult) : nullptr;
 }
 
 DEFINE_TRACE(HitTestResult)
@@ -151,9 +147,7 @@ DEFINE_TRACE(HitTestResult)
     visitor->trace(m_innerPossiblyPseudoNode);
     visitor->trace(m_innerURLElement);
     visitor->trace(m_scrollbar);
-#if ENABLE(OILPAN)
     visitor->trace(m_listBasedTestResult);
-#endif
 }
 
 PositionWithAffinity HitTestResult::position() const
@@ -163,7 +157,7 @@ PositionWithAffinity HitTestResult::position() const
     LayoutObject* layoutObject = this->layoutObject();
     if (!layoutObject)
         return PositionWithAffinity();
-    if (m_innerPossiblyPseudoNode->isPseudoElement() && m_innerPossiblyPseudoNode->getPseudoId() == BEFORE)
+    if (m_innerPossiblyPseudoNode->isPseudoElement() && m_innerPossiblyPseudoNode->getPseudoId() == PseudoIdBefore)
         return mostForwardCaretPosition(Position(m_innerNode, PositionAnchorType::BeforeChildren));
     return layoutObject->positionForPoint(localPoint());
 }
@@ -203,13 +197,7 @@ HTMLAreaElement* HitTestResult::imageAreaForImage() const
     if (!map)
         return nullptr;
 
-    LayoutBox* box = toLayoutBox(imageElement->layoutObject());
-    LayoutRect contentBox = box->contentBoxRect();
-    float scaleFactor = 1 / box->style()->effectiveZoom();
-    LayoutPoint location = localPoint();
-    location.scale(scaleFactor, scaleFactor);
-
-    return map->areaForPoint(location, contentBox.size());
+    return map->areaForPoint(localPoint(), imageElement->layoutObject());
 }
 
 void HitTestResult::setInnerNode(Node* n)
@@ -249,23 +237,6 @@ bool HitTestResult::isSelected() const
     if (LocalFrame* frame = m_innerNode->document().frame())
         return frame->selection().contains(m_hitTestLocation.point());
     return false;
-}
-
-String HitTestResult::spellingToolTip(TextDirection& dir) const
-{
-    dir = LTR;
-    // Return the tool tip string associated with this point, if any. Only markers associated with bad grammar
-    // currently supply strings, but maybe someday markers associated with misspelled words will also.
-    if (!m_innerNode)
-        return String();
-
-    DocumentMarker* marker = m_innerNode->document().markers().markerContainingPoint(m_hitTestLocation.point(), DocumentMarker::Grammar);
-    if (!marker)
-        return String();
-
-    if (LayoutObject* layoutObject = m_innerNode->layoutObject())
-        dir = layoutObject->style()->direction();
-    return marker->description();
 }
 
 String HitTestResult::title(TextDirection& dir) const
@@ -317,7 +288,7 @@ Image* HitTestResult::image() const
     if (layoutObject && layoutObject->isImage()) {
         LayoutImage* image = toLayoutImage(layoutObject);
         if (image->cachedImage() && !image->cachedImage()->errorOccurred())
-            return image->cachedImage()->image();
+            return image->cachedImage()->getImage();
     }
 
     return nullptr;
@@ -341,7 +312,7 @@ KURL HitTestResult::absoluteImageURL() const
     // don't have a LayoutImage (e.g. because the image didn't load and we are using an alt container).
     // For other elements we don't create alt containers so ensure they contain a loaded image.
     if (isHTMLImageElement(*innerNodeOrImageMapImage)
-        || (isHTMLInputElement(*innerNodeOrImageMapImage) && toHTMLInputElement(innerNodeOrImageMapImage)->isImage()))
+        || (isHTMLInputElement(*innerNodeOrImageMapImage) && toHTMLInputElement(innerNodeOrImageMapImage)->type() == InputTypeNames::image))
         urlString = toElement(*innerNodeOrImageMapImage).imageSourceURL();
     else if ((innerNodeOrImageMapImage->layoutObject() && innerNodeOrImageMapImage->layoutObject()->isImage())
         && (isHTMLEmbedElement(*innerNodeOrImageMapImage)
@@ -492,14 +463,14 @@ void HitTestResult::append(const HitTestResult& other)
 const HitTestResult::NodeSet& HitTestResult::listBasedTestResult() const
 {
     if (!m_listBasedTestResult)
-        m_listBasedTestResult = adoptPtrWillBeNoop(new NodeSet);
+        m_listBasedTestResult = new NodeSet;
     return *m_listBasedTestResult;
 }
 
 HitTestResult::NodeSet& HitTestResult::mutableListBasedTestResult()
 {
     if (!m_listBasedTestResult)
-        m_listBasedTestResult = adoptPtrWillBeNoop(new NodeSet);
+        m_listBasedTestResult = new NodeSet;
     return *m_listBasedTestResult;
 }
 

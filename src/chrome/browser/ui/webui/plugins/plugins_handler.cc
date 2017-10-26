@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/webui/plugins/plugins_handler.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -20,6 +20,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/pepper_flash.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -50,8 +51,6 @@ base::string16 PluginTypeToString(int type) {
   // enumeration type gives us better build-time error checking (if someone adds
   // a new type).
   switch (static_cast<WebPluginInfo::PluginType>(type)) {
-    case WebPluginInfo::PLUGIN_TYPE_NPAPI:
-      return l10n_util::GetStringUTF16(IDS_PLUGINS_NPAPI);
     case WebPluginInfo::PLUGIN_TYPE_PEPPER_IN_PROCESS:
       return l10n_util::GetStringUTF16(IDS_PLUGINS_PPAPI_IN_PROCESS);
     case WebPluginInfo::PLUGIN_TYPE_PEPPER_OUT_OF_PROCESS:
@@ -76,23 +75,20 @@ base::string16 GetPluginDescription(const WebPluginInfo& plugin) {
                      &system_flash_path);
     if (base::FilePath::CompareEqualIgnoreCase(plugin.path.value(),
                                                system_flash_path.value())) {
-#if defined(GOOGLE_CHROME_BUILD)
-      // Existing documentation for debugging Flash describe this plugin as
-      // "Debug" so preserve this nomenclature here.
-      desc += base::ASCIIToUTF16(" Debug");
-#else
-      // On Chromium, we can name it what it really is; the system plugin.
-      desc += base::ASCIIToUTF16(" System");
-#endif
+      if (chrome::IsSystemFlashScriptDebuggerPresent())
+        desc += base::ASCIIToUTF16(" Debug");
+      else
+        desc += base::ASCIIToUTF16(" System");
     }
   }
   return desc;
 }
 
-mojo::Array<MimeTypePtr> GeneratePluginMimeTypes(const WebPluginInfo& plugin) {
-  mojo::Array<MimeTypePtr> mime_types;
+mojo::Array<mojom::MimeTypePtr> GeneratePluginMimeTypes(
+    const WebPluginInfo& plugin) {
+  mojo::Array<mojom::MimeTypePtr> mime_types;
   for (const auto& plugin_mime_type : plugin.mime_types) {
-    MimeTypePtr mime_type(MimeType::New());
+    mojom::MimeTypePtr mime_type(mojom::MimeType::New());
     mime_type->description = mojo::String::From(plugin_mime_type.description);
 
     mime_type->mime_type = mojo::String::From(plugin_mime_type.mime_type);
@@ -106,9 +102,9 @@ mojo::Array<MimeTypePtr> GeneratePluginMimeTypes(const WebPluginInfo& plugin) {
 
 }  // namespace
 
-PluginsHandler::PluginsHandler(
+PluginsPageHandler::PluginsPageHandler(
     content::WebUI* web_ui,
-    mojo::InterfaceRequest<PluginsHandlerMojo> request)
+    mojo::InterfaceRequest<mojom::PluginsPageHandler> request)
     : web_ui_(web_ui),
       binding_(this, std::move(request)),
       weak_ptr_factory_(this) {
@@ -120,10 +116,10 @@ PluginsHandler::PluginsHandler(
                  content::Source<Profile>(profile));
 }
 
-PluginsHandler::~PluginsHandler() {}
+PluginsPageHandler::~PluginsPageHandler() {}
 
-void PluginsHandler::SetPluginEnabled(const mojo::String& plugin_path,
-                                      bool enable) {
+void PluginsPageHandler::SetPluginEnabled(const mojo::String& plugin_path,
+                                          bool enable) {
   Profile* profile = Profile::FromWebUI(web_ui_);
   PluginPrefs* plugin_prefs = PluginPrefs::GetForProfile(profile).get();
   plugin_prefs->EnablePlugin(
@@ -131,8 +127,8 @@ void PluginsHandler::SetPluginEnabled(const mojo::String& plugin_path,
       base::Bind(&AssertPluginEnabled));
 }
 
-void PluginsHandler::SetPluginGroupEnabled(const mojo::String& group_name,
-                                           bool enable) {
+void PluginsPageHandler::SetPluginGroupEnabled(const mojo::String& group_name,
+                                               bool enable) {
   Profile* profile = Profile::FromWebUI(web_ui_);
   PluginPrefs* plugin_prefs = PluginPrefs::GetForProfile(profile).get();
   base::string16 group_name_as_string16 = group_name.To<base::string16>();
@@ -152,21 +148,24 @@ void PluginsHandler::SetPluginGroupEnabled(const mojo::String& group_name,
     plugin_prefs->EnablePluginGroup(false, adobereader);
 }
 
-void PluginsHandler::GetShowDetails(const GetShowDetailsCallback& callback) {
+void PluginsPageHandler::GetShowDetails(
+    const GetShowDetailsCallback& callback) {
   callback.Run(show_details_.GetValue());
 }
 
-void PluginsHandler::SaveShowDetailsToPrefs(bool details_mode) {
+void PluginsPageHandler::SaveShowDetailsToPrefs(bool details_mode) {
   show_details_.SetValue(details_mode);
 }
 
-void PluginsHandler::SetPluginAlwaysAllowed(const mojo::String& plugin,
-                                            bool allowed) {
+void PluginsPageHandler::SetPluginAlwaysAllowed(const mojo::String& plugin,
+                                                bool allowed) {
   Profile* profile = Profile::FromWebUI(web_ui_);
-  HostContentSettingsMapFactory::GetForProfile(profile)->SetContentSetting(
-      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      CONTENT_SETTINGS_TYPE_PLUGINS, plugin.get(),
-      allowed ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_DEFAULT);
+  HostContentSettingsMapFactory::GetForProfile(profile)
+      ->SetContentSettingCustomScope(
+          ContentSettingsPattern::Wildcard(),
+          ContentSettingsPattern::Wildcard(), CONTENT_SETTINGS_TYPE_PLUGINS,
+          plugin.get(),
+          allowed ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_DEFAULT);
 
   // Keep track of the whitelist separately, so that we can distinguish plugins
   // whitelisted by the user from automatically whitelisted ones.
@@ -175,44 +174,46 @@ void PluginsHandler::SetPluginAlwaysAllowed(const mojo::String& plugin,
   update->SetBoolean(plugin, allowed);
 }
 
-void PluginsHandler::GetPluginsData(const GetPluginsDataCallback& callback) {
+void PluginsPageHandler::GetPluginsData(
+    const GetPluginsDataCallback& callback) {
   if (weak_ptr_factory_.HasWeakPtrs())
     return;
 
   content::PluginService::GetInstance()->GetPlugins(
-      base::Bind(&PluginsHandler::RespondWithPluginsData,
+      base::Bind(&PluginsPageHandler::RespondWithPluginsData,
                  weak_ptr_factory_.GetWeakPtr(), callback));
 }
 
-void PluginsHandler::SetClientPage(PluginsPageMojoPtr page) {
+void PluginsPageHandler::SetClientPage(mojom::PluginsPagePtr page) {
   page_ = std::move(page);
 }
 
-void PluginsHandler::Observe(int type,
-                             const content::NotificationSource& source,
-                             const content::NotificationDetails& details) {
+void PluginsPageHandler::Observe(int type,
+                                 const content::NotificationSource& source,
+                                 const content::NotificationDetails& details) {
   DCHECK_EQ(chrome::NOTIFICATION_PLUGIN_ENABLE_STATUS_CHANGED, type);
 
   if (weak_ptr_factory_.HasWeakPtrs())
     return;
 
-  content::PluginService::GetInstance()->GetPlugins(base::Bind(
-      &PluginsHandler::NotifyWithPluginsData, weak_ptr_factory_.GetWeakPtr()));
+  content::PluginService::GetInstance()->GetPlugins(
+      base::Bind(&PluginsPageHandler::NotifyWithPluginsData,
+                 weak_ptr_factory_.GetWeakPtr()));
 }
 
-void PluginsHandler::RespondWithPluginsData(
+void PluginsPageHandler::RespondWithPluginsData(
     const GetPluginsDataCallback& callback,
     const std::vector<WebPluginInfo>& plugins) {
   callback.Run(GeneratePluginsData(plugins));
 }
 
-void PluginsHandler::NotifyWithPluginsData(
+void PluginsPageHandler::NotifyWithPluginsData(
     const std::vector<WebPluginInfo>& plugins) {
   if (page_)
     page_->OnPluginsUpdated(GeneratePluginsData(plugins));
 }
 
-mojo::Array<PluginDataPtr> PluginsHandler::GeneratePluginsData(
+mojo::Array<mojom::PluginDataPtr> PluginsPageHandler::GeneratePluginsData(
     const std::vector<WebPluginInfo>& plugins) {
   Profile* profile = Profile::FromWebUI(web_ui_);
   PluginPrefs* plugin_prefs = PluginPrefs::GetForProfile(profile).get();
@@ -222,19 +223,19 @@ mojo::Array<PluginDataPtr> PluginsHandler::GeneratePluginsData(
   // the plugins in UI in a grouped fashion.
   PluginGroups groups;
   for (size_t i = 0; i < plugins.size(); ++i) {
-    scoped_ptr<PluginMetadata> plugin(
+    std::unique_ptr<PluginMetadata> plugin(
         plugin_finder->GetPluginMetadata(plugins[i]));
     groups[plugin->identifier()].push_back(&plugins[i]);
   }
 
-  mojo::Array<PluginDataPtr> plugins_data;
+  mojo::Array<mojom::PluginDataPtr> plugins_data;
 
   for (PluginGroups::const_iterator it = groups.begin(); it != groups.end();
        ++it) {
-    PluginDataPtr plugin_data(PluginData::New());
+    mojom::PluginDataPtr plugin_data(mojom::PluginData::New());
     const std::vector<const WebPluginInfo*>& group_plugins = it->second;
 
-    scoped_ptr<PluginMetadata> plugin_metadata(
+    std::unique_ptr<PluginMetadata> plugin_metadata(
         plugin_finder->GetPluginMetadata(*group_plugins[0]));
     std::string group_identifier = plugin_metadata->identifier();
     plugin_data->id = mojo::String::From(group_identifier);
@@ -242,7 +243,7 @@ mojo::Array<PluginDataPtr> PluginsHandler::GeneratePluginsData(
     const WebPluginInfo* active_plugin = nullptr;
     bool group_enabled = false;
 
-    mojo::Array<PluginFilePtr> plugin_files;
+    mojo::Array<mojom::PluginFilePtr> plugin_files;
     for (const auto& group_plugin : group_plugins) {
       bool plugin_enabled = plugin_prefs->IsPluginEnabled(*group_plugin);
 
@@ -259,11 +260,19 @@ mojo::Array<PluginDataPtr> PluginsHandler::GeneratePluginsData(
         GetPluginGroupEnabledMode(plugin_files, group_enabled));
 
     plugin_data->always_allowed = false;
+    plugin_data->trusted = false;
+
     if (group_enabled) {
-      const base::DictionaryValue* whitelist =
-          profile->GetPrefs()->GetDictionary(
-              prefs::kContentSettingsPluginWhitelist);
-      whitelist->GetBoolean(group_identifier, &plugin_data->always_allowed);
+      if (plugin_metadata->GetSecurityStatus(*active_plugin) ==
+          PluginMetadata::SECURITY_STATUS_FULLY_TRUSTED) {
+        plugin_data->trusted = true;
+        plugin_data->always_allowed = true;
+      } else {
+        const base::DictionaryValue* whitelist =
+            profile->GetPrefs()->GetDictionary(
+                prefs::kContentSettingsPluginWhitelist);
+        whitelist->GetBoolean(group_identifier, &plugin_data->always_allowed);
+      }
     }
 
     plugin_data->critical = false;
@@ -285,11 +294,11 @@ mojo::Array<PluginDataPtr> PluginsHandler::GeneratePluginsData(
   return plugins_data;
 }
 
-PluginFilePtr PluginsHandler::GeneratePluginFile(
+mojom::PluginFilePtr PluginsPageHandler::GeneratePluginFile(
     const WebPluginInfo& plugin,
     const base::string16& group_name,
     bool plugin_enabled) const {
-  PluginFilePtr plugin_file(PluginFile::New());
+  mojom::PluginFilePtr plugin_file(mojom::PluginFile::New());
   plugin_file->description = mojo::String::From(GetPluginDescription(plugin));
   plugin_file->enabled_mode = mojo::String::From(
       GetPluginEnabledMode(plugin.name, group_name, plugin_enabled));
@@ -302,7 +311,7 @@ PluginFilePtr PluginsHandler::GeneratePluginFile(
   return plugin_file;
 }
 
-std::string PluginsHandler::GetPluginEnabledMode(
+std::string PluginsPageHandler::GetPluginEnabledMode(
     const base::string16& plugin_name,
     const base::string16& group_name,
     bool plugin_enabled) const {
@@ -324,8 +333,8 @@ std::string PluginsHandler::GetPluginEnabledMode(
   return plugin_enabled ? "enabledByUser" : "disabledByUser";
 }
 
-std::string PluginsHandler::GetPluginGroupEnabledMode(
-    const mojo::Array<PluginFilePtr>& plugin_files,
+std::string PluginsPageHandler::GetPluginGroupEnabledMode(
+    const mojo::Array<mojom::PluginFilePtr>& plugin_files,
     bool group_enabled) const {
   bool plugins_enabled_by_policy = true;
   bool plugins_disabled_by_policy = true;

@@ -32,7 +32,6 @@
 #define WorkerConsoleAgent_h
 
 #include "core/inspector/InspectorConsoleAgent.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -41,10 +40,7 @@ class WorkerGlobalScope;
 class WorkerConsoleAgent final : public InspectorConsoleAgent {
     WTF_MAKE_NONCOPYABLE(WorkerConsoleAgent);
 public:
-    static PassOwnPtrWillBeRawPtr<WorkerConsoleAgent> create(V8RuntimeAgent* runtimeAgent, WorkerGlobalScope* workerGlobalScope)
-    {
-        return adoptPtrWillBeNoop(new WorkerConsoleAgent(runtimeAgent, workerGlobalScope));
-    }
+    WorkerConsoleAgent(V8InspectorSession*, WorkerGlobalScope*);
     ~WorkerConsoleAgent() override;
     DECLARE_VIRTUAL_TRACE();
 
@@ -58,9 +54,7 @@ protected:
     void disableStackCapturingIfNeeded() override;
 
 private:
-    WorkerConsoleAgent(V8RuntimeAgent*, WorkerGlobalScope*);
-
-    RawPtrWillBeMember<WorkerGlobalScope> m_workerGlobalScope;
+    Member<WorkerGlobalScope> m_workerGlobalScope;
 };
 
 } // namespace blink

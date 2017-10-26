@@ -6,17 +6,6 @@
  * @fileoverview
  * 'settings-site-settings-page' is the settings page containing privacy and
  * security site settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-site-settings-page prefs="{{prefs}}">
- *      </settings-site-settings-page>
- *      ... other pages ...
- *    </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-site-settings-page
  */
 Polymer({
   is: 'settings-site-settings-page',
@@ -24,14 +13,6 @@ Polymer({
   behaviors: [SiteSettingsBehavior],
 
   properties: {
-    /**
-     * Preferences state.
-     */
-    prefs: {
-      type: Object,
-      notify: true,
-    },
-
     /**
      * The current active route.
      */
@@ -50,85 +31,47 @@ Polymer({
   },
 
   ready: function() {
-    CrSettingsPrefs.initialized.then(function() {
-      this.addAllSitesCategory_();
-      this.addCategory_(settings.ContentSettingsTypes.COOKIES);
-      this.addCategory_(settings.ContentSettingsTypes.GEOLOCATION);
-      this.addCategory_(settings.ContentSettingsTypes.CAMERA);
-      this.addCategory_(settings.ContentSettingsTypes.MIC);
-      this.addCategory_(settings.ContentSettingsTypes.JAVASCRIPT);
-      this.addCategory_(settings.ContentSettingsTypes.POPUPS);
-      this.addCategory_(settings.ContentSettingsTypes.FULLSCREEN);
-      this.addCategory_(settings.ContentSettingsTypes.NOTIFICATIONS);
-      this.addCategory_(settings.ContentSettingsTypes.IMAGES);
-    }.bind(this));
+    this.ContentSettingsTypes = settings.ContentSettingsTypes;
+    this.ALL_SITES = settings.ALL_SITES;
+
+    // Look up the default value for each category and show it.
+    this.setDefaultValue_(this.ContentSettingsTypes.AUTOMATIC_DOWNLOADS,
+        '#automaticDownloads');
+    this.setDefaultValue_(this.ContentSettingsTypes.BACKGROUND_SYNC,
+        '#backgroundSync');
+    this.setDefaultValue_(this.ContentSettingsTypes.CAMERA, '#camera');
+    this.setDefaultValue_(this.ContentSettingsTypes.COOKIES, '#cookies');
+    this.setDefaultValue_(this.ContentSettingsTypes.GEOLOCATION,
+        '#geolocation');
+    this.setDefaultValue_(this.ContentSettingsTypes.IMAGES, '#images');
+    this.setDefaultValue_(this.ContentSettingsTypes.JAVASCRIPT,
+        '#javascript');
+    this.setDefaultValue_(this.ContentSettingsTypes.KEYGEN, '#keygen');
+    this.setDefaultValue_(this.ContentSettingsTypes.MIC, '#mic');
+    this.setDefaultValue_(this.ContentSettingsTypes.NOTIFICATIONS,
+        '#notifications');
+    this.setDefaultValue_(this.ContentSettingsTypes.PLUGINS, '#plugins');
+    this.setDefaultValue_(this.ContentSettingsTypes.POPUPS, '#popups');
+    this.setDefaultValue_(this.ContentSettingsTypes.UNSANDBOXED_PLUGINS,
+        '#unsandboxedPlugins');
   },
 
-  /**
-   * Adds the All Sites category to the page.
-   * @private
-   */
-  addAllSitesCategory_: function() {
-      var description = loadTimeData.getString('siteSettingsCategoryAllSites');
-      this.addCategoryImpl_(-1, 'list', description, '');
-  },
-
-  /**
-   * Adds a single category to the page.
-   * @param {number} category The category to add.
-   * @private
-   */
-  addCategory_: function(category) {
-    var icon = this.computeIconForContentCategory(category);
-    var title = this.computeTitleForContentCategory(category);
-    var prefsProxy = settings.SiteSettingsPrefsBrowserProxy.getInstance();
-    prefsProxy.getDefaultValueForContentType(
+  setDefaultValue_: function(category, id) {
+    this.browserProxy.getDefaultValueForContentType(
         category).then(function(enabled) {
           var description = this.computeCategoryDesc(category, enabled, false);
-          this.addCategoryImpl_(category, icon, title, description);
+          this.$$(id).innerText = description;
         }.bind(this));
-  },
-
-  /**
-   * Constructs the actual HTML elements for the category.
-   * @param {number} category The category to add.
-   * @param {string} icon The icon to show with it.
-   * @param {string} title The title to show for the category.
-   * @param {string} defaultValue The default value (permission) for the
-   *     category.
-   * @private
-   */
-  addCategoryImpl_: function(category, icon, title, defaultValue) {
-    var root = this.$.list;
-    var paperIcon = document.createElement('paper-icon-item');
-    paperIcon.addEventListener('tap', this.onTapCategory.bind(this, category));
-
-    var ironIcon = document.createElement('iron-icon');
-    ironIcon.setAttribute('icon', icon);
-    ironIcon.setAttribute('item-icon', '');
-
-    var description = document.createElement('div');
-    description.setAttribute('class', 'flex');
-    description.appendChild(document.createTextNode(title));
-    var setting = document.createElement('div');
-    setting.setAttribute('class', 'option-value');
-
-    setting.appendChild(document.createTextNode(defaultValue));
-
-    paperIcon.appendChild(ironIcon);
-    paperIcon.appendChild(description);
-    paperIcon.appendChild(setting);
-    root.appendChild(paperIcon);
   },
 
   /**
    * Handles selection of a single category and navigates to the details for
    * that category.
-   * @param {number} category The category selected by the user.
    * @param {!Event} event The tap event.
    */
-  onTapCategory: function(category, event) {
-    if (category == -1) {
+  onTapCategory: function(event) {
+    var category = event.currentTarget.getAttribute('category');
+    if (category == settings.ALL_SITES) {
       this.currentRoute = {
         page: this.currentRoute.page,
         section: 'privacy',

@@ -30,6 +30,7 @@
 #include "core/dom/Document.h"
 #include "core/dom/DocumentStyleSheetCollector.h"
 #include "core/dom/ProcessingInstruction.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/dom/StyleEngine.h"
 #include "core/dom/StyleSheetCandidate.h"
 #include "platform/RuntimeEnabledFeatures.h"
@@ -39,7 +40,7 @@ namespace blink {
 DocumentStyleSheetCollection::DocumentStyleSheetCollection(TreeScope& treeScope)
     : TreeScopeStyleSheetCollection(treeScope)
 {
-    ASSERT(treeScope.rootNode() == treeScope.rootNode().document());
+    DCHECK_EQ(treeScope.rootNode(), treeScope.rootNode().document());
 }
 
 void DocumentStyleSheetCollection::collectStyleSheetsFromCandidates(StyleEngine& engine, DocumentStyleSheetCollector& collector)
@@ -47,7 +48,7 @@ void DocumentStyleSheetCollection::collectStyleSheetsFromCandidates(StyleEngine&
     for (Node* n : m_styleSheetCandidateNodes) {
         StyleSheetCandidate candidate(*n);
 
-        ASSERT(!candidate.isXSL());
+        DCHECK(!candidate.isXSL());
         if (candidate.isImport()) {
             Document* document = candidate.importedDocument();
             if (!document)
@@ -59,19 +60,13 @@ void DocumentStyleSheetCollection::collectStyleSheetsFromCandidates(StyleEngine&
             continue;
         }
 
-        if (candidate.isEnabledAndLoading()) {
-            // it is loading but we should still decide which style sheet set to use
-            if (candidate.hasPreferrableName(engine.preferredStylesheetSetName()))
-                engine.selectStylesheetSetName(candidate.title());
+        if (candidate.isEnabledAndLoading())
             continue;
-        }
 
         StyleSheet* sheet = candidate.sheet();
         if (!sheet)
             continue;
 
-        if (candidate.hasPreferrableName(engine.preferredStylesheetSetName()))
-            engine.selectStylesheetSetName(candidate.title());
         collector.appendSheetForList(sheet);
         if (candidate.canBeActivated(engine.preferredStylesheetSetName()))
             collector.appendActiveStyleSheet(toCSSStyleSheet(sheet));
@@ -80,7 +75,7 @@ void DocumentStyleSheetCollection::collectStyleSheetsFromCandidates(StyleEngine&
 
 void DocumentStyleSheetCollection::collectStyleSheets(StyleEngine& engine, DocumentStyleSheetCollector& collector)
 {
-    ASSERT(&document().styleEngine() == &engine);
+    DCHECK_EQ(&document().styleEngine(), &engine);
     collector.appendActiveStyleSheets(engine.injectedAuthorStyleSheets());
     collectStyleSheetsFromCandidates(engine, collector);
 }
@@ -104,7 +99,7 @@ void DocumentStyleSheetCollection::updateActiveStyleSheets(StyleEngine& engine, 
             engine.clearFontCache();
     } else if (StyleResolver* styleResolver = engine.resolver()) {
         if (change.styleResolverUpdateType != Additive) {
-            ASSERT(change.styleResolverUpdateType == Reset);
+            DCHECK_EQ(change.styleResolverUpdateType, Reset);
             styleResolver->resetAuthorStyle(treeScope());
             engine.removeFontFaceRules(change.fontFaceRulesToRemove);
             styleResolver->removePendingAuthorStyleSheets(m_activeAuthorStyleSheets);
@@ -119,4 +114,10 @@ void DocumentStyleSheetCollection::updateActiveStyleSheets(StyleEngine& engine, 
     collection.swap(*this);
 }
 
+DEFINE_TRACE_WRAPPERS(DocumentStyleSheetCollection)
+{
+    for (auto sheet : m_styleSheetsForStyleSheetList) {
+        visitor->traceWrappers(sheet);
+    }
+}
 } // namespace blink

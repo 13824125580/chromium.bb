@@ -2,18 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/cast/net/rtcp/rtcp_builder.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/net/cast_transport_config.h"
 #include "media/cast/net/cast_transport_defines.h"
 #include "media/cast/net/pacing/paced_sender.h"
 #include "media/cast/net/rtcp/receiver_rtcp_event_subscriber.h"
-#include "media/cast/net/rtcp/rtcp_builder.h"
 #include "media/cast/net/rtcp/rtcp_utility.h"
 #include "media/cast/net/rtcp/test_rtcp_packet_builder.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -49,8 +51,7 @@ class RtcpBuilderTest : public ::testing::Test {
   RtcpBuilderTest()
       : rtcp_builder_(new RtcpBuilder(kSendingSsrc)) {}
 
-  void ExpectPacketEQ(scoped_ptr<Packet> golden_packet,
-                      PacketRef packet) {
+  void ExpectPacketEQ(std::unique_ptr<Packet> golden_packet, PacketRef packet) {
     int diffs = 0;
     EXPECT_EQ(golden_packet->size(), packet->data.size());
     if (golden_packet->size() == packet->data.size()) {
@@ -69,7 +70,30 @@ class RtcpBuilderTest : public ::testing::Test {
     return RtpTimeTicks().Expand(kRtpTimestamp);
   }
 
-  scoped_ptr<RtcpBuilder> rtcp_builder_;
+  PacketRef BuildRtcpFromReceiver(
+      const RtcpReportBlock* report_block,
+      const RtcpReceiverReferenceTimeReport* rrtr,
+      const RtcpCastMessage* cast_message,
+      const RtcpPliMessage* pli_message,
+      const ReceiverRtcpEventSubscriber::RtcpEvents* rtcp_events,
+      base::TimeDelta target_delay) {
+    DCHECK(rtcp_builder_);
+
+    rtcp_builder_->Start();
+    if (report_block)
+      rtcp_builder_->AddRR(report_block);
+    if (rrtr)
+      rtcp_builder_->AddRrtr(*rrtr);
+    if (cast_message)
+      rtcp_builder_->AddCast(*cast_message, target_delay);
+    if (pli_message)
+      rtcp_builder_->AddPli(*pli_message);
+    if (rtcp_events)
+      rtcp_builder_->AddReceiverLog(*rtcp_events);
+    return rtcp_builder_->Finish();
+  }
+
+  std::unique_ptr<RtcpBuilder> rtcp_builder_;
 
   DISALLOW_COPY_AND_ASSIGN(RtcpBuilderTest);
 };
@@ -83,8 +107,8 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReport) {
   RtcpReportBlock report_block = GetReportBlock();
 
   ExpectPacketEQ(p2.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(&report_block, NULL, NULL,
-                                                      NULL, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, nullptr, nullptr, nullptr,
+                                       nullptr, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtr) {
@@ -102,8 +126,8 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtr) {
   rrtr.ntp_fraction = kNtpLow;
 
   ExpectPacketEQ(p.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(
-                     &report_block, &rrtr, NULL, NULL, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, &rrtr, nullptr, nullptr,
+                                       nullptr, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithCast) {
@@ -116,19 +140,21 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithCast) {
   RtcpReportBlock report_block = GetReportBlock();
 
   RtcpCastMessage cast_message(kMediaSsrc);
-  cast_message.ack_frame_id = kAckFrameId;
+  cast_message.ack_frame_id = FrameId::first() + kAckFrameId;
   PacketIdSet missing_packets;
-  cast_message.missing_frames_and_packets[kLostFrameId] = missing_packets;
+  cast_message.missing_frames_and_packets[FrameId::first() + kLostFrameId] =
+      missing_packets;
 
   missing_packets.insert(kLostPacketId1);
   missing_packets.insert(kLostPacketId2);
   missing_packets.insert(kLostPacketId3);
-  cast_message.missing_frames_and_packets[kFrameIdWithLostPackets] =
+  cast_message
+      .missing_frames_and_packets[FrameId::first() + kFrameIdWithLostPackets] =
       missing_packets;
 
   ExpectPacketEQ(p.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(
-                     &report_block, NULL, &cast_message, NULL, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, nullptr, &cast_message,
+                                       nullptr, nullptr, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtraAndCastMessage) {
@@ -146,19 +172,21 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtraAndCastMessage) {
   rrtr.ntp_fraction = kNtpLow;
 
   RtcpCastMessage cast_message(kMediaSsrc);
-  cast_message.ack_frame_id = kAckFrameId;
+  cast_message.ack_frame_id = FrameId::first() + kAckFrameId;
   PacketIdSet missing_packets;
-  cast_message.missing_frames_and_packets[kLostFrameId] = missing_packets;
+  cast_message.missing_frames_and_packets[FrameId::first() + kLostFrameId] =
+      missing_packets;
 
   missing_packets.insert(kLostPacketId1);
   missing_packets.insert(kLostPacketId2);
   missing_packets.insert(kLostPacketId3);
-  cast_message.missing_frames_and_packets[kFrameIdWithLostPackets] =
+  cast_message
+      .missing_frames_and_packets[FrameId::first() + kFrameIdWithLostPackets] =
       missing_packets;
 
   ExpectPacketEQ(p.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(
-                     &report_block, &rrtr, &cast_message, NULL, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, &rrtr, &cast_message,
+                                       nullptr, nullptr, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtrCastMessageAndLog) {
@@ -179,22 +207,24 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtrCastMessageAndLog) {
   rrtr.ntp_fraction = kNtpLow;
 
   RtcpCastMessage cast_message(kMediaSsrc);
-  cast_message.ack_frame_id = kAckFrameId;
+  cast_message.ack_frame_id = FrameId::first() + kAckFrameId;
   PacketIdSet missing_packets;
-  cast_message.missing_frames_and_packets[kLostFrameId] = missing_packets;
+  cast_message.missing_frames_and_packets[FrameId::first() + kLostFrameId] =
+      missing_packets;
 
   missing_packets.insert(kLostPacketId1);
   missing_packets.insert(kLostPacketId2);
   missing_packets.insert(kLostPacketId3);
-  cast_message.missing_frames_and_packets[kFrameIdWithLostPackets] =
+  cast_message
+      .missing_frames_and_packets[FrameId::first() + kFrameIdWithLostPackets] =
       missing_packets;
 
   ReceiverRtcpEventSubscriber event_subscriber(500, VIDEO_EVENT);
   ReceiverRtcpEventSubscriber::RtcpEvents rtcp_events;
 
-  ExpectPacketEQ(p.GetPacket(), rtcp_builder_->BuildRtcpFromReceiver(
-                                    &report_block, &rrtr, &cast_message,
-                                    &rtcp_events, kDefaultDelay));
+  ExpectPacketEQ(p.GetPacket(),
+                 BuildRtcpFromReceiver(&report_block, &rrtr, &cast_message,
+                                       nullptr, &rtcp_events, kDefaultDelay));
 
   base::SimpleTestTickClock testing_clock;
   testing_clock.Advance(base::TimeDelta::FromMilliseconds(kTimeBaseMs));
@@ -222,9 +252,9 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithRrtrCastMessageAndLog) {
   event_subscriber.GetRtcpEventsWithRedundancy(&rtcp_events);
   EXPECT_EQ(2u, rtcp_events.size());
 
-  ExpectPacketEQ(p.GetPacket(), rtcp_builder_->BuildRtcpFromReceiver(
-                                    &report_block, &rrtr, &cast_message,
-                                    &rtcp_events, kDefaultDelay));
+  ExpectPacketEQ(p.GetPacket(),
+                 BuildRtcpFromReceiver(&report_block, &rrtr, &cast_message,
+                                       nullptr, &rtcp_events, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithOversizedFrameLog) {
@@ -273,8 +303,8 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithOversizedFrameLog) {
   event_subscriber.GetRtcpEventsWithRedundancy(&rtcp_events);
 
   ExpectPacketEQ(p.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(
-                     &report_block, NULL, NULL, &rtcp_events, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, nullptr, nullptr, nullptr,
+                                       &rtcp_events, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithTooManyLogFrames) {
@@ -318,8 +348,8 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithTooManyLogFrames) {
   event_subscriber.GetRtcpEventsWithRedundancy(&rtcp_events);
 
   ExpectPacketEQ(p.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(
-                     &report_block, NULL, NULL, &rtcp_events, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, nullptr, nullptr, nullptr,
+                                       &rtcp_events, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportWithOldLogFrames) {
@@ -362,8 +392,8 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportWithOldLogFrames) {
   event_subscriber.GetRtcpEventsWithRedundancy(&rtcp_events);
 
   ExpectPacketEQ(p.GetPacket(),
-                 rtcp_builder_->BuildRtcpFromReceiver(
-                     &report_block, NULL, NULL, &rtcp_events, kDefaultDelay));
+                 BuildRtcpFromReceiver(&report_block, nullptr, nullptr, nullptr,
+                                       &rtcp_events, kDefaultDelay));
 }
 
 TEST_F(RtcpBuilderTest, RtcpReceiverReportRedundancy) {
@@ -406,8 +436,8 @@ TEST_F(RtcpBuilderTest, RtcpReceiverReportRedundancy) {
     event_subscriber.GetRtcpEventsWithRedundancy(&rtcp_events);
 
     ExpectPacketEQ(p.GetPacket(),
-                   rtcp_builder_->BuildRtcpFromReceiver(
-                       &report_block, NULL, NULL, &rtcp_events, kDefaultDelay));
+                   BuildRtcpFromReceiver(&report_block, nullptr, nullptr,
+                                         nullptr, &rtcp_events, kDefaultDelay));
 
     testing_clock.Advance(
         base::TimeDelta::FromMilliseconds(kTimeBetweenEventsMs));

@@ -407,7 +407,7 @@ size_t OmniboxFieldTrial::HQPNumTitleWordsToAllow() {
           variations::GetVariationParamValue(kBundledExperimentFieldTrialName,
                                              kHQPNumTitleWordsRule),
           &num_title_words))
-    return 10;
+    return 20;
   return num_title_words;
 }
 
@@ -422,12 +422,6 @@ bool OmniboxFieldTrial::HUPSearchDatabase() {
       kBundledExperimentFieldTrialName,
       kHUPSearchDatabaseRule);
   return value.empty() || (value == "true");
-}
-
-bool OmniboxFieldTrial::PreventUWYTDefaultForNonURLInputs() {
-  return variations::GetVariationParamValue(
-      kBundledExperimentFieldTrialName,
-      kPreventUWYTDefaultForNonURLInputsRule) == "true";
 }
 
 bool OmniboxFieldTrial::KeywordRequiresRegistry() {
@@ -519,8 +513,6 @@ const char OmniboxFieldTrial::kHQPAlsoDoHUPLikeScoringRule[] =
     "HQPAlsoDoHUPLikeScoring";
 const char OmniboxFieldTrial::kHUPSearchDatabaseRule[] =
     "HUPSearchDatabase";
-const char OmniboxFieldTrial::kPreventUWYTDefaultForNonURLInputsRule[] =
-    "PreventUWYTDefaultForNonURLInputs";
 const char OmniboxFieldTrial::kKeywordRequiresRegistryRule[] =
     "KeywordRequiresRegistry";
 const char OmniboxFieldTrial::kKeywordRequiresPrefixMatchRule[] =

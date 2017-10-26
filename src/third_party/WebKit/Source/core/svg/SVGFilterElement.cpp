@@ -57,25 +57,19 @@ inline SVGFilterElement::SVGFilterElement(Document& document)
 
 SVGFilterElement::~SVGFilterElement()
 {
-#if !ENABLE(OILPAN)
-    for (SVGResourceClient* filterClient : m_clientsToAdd)
-        filterClient->filterWillBeDestroyed(this);
-    m_clientsToAdd.clear();
-#endif
 }
 
 DEFINE_NODE_FACTORY(SVGFilterElement)
 
 DEFINE_TRACE(SVGFilterElement)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_x);
     visitor->trace(m_y);
     visitor->trace(m_width);
     visitor->trace(m_height);
     visitor->trace(m_filterUnits);
     visitor->trace(m_primitiveUnits);
-#endif
+    visitor->trace(m_clientsToAdd);
     SVGElement::trace(visitor);
     SVGURIReference::trace(visitor);
 }

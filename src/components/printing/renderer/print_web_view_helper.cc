@@ -20,7 +20,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/common/web_preferences.h"
@@ -77,6 +77,9 @@ enum PrintPreviewHelperEvents {
 };
 
 const double kMinDpi = 1.0;
+
+// Also set in third_party/WebKit/Source/core/page/PrintContext.cpp
+const float kPrintingMinimumShrinkFactor = 1.333f;
 
 #if defined(ENABLE_PRINT_PREVIEW)
 bool g_is_preview_enabled = true;
@@ -541,7 +544,8 @@ void PrintWebViewHelper::PrintHeaderAndFooter(
                            page_layout.margin_top + page_layout.margin_bottom +
                                page_layout.content_height);
 
-  blink::WebView* web_view = blink::WebView::create(NULL);
+  blink::WebView* web_view =
+      blink::WebView::create(nullptr, blink::WebPageVisibilityStateVisible);
   web_view->settings()->setJavaScriptEnabled(true);
 
   blink::WebLocalFrame* frame =
@@ -552,7 +556,7 @@ void PrintWebViewHelper::PrintHeaderAndFooter(
   // Load page with script to avoid async operations.
   ExecuteScript(frame, kPageLoadScriptFormat, html);
 
-  scoped_ptr<base::DictionaryValue> options(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> options(new base::DictionaryValue());
   options.reset(new base::DictionaryValue());
   options->SetDouble(kSettingHeaderFooterDate, base::Time::Now().ToJsTime());
   options->SetDouble("width", page_size.width);
@@ -705,15 +709,19 @@ PrepareFrameAndViewForPrint::~PrepareFrameAndViewForPrint() {
 
 void PrepareFrameAndViewForPrint::ResizeForPrinting() {
   // Layout page according to printer page size. Since WebKit shrinks the
-  // size of the page automatically (from 125% to 200%) we trick it to
-  // think the page is 125% larger so the size of the page is correct for
+  // size of the page automatically (from 133.3% to 200%) we trick it to
+  // think the page is 133.3% larger so the size of the page is correct for
   // minimum (default) scaling.
+  // The scaling factor 1.25 was originally chosen as a magic number that
+  // was 'about right'. However per https://crbug.com/273306 1.333 seems to be
+  // the number that produces output with the correct physical size for elements
+  // that are specified in cm, mm, pt etc.
   // This is important for sites that try to fill the page.
-  // The 1.25 value is |printingMinimumShrinkFactor|.
   gfx::Size print_layout_size(web_print_params_.printContentArea.width,
                               web_print_params_.printContentArea.height);
   print_layout_size.set_height(
-      static_cast<int>(static_cast<double>(print_layout_size.height()) * 1.25));
+      static_cast<int>(static_cast<double>(print_layout_size.height()) *
+                       kPrintingMinimumShrinkFactor));
 
   if (!frame())
     return;
@@ -760,7 +768,8 @@ void PrepareFrameAndViewForPrint::CopySelection(
   WebPreferences prefs = preferences;
   prefs.javascript_enabled = false;
 
-  blink::WebView* web_view = blink::WebView::create(this);
+  blink::WebView* web_view =
+      blink::WebView::create(this, blink::WebPageVisibilityStateVisible);
   owns_web_view_ = true;
   content::RenderView::ApplyWebPreferences(prefs, web_view);
   web_view->setMainFrame(
@@ -850,7 +859,7 @@ bool PrintWebViewHelper::Delegate::IsScriptedPrintEnabled() {
 }
 
 PrintWebViewHelper::PrintWebViewHelper(content::RenderView* render_view,
-                                       scoped_ptr<Delegate> delegate,
+                                       std::unique_ptr<Delegate> delegate,
                                        bool single_thread_mode)
     : content::RenderViewObserver(render_view),
       content::RenderViewObserverTracker<PrintWebViewHelper>(render_view),
@@ -975,6 +984,10 @@ bool PrintWebViewHelper::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
+void PrintWebViewHelper::OnDestruct() {
+  delete this;
+}
+
 bool PrintWebViewHelper::GetPrintFrame(blink::WebLocalFrame** frame) {
   DCHECK(frame);
   blink::WebView* webView = render_view()->GetWebView();
@@ -990,6 +1003,53 @@ bool PrintWebViewHelper::GetPrintFrame(blink::WebLocalFrame** frame) {
                ? focusedFrame
                : webView->mainFrame()->toWebLocalFrame();
   return true;
+}
+
+std::vector<char> PrintWebViewHelper::PrintToPDF(blink::WebLocalFrame* localframe) {
+  
+  std::vector<char> buffer;
+  DCHECK(localframe);
+
+  int expected_pages_count_ = 0;
+  if (CalculateNumberOfPages(localframe, blink::WebNode(), &expected_pages_count_) &&
+      expected_pages_count_ > 0) {
+
+    PrintMsg_PrintPages_Params& params = *print_pages_params_;
+    PrintMsg_Print_Params& print_params = params.params;
+    prep_frame_view_.reset(new PrepareFrameAndViewForPrint(
+          print_params, localframe, blink::WebNode(), true));
+
+    prep_frame_view_->StartPrinting();
+    int page_count = prep_frame_view_->GetExpectedPageCount();
+
+    blink::WebFrame* frame = prep_frame_view_->frame();
+
+    std::vector<int> printed_pages = GetPrintedPages(params, page_count);
+    if (!printed_pages.empty()) {
+      std::vector<gfx::Size> page_size_in_dpi(printed_pages.size());
+      std::vector<gfx::Rect> content_area_in_dpi(printed_pages.size());
+
+      PdfMetafileSkia metafile(PDF_SKIA_DOCUMENT_TYPE);
+      CHECK(metafile.Init());
+
+      PrintMsg_PrintPage_Params page_params;
+      page_params.params = params.params;
+      for (size_t i = 0; i < printed_pages.size(); ++i) {
+        page_params.page_number = printed_pages[i];
+        PrintPageInternal(page_params,
+                          frame,
+                          &metafile,
+                          &page_size_in_dpi[i],
+                          &content_area_in_dpi[i], page_count);
+      }
+      FinishFramePrinting();
+      metafile.FinishDocument();
+
+      metafile.GetDataAsVector(&buffer);
+    }
+  }
+
+  return buffer;
 }
 
 #if defined(ENABLE_BASIC_PRINTING)
@@ -1275,10 +1335,10 @@ bool PrintWebViewHelper::RenderPreviewPage(
   PrintMsg_PrintPage_Params page_params;
   page_params.params = print_params;
   page_params.page_number = page_number;
-  scoped_ptr<PdfMetafileSkia> draft_metafile;
+  std::unique_ptr<PdfMetafileSkia> draft_metafile;
   PdfMetafileSkia* initial_render_metafile = print_preview_context_.metafile();
   if (print_preview_context_.IsModifiable() && is_print_ready_metafile_sent_) {
-    draft_metafile.reset(new PdfMetafileSkia);
+    draft_metafile.reset(new PdfMetafileSkia(PDF_SKIA_DOCUMENT_TYPE));
     initial_render_metafile = draft_metafile.get();
   }
 
@@ -1293,7 +1353,8 @@ bool PrintWebViewHelper::RenderPreviewPage(
              print_preview_context_.generate_draft_pages()) {
     DCHECK(!draft_metafile.get());
     draft_metafile =
-        print_preview_context_.metafile()->GetMetafileForCurrentPage();
+        print_preview_context_.metafile()->GetMetafileForCurrentPage(
+            PDF_SKIA_DOCUMENT_TYPE);
   }
   return PreviewPageRendered(page_number, draft_metafile.get());
 }
@@ -1828,12 +1889,12 @@ void PrintWebViewHelper::PrintPageInternal(
 
 #if defined(ENABLE_PRINT_PREVIEW)
   if (params.params.display_header_footer) {
-    // TODO(thestig): Figure out why Linux needs this. The value may be
-    // |printingMinimumShrinkFactor|.
+    // TODO(thestig): Figure out why Linux needs this. It is almost certainly
+    // |printingMinimumShrinkFactor| from Blink.
 #if defined(OS_WIN)
     const float fudge_factor = 1;
 #else
-    const float fudge_factor = 1.25;
+    const float fudge_factor = kPrintingMinimumShrinkFactor;
 #endif
     // |page_number| is 0-based, so 1 is added.
     PrintHeaderAndFooter(canvas, params.page_number + 1,
@@ -1863,7 +1924,7 @@ bool PrintWebViewHelper::CopyMetafileDataToSharedMem(
   if (buf_size == 0)
     return false;
 
-  scoped_ptr<base::SharedMemory> shared_buf(
+  std::unique_ptr<base::SharedMemory> shared_buf(
       content::RenderThread::Get()->HostAllocateSharedMemoryBuffer(buf_size));
   if (!shared_buf)
     return false;
@@ -2062,7 +2123,7 @@ bool PrintWebViewHelper::PrintPreviewContext::CreatePreviewDocument(
     return false;
   }
 
-  metafile_.reset(new PdfMetafileSkia);
+  metafile_.reset(new PdfMetafileSkia(PDF_SKIA_DOCUMENT_TYPE));
   CHECK(metafile_->Init());
 
   current_page_index_ = 0;

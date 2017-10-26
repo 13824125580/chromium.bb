@@ -38,6 +38,7 @@ namespace blink {
 class AXObjectCacheImpl;
 
 class AXImageMapLink final : public AXNodeObject {
+    WTF_MAKE_NONCOPYABLE(AXImageMapLink);
 
 private:
     explicit AXImageMapLink(HTMLAreaElement*, AXObjectCacheImpl&);
@@ -47,7 +48,7 @@ public:
     ~AXImageMapLink() override;
     DECLARE_VIRTUAL_TRACE();
 
-    HTMLAreaElement* areaElement() const { return toHTMLAreaElement(node()); }
+    HTMLAreaElement* areaElement() const { return toHTMLAreaElement(getNode()); }
 
     HTMLMapElement* mapElement() const;
 

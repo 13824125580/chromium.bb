@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/test_mock_time_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/notifications/desktop_notification_profile_util.h"
@@ -20,15 +21,15 @@
 #include "content/public/browser/permission_manager.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/permission_status.mojom.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
 
 namespace {
 
 void DoNothing(ContentSetting content_setting) {}
-void DoNothing2(content::PermissionStatus status) {}
+void DoNothing2(blink::mojom::PermissionStatus status) {}
 
 class TestNotificationPermissionContext : public NotificationPermissionContext {
  public:
@@ -78,7 +79,7 @@ class NotificationPermissionContextTest
     : public ChromeRenderViewHostTestHarness {
  public:
   scoped_refptr<base::TestMockTimeTaskRunner> SwitchToMockTime() {
-    old_task_runner_ = base::MessageLoop::current()->task_runner();
+    old_task_runner_ = base::ThreadTaskRunnerHandle::Get();
     scoped_refptr<base::TestMockTimeTaskRunner> task_runner(
         new base::TestMockTimeTaskRunner(base::Time::Now(),
                                          base::TimeTicks::Now()));

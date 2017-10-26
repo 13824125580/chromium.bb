@@ -5,18 +5,14 @@
 #ifndef NET_PROXY_MOCK_PROXY_RESOLVER_H_
 #define NET_PROXY_MOCK_PROXY_RESOLVER_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/proxy_resolver.h"
 #include "net/proxy/proxy_resolver_factory.h"
 #include "url/gurl.h"
-
-namespace base {
-class MessageLoop;
-}
 
 namespace net {
 
@@ -46,7 +42,6 @@ class MockAsyncProxyResolver : public ProxyResolver {
     const GURL url_;
     ProxyInfo* results_;
     CompletionCallback callback_;
-    base::MessageLoop* origin_loop_;
   };
 
   typedef std::vector<scoped_refptr<Request> > RequestsList;
@@ -90,9 +85,9 @@ class MockAsyncProxyResolverFactory : public ProxyResolverFactory {
 
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& pac_script,
-      scoped_ptr<ProxyResolver>* resolver,
+      std::unique_ptr<ProxyResolver>* resolver,
       const CompletionCallback& callback,
-      scoped_ptr<ProxyResolverFactory::Request>* request) override;
+      std::unique_ptr<ProxyResolverFactory::Request>* request) override;
 
   const RequestsList& pending_requests() const { return pending_requests_; }
 
@@ -111,7 +106,7 @@ class MockAsyncProxyResolverFactory::Request
  public:
   Request(MockAsyncProxyResolverFactory* factory,
           const scoped_refptr<ProxyResolverScriptData>& script_data,
-          scoped_ptr<ProxyResolver>* resolver,
+          std::unique_ptr<ProxyResolver>* resolver,
           const CompletionCallback& callback);
 
   const scoped_refptr<ProxyResolverScriptData>& script_data() const {
@@ -124,7 +119,7 @@ class MockAsyncProxyResolverFactory::Request
   // remains in use.
   void CompleteNowWithForwarder(int rv, ProxyResolver* resolver);
 
-  void CompleteNow(int rv, scoped_ptr<ProxyResolver> resolver);
+  void CompleteNow(int rv, std::unique_ptr<ProxyResolver> resolver);
 
  private:
   friend class base::RefCounted<Request>;
@@ -137,7 +132,7 @@ class MockAsyncProxyResolverFactory::Request
 
   MockAsyncProxyResolverFactory* factory_;
   const scoped_refptr<ProxyResolverScriptData> script_data_;
-  scoped_ptr<ProxyResolver>* resolver_;
+  std::unique_ptr<ProxyResolver>* resolver_;
   CompletionCallback callback_;
 };
 

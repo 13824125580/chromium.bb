@@ -17,7 +17,7 @@
 #include "SkString.h"
 #include "SkTArray.h"
 #include "SkTScopedComPtr.h"
-#include "SkTypeface_win.h"
+#include "SkTypeface_win_dw.h"
 #include "SkTypes.h"
 #include "SkUtils.h"
 
@@ -137,23 +137,7 @@ public:
         fontId->fTtcIndex = fontFace->GetIndex();
 
         // style
-        SkFontStyle::Slant slant;
-        switch (font->GetStyle()) {
-        case DWRITE_FONT_STYLE_NORMAL:
-            slant = SkFontStyle::kUpright_Slant;
-            break;
-        case DWRITE_FONT_STYLE_OBLIQUE:
-        case DWRITE_FONT_STYLE_ITALIC:
-            slant = SkFontStyle::kItalic_Slant;
-            break;
-        default:
-            SkASSERT(false);
-        }
-
-        int weight = font->GetWeight();
-        int width = font->GetStretch();
-
-        fontId->fFontStyle = SkFontStyle(weight, width, slant);
+        fontId->fFontStyle = get_style(font);
         return S_OK;
     }
 
@@ -172,7 +156,7 @@ public:
 
             HRN(FontToIdentity(font.get(), &fontIds[fontIndex]));
         }
-        return fontIdSet.detach();
+        return fontIdSet.release();
     }
 
     virtual SkFontIdentity matchIndexStyle(int familyIndex,
@@ -482,7 +466,7 @@ SkRemotableFontMgr* SkRemotableFontMgr_New_DirectWrite() {
     }
 
     SkTScopedComPtr<IDWriteFontCollection> sysFontCollection;
-    HRNM(SkFontMgr_GetFontCollectionToUse(&sysFontCollection, factory),
+    HRNM(factory->GetSystemFontCollection(&sysFontCollection),
          "Could not get system font collection.");
 
     WCHAR localeNameStorage[LOCALE_NAME_MAX_LENGTH];

@@ -5,6 +5,8 @@
 #include "sql/recovery.h"
 
 #include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -18,7 +20,7 @@
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/test/paths.h"
-#include "sql/test/scoped_error_ignorer.h"
+#include "sql/test/scoped_error_expecter.h"
 #include "sql/test/sql_test_base.h"
 #include "sql/test/test_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -80,7 +82,8 @@ TEST_F(SQLRecoveryTest, RecoverBasic) {
   // If the Recovery handle goes out of scope without being
   // Recovered(), the database is razed.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery.get());
   }
   EXPECT_FALSE(db().is_open());
@@ -95,7 +98,8 @@ TEST_F(SQLRecoveryTest, RecoverBasic) {
 
   // Unrecoverable() also razes.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery.get());
     sql::Recovery::Unrecoverable(std::move(recovery));
 
@@ -108,7 +112,8 @@ TEST_F(SQLRecoveryTest, RecoverBasic) {
 
   // Attempting to recover a previously-recovered handle fails early.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery.get());
     recovery.reset();
 
@@ -128,7 +133,8 @@ TEST_F(SQLRecoveryTest, RecoverBasic) {
 
   // Recovered() replaces the original with the "recovered" version.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery.get());
 
     // Create the new version of the table.
@@ -155,7 +161,8 @@ TEST_F(SQLRecoveryTest, RecoverBasic) {
 
   // Rollback() discards recovery progress and leaves the database as it was.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery.get());
 
     ASSERT_TRUE(recovery->db()->Execute(kCreateSql));
@@ -172,9 +179,6 @@ TEST_F(SQLRecoveryTest, RecoverBasic) {
             ExecuteWithResults(&db(), kXSql, "|", "\n"));
 }
 
-// The recovery virtual table is only supported for Chromium's SQLite.
-#if !defined(USE_SYSTEM_SQLITE)
-
 // Test operation of the virtual table used by sql::Recovery.
 TEST_F(SQLRecoveryTest, VirtualTable) {
   const char kCreateSql[] = "CREATE TABLE x (t TEXT)";
@@ -184,7 +188,8 @@ TEST_F(SQLRecoveryTest, VirtualTable) {
 
   // Successfully recover the database.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
 
     // Tables to recover original DB, now at [corrupt].
     const char kRecoveryCreateSql[] =
@@ -224,7 +229,7 @@ void RecoveryCallback(sql::Connection* db, const base::FilePath& db_path,
   // Clear the error callback to prevent reentrancy.
   db->reset_error_callback();
 
-  scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(db, db_path);
+  std::unique_ptr<sql::Recovery> recovery = sql::Recovery::Begin(db, db_path);
   ASSERT_TRUE(recovery.get());
 
   ASSERT_TRUE(recovery->db()->Execute(create_table));
@@ -389,7 +394,8 @@ TEST_F(SQLRecoveryTest, Meta) {
 
   // Test expected case where everything works.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     EXPECT_TRUE(recovery->SetupMeta());
     int version = 0;
     EXPECT_TRUE(recovery->GetMetaVersionNumber(&version));
@@ -402,7 +408,8 @@ TEST_F(SQLRecoveryTest, Meta) {
   // Test version row missing.
   EXPECT_TRUE(db().Execute("DELETE FROM meta WHERE key = 'version'"));
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     EXPECT_TRUE(recovery->SetupMeta());
     int version = 0;
     EXPECT_FALSE(recovery->GetMetaVersionNumber(&version));
@@ -415,11 +422,12 @@ TEST_F(SQLRecoveryTest, Meta) {
   // Test meta table missing.
   EXPECT_TRUE(db().Execute("DROP TABLE meta"));
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);  // From virtual table.
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);  // From virtual table.
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     EXPECT_FALSE(recovery->SetupMeta());
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 }
 
@@ -442,7 +450,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTable) {
   ASSERT_NE(orig_schema, GetSchema(&db()));
 
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery->db()->Execute(kCreateSql));
 
     // Save a copy of the temp db's schema before recovering the table.
@@ -469,7 +478,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTable) {
 
   // Recovery fails if the target table doesn't exist.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery->db()->Execute(kCreateSql));
 
     // TODO(shess): Should this failure implicitly lead to Raze()?
@@ -526,7 +536,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTableWithDefault) {
   }
 
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     // Different default to detect which table provides the default.
     ASSERT_TRUE(recovery->db()->Execute(final_schema.c_str()));
 
@@ -563,7 +574,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTableNullFilter) {
   ASSERT_NE(kOrigSchema, GetSchema(&db()));
 
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery->db()->Execute(kFinalSchema));
 
     size_t rows = 0;
@@ -602,7 +614,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTableWithRowid) {
   ASSERT_NE(orig_schema, GetSchema(&db()));
 
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery->db()->Execute(kCreateSql));
 
     size_t rows = 0;
@@ -647,7 +660,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTableWithCompoundKey) {
   ASSERT_NE(orig_schema, GetSchema(&db()));
 
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery->db()->Execute(kCreateSql));
 
     size_t rows = 0;
@@ -693,7 +707,8 @@ TEST_F(SQLRecoveryTest, AutoRecoverTableMissingColumns) {
 
   // Recover the previous version of the table into the altered version.
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery->db()->Execute(kCreateSql));
     ASSERT_TRUE(recovery->db()->Execute(kAlterSql));
     size_t rows = 0;
@@ -721,7 +736,8 @@ TEST_F(SQLRecoveryTest, Bug387868) {
   ASSERT_TRUE(Reopen());
 
   {
-    scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+    std::unique_ptr<sql::Recovery> recovery =
+        sql::Recovery::Begin(&db(), db_path());
     ASSERT_TRUE(recovery.get());
 
     // Create the new version of the table.
@@ -737,12 +753,12 @@ TEST_F(SQLRecoveryTest, Bug387868) {
     EXPECT_TRUE(sql::Recovery::Recovered(std::move(recovery)));
   }
 }
-#endif  // !defined(USE_SYSTEM_SQLITE)
 
 // Memory-mapped I/O interacts poorly with I/O errors.  Make sure the recovery
 // database doesn't accidentally enable it.
 TEST_F(SQLRecoveryTest, NoMmap) {
-  scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(&db(), db_path());
+  std::unique_ptr<sql::Recovery> recovery =
+      sql::Recovery::Begin(&db(), db_path());
   ASSERT_TRUE(recovery.get());
 
   // In the current implementation, the PRAGMA successfully runs with no result

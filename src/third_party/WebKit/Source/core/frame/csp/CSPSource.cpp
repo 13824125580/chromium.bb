@@ -24,13 +24,13 @@ CSPSource::CSPSource(ContentSecurityPolicy* policy, const String& scheme, const 
 {
 }
 
-bool CSPSource::matches(const KURL& url, ContentSecurityPolicy::RedirectStatus redirectStatus) const
+bool CSPSource::matches(const KURL& url, ResourceRequest::RedirectStatus redirectStatus) const
 {
     if (!schemeMatches(url))
         return false;
     if (isSchemeOnly())
         return true;
-    bool pathsMatch = (redirectStatus == ContentSecurityPolicy::DidRedirect) || pathMatches(url);
+    bool pathsMatch = (redirectStatus == RedirectStatus::FollowedRedirect) || pathMatches(url);
     return hostMatches(url) && portMatches(url) && pathsMatch;
 }
 
@@ -76,7 +76,7 @@ bool CSPSource::pathMatches(const KURL& url) const
     String path = decodeURLEscapeSequences(url.path());
 
     if (m_path.endsWith("/"))
-        return path.startsWith(m_path, TextCaseInsensitive);
+        return path.startsWith(m_path);
 
     return path == m_path;
 }
@@ -91,6 +91,9 @@ bool CSPSource::portMatches(const KURL& url) const
     if (port == m_port)
         return true;
 
+    if (m_port == 80 && (port == 443 || (port == 0 && defaultPortForProtocol(url.protocol()) == 443)))
+        return true;
+
     if (!port)
         return isDefaultPortForProtocol(m_port, url.protocol());
 
@@ -103,6 +106,11 @@ bool CSPSource::portMatches(const KURL& url) const
 bool CSPSource::isSchemeOnly() const
 {
     return m_host.isEmpty();
+}
+
+DEFINE_TRACE(CSPSource)
+{
+    visitor->trace(m_policy);
 }
 
 } // namespace blink

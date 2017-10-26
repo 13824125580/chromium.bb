@@ -25,6 +25,7 @@
 #include "components/history/core/browser/history_context.h"
 #include "components/history/core/browser/url_row.h"
 #include "components/history/core/common/thumbnail_score.h"
+#include "components/query_parser/query_parser.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
@@ -272,6 +273,9 @@ struct QueryOptions {
   // be handled. The default is REMOVE_DUPLICATES.
   DuplicateHandling duplicate_policy;
 
+  // Allows the caller to specify the matching algorithm for text queries.
+  query_parser::MatchingAlgorithm matching_algorithm;
+
   // Helpers to get the effective parameters values, since a value of 0 means
   // "unspecified".
   int EffectiveMaxCount() const;
@@ -459,8 +463,9 @@ class MostVisitedThumbnails
 // Map from host to visit count, sorted by visit count descending.
 typedef std::vector<std::pair<std::string, int>> TopHostsList;
 
-// Map from origins to a count of matching URLs.
-typedef std::map<GURL, int> OriginCountMap;
+// Map from origins to a count of matching URLs and the last visited time to any
+// URL under that origin.
+typedef std::map<GURL, std::pair<int, base::Time>> OriginCountAndLastVisitMap;
 
 // Statistics -----------------------------------------------------------------
 

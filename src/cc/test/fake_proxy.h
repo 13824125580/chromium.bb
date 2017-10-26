@@ -23,7 +23,6 @@ class FakeProxy : public Proxy {
   void SetOutputSurface(OutputSurface* output_surface) override {}
   void ReleaseOutputSurface() override;
   void SetVisible(bool visible) override {}
-  void SetThrottleFrameProduction(bool throttle) override {}
   const RendererCapabilities& GetRendererCapabilities() const override;
   void SetNeedsAnimate() override {}
   void SetNeedsUpdateLayers() override {}
@@ -36,13 +35,11 @@ class FakeProxy : public Proxy {
   bool BeginMainFrameRequested() const override;
   bool CommitRequested() const override;
   void Start(
-      scoped_ptr<BeginFrameSource> external_begin_frame_source) override {}
+      std::unique_ptr<BeginFrameSource> external_begin_frame_source) override {}
   void Stop() override {}
+  void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   bool SupportsImplScrolling() const override;
   bool MainFrameWillHappenForTesting() override;
-  void SetChildrenNeedBeginFrames(bool children_need_begin_frames) override {}
-  void SetAuthoritativeVSyncInterval(const base::TimeDelta& interval) override {
-  }
   void UpdateTopControlsState(TopControlsState constraints,
                               TopControlsState current,
                               bool animate) override {}

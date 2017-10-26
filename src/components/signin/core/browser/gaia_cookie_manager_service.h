@@ -84,6 +84,7 @@ class GaiaCookieManagerService : public KeyedService,
     // is passed in |error|.
     virtual void OnGaiaAccountsInCookieUpdated(
         const std::vector<gaia::ListedAccount>& accounts,
+        const std::vector<gaia::ListedAccount>& signed_out_accounts,
         const GoogleServiceAuthError& error) {}
 
    protected:
@@ -129,7 +130,7 @@ class GaiaCookieManagerService : public KeyedService,
         const GoogleServiceAuthError& error) override;
 
     // Creates and initializes a URL fetcher for doing a connection check.
-    scoped_ptr<net::URLFetcher> CreateFetcher(const GURL& url);
+    std::unique_ptr<net::URLFetcher> CreateFetcher(const GURL& url);
 
     // Overridden from URLFetcherDelgate.
     void OnURLFetchComplete(const net::URLFetcher* source) override;
@@ -168,7 +169,10 @@ class GaiaCookieManagerService : public KeyedService,
   // parameter if return is false). The parameter will be assigned the current
   // cached accounts. If the accounts are not up to date, a ListAccounts fetch
   // is sent GAIA and Observer::OnGaiaAccountsInCookieUpdated will be called.
-  bool ListAccounts(std::vector<gaia::ListedAccount>* accounts);
+  // If either of |accounts| or |signed_out_accounts| is null, the corresponding
+  // accounts returned from /ListAccounts are ignored.
+  bool ListAccounts(std::vector<gaia::ListedAccount>* accounts,
+                    std::vector<gaia::ListedAccount>* signed_out_accounts);
 
   // Triggers a ListAccounts fetch. This is public so that callers that know
   // that a check which GAIA should be done can force it.
@@ -254,8 +258,8 @@ class GaiaCookieManagerService : public KeyedService,
 
   OAuth2TokenService* token_service_;
   SigninClient* signin_client_;
-  scoped_ptr<GaiaAuthFetcher> gaia_auth_fetcher_;
-  scoped_ptr<UbertokenFetcher> uber_token_fetcher_;
+  std::unique_ptr<GaiaAuthFetcher> gaia_auth_fetcher_;
+  std::unique_ptr<UbertokenFetcher> uber_token_fetcher_;
   ExternalCcResultFetcher external_cc_result_fetcher_;
 
   // If the GaiaAuthFetcher or URLFetcher fails, retry with exponential backoff
@@ -271,7 +275,7 @@ class GaiaCookieManagerService : public KeyedService,
   std::string access_token_;
 
   // Subscription to be called whenever the GAIA cookies change.
-  scoped_ptr<SigninClient::CookieChangedSubscription>
+  std::unique_ptr<SigninClient::CookieChangedSubscription>
       cookie_changed_subscription_;
 
   // A worklist for this class. Stores any pending requests that couldn't be
@@ -290,6 +294,7 @@ class GaiaCookieManagerService : public KeyedService,
   bool external_cc_result_fetched_;
 
   std::vector<gaia::ListedAccount> listed_accounts_;
+  std::vector<gaia::ListedAccount> signed_out_accounts_;
 
   bool list_accounts_stale_;
 

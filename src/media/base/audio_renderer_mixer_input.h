@@ -1,6 +1,17 @@
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+//
+// THREAD SAFETY
+//
+// This class is generally not thread safe. Callers should ensure thread safety.
+// For instance, the |sink_lock_| in WebAudioSourceProvider synchronizes access
+// to this object across the main thread (for WebAudio APIs) and the
+// media thread (for HTMLMediaElement APIs).
+//
+// The one exception is protection for |volume_| via |volume_lock_|. This lock
+// prevents races between SetVolume() (called on any thread) and ProvideInput
+// (called on audio device thread). See http://crbug.com/588992.
 
 #ifndef MEDIA_BASE_AUDIO_RENDERER_MIXER_INPUT_H_
 #define MEDIA_BASE_AUDIO_RENDERER_MIXER_INPUT_H_
@@ -9,56 +20,44 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/synchronization/lock.h"
 #include "media/base/audio_converter.h"
+#include "media/base/audio_latency.h"
 #include "media/base/audio_renderer_sink.h"
-#include "media/base/output_device.h"
 #include "url/origin.h"
 
 namespace media {
 
+class AudioRendererMixerPool;
 class AudioRendererMixer;
 
 class MEDIA_EXPORT AudioRendererMixerInput
-    : NON_EXPORTED_BASE(public RestartableAudioRendererSink),
-      NON_EXPORTED_BASE(public OutputDevice),
+    : NON_EXPORTED_BASE(public SwitchableAudioRendererSink),
       public AudioConverter::InputCallback {
  public:
-  typedef base::Callback<AudioRendererMixer*(const AudioParameters& params,
-                                             const std::string& device_id,
-                                             const url::Origin& security_origin,
-                                             OutputDeviceStatus* device_status)>
-      GetMixerCB;
-  typedef base::Callback<void(const AudioParameters& params,
-                              const std::string& device_id,
-                              const url::Origin& security_origin)>
-      RemoveMixerCB;
-
-  typedef base::Callback<AudioParameters(const std::string& device_id,
-                                         const url::Origin& security_origin)>
-      GetHardwareParamsCB;
-
-  AudioRendererMixerInput(const GetMixerCB& get_mixer_cb,
-                          const RemoveMixerCB& remove_mixer_cb,
-                          const GetHardwareParamsCB& get_hardware_params_cb,
+  AudioRendererMixerInput(AudioRendererMixerPool* mixer_pool,
+                          int owner_id,
                           const std::string& device_id,
-                          const url::Origin& security_origin);
+                          const url::Origin& security_origin,
+                          AudioLatency::LatencyType latency);
 
-  // RestartableAudioRendererSink implementation.
+  // SwitchableAudioRendererSink implementation.
   void Start() override;
   void Stop() override;
   void Play() override;
   void Pause() override;
   bool SetVolume(double volume) override;
-  OutputDevice* GetOutputDevice() override;
+  OutputDeviceInfo GetOutputDeviceInfo() override;
   void Initialize(const AudioParameters& params,
                   AudioRendererSink::RenderCallback* renderer) override;
-
-  // OutputDevice implementation.
   void SwitchOutputDevice(const std::string& device_id,
                           const url::Origin& security_origin,
-                          const SwitchOutputDeviceCB& callback) override;
-  AudioParameters GetOutputParameters() override;
-  OutputDeviceStatus GetDeviceStatus() override;
+                          const OutputDeviceStatusCB& callback) override;
+  // This is expected to be called on the audio rendering thread. The caller
+  // must ensure that this input has been added to a mixer before calling the
+  // function, and that it is not removed from the mixer before this function
+  // returns.
+  bool CurrentThreadIsRenderingThread() override;
 
   // Called by AudioRendererMixer when an error occurs.
   void OnRenderError();
@@ -69,32 +68,30 @@ class MEDIA_EXPORT AudioRendererMixerInput
  private:
   friend class AudioRendererMixerInputTest;
 
+  // Pool to obtain mixers from / return them to.
+  AudioRendererMixerPool* const mixer_pool_;
+
+  // Protect |volume_|, accessed by separate threads in ProvideInput() and
+  // SetVolume().
+  base::Lock volume_lock_;
+
   bool started_;
   bool playing_;
   double volume_;
 
   // AudioConverter::InputCallback implementation.
-  double ProvideInput(AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override;
-
-  // Callbacks provided during construction which allow AudioRendererMixerInput
-  // to retrieve a mixer during Initialize() and notify when it's done with it.
-  const GetMixerCB get_mixer_cb_;
-  const RemoveMixerCB remove_mixer_cb_;
-
-  // Callbacks provided during construction which allows AudioRendererMixerInput
-  // to access hardware output parameters when it is detached from the mixer.
-  const GetHardwareParamsCB get_hardware_params_cb_;
+  double ProvideInput(AudioBus* audio_bus, uint32_t frames_delayed) override;
 
   // AudioParameters received during Initialize().
   AudioParameters params_;
 
-  // ID of hardware device to use
-  std::string device_id_;
+  const int owner_id_;
+  std::string device_id_;  // ID of hardware device to use
   url::Origin security_origin_;
+  const AudioLatency::LatencyType latency_;
 
-  // AudioRendererMixer provided through |get_mixer_cb_| during Initialize(),
-  // guaranteed to live (at least) until |remove_mixer_cb_| is called.
+  // AudioRendererMixer obtained from mixer pool during Initialize(),
+  // guaranteed to live (at least) until it is returned to the pool.
   AudioRendererMixer* mixer_;
 
   // Source of audio data which is provided to the mixer.
@@ -105,7 +102,7 @@ class MEDIA_EXPORT AudioRendererMixerInput
 
   // Pending switch-device callback, in case SwitchOutputDevice() is invoked
   // before Start()
-  SwitchOutputDeviceCB pending_switch_callback_;
+  OutputDeviceStatusCB pending_switch_callback_;
   std::string pending_switch_device_id_;
   url::Origin pending_switch_security_origin_;
 

@@ -35,11 +35,11 @@ namespace blink {
 
 using namespace HTMLNames;
 
-PassRefPtrWillBeRawPtr<HTMLSummaryElement> HTMLSummaryElement::create(Document& document)
+HTMLSummaryElement* HTMLSummaryElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<HTMLSummaryElement> summary = adoptRefWillBeNoop(new HTMLSummaryElement(document));
+    HTMLSummaryElement* summary = new HTMLSummaryElement(document);
     summary->ensureUserAgentShadowRoot();
-    return summary.release();
+    return summary;
 }
 
 HTMLSummaryElement::HTMLSummaryElement(Document& document)
@@ -54,7 +54,7 @@ LayoutObject* HTMLSummaryElement::createLayoutObject(const ComputedStyle&)
 
 void HTMLSummaryElement::didAddUserAgentShadowRoot(ShadowRoot& root)
 {
-    RefPtrWillBeRawPtr<DetailsMarkerControl> markerControl = DetailsMarkerControl::create(document());
+    DetailsMarkerControl* markerControl = DetailsMarkerControl::create(document());
     markerControl->setIdAttribute(ShadowElementNames::detailsMarker());
     root.appendChild(markerControl);
     root.appendChild(HTMLContentElement::create(document()));
@@ -111,7 +111,7 @@ void HTMLSummaryElement::defaultEventHandler(Event* event)
         }
 
         if (event->isKeyboardEvent()) {
-            if (event->type() == EventTypeNames::keydown && toKeyboardEvent(event)->keyIdentifier() == "U+0020") {
+            if (event->type() == EventTypeNames::keydown && toKeyboardEvent(event)->key() == " ") {
                 setActive(true);
                 // No setDefaultHandled() - IE dispatches a keypress in this case.
                 return;
@@ -128,7 +128,7 @@ void HTMLSummaryElement::defaultEventHandler(Event* event)
                     return;
                 }
             }
-            if (event->type() == EventTypeNames::keyup && toKeyboardEvent(event)->keyIdentifier() == "U+0020") {
+            if (event->type() == EventTypeNames::keyup && toKeyboardEvent(event)->key() == " ") {
                 if (active())
                     dispatchSimulatedClick(event);
                 event->setDefaultHandled();

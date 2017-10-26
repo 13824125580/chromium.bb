@@ -4,17 +4,18 @@
 
 #include "chrome/browser/android/data_usage/external_data_use_observer_bridge.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/android/context_utils.h"
 #include "base/android/jni_string.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/data_usage/data_use_tab_model.h"
 #include "chrome/browser/android/data_usage/external_data_use_observer.h"
+#include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/browser_thread.h"
 #include "jni/ExternalDataUseObserver_jni.h"
@@ -22,6 +23,12 @@
 using base::android::ConvertUTF8ToJavaString;
 
 namespace {
+
+// Name of the external data use observer synthetic field trial, enabled and
+// disabled groups.
+const char kSyntheticFieldTrial[] = "SyntheticExternalDataUseObserver";
+const char kSyntheticFieldTrialEnabledGroup[] = "Enabled";
+const char kSyntheticFieldTrialDisabledGroup[] = "Disabled";
 
 // Returns the package name of the control app from the field trial.
 const std::string GetControlAppPackageName() {
@@ -78,7 +85,7 @@ void ExternalDataUseObserverBridge::Init(
       reinterpret_cast<intptr_t>(this)));
   DCHECK(!j_external_data_use_observer_.is_null());
 
-  Java_ExternalDataUseObserver_setControlAppPackageName(
+  Java_ExternalDataUseObserver_initControlAppManager(
       env, j_external_data_use_observer_.obj(),
       ConvertUTF8ToJavaString(env, GetControlAppPackageName()).obj());
 }
@@ -132,6 +139,7 @@ void ExternalDataUseObserverBridge::FetchMatchingRulesDone(
 
 void ExternalDataUseObserverBridge::ReportDataUse(
     const std::string& label,
+    const std::string& tag,
     net::NetworkChangeNotifier::ConnectionType connection_type,
     const std::string& mcc_mnc,
     const base::Time& start_time,
@@ -151,7 +159,8 @@ void ExternalDataUseObserverBridge::ReportDataUse(
 
   Java_ExternalDataUseObserver_reportDataUse(
       env, j_external_data_use_observer_.obj(),
-      ConvertUTF8ToJavaString(env, label).obj(), connection_type,
+      ConvertUTF8ToJavaString(env, label).obj(),
+      ConvertUTF8ToJavaString(env, tag).obj(), connection_type,
       ConvertUTF8ToJavaString(env, mcc_mnc).obj(), start_time_milliseconds,
       end_time_milliseconds, bytes_downloaded, bytes_uploaded);
 }
@@ -172,7 +181,34 @@ void ExternalDataUseObserverBridge::OnControlAppInstallStateChange(
     jobject obj,
     bool is_control_app_installed) const {
   DCHECK(thread_checker_.CalledOnValidThread());
-  data_use_tab_model_->OnControlAppInstallStateChange(is_control_app_installed);
+  if (data_use_tab_model_) {
+    data_use_tab_model_->OnControlAppInstallStateChange(
+        is_control_app_installed);
+  }
+}
+
+void ExternalDataUseObserverBridge::ShouldRegisterAsDataUseObserver(
+    bool should_register) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(!j_external_data_use_observer_.is_null());
+
+  io_task_runner_->PostTask(
+      FROM_HERE,
+      base::Bind(&ExternalDataUseObserver::ShouldRegisterAsDataUseObserver,
+                 external_data_use_observer_, should_register));
+
+  // Set or clear the variation id for the enabled group.
+  JNIEnv* env = base::android::AttachCurrentThread();
+  variations::AssociateGoogleVariationID(
+      variations::GOOGLE_WEB_PROPERTIES, kSyntheticFieldTrial,
+      kSyntheticFieldTrialEnabledGroup,
+      should_register ? Java_ExternalDataUseObserver_getGoogleVariationID(
+                            env, j_external_data_use_observer_.obj())
+                      : variations::EMPTY_ID);
+  ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+      kSyntheticFieldTrial, should_register
+                                ? kSyntheticFieldTrialEnabledGroup
+                                : kSyntheticFieldTrialDisabledGroup);
 }
 
 bool RegisterExternalDataUseObserver(JNIEnv* env) {

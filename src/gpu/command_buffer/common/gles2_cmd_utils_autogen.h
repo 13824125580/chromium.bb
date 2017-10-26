@@ -77,7 +77,6 @@ static std::string GetStringShaderType(uint32_t value);
 static std::string GetStringSrcBlendFactor(uint32_t value);
 static std::string GetStringStencilOp(uint32_t value);
 static std::string GetStringStringType(uint32_t value);
-static std::string GetStringSubscriptionTarget(uint32_t value);
 static std::string GetStringSyncCondition(uint32_t value);
 static std::string GetStringSyncParameter(uint32_t value);
 static std::string GetStringTexture3DTarget(uint32_t value);
@@ -98,6 +97,7 @@ static std::string GetStringTextureSizedTextureFilterableInternalFormat(
     uint32_t value);
 static std::string GetStringTextureStencilRenderableInternalFormat(
     uint32_t value);
+static std::string GetStringTextureSwizzle(uint32_t value);
 static std::string GetStringTextureTarget(uint32_t value);
 static std::string GetStringTextureUnsizedInternalFormat(uint32_t value);
 static std::string GetStringTextureUsage(uint32_t value);
@@ -106,7 +106,6 @@ static std::string GetStringTransformFeedbackBindTarget(uint32_t value);
 static std::string GetStringTransformFeedbackPrimitiveMode(uint32_t value);
 static std::string GetStringUniformBlockParameter(uint32_t value);
 static std::string GetStringUniformParameter(uint32_t value);
-static std::string GetStringValueBufferTarget(uint32_t value);
 static std::string GetStringVertexAttribIType(uint32_t value);
 static std::string GetStringVertexAttribType(uint32_t value);
 static std::string GetStringVertexAttribute(uint32_t value);

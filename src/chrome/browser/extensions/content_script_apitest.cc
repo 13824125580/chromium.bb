@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -168,7 +169,7 @@ DialogHelper::DialogHelper(content::WebContents* web_contents)
   DCHECK_EQ(dialog_manager_impl, dialog_manager_);
 
   client_ = new DialogClient(this);
-  dialog_manager_impl->SetExtensionsClient(make_scoped_ptr(client_));
+  dialog_manager_impl->SetExtensionsClient(base::WrapUnique(client_));
 }
 
 DialogHelper::~DialogHelper() {
@@ -481,7 +482,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ContentScriptBlockingScript) {
   run_loop.Run();
   // Right now, the alert dialog is showing and blocking injection of anything
   // after it, so the listener shouldn't be satisfied.
-  EXPECT_TRUE(RunAllPending(web_contents));
   EXPECT_FALSE(listener.was_satisfied());
   EXPECT_EQ(1u, dialog_helper.dialog_count());
   dialog_helper.CloseDialogs();
@@ -537,7 +537,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ContentScriptBlockingScriptTabClosed) {
   // Now, instead of closing the dialog, just close the tab. Later scripts
   // should never get a chance to run (and we shouldn't crash).
   run_loop.Run();
-  EXPECT_TRUE(RunAllPending(web_contents));
   EXPECT_FALSE(listener.was_satisfied());
   EXPECT_TRUE(browser()->tab_strip_model()->CloseWebContentsAt(
       browser()->tab_strip_model()->active_index(), 0));
@@ -575,7 +574,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest,
   run_loop.Run();
 
   // The extension will have injected at idle, but it should only inject once.
-  EXPECT_TRUE(RunAllPending(web_contents));
   EXPECT_EQ(1u, dialog_helper.dialog_count());
   dialog_helper.CloseDialogs();
   EXPECT_TRUE(RunAllPending(web_contents));

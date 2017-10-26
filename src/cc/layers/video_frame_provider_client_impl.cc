@@ -27,11 +27,14 @@ VideoFrameProviderClientImpl::VideoFrameProviderClientImpl(
       stopped_(false),
       rendering_(false),
       needs_put_current_frame_(false) {
-  // This only happens during a commit on the compositor thread while the main
-  // thread is blocked. That makes this a thread-safe call to set the video
-  // frame provider client that does not require a lock. The same is true of
-  // the call to Stop().
-  provider_->SetVideoFrameProviderClient(this);
+  // |provider_| may be null if destructed before the layer.
+  if (provider_) {
+    // This only happens during a commit on the compositor thread while the main
+    // thread is blocked. That makes this a thread-safe call to set the video
+    // frame provider client that does not require a lock. The same is true of
+    // the call to Stop().
+    provider_->SetVideoFrameProviderClient(this);
+  }
 
   // This matrix is the default transformation for stream textures, and flips
   // on the Y axis.
@@ -147,17 +150,6 @@ void VideoFrameProviderClientImpl::DidReceiveFrame() {
                !!active_video_layer_);
   DCHECK(thread_checker_.CalledOnValidThread());
   needs_put_current_frame_ = true;
-  if (active_video_layer_)
-    active_video_layer_->SetNeedsRedraw();
-}
-
-void VideoFrameProviderClientImpl::DidUpdateMatrix(const float* matrix) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  stream_texture_matrix_ = gfx::Transform(
-      matrix[0], matrix[4], matrix[8], matrix[12],
-      matrix[1], matrix[5], matrix[9], matrix[13],
-      matrix[2], matrix[6], matrix[10], matrix[14],
-      matrix[3], matrix[7], matrix[11], matrix[15]);
   if (active_video_layer_)
     active_video_layer_->SetNeedsRedraw();
 }

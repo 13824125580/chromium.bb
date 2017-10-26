@@ -29,6 +29,7 @@
 
 #include "platform/graphics/ImagePattern.h"
 #include "platform/graphics/PicturePattern.h"
+#include "platform/graphics/skia/SkiaUtils.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkShader.h"
@@ -41,7 +42,7 @@ PassRefPtr<Pattern> Pattern::createImagePattern(PassRefPtr<Image> tileImage, Rep
     return ImagePattern::create(tileImage, repeatMode);
 }
 
-PassRefPtr<Pattern> Pattern::createPicturePattern(PassRefPtr<const SkPicture> picture,
+PassRefPtr<Pattern> Pattern::createPicturePattern(PassRefPtr<SkPicture> picture,
     RepeatMode repeatMode)
 {
     return PicturePattern::create(picture, repeatMode);
@@ -59,22 +60,12 @@ Pattern::~Pattern()
     adjustExternalMemoryAllocated(-m_externalMemoryAllocated);
 }
 
-void Pattern::applyToPaint(SkPaint& paint)
+void Pattern::applyToPaint(SkPaint& paint, const SkMatrix& localMatrix) const
 {
-    if (!m_pattern) {
-        m_pattern = createShader();
-    }
+    if (!m_cachedShader || localMatrix != m_cachedShader->getLocalMatrix())
+        m_cachedShader = createShader(localMatrix);
 
-    paint.setShader(m_pattern.get());
-}
-
-void Pattern::setPatternSpaceTransform(const AffineTransform& patternSpaceTransformation)
-{
-    if (patternSpaceTransformation == m_patternSpaceTransformation)
-        return;
-
-    m_patternSpaceTransformation = patternSpaceTransformation;
-    m_pattern.clear();
+    paint.setShader(m_cachedShader);
 }
 
 void Pattern::adjustExternalMemoryAllocated(int64_t delta)

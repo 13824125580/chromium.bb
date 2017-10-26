@@ -4,16 +4,18 @@
 
 #include "ash/shelf/shelf_window_watcher.h"
 
-#include "ash/ash_switches.h"
-#include "ash/shelf/shelf_item_types.h"
-#include "ash/shelf/shelf_model.h"
+#include "ash/aura/wm_window_aura.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/shelf/shelf_item_types.h"
+#include "ash/common/shelf/shelf_model.h"
+#include "ash/common/shell_window_ids.h"
+#include "ash/common/wm/window_resizer.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/shelf/shelf_util.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/shell_test_api.h"
-#include "ash/wm/window_resizer.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "ui/aura/client/aura_constants.h"
@@ -56,8 +58,8 @@ TEST_F(ShelfWindowWatcherTest, CreateAndRemoveShelfItem) {
   // ShelfModel only has an APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
 
-  scoped_ptr<aura::Window> w1(CreateTestWindowInShellWithId(0));
-  scoped_ptr<aura::Window> w2(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> w1(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> w2(CreateTestWindowInShellWithId(0));
 
   // Create a ShelfItem for w1.
   ShelfID id_w1 = CreateShelfItem(w1.get());
@@ -81,14 +83,13 @@ TEST_F(ShelfWindowWatcherTest, CreateAndRemoveShelfItem) {
   // Clears twice doesn't do anything.
   ClearShelfItemDetailsForWindow(w2.get());
   EXPECT_EQ(1, model_->item_count());
-
 }
 
 TEST_F(ShelfWindowWatcherTest, ActivateWindow) {
   // ShelfModel only have APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
-  scoped_ptr<aura::Window> w1(CreateTestWindowInShellWithId(0));
-  scoped_ptr<aura::Window> w2(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> w1(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> w2(CreateTestWindowInShellWithId(0));
 
   // Create a ShelfItem for w1.
   ShelfID id_w1 = CreateShelfItem(w1.get());
@@ -117,7 +118,7 @@ TEST_F(ShelfWindowWatcherTest, UpdateWindowProperty) {
   // ShelfModel only has an APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
 
-  scoped_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
 
   // Create a ShelfItem for |window|.
   ShelfID id = CreateShelfItem(window.get());
@@ -142,7 +143,7 @@ TEST_F(ShelfWindowWatcherTest, MaximizeAndRestoreWindow) {
   // ShelfModel only has an APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
 
-  scoped_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
   wm::WindowState* window_state = wm::GetWindowState(window.get());
 
   // Create a ShelfItem for |window|.
@@ -177,7 +178,7 @@ TEST_F(ShelfWindowWatcherTest, ReparentWindow) {
   // ShelfModel only has an APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
 
-  scoped_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
   window->set_owned_by_parent(false);
 
   // Create a ShelfItem for |window|.
@@ -188,14 +189,12 @@ TEST_F(ShelfWindowWatcherTest, ReparentWindow) {
   EXPECT_EQ(STATUS_RUNNING, model_->items()[index].status);
 
   aura::Window* root_window = window->GetRootWindow();
-  aura::Window* default_container = Shell::GetContainer(
-      root_window,
-      kShellWindowId_DefaultContainer);
+  aura::Window* default_container =
+      Shell::GetContainer(root_window, kShellWindowId_DefaultContainer);
   EXPECT_EQ(default_container, window->parent());
 
-  aura::Window* new_parent = Shell::GetContainer(
-      root_window,
-      kShellWindowId_PanelContainer);
+  aura::Window* new_parent =
+      Shell::GetContainer(root_window, kShellWindowId_PanelContainer);
 
   // Check |window|'s item is removed when it is re-parented to |new_parent|
   // which is not default container.
@@ -214,7 +213,7 @@ TEST_F(ShelfWindowWatcherTest, DragWindow) {
   // ShelfModel only has an APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
 
-  scoped_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
 
   // Create a ShelfItem for |window|.
   ShelfID id = CreateShelfItem(window.get());
@@ -224,16 +223,14 @@ TEST_F(ShelfWindowWatcherTest, DragWindow) {
   EXPECT_EQ(STATUS_RUNNING, model_->items()[index].status);
 
   // Simulate dragging of |window| and check its item is not changed.
-  scoped_ptr<WindowResizer> resizer(
-      CreateWindowResizer(window.get(),
-                          gfx::Point(),
-                          HTCAPTION,
-                          aura::client::WINDOW_MOVE_SOURCE_MOUSE));
+  std::unique_ptr<WindowResizer> resizer(
+      CreateWindowResizer(WmWindowAura::Get(window.get()), gfx::Point(),
+                          HTCAPTION, aura::client::WINDOW_MOVE_SOURCE_MOUSE));
   ASSERT_TRUE(resizer.get());
   resizer->Drag(gfx::Point(50, 50), 0);
   resizer->CompleteDrag();
 
-  //Index and id are not changed after dragging a |window|.
+  // Index and id are not changed after dragging a |window|.
   EXPECT_EQ(index, model_->ItemIndexByID(id));
   EXPECT_EQ(id, model_->items()[index].id);
 }
@@ -244,7 +241,7 @@ TEST_F(ShelfWindowWatcherTest, ReparentWindowDuringTheDragging) {
   // ShelfModel only has an APP_LIST item.
   EXPECT_EQ(1, model_->item_count());
 
-  scoped_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
   window->set_owned_by_parent(false);
 
   // Create a ShelfItem for |window|.
@@ -254,22 +251,18 @@ TEST_F(ShelfWindowWatcherTest, ReparentWindowDuringTheDragging) {
   EXPECT_EQ(STATUS_RUNNING, model_->items()[index].status);
 
   aura::Window* root_window = window->GetRootWindow();
-  aura::Window* default_container = Shell::GetContainer(
-      root_window,
-      kShellWindowId_DefaultContainer);
+  aura::Window* default_container =
+      Shell::GetContainer(root_window, kShellWindowId_DefaultContainer);
   EXPECT_EQ(default_container, window->parent());
 
-  aura::Window* new_parent = Shell::GetContainer(
-      root_window,
-      kShellWindowId_PanelContainer);
+  aura::Window* new_parent =
+      Shell::GetContainer(root_window, kShellWindowId_PanelContainer);
 
   // Simulate re-parenting to |new_parent| during the dragging.
   {
-    scoped_ptr<WindowResizer> resizer(
-        CreateWindowResizer(window.get(),
-                            gfx::Point(),
-                            HTCAPTION,
-                            aura::client::WINDOW_MOVE_SOURCE_MOUSE));
+    std::unique_ptr<WindowResizer> resizer(
+        CreateWindowResizer(WmWindowAura::Get(window.get()), gfx::Point(),
+                            HTCAPTION, aura::client::WINDOW_MOVE_SOURCE_MOUSE));
     ASSERT_TRUE(resizer.get());
     resizer->Drag(gfx::Point(50, 50), 0);
     resizer->CompleteDrag();

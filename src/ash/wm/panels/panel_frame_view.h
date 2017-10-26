@@ -5,7 +5,10 @@
 #ifndef ASH_WM_PANELS_PANEL_FRAME_VIEW_H_
 #define ASH_WM_PANELS_PANEL_FRAME_VIEW_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
+#include "ash/common/shell_observer.h"
 #include "base/macros.h"
 #include "ui/views/window/non_client_view.h"
 
@@ -18,15 +21,13 @@ class DefaultHeaderPainter;
 class FrameCaptionButtonContainerView;
 class FrameBorderHitTestController;
 
-class ASH_EXPORT PanelFrameView : public views::NonClientFrameView {
+class ASH_EXPORT PanelFrameView : public views::NonClientFrameView,
+                                  public ShellObserver {
  public:
   // Internal class name.
   static const char kViewClassName[];
 
-  enum FrameType {
-    FRAME_NONE,
-    FRAME_ASH
-  };
+  enum FrameType { FRAME_NONE, FRAME_ASH };
 
   PanelFrameView(views::Widget* frame, FrameType frame_type);
   ~PanelFrameView() override;
@@ -35,7 +36,7 @@ class ASH_EXPORT PanelFrameView : public views::NonClientFrameView {
   // will have some transparency added when the frame is drawn.
   void SetFrameColors(SkColor active_frame_color, SkColor inactive_frame_color);
 
-  // Overridden from views::View:
+  // views::View:
   const char* GetClassName() const override;
 
  private:
@@ -44,7 +45,7 @@ class ASH_EXPORT PanelFrameView : public views::NonClientFrameView {
   // Height from top of window to top of client area.
   int NonClientTopBorderHeight() const;
 
-  // Overridden from views::NonClientFrameView:
+  // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
   gfx::Rect GetWindowBoundsForClientBounds(
       const gfx::Rect& client_bounds) const override;
@@ -55,10 +56,14 @@ class ASH_EXPORT PanelFrameView : public views::NonClientFrameView {
   void UpdateWindowTitle() override;
   void SizeConstraintsChanged() override;
 
-  // Overridden from views::View:
+  // views::View:
   gfx::Size GetMinimumSize() const override;
   void Layout() override;
   void OnPaint(gfx::Canvas* canvas) override;
+
+  // ShellObserver:
+  void OnOverviewModeStarting() override;
+  void OnOverviewModeEnded() override;
 
   // Child View class describing the panel's title bar behavior
   // and buttons, owned by the view hierarchy
@@ -68,14 +73,14 @@ class ASH_EXPORT PanelFrameView : public views::NonClientFrameView {
   gfx::Rect client_view_bounds_;
 
   // Helper class for painting the header.
-  scoped_ptr<DefaultHeaderPainter> header_painter_;
+  std::unique_ptr<DefaultHeaderPainter> header_painter_;
 
   // Updates the hittest bounds overrides based on the window state type.
-  scoped_ptr<FrameBorderHitTestController> frame_border_hit_test_controller_;
+  std::unique_ptr<FrameBorderHitTestController>
+      frame_border_hit_test_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(PanelFrameView);
 };
-
 }
 
-#endif // ASH_WM_PANELS_PANEL_FRAME_VIEW_H_
+#endif  // ASH_WM_PANELS_PANEL_FRAME_VIEW_H_

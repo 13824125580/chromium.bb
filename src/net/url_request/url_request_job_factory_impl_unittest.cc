@@ -4,12 +4,15 @@
 
 #include "net/url_request/url_request_job_factory_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/request_priority.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
@@ -56,11 +59,11 @@ class DummyProtocolHandler : public URLRequestJobFactory::ProtocolHandler {
 TEST(URLRequestJobFactoryTest, NoProtocolHandler) {
   TestDelegate delegate;
   TestURLRequestContext request_context;
-  scoped_ptr<URLRequest> request(request_context.CreateRequest(
+  std::unique_ptr<URLRequest> request(request_context.CreateRequest(
       GURL("foo://bar"), DEFAULT_PRIORITY, &delegate));
   request->Start();
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_EQ(URLRequestStatus::FAILED, request->status().status());
   EXPECT_EQ(ERR_UNKNOWN_URL_SCHEME, request->status().error());
 }
@@ -71,12 +74,12 @@ TEST(URLRequestJobFactoryTest, BasicProtocolHandler) {
   TestURLRequestContext request_context;
   request_context.set_job_factory(&job_factory);
   job_factory.SetProtocolHandler("foo",
-                                 make_scoped_ptr(new DummyProtocolHandler));
-  scoped_ptr<URLRequest> request(request_context.CreateRequest(
+                                 base::WrapUnique(new DummyProtocolHandler));
+  std::unique_ptr<URLRequest> request(request_context.CreateRequest(
       GURL("foo://bar"), DEFAULT_PRIORITY, &delegate));
   request->Start();
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_EQ(URLRequestStatus::SUCCESS, request->status().status());
   EXPECT_EQ(OK, request->status().error());
 }
@@ -86,7 +89,7 @@ TEST(URLRequestJobFactoryTest, DeleteProtocolHandler) {
   TestURLRequestContext request_context;
   request_context.set_job_factory(&job_factory);
   job_factory.SetProtocolHandler("foo",
-                                 make_scoped_ptr(new DummyProtocolHandler));
+                                 base::WrapUnique(new DummyProtocolHandler));
   job_factory.SetProtocolHandler("foo", nullptr);
 }
 

@@ -137,11 +137,6 @@ public class ContentView extends FrameLayout
     }
 
     @Override
-    public boolean dispatchKeyEventPreIme(KeyEvent event) {
-        return mContentViewCore.dispatchKeyEventPreIme(event);
-    }
-
-    @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (isFocused()) {
             return mContentViewCore.dispatchKeyEvent(event);
@@ -322,11 +317,6 @@ public class ContentView extends FrameLayout
     }
 
     @Override
-    public boolean super_dispatchKeyEventPreIme(KeyEvent event) {
-        return super.dispatchKeyEventPreIme(event);
-    }
-
-    @Override
     public boolean super_dispatchKeyEvent(KeyEvent event) {
         return super.dispatchKeyEvent(event);
     }
@@ -357,7 +347,7 @@ public class ContentView extends FrameLayout
 
         @Override
         public void onProvideVirtualStructure(final ViewStructure structure) {
-            mContentViewCore.onProvideVirtualStructure(structure);
+            mContentViewCore.onProvideVirtualStructure(structure, false);
         }
     }
 }

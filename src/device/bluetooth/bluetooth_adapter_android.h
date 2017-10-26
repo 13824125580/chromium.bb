@@ -5,6 +5,8 @@
 #ifndef DEVICE_BLUETOOTH_BLUETOOTH_ADAPTER_ANDROID_H_
 #define DEVICE_BLUETOOTH_BLUETOOTH_ADAPTER_ANDROID_H_
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
@@ -64,6 +66,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
                        const base::Closure& callback,
                        const ErrorCallback& error_callback) override;
   bool IsDiscovering() const override;
+  UUIDList GetUUIDs() const override;
   void CreateRfcommService(
       const BluetoothUUID& uuid,
       const ServiceOptions& options,
@@ -79,9 +82,11 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
       const AcquiredCallback& callback,
       const BluetoothAudioSink::ErrorCallback& error_callback) override;
   void RegisterAdvertisement(
-      scoped_ptr<BluetoothAdvertisement::Data> advertisement_data,
+      std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data,
       const CreateAdvertisementCallback& callback,
       const CreateAdvertisementErrorCallback& error_callback) override;
+  BluetoothLocalGattService* GetGattService(
+      const std::string& identifier) const override;
 
   // Called when adapter state changes.
   void OnAdapterStateChanged(JNIEnv* env,
@@ -117,14 +122,21 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
       const base::Closure& callback,
       const DiscoverySessionErrorCallback& error_callback) override;
   void SetDiscoveryFilter(
-      scoped_ptr<BluetoothDiscoveryFilter> discovery_filter,
+      std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
       const base::Closure& callback,
       const DiscoverySessionErrorCallback& error_callback) override;
   void RemovePairingDelegateInternal(
       BluetoothDevice::PairingDelegate* pairing_delegate) override;
 
+  void PurgeTimedOutDevices();
+
+  scoped_refptr<base::SequencedTaskRunner> ui_task_runner_;
+
   // Java object org.chromium.device.bluetooth.ChromeBluetoothAdapter.
   base::android::ScopedJavaGlobalRef<jobject> j_adapter_;
+
+ private:
+  size_t num_discovery_sessions_ = 0;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

@@ -7,6 +7,7 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
 
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
@@ -19,25 +20,25 @@ namespace ui {
 namespace {
 
 // Translates XI2 XEvent into a ui::Event.
-scoped_ptr<ui::Event> TranslateXI2EventToEvent(const XEvent& xev) {
+std::unique_ptr<ui::Event> TranslateXI2EventToEvent(const XEvent& xev) {
   EventType event_type = EventTypeFromXEvent(xev);
   switch (event_type) {
     case ET_KEY_PRESSED:
     case ET_KEY_RELEASED:
-      return make_scoped_ptr(new KeyEvent(event_type,
-                                          KeyboardCodeFromXKeyEvent(&xev),
-                                          EventFlagsFromXEvent(xev)));
+      return base::WrapUnique(new KeyEvent(event_type,
+                                           KeyboardCodeFromXKeyEvent(&xev),
+                                           EventFlagsFromXEvent(xev)));
     case ET_MOUSE_PRESSED:
     case ET_MOUSE_MOVED:
     case ET_MOUSE_DRAGGED:
     case ET_MOUSE_RELEASED:
-      return make_scoped_ptr(
+      return base::WrapUnique(
           new MouseEvent(event_type, EventLocationFromXEvent(xev),
                          EventSystemLocationFromXEvent(xev),
                          EventTimeFromXEvent(xev), EventFlagsFromXEvent(xev),
                          GetChangedMouseButtonFlagsFromXEvent(xev)));
     case ET_MOUSEWHEEL:
-      return make_scoped_ptr(new MouseWheelEvent(
+      return base::WrapUnique(new MouseWheelEvent(
           GetMouseWheelOffsetFromXEvent(xev), EventLocationFromXEvent(xev),
           EventSystemLocationFromXEvent(xev), EventTimeFromXEvent(xev),
           EventFlagsFromXEvent(xev),
@@ -47,7 +48,7 @@ scoped_ptr<ui::Event> TranslateXI2EventToEvent(const XEvent& xev) {
       float x_offset, y_offset, x_offset_ordinal, y_offset_ordinal;
       GetFlingDataFromXEvent(xev, &x_offset, &y_offset, &x_offset_ordinal,
                              &y_offset_ordinal, nullptr);
-      return make_scoped_ptr(new ScrollEvent(
+      return base::WrapUnique(new ScrollEvent(
           event_type, EventLocationFromXEvent(xev), EventTimeFromXEvent(xev),
           EventFlagsFromXEvent(xev), x_offset, y_offset, x_offset_ordinal,
           y_offset_ordinal, 0));
@@ -57,7 +58,7 @@ scoped_ptr<ui::Event> TranslateXI2EventToEvent(const XEvent& xev) {
       int finger_count;
       GetScrollOffsetsFromXEvent(xev, &x_offset, &y_offset, &x_offset_ordinal,
                                  &y_offset_ordinal, &finger_count);
-      return make_scoped_ptr(new ScrollEvent(
+      return base::WrapUnique(new ScrollEvent(
           event_type, EventLocationFromXEvent(xev), EventTimeFromXEvent(xev),
           EventFlagsFromXEvent(xev), x_offset, y_offset, x_offset_ordinal,
           y_offset_ordinal, finger_count));
@@ -66,9 +67,16 @@ scoped_ptr<ui::Event> TranslateXI2EventToEvent(const XEvent& xev) {
     case ET_TOUCH_PRESSED:
     case ET_TOUCH_CANCELLED:
     case ET_TOUCH_RELEASED:
-      return make_scoped_ptr(
-          new TouchEvent(event_type, EventLocationFromXEvent(xev),
-                         GetTouchIdFromXEvent(xev), EventTimeFromXEvent(xev)));
+      return base::WrapUnique(
+          new TouchEvent(event_type,
+                         EventLocationFromXEvent(xev),
+                         /* flags */ 0,
+                         GetTouchIdFromXEvent(xev),
+                         EventTimeFromXEvent(xev),
+                         GetTouchRadiusXFromXEvent(xev),
+                         GetTouchRadiusYFromXEvent(xev),
+                         /* angle */ 0.f,
+                         GetTouchForceFromXEvent(xev)));
     case ET_UNKNOWN:
       return nullptr;
     default:
@@ -78,7 +86,7 @@ scoped_ptr<ui::Event> TranslateXI2EventToEvent(const XEvent& xev) {
 }
 
 // Translates a XEvent into a ui::Event.
-scoped_ptr<ui::Event> TranslateXEventToEvent(const XEvent& xev) {
+std::unique_ptr<ui::Event> TranslateXEventToEvent(const XEvent& xev) {
   int flags = EventFlagsFromXEvent(xev);
   switch (xev.type) {
     case LeaveNotify:
@@ -87,27 +95,27 @@ scoped_ptr<ui::Event> TranslateXEventToEvent(const XEvent& xev) {
       // not real mouse move event.
       if (xev.type == EnterNotify)
         flags |= EF_IS_SYNTHESIZED;
-      return make_scoped_ptr(
+      return base::WrapUnique(
           new MouseEvent(ET_MOUSE_MOVED, EventLocationFromXEvent(xev),
                          EventSystemLocationFromXEvent(xev),
                          EventTimeFromXEvent(xev), flags, 0));
 
     case KeyPress:
     case KeyRelease:
-      return make_scoped_ptr(new KeyEvent(
+      return base::WrapUnique(new KeyEvent(
           EventTypeFromXEvent(xev), KeyboardCodeFromXKeyEvent(&xev), flags));
 
     case ButtonPress:
     case ButtonRelease: {
       switch (EventTypeFromXEvent(xev)) {
         case ET_MOUSEWHEEL:
-          return make_scoped_ptr(new MouseWheelEvent(
+          return base::WrapUnique(new MouseWheelEvent(
               GetMouseWheelOffsetFromXEvent(xev), EventLocationFromXEvent(xev),
               EventSystemLocationFromXEvent(xev), EventTimeFromXEvent(xev),
               flags, 0));
         case ET_MOUSE_PRESSED:
         case ET_MOUSE_RELEASED:
-          return make_scoped_ptr(new MouseEvent(
+          return base::WrapUnique(new MouseEvent(
               EventTypeFromXEvent(xev), EventLocationFromXEvent(xev),
               EventSystemLocationFromXEvent(xev), EventTimeFromXEvent(xev),
               flags, GetChangedMouseButtonFlagsFromXEvent(xev)));
@@ -146,15 +154,9 @@ void X11EventSourceLibevent::RemoveXEventDispatcher(
 }
 
 void X11EventSourceLibevent::ProcessXEvent(XEvent* xevent) {
-  scoped_ptr<ui::Event> translated_event = TranslateXEventToEvent(*xevent);
+  std::unique_ptr<ui::Event> translated_event = TranslateXEventToEvent(*xevent);
   if (translated_event) {
-    // The ui::Events produced by TranslateXEventToEvent() don't use
-    // base::NativeEvent constructors. To trigger any additional checks that
-    // occur in the base::NativeEvent constructor (eg. check for double click)
-    // we create a copy here.
-    scoped_ptr<ui::Event> event_copy =
-        ui::EventFromNative(translated_event.get());
-    DispatchEvent(event_copy.get());
+    DispatchEvent(translated_event.get());
   } else {
     // Only if we can't translate XEvent into ui::Event, try to dispatch XEvent
     // directly to XEventDispatchers.

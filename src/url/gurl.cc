@@ -101,9 +101,7 @@ GURL::GURL(const char* canonical_spec,
 }
 
 GURL::GURL(std::string canonical_spec, const url::Parsed& parsed, bool is_valid)
-    : is_valid_(is_valid),
-      parsed_(parsed) {
-  spec_.swap(canonical_spec);
+    : spec_(std::move(canonical_spec)), is_valid_(is_valid), parsed_(parsed) {
   InitializeFromCanonicalSpec();
 }
 
@@ -280,7 +278,8 @@ GURL GURL::ReplaceComponents(
 
   output.Complete();
   if (result.is_valid_ && result.SchemeIsFileSystem()) {
-    result.inner_url_.reset(new GURL(spec_.data(), result.parsed_.Length(),
+    result.inner_url_.reset(new GURL(result.spec_.data(),
+                                     result.parsed_.Length(),
                                      *result.parsed_.inner_parsed(), true));
   }
   return result;
@@ -306,7 +305,8 @@ GURL GURL::ReplaceComponents(
 
   output.Complete();
   if (result.is_valid_ && result.SchemeIsFileSystem()) {
-    result.inner_url_.reset(new GURL(spec_.data(), result.parsed_.Length(),
+    result.inner_url_.reset(new GURL(result.spec_.data(),
+                                     result.parsed_.Length(),
                                      *result.parsed_.inner_parsed(), true));
   }
   return result;

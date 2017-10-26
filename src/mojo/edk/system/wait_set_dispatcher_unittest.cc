@@ -13,10 +13,11 @@
 #include "base/memory/ref_counted.h"
 #include "mojo/edk/embedder/embedder_internal.h"
 #include "mojo/edk/system/core.h"
+#include "mojo/edk/system/message_for_transit.h"
 #include "mojo/edk/system/message_pipe_dispatcher.h"
+#include "mojo/edk/system/request_context.h"
 #include "mojo/edk/system/test_utils.h"
 #include "mojo/edk/system/waiter.h"
-#include "mojo/public/cpp/system/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace mojo {
@@ -74,11 +75,44 @@ class WaitSetDispatcherTest : public ::testing::Test {
     dispatchers_to_close_.push_back(dispatcher);
   }
 
+  void WriteMessage(MessagePipeDispatcher* dispatcher,
+                    const void* bytes,
+                    size_t num_bytes) {
+    Core* core = mojo::edk::internal::g_core;
+    MojoMessageHandle msg;
+    ASSERT_EQ(MOJO_RESULT_OK,
+              core->AllocMessage(static_cast<uint32_t>(num_bytes), nullptr, 0,
+                                 MOJO_ALLOC_MESSAGE_FLAG_NONE, &msg));
+    void* buffer;
+    ASSERT_EQ(MOJO_RESULT_OK, core->GetMessageBuffer(msg, &buffer));
+    memcpy(buffer, bytes, num_bytes);
+
+    std::unique_ptr<MessageForTransit> message(
+        reinterpret_cast<MessageForTransit*>(msg));
+    ASSERT_EQ(MOJO_RESULT_OK,
+              dispatcher->WriteMessage(std::move(message),
+                                       MOJO_WRITE_MESSAGE_FLAG_NONE));
+  }
+
+  void ReadMessage(MessagePipeDispatcher* dispatcher,
+                   void* bytes,
+                   uint32_t* num_bytes) {
+    std::unique_ptr<MessageForTransit> message;
+    ASSERT_EQ(MOJO_RESULT_OK,
+              dispatcher->ReadMessage(&message, num_bytes, nullptr, 0,
+                                      MOJO_READ_MESSAGE_FLAG_NONE, false));
+    memcpy(bytes, message->bytes(), *num_bytes);
+  }
+
  protected:
   scoped_refptr<MessagePipeDispatcher> dispatcher0_;
   scoped_refptr<MessagePipeDispatcher> dispatcher1_;
 
  private:
+  // We keep an active RequestContext for the duration of each test. It's unused
+  // since these tests don't rely on the MojoWatch API.
+  const RequestContext request_context_;
+
   static uint64_t pipe_id_generator_;
   DispatcherVector dispatchers_to_close_;
 
@@ -136,9 +170,7 @@ TEST_F(WaitSetDispatcherTest, Basic) {
   // Write to |dispatcher1_|, which should make |dispatcher0_| readable.
   char buffer[] = "abcd";
   w.Init();
-  ASSERT_EQ(MOJO_RESULT_OK,
-            dispatcher1_->WriteMessage(buffer, sizeof(buffer), nullptr, 0,
-                                       MOJO_WRITE_MESSAGE_FLAG_NONE));
+  WriteMessage(dispatcher1_.get(), buffer, sizeof(buffer));
   EXPECT_EQ(MOJO_RESULT_OK, w.Wait(MOJO_DEADLINE_INDEFINITE, nullptr));
   woken_dispatcher = nullptr;
   context = 0;
@@ -183,9 +215,7 @@ TEST_F(WaitSetDispatcherTest, HandleWithoutRemoving) {
     // Write to |dispatcher1_|, which should make |dispatcher0_| readable.
     char buffer[] = "abcd";
     w.Init();
-    ASSERT_EQ(MOJO_RESULT_OK,
-              dispatcher1_->WriteMessage(buffer, sizeof(buffer), nullptr, 0,
-                                         MOJO_WRITE_MESSAGE_FLAG_NONE));
+    WriteMessage(dispatcher1_.get(), buffer, sizeof(buffer));
     EXPECT_EQ(MOJO_RESULT_OK, w.Wait(MOJO_DEADLINE_INDEFINITE, nullptr));
     woken_dispatcher = nullptr;
     context = 0;
@@ -197,9 +227,7 @@ TEST_F(WaitSetDispatcherTest, HandleWithoutRemoving) {
     // Read from |dispatcher0_| which should change it's state to non-readable.
     char read_buffer[sizeof(buffer) + 5];
     uint32_t num_bytes = sizeof(read_buffer);
-    ASSERT_EQ(MOJO_RESULT_OK,
-              dispatcher0_->ReadMessage(read_buffer, &num_bytes, nullptr,
-                                        nullptr, MOJO_READ_MESSAGE_FLAG_NONE));
+    ReadMessage(dispatcher0_.get(), read_buffer, &num_bytes);
     EXPECT_EQ(sizeof(buffer), num_bytes);
 
     // No dispatchers are ready.
@@ -208,7 +236,7 @@ TEST_F(WaitSetDispatcherTest, HandleWithoutRemoving) {
     context = 0;
     EXPECT_EQ(MOJO_RESULT_SHOULD_WAIT,
               GetOneReadyDispatcher(wait_set, &woken_dispatcher, &context));
-    EXPECT_EQ(nullptr, woken_dispatcher);
+    EXPECT_FALSE(woken_dispatcher);
     EXPECT_EQ(0u, context);
     EXPECT_EQ(MOJO_RESULT_DEADLINE_EXCEEDED, w.Wait(0, nullptr));
   }
@@ -310,9 +338,7 @@ TEST_F(WaitSetDispatcherTest, MultipleReady) {
   // Write to |dispatcher1_|, which should make |dispatcher0_| readable.
   char buffer[] = "abcd";
   w.Init();
-  ASSERT_EQ(MOJO_RESULT_OK,
-            dispatcher1_->WriteMessage(buffer, sizeof(buffer), nullptr, 0,
-                                       MOJO_WRITE_MESSAGE_FLAG_NONE));
+  WriteMessage(dispatcher1_.get(), buffer, sizeof(buffer));
   {
     Waiter mp_w;
     mp_w.Init();

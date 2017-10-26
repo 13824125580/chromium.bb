@@ -45,21 +45,12 @@ public abstract class ChromeSwitches {
      */
     public static final String DISABLE_CRASH_DUMP_UPLOAD = "disable-dump-upload";
 
-    /** Enable debug logs for the video casting feature. */
-    public static final String ENABLE_CAST_DEBUG_LOGS = "enable-cast-debug";
-
-    /** Prevent automatic reconnection to current Cast video when Chrome restarts. */
-    public static final String DISABLE_CAST_RECONNECTION = "disable-cast-reconnection";
-
     /** Whether or not to enable the experimental tablet tab stack. */
     public static final String ENABLE_TABLET_TAB_STACK = "enable-tablet-tab-stack";
 
     /** Never forward URL requests to external intents. */
     public static final String DISABLE_EXTERNAL_INTENT_REQUESTS =
             "disable-external-intent-requests";
-
-    /** Disable document mode. */
-    public static final String DISABLE_DOCUMENT_MODE = "disable-document-mode";
 
     /** Disable Contextual Search. */
     public static final String DISABLE_CONTEXTUAL_SEARCH = "disable-contextual-search";
@@ -108,16 +99,15 @@ public abstract class ChromeSwitches {
      */
     public static final String MARKET_URL_FOR_TESTING = "market-url-for-testing";
 
+    /** Enables the download manager UI. */
+    public static final String ENABLE_DOWNLOAD_MANAGER_UI = "enable-download-manager-ui";
+
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Native Switches
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     /** Enable the DOM Distiller. */
     public static final String ENABLE_DOM_DISTILLER = "enable-dom-distiller";
-
-    /** Enable experimental web-platform features, such as Push Messaging. */
-    public static final String EXPERIMENTAL_WEB_PLAFTORM_FEATURES =
-            "enable-experimental-web-platform-features";
 
     /**
      * Use sandbox Wallet environment for requestAutocomplete.
@@ -171,37 +161,18 @@ public abstract class ChromeSwitches {
     public static final String NTP_SWITCH_TO_EXISTING_TAB = "ntp-switch-to-existing-tab";
 
     /**
-     * Enables offline pages.
-     * Native switch - switches::kEnableOfflinePages
-     */
-    public static final String ENABLE_OFFLINE_PAGES = "enable-offline-pages";
-
-    /**
-     * Enables offline pages, showing 'bookmarks' name in UI strings.
-     * Native switch - switches::kEnableOfflinePagesAsBookmarks
-     */
-    public static final String ENABLE_OFFLINE_PAGES_AS_BOOKMARKS =
-            "enable-offline-pages-as-bookmarks";
-
-    /**
-     * Enables offline pages, showing 'saved pages' name in UI strings.
-     * Native switch - switches::kEnableOfflinePagesAsSavedPages
-     */
-    public static final String ENABLE_OFFLINE_PAGES_AS_SAVED_PAGES =
-            "enable-offline-pages-as-saved-pages";
-
-    /**
-     * Disables offline pages.
-     * Native switch - switches::kDisableOfflinePages
-     */
-    public static final String DISABLE_OFFLINE_PAGES = "disable-offline-pages";
-
-    /**
      * Enable keyboard accessory view that shows autofill suggestions on top of the keyboard.
      * Native switch - autofill::switches::kEnableAccessorySuggestionView
      */
     public static final String ENABLE_AUTOFILL_KEYBOARD_ACCESSORY =
             "enable-autofill-keyboard-accessory-view";
+
+    /**
+     * Enables overscroll of the on screen keyboard. With this flag on, the OSK will only resize the
+     * visual viewport.
+     * Native switch - switches::kEnableOSKOverscroll
+     */
+    public static final String ENABLE_OSK_OVERSCROLL = "enable-osk-overscroll";
 
     /**
      * Enables hung renderer InfoBar activation for unresponsive web content.
@@ -233,6 +204,8 @@ public abstract class ChromeSwitches {
     public static final String HERB_FLAVOR_BASIL_SWITCH = "tab-management-experiment-type-basil";
     public static final String HERB_FLAVOR_CHIVE_SWITCH = "tab-management-experiment-type-chive";
     public static final String HERB_FLAVOR_DILL_SWITCH = "tab-management-experiment-type-dill";
+    public static final String HERB_FLAVOR_ELDERBERRY_SWITCH =
+            "tab-management-experiment-type-elderberry";
 
     public static final String HERB_FLAVOR_DEFAULT = "Default";
     public static final String HERB_FLAVOR_CONTROL = "Control";
@@ -241,12 +214,43 @@ public abstract class ChromeSwitches {
     public static final String HERB_FLAVOR_BASIL = "Basil";
     public static final String HERB_FLAVOR_CHIVE = "Chive";
     public static final String HERB_FLAVOR_DILL = "Dill";
+    public static final String HERB_FLAVOR_ELDERBERRY = "Elderberry";
+
+    public static final String DISABLE_APP_LINK = "disable-app-link";
+    public static final String ENABLE_APP_LINK = "enable-app-link";
 
     /**
      * Enable tab switcher in document mode (merged tabs and apps option).
      */
     public static final String ENABLE_TAB_SWITCHER_IN_DOCUMENT_MODE =
             "enable-tab-switcher-in-document-mode";
+
+    /**
+     * Set the partner-defined homepage URL, for testing.
+     */
+    public static final String PARTNER_HOMEPAGE_FOR_TESTING = "partner-homepage-for-testing";
+
+    /**
+     * Enables the all bookmarks section in bookmark manager.
+     */
+    public static final String ENABLE_ALL_BOOKMARKS_VIEW = "enable-all-bookmarks-view";
+
+    /**
+     * Enables "Add to Home screen" to mint a WebApk.
+     */
+    public static final String ENABLE_WEBAPK = "enable-webapk";
+
+    /**
+     * Enables theme colors in the tab switcher.
+     */
+    public static final String ENABLE_TAB_SWITCHER_THEME_COLORS =
+            "enable-tab-switcher-theme-colors";
+
+    /**
+     * Forces the WebAPK runtime dex to be extracted each time that Chrome is started.
+     */
+    public static final String ALWAYS_EXTRACT_WEBAPK_RUNTIME_DEX_ON_STARTUP =
+            "always-extract-webapk-dex-on-startup";
 
     // Prevent instantiation.
     private ChromeSwitches() {}

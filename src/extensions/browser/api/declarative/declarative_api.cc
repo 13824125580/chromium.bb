@@ -41,11 +41,12 @@ void ConvertBinaryDictionaryValuesToBase64(base::DictionaryValue* dict);
 
 // Encodes |binary| as base64 and returns a new StringValue populated with the
 // encoded string.
-scoped_ptr<base::StringValue> ConvertBinaryToBase64(base::BinaryValue* binary) {
+std::unique_ptr<base::StringValue> ConvertBinaryToBase64(
+    base::BinaryValue* binary) {
   std::string binary_data = std::string(binary->GetBuffer(), binary->GetSize());
   std::string data64;
   base::Base64Encode(binary_data, &data64);
-  return scoped_ptr<base::StringValue>(new base::StringValue(data64));
+  return std::unique_ptr<base::StringValue>(new base::StringValue(data64));
 }
 
 // Parses through |args| replacing any BinaryValues with base64 encoded
@@ -168,19 +169,30 @@ bool RulesFunction::RunAsync() {
 
 bool EventsEventAddRulesFunction::RunAsyncOnCorrectThread() {
   ConvertBinaryListElementsToBase64(args_.get());
-  scoped_ptr<AddRules::Params> params(AddRules::Params::Create(*args_));
+  std::unique_ptr<AddRules::Params> params(AddRules::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  error_ = rules_registry_->AddRules(extension_id(), params->rules);
+  // TODO(devlin): Remove the dependency on linked_ptr here.
+  std::vector<linked_ptr<api::events::Rule>> linked_rules;
+  for (api::events::Rule& rule : params->rules) {
+    linked_rules.push_back(
+        make_linked_ptr(new api::events::Rule(std::move(rule))));
+  }
+  error_ = rules_registry_->AddRules(extension_id(), linked_rules);
 
-  if (error_.empty())
-    results_ = AddRules::Results::Create(params->rules);
+  if (error_.empty()) {
+    std::unique_ptr<base::ListValue> rules_value(new base::ListValue());
+    for (const auto& rule : linked_rules)
+      rules_value->Append(rule->ToValue());
+    SetResult(std::move(rules_value));
+  }
 
   return error_.empty();
 }
 
 bool EventsEventRemoveRulesFunction::RunAsyncOnCorrectThread() {
-  scoped_ptr<RemoveRules::Params> params(RemoveRules::Params::Create(*args_));
+  std::unique_ptr<RemoveRules::Params> params(
+      RemoveRules::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   if (params->rule_identifiers.get()) {
@@ -194,7 +206,7 @@ bool EventsEventRemoveRulesFunction::RunAsyncOnCorrectThread() {
 }
 
 bool EventsEventGetRulesFunction::RunAsyncOnCorrectThread() {
-  scoped_ptr<GetRules::Params> params(GetRules::Params::Create(*args_));
+  std::unique_ptr<GetRules::Params> params(GetRules::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   std::vector<linked_ptr<Rule> > rules;
@@ -205,7 +217,10 @@ bool EventsEventGetRulesFunction::RunAsyncOnCorrectThread() {
     rules_registry_->GetAllRules(extension_id(), &rules);
   }
 
-  results_ = GetRules::Results::Create(rules);
+  std::unique_ptr<base::ListValue> rules_value(new base::ListValue());
+  for (const auto& rule : rules)
+    rules_value->Append(rule->ToValue());
+  SetResult(std::move(rules_value));
 
   return true;
 }

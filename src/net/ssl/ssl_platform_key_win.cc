@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <openssl/bn.h>
@@ -20,7 +21,6 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/sequenced_task_runner.h"
-#include "base/win/windows_version.h"
 #include "crypto/openssl_util.h"
 #include "crypto/scoped_capi_types.h"
 #include "crypto/wincrypt_shim.h"
@@ -336,9 +336,7 @@ scoped_refptr<SSLPrivateKey> FetchClientCertPrivateKey(
   HCRYPTPROV_OR_NCRYPT_KEY_HANDLE prov_or_key = 0;
   DWORD key_spec = 0;
   BOOL must_free = FALSE;
-  DWORD flags = 0;
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA)
-    flags |= CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG;
+  DWORD flags = CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG;
 
   if (!CryptAcquireCertificatePrivateKey(cert_context, flags, nullptr,
                                          &prov_or_key, &key_spec, &must_free)) {
@@ -350,7 +348,7 @@ scoped_refptr<SSLPrivateKey> FetchClientCertPrivateKey(
   // transferred.
   CHECK_EQ(must_free, TRUE);
 
-  scoped_ptr<ThreadedSSLPrivateKey::Delegate> delegate;
+  std::unique_ptr<ThreadedSSLPrivateKey::Delegate> delegate;
   if (key_spec == CERT_NCRYPT_KEY_SPEC) {
     delegate.reset(new SSLPlatformKeyCNG(prov_or_key, key_type, max_length));
   } else {
@@ -358,7 +356,7 @@ scoped_refptr<SSLPrivateKey> FetchClientCertPrivateKey(
     delegate.reset(new SSLPlatformKeyCAPI(prov_or_key, key_spec, max_length));
   }
   return make_scoped_refptr(new ThreadedSSLPrivateKey(
-      delegate.Pass(), GetSSLPlatformKeyTaskRunner()));
+      std::move(delegate), GetSSLPlatformKeyTaskRunner()));
 }
 
 }  // namespace net

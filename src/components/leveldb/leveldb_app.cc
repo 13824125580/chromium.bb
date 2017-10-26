@@ -4,8 +4,9 @@
 
 #include "components/leveldb/leveldb_app.h"
 
+#include "base/message_loop/message_loop.h"
 #include "components/leveldb/leveldb_service_impl.h"
-#include "mojo/shell/public/cpp/connection.h"
+#include "services/shell/public/cpp/connection.h"
 
 namespace leveldb {
 
@@ -13,21 +14,22 @@ LevelDBApp::LevelDBApp() {}
 
 LevelDBApp::~LevelDBApp() {}
 
-void LevelDBApp::Initialize(mojo::Connector* connector,
-                            const std::string& url,
-                            uint32_t id,
-                            uint32_t user_id) {
-  tracing_.Initialize(connector, url);
-  service_.reset(new LevelDBServiceImpl);
+void LevelDBApp::Initialize(shell::Connector* connector,
+                            const shell::Identity& identity,
+                            uint32_t id) {
+  tracing_.Initialize(connector, identity.name());
 }
 
-bool LevelDBApp::AcceptConnection(mojo::Connection* connection) {
-  connection->AddInterface<LevelDBService>(this);
+bool LevelDBApp::AcceptConnection(shell::Connection* connection) {
+  connection->AddInterface<mojom::LevelDBService>(this);
   return true;
 }
 
-void LevelDBApp::Create(mojo::Connection* connection,
-                        mojo::InterfaceRequest<LevelDBService> request) {
+void LevelDBApp::Create(shell::Connection* connection,
+                        leveldb::mojom::LevelDBServiceRequest request) {
+  if (!service_)
+    service_.reset(
+        new LevelDBServiceImpl(base::MessageLoop::current()->task_runner()));
   bindings_.AddBinding(service_.get(), std::move(request));
 }
 

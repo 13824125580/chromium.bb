@@ -93,9 +93,9 @@ BookmarkShortcutDisposition GetBookmarkShortcutDisposition(Profile* profile) {
   return BOOKMARK_SHORTCUT_DISPOSITION_UNCHANGED;
 }
 
-#if defined(TOOLKIT_VIEWS)
+#if defined(TOOLKIT_VIEWS) && !defined(OS_WIN)
 gfx::ImageSkia GetFolderIcon(gfx::VectorIconId id, SkColor text_color) {
-  return gfx::CreateVectorIcon(id, 16,
+  return gfx::CreateVectorIcon(id,
                                color_utils::DeriveDefaultIconColor(text_color));
 }
 #endif
@@ -124,19 +124,14 @@ void ToggleBookmarkBarWhenVisible(content::BrowserContext* browser_context) {
   prefs->SetBoolean(bookmarks::prefs::kShowBookmarkBar, always_show);
 }
 
-base::string16 FormatBookmarkURLForDisplay(const GURL& url,
-                                           const PrefService* prefs) {
-  std::string languages;
-  if (prefs)
-    languages = prefs->GetString(prefs::kAcceptLanguages);
-
+base::string16 FormatBookmarkURLForDisplay(const GURL& url) {
   // Because this gets re-parsed by FixupURL(), it's safe to omit the scheme
   // and trailing slash, and unescape most characters.  However, it's
   // important not to drop any username/password, or unescape anything that
   // changes the URL's meaning.
   return url_formatter::FormatUrl(
-      url, languages, url_formatter::kFormatUrlOmitAll &
-                          ~url_formatter::kFormatUrlOmitUsernamePassword,
+      url, url_formatter::kFormatUrlOmitAll &
+               ~url_formatter::kFormatUrlOmitUsernamePassword,
       net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
 }
 
@@ -289,37 +284,32 @@ bool IsValidBookmarkDropLocation(Profile* profile,
 }
 
 #if defined(TOOLKIT_VIEWS)
+// TODO(bsep): vectorize the Windows versions: crbug.com/564112
 gfx::ImageSkia GetBookmarkFolderIcon(SkColor text_color) {
 #if defined(OS_WIN)
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_BOOKMARK_BAR_FOLDER);
-  }
-#endif
-
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+      IDR_BOOKMARK_BAR_FOLDER);
+#else
   return GetFolderIcon(gfx::VectorIconId::FOLDER, text_color);
+#endif
 }
 
 gfx::ImageSkia GetBookmarkSupervisedFolderIcon(SkColor text_color) {
 #if defined(OS_WIN)
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_BOOKMARK_BAR_FOLDER_SUPERVISED);
-  }
-#endif
-
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+      IDR_BOOKMARK_BAR_FOLDER_SUPERVISED);
+#else
   return GetFolderIcon(gfx::VectorIconId::FOLDER_SUPERVISED, text_color);
+#endif
 }
 
 gfx::ImageSkia GetBookmarkManagedFolderIcon(SkColor text_color) {
 #if defined(OS_WIN)
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_BOOKMARK_BAR_FOLDER_MANAGED);
-  }
-#endif
-
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+      IDR_BOOKMARK_BAR_FOLDER_MANAGED);
+#else
   return GetFolderIcon(gfx::VectorIconId::FOLDER_MANAGED, text_color);
+#endif
 }
 #endif
 

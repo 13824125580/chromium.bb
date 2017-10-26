@@ -1,19 +1,18 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [18, 27, 237, 18]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow HTML",
-        "LayoutBlockFlow BODY",
-        "LayoutBlockFlow DIV id='t'",
-        "LayoutText #text",
-        "InlineTextBox 'Should have blue, not gray, highlight'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutText #text",
+          "rect": [18, 27, 237, 18],
+          "reason": "selection"
+        }
       ]
     }
   ]

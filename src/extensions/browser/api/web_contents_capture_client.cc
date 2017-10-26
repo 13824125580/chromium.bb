@@ -11,11 +11,12 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/constants.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/codec/png_codec.h"
-#include "ui/gfx/display.h"
 #include "ui/gfx/geometry/size_conversions.h"
-#include "ui/gfx/screen.h"
 
 using content::RenderWidgetHost;
 using content::RenderWidgetHostView;
@@ -64,7 +65,7 @@ bool WebContentsCaptureClient::CaptureAsync(
   const gfx::Size view_size = view->GetViewBounds().size();
   gfx::Size bitmap_size = view_size;
   const gfx::NativeView native_view = view->GetNativeView();
-  gfx::Screen* const screen = gfx::Screen::GetScreen();
+  display::Screen* const screen = display::Screen::GetScreen();
   const float scale =
       screen->GetDisplayNearestWindow(native_view).device_scale_factor();
   if (scale > 1.0f)
@@ -107,6 +108,7 @@ bool WebContentsCaptureClient::EncodeBitmap(const SkBitmap& bitmap,
   DCHECK(base64_result);
   std::vector<unsigned char> data;
   SkAutoLockPixels screen_capture_lock(bitmap);
+  const bool should_discard_alpha = !ClientAllowsTransparency();
   bool encoded = false;
   std::string mime_type;
   switch (image_format_) {
@@ -118,10 +120,8 @@ bool WebContentsCaptureClient::EncodeBitmap(const SkBitmap& bitmap,
       mime_type = kMimeTypeJpeg;
       break;
     case api::extension_types::IMAGE_FORMAT_PNG:
-      encoded =
-          gfx::PNGCodec::EncodeBGRASkBitmap(bitmap,
-                                            true,  // Discard transparency.
-                                            &data);
+      encoded = gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, should_discard_alpha,
+                                                  &data);
       mime_type = kMimeTypePng;
       break;
     default:

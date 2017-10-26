@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/api/audio_modem/audio_modem_api.h"
+
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/api/audio_modem/audio_modem_api.h"
 #include "chrome/browser/extensions/extension_api_unittest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -48,37 +50,38 @@ namespace {
 std::map<BrowserContext*, StubModem*> g_modems;
 
 // Create a test AudioModemAPI and store the modem it uses.
-scoped_ptr<KeyedService> ApiFactoryFunction(BrowserContext* context) {
+std::unique_ptr<KeyedService> ApiFactoryFunction(BrowserContext* context) {
   StubModem* modem = new StubModem;
   g_modems[context] = modem;
-  return make_scoped_ptr(new AudioModemAPI(
+  return base::WrapUnique(new AudioModemAPI(
       context,
-      make_scoped_ptr<audio_modem::WhispernetClient>(new StubWhispernetClient),
-      make_scoped_ptr<audio_modem::Modem>(modem)));
+      base::WrapUnique<audio_modem::WhispernetClient>(new StubWhispernetClient),
+      base::WrapUnique<audio_modem::Modem>(modem)));
 }
 
-DictionaryValue* CreateParams(const std::string& audio_band) {
-  DictionaryValue* params = new DictionaryValue;
+std::unique_ptr<DictionaryValue> CreateParams(const std::string& audio_band) {
+  std::unique_ptr<DictionaryValue> params(new DictionaryValue);
   params->SetInteger("timeoutMillis", 60000);
   params->SetString("band", audio_band);
   params->SetInteger("encoding.tokenLength", 4);
   return params;
 }
 
-BinaryValue* CreateToken(const std::string& token) {
+std::unique_ptr<BinaryValue> CreateToken(const std::string& token) {
   return BinaryValue::CreateWithCopiedBuffer(token.c_str(), token.size());
 }
 
-scoped_ptr<ListValue> CreateList(Value* single_elt) {
-  scoped_ptr<ListValue> list(new ListValue);
-  list->Append(single_elt);
+std::unique_ptr<ListValue> CreateList(std::unique_ptr<Value> single_elt) {
+  std::unique_ptr<ListValue> list(new ListValue);
+  list->Append(std::move(single_elt));
   return list;
 }
 
-scoped_ptr<ListValue> CreateList(Value* elt1, Value* elt2) {
-  scoped_ptr<ListValue> list(new ListValue);
-  list->Append(elt1);
-  list->Append(elt2);
+std::unique_ptr<ListValue> CreateList(std::unique_ptr<Value> elt1,
+                                      std::unique_ptr<Value> elt2) {
+  std::unique_ptr<ListValue> list(new ListValue);
+  list->Append(std::move(elt1));
+  list->Append(std::move(elt2));
   return list;
 }
 
@@ -108,14 +111,14 @@ class StubEventRouter : public EventRouter {
  public:
   // Callback to receive events. First argument is
   // the extension id to receive the event.
-  using EventCallback = base::Callback<void(const std::string&,
-                                            scoped_ptr<Event>)>;
+  using EventCallback =
+      base::Callback<void(const std::string&, std::unique_ptr<Event>)>;
 
   explicit StubEventRouter(BrowserContext* context)
       : EventRouter(context, nullptr) {}
 
   void DispatchEventToExtension(const std::string& extension_id,
-                                scoped_ptr<Event> event) override {
+                                std::unique_ptr<Event> event) override {
     event_callback_.Run(extension_id, std::move(event));
   }
 
@@ -132,9 +135,9 @@ class StubEventRouter : public EventRouter {
 };
 
 // StubEventRouter factory function
-scoped_ptr<KeyedService> StubEventRouterFactoryFunction(
+std::unique_ptr<KeyedService> StubEventRouterFactoryFunction(
     content::BrowserContext* context) {
-  return make_scoped_ptr(new StubEventRouter(context));
+  return base::WrapUnique(new StubEventRouter(context));
 }
 
 }  // namespace
@@ -145,8 +148,8 @@ class AudioModemApiUnittest : public ExtensionApiUnittest {
   ~AudioModemApiUnittest() override {}
 
  protected:
-  template<typename Function>
-  const std::string RunFunction(scoped_ptr<ListValue> args,
+  template <typename Function>
+  const std::string RunFunction(std::unique_ptr<ListValue> args,
                                 const Extension* extension) {
     scoped_refptr<UIThreadExtensionFunction> function(new Function);
     function->set_extension(extension);
@@ -160,8 +163,8 @@ class AudioModemApiUnittest : public ExtensionApiUnittest {
     return result_status;
   }
 
-  template<typename Function>
-  const std::string RunFunction(scoped_ptr<ListValue> args) {
+  template <typename Function>
+  const std::string RunFunction(std::unique_ptr<ListValue> args) {
     return RunFunction<Function>(std::move(args), GetExtension(std::string()));
   }
 
@@ -171,7 +174,8 @@ class AudioModemApiUnittest : public ExtensionApiUnittest {
 
   const Extension* GetExtension(const std::string& name) {
     if (!extensions_by_name_[name].get()) {
-      scoped_ptr<DictionaryValue> extension_definition(new DictionaryValue);
+      std::unique_ptr<DictionaryValue> extension_definition(
+          new DictionaryValue);
       extension_definition->SetString("name", name);
       extension_definition->SetString("version", "1.0");
       extensions_by_name_[name] = api_test_utils::CreateExtension(
@@ -181,14 +185,14 @@ class AudioModemApiUnittest : public ExtensionApiUnittest {
     return extensions_by_name_[name].get();
   }
 
-  const std::vector<scoped_ptr<const Event>>& GetEventsForExtension(
+  const std::vector<std::unique_ptr<const Event>>& GetEventsForExtension(
       const std::string& name) {
     const Extension* extension = extensions_by_name_[name].get();
     DCHECK(extension);
     return events_by_extension_id_[extension->id()];
   }
 
-  const std::vector<scoped_ptr<const Event>>& GetEvents() {
+  const std::vector<std::unique_ptr<const Event>>& GetEvents() {
     return GetEventsForExtension(std::string());
   }
 
@@ -206,13 +210,13 @@ class AudioModemApiUnittest : public ExtensionApiUnittest {
   }
 
   void CaptureEvent(const std::string& extension_id,
-                    scoped_ptr<Event> event) {
+                    std::unique_ptr<Event> event) {
     events_by_extension_id_[extension_id].push_back(std::move(event));
   }
 
   std::map<std::string, scoped_refptr<Extension>> extensions_by_name_;
 
-  std::map<std::string, std::vector<scoped_ptr<const Event>>>
+  std::map<std::string, std::vector<std::unique_ptr<const Event>>>
       events_by_extension_id_;
 };
 
@@ -223,8 +227,9 @@ TEST_F(AudioModemApiUnittest, TransmitBasic) {
   EXPECT_TRUE(GetModem()->IsPlaying(INAUDIBLE));
 
   // Can't cancel audible transmit - we haven't started it yet.
-  EXPECT_EQ("invalidRequest", RunFunction<AudioModemStopTransmitFunction>(
-      CreateList(new StringValue("audible"))));
+  EXPECT_EQ("invalidRequest",
+            RunFunction<AudioModemStopTransmitFunction>(
+                CreateList(base::MakeUnique<StringValue>("audible"))));
 
   // Start transmitting audibly.
   EXPECT_EQ("success", RunFunction<AudioModemTransmitFunction>(
@@ -232,14 +237,14 @@ TEST_F(AudioModemApiUnittest, TransmitBasic) {
   EXPECT_TRUE(GetModem()->IsPlaying(AUDIBLE));
 
   // Stop audible transmit. We're still transmitting inaudibly.
-  EXPECT_EQ("success", RunFunction<AudioModemStopTransmitFunction>(
-      CreateList(new StringValue("audible"))));
+  EXPECT_EQ("success", RunFunction<AudioModemStopTransmitFunction>(CreateList(
+                           base::MakeUnique<StringValue>("audible"))));
   EXPECT_FALSE(GetModem()->IsPlaying(AUDIBLE));
   EXPECT_TRUE(GetModem()->IsPlaying(INAUDIBLE));
 
   // Stop inaudible transmit.
-  EXPECT_EQ("success", RunFunction<AudioModemStopTransmitFunction>(
-      CreateList(new StringValue("inaudible"))));
+  EXPECT_EQ("success", RunFunction<AudioModemStopTransmitFunction>(CreateList(
+                           base::MakeUnique<StringValue>("inaudible"))));
   EXPECT_FALSE(GetModem()->IsPlaying(INAUDIBLE));
 }
 
@@ -250,8 +255,9 @@ TEST_F(AudioModemApiUnittest, ReceiveBasic) {
   EXPECT_TRUE(GetModem()->IsRecording(AUDIBLE));
 
   // Can't cancel inaudible receive - we haven't started it yet.
-  EXPECT_EQ("invalidRequest", RunFunction<AudioModemStopReceiveFunction>(
-      CreateList(new StringValue("inaudible"))));
+  EXPECT_EQ("invalidRequest",
+            RunFunction<AudioModemStopReceiveFunction>(
+                CreateList(base::MakeUnique<StringValue>("inaudible"))));
 
   // Send some audible tokens.
   std::vector<AudioToken> tokens;
@@ -262,7 +268,7 @@ TEST_F(AudioModemApiUnittest, ReceiveBasic) {
 
   // Check the tokens received.
   EXPECT_EQ(1u, GetEvents().size());
-  scoped_ptr<ListValue> expected_tokens(new ListValue);
+  std::unique_ptr<ListValue> expected_tokens(new ListValue);
   expected_tokens->Append(CreateReceivedToken("1234", "audible"));
   expected_tokens->Append(CreateReceivedToken("ABCD", "audible"));
   ListValue* received_tokens;
@@ -286,14 +292,14 @@ TEST_F(AudioModemApiUnittest, ReceiveBasic) {
   EXPECT_TRUE(received_tokens->Equals(expected_tokens.get()));
 
   // Stop audible receive. We're still receiving inaudible.
-  EXPECT_EQ("success", RunFunction<AudioModemStopReceiveFunction>(
-      CreateList(new StringValue("audible"))));
+  EXPECT_EQ("success", RunFunction<AudioModemStopReceiveFunction>(CreateList(
+                           base::MakeUnique<StringValue>("audible"))));
   EXPECT_FALSE(GetModem()->IsRecording(AUDIBLE));
   EXPECT_TRUE(GetModem()->IsRecording(INAUDIBLE));
 
   // Stop inaudible receive.
-  EXPECT_EQ("success", RunFunction<AudioModemStopReceiveFunction>(
-      CreateList(new StringValue("inaudible"))));
+  EXPECT_EQ("success", RunFunction<AudioModemStopReceiveFunction>(CreateList(
+                           base::MakeUnique<StringValue>("inaudible"))));
   EXPECT_FALSE(GetModem()->IsRecording(INAUDIBLE));
 }
 
@@ -308,8 +314,10 @@ TEST_F(AudioModemApiUnittest, TransmitMultiple) {
   EXPECT_EQ("inUse", RunFunction<AudioModemTransmitFunction>(
       CreateList(CreateParams("audible"), CreateToken("ABCD")),
       GetExtension("ext2")));
-  EXPECT_EQ("invalidRequest", RunFunction<AudioModemStopTransmitFunction>(
-      CreateList(new StringValue("audible")), GetExtension("ext2")));
+  EXPECT_EQ("invalidRequest",
+            RunFunction<AudioModemStopTransmitFunction>(
+                CreateList(base::MakeUnique<StringValue>("audible")),
+                GetExtension("ext2")));
   EXPECT_TRUE(GetModem()->IsPlaying(AUDIBLE));
 
   // The other extension can use the other audio band, however.
@@ -329,10 +337,13 @@ TEST_F(AudioModemApiUnittest, TransmitMultiple) {
 
   // Stop transmission.
   EXPECT_EQ("success", RunFunction<AudioModemStopTransmitFunction>(
-      CreateList(new StringValue("audible")), GetExtension("ext1")));
+                           CreateList(base::MakeUnique<StringValue>("audible")),
+                           GetExtension("ext1")));
   EXPECT_FALSE(GetModem()->IsPlaying(AUDIBLE));
-  EXPECT_EQ("success", RunFunction<AudioModemStopTransmitFunction>(
-      CreateList(new StringValue("inaudible")), GetExtension("ext2")));
+  EXPECT_EQ("success",
+            RunFunction<AudioModemStopTransmitFunction>(
+                CreateList(base::MakeUnique<StringValue>("inaudible")),
+                GetExtension("ext2")));
   EXPECT_FALSE(GetModem()->IsPlaying(INAUDIBLE));
 }
 
@@ -351,7 +362,7 @@ TEST_F(AudioModemApiUnittest, ReceiveMultiple) {
   EXPECT_EQ(1u, GetEventsForExtension("ext2").size());
 
   // Check the token received.
-  scoped_ptr<DictionaryValue> expected_token(
+  std::unique_ptr<DictionaryValue> expected_token(
       CreateReceivedToken("abcd", "inaudible"));
   EXPECT_TRUE(ReceivedSingleToken(GetEventsForExtension("ext1")[0].get(),
                                   expected_token.get()));
@@ -359,8 +370,10 @@ TEST_F(AudioModemApiUnittest, ReceiveMultiple) {
                                   expected_token.get()));
 
   // If one extension stops, the modem is still receiving for the other.
-  EXPECT_EQ("success", RunFunction<AudioModemStopReceiveFunction>(
-      CreateList(new StringValue("inaudible")), GetExtension("ext1")));
+  EXPECT_EQ("success",
+            RunFunction<AudioModemStopReceiveFunction>(
+                CreateList(base::MakeUnique<StringValue>("inaudible")),
+                GetExtension("ext1")));
   EXPECT_TRUE(GetModem()->IsRecording(INAUDIBLE));
 
   // Receive another token. Should only go to ext2.
@@ -372,8 +385,10 @@ TEST_F(AudioModemApiUnittest, ReceiveMultiple) {
   EXPECT_TRUE(ReceivedSingleToken(GetEventsForExtension("ext2")[1].get(),
                                   expected_token.get()));
 
-  EXPECT_EQ("success", RunFunction<AudioModemStopReceiveFunction>(
-      CreateList(new StringValue("inaudible")), GetExtension("ext2")));
+  EXPECT_EQ("success",
+            RunFunction<AudioModemStopReceiveFunction>(
+                CreateList(base::MakeUnique<StringValue>("inaudible")),
+                GetExtension("ext2")));
   EXPECT_FALSE(GetModem()->IsRecording(INAUDIBLE));
 }
 

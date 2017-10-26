@@ -45,24 +45,27 @@ class ManagePasswordsUIController
 
   // PasswordsClientUIDelegate:
   void OnPasswordSubmitted(
-      scoped_ptr<password_manager::PasswordFormManager> form_manager) override;
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager)
+      override;
   void OnUpdatePasswordSubmitted(
-      scoped_ptr<password_manager::PasswordFormManager> form_manager) override;
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager)
+      override;
   bool OnChooseCredentials(
       ScopedVector<autofill::PasswordForm> local_credentials,
       ScopedVector<autofill::PasswordForm> federated_credentials,
       const GURL& origin,
-      base::Callback<void(const password_manager::CredentialInfo&)> callback)
-      override;
-  void OnAutoSignin(ScopedVector<autofill::PasswordForm> local_forms) override;
+      const ManagePasswordsState::CredentialsCallback& callback) override;
+  void OnAutoSignin(ScopedVector<autofill::PasswordForm> local_forms,
+                    const GURL& origin) override;
   void OnPromptEnableAutoSignin() override;
   void OnAutomaticPasswordSave(
-      scoped_ptr<password_manager::PasswordFormManager> form_manager) override;
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager)
+      override;
   void OnPasswordAutofilled(
       const autofill::PasswordFormMap& password_form_map,
       const GURL& origin,
-      const std::vector<scoped_ptr<autofill::PasswordForm>>* federated_matches)
-      override;
+      const std::vector<std::unique_ptr<autofill::PasswordForm>>*
+          federated_matches) override;
 
   // PasswordStore::Observer:
   void OnLoginsChanged(
@@ -100,6 +103,7 @@ class ManagePasswordsUIController
   void NavigateToExternalPasswordManager() override;
   void NavigateToSmartLockHelpPage() override;
   void NavigateToPasswordManagerSettingsPage() override;
+  void NavigateToChromeSignIn() override;
   void OnDialogHidden() override;
 
  protected:
@@ -146,6 +150,8 @@ class ManagePasswordsUIController
     // UpdateBubbleAndIconVisibility().
     SHOULD_POP_UP,
     SHOWN,
+    // Same as SHOWN but the icon is to be updated when the bubble is closed.
+    SHOWN_PENDING_ICON_UPDATE,
   };
 
   // Shows the password bubble without user interaction.
@@ -162,7 +168,7 @@ class ManagePasswordsUIController
   ManagePasswordsState passwords_data_;
 
   // The controller for the blocking dialogs.
-  scoped_ptr<PasswordDialogControllerImpl> dialog_controller_;
+  std::unique_ptr<PasswordDialogControllerImpl> dialog_controller_;
 
   BubbleStatus bubble_status_;
 

@@ -19,8 +19,7 @@ PictureDrawQuad::PictureDrawQuad(const PictureDrawQuad& other) = default;
 PictureDrawQuad::~PictureDrawQuad() {
 }
 
-void PictureDrawQuad::SetNew(
-    const SharedQuadState* shared_quad_state,
+void PictureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
     const gfx::Rect& rect,
     const gfx::Rect& opaque_rect,
     const gfx::Rect& visible_rect,
@@ -30,7 +29,7 @@ void PictureDrawQuad::SetNew(
     ResourceFormat texture_format,
     const gfx::Rect& content_rect,
     const gfx::Scaling2d& contents_scale,
-    scoped_refptr<DisplayListRasterSource> raster_source) {
+    scoped_refptr<RasterSource> raster_source) {
   ContentDrawQuadBase::SetNew(
       shared_quad_state,
       DrawQuad::PICTURE_CONTENT,
@@ -47,8 +46,7 @@ void PictureDrawQuad::SetNew(
   this->texture_format = texture_format;
 }
 
-void PictureDrawQuad::SetAll(
-    const SharedQuadState* shared_quad_state,
+void PictureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
     const gfx::Rect& rect,
     const gfx::Rect& opaque_rect,
     const gfx::Rect& visible_rect,
@@ -59,7 +57,7 @@ void PictureDrawQuad::SetAll(
     ResourceFormat texture_format,
     const gfx::Rect& content_rect,
     const gfx::Scaling2d& contents_scale,
-    scoped_refptr<DisplayListRasterSource> raster_source) {
+    scoped_refptr<RasterSource> raster_source) {
   ContentDrawQuadBase::SetAll(shared_quad_state,
                               DrawQuad::PICTURE_CONTENT,
                               rect,

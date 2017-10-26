@@ -31,6 +31,7 @@
 #ifndef SourceBuffer_h
 #define SourceBuffer_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ActiveDOMObject.h"
 #include "core/fileapi/FileReaderLoaderClient.h"
 #include "modules/EventTargetModules.h"
@@ -38,11 +39,12 @@
 #include "platform/AsyncMethodRunner.h"
 #include "platform/weborigin/KURL.h"
 #include "public/platform/WebSourceBufferClient.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
+class AudioTrackList;
 class DOMArrayBuffer;
 class DOMArrayBufferView;
 class ExceptionState;
@@ -51,18 +53,20 @@ class GenericEventQueue;
 class MediaSource;
 class Stream;
 class TimeRanges;
+class VideoTrackList;
 class WebSourceBuffer;
 
 class SourceBuffer final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<SourceBuffer>
+    : public EventTargetWithInlineData
+    , public ActiveScriptWrappable
     , public ActiveDOMObject
     , public FileReaderLoaderClient
     , public WebSourceBufferClient {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(SourceBuffer);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SourceBuffer);
+    USING_GARBAGE_COLLECTED_MIXIN(SourceBuffer);
     DEFINE_WRAPPERTYPEINFO();
+    USING_PRE_FINALIZER(SourceBuffer, dispose);
 public:
-    static SourceBuffer* create(PassOwnPtr<WebSourceBuffer>, MediaSource*, GenericEventQueue*);
+    static SourceBuffer* create(std::unique_ptr<WebSourceBuffer>, MediaSource*, GenericEventQueue*);
     static const AtomicString& segmentsKeyword();
     static const AtomicString& sequenceKeyword();
 
@@ -75,8 +79,8 @@ public:
     TimeRanges* buffered(ExceptionState&) const;
     double timestampOffset() const;
     void setTimestampOffset(double, ExceptionState&);
-    void appendBuffer(PassRefPtr<DOMArrayBuffer> data, ExceptionState&);
-    void appendBuffer(PassRefPtr<DOMArrayBufferView> data, ExceptionState&);
+    void appendBuffer(DOMArrayBuffer* data, ExceptionState&);
+    void appendBuffer(DOMArrayBufferView* data, ExceptionState&);
     void appendStream(Stream*, ExceptionState&);
     void appendStream(Stream*, unsigned long long maxSize, ExceptionState&);
     void abort(ExceptionState&);
@@ -85,31 +89,51 @@ public:
     void setAppendWindowStart(double, ExceptionState&);
     double appendWindowEnd() const;
     void setAppendWindowEnd(double, ExceptionState&);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(updatestart);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(update);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(updateend);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(abort);
     TrackDefaultList* trackDefaults() const { return m_trackDefaults.get(); }
     void setTrackDefaults(TrackDefaultList*, ExceptionState&);
 
-    void abortIfUpdating();
+    AudioTrackList& audioTracks();
+    VideoTrackList& videoTracks();
+
     void removedFromMediaSource();
+    double highestPresentationTimestamp();
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const final;
 
     // ActiveDOMObject interface
-    bool hasPendingActivity() const override;
     void suspend() override;
     void resume() override;
     void stop() override;
 
     // EventTarget interface
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
     const AtomicString& interfaceName() const override;
 
     // WebSourceBufferClient interface
-    void initializationSegmentReceived() override;
+    bool initializationSegmentReceived(const WebVector<MediaTrackInfo>&) override;
 
-    // Oilpan: eagerly release owned m_webSourceBuffer
-    EAGERLY_FINALIZE();
     DECLARE_VIRTUAL_TRACE();
 
 private:
-    SourceBuffer(PassOwnPtr<WebSourceBuffer>, MediaSource*, GenericEventQueue*);
+    enum AppendStreamDoneAction {
+        NoError,
+        RunAppendErrorWithNoDecodeError,
+        RunAppendErrorWithDecodeError
+    };
+
+    enum AppendError {
+        NoDecodeError,
+        DecodeError
+    };
+
+    SourceBuffer(std::unique_ptr<WebSourceBuffer>, MediaSource*, GenericEventQueue*);
+    void dispose();
 
     bool isRemoved() const;
     void scheduleEvent(const AtomicString& eventName);
@@ -118,14 +142,23 @@ private:
     bool evictCodedFrames(size_t newDataSize);
     void appendBufferInternal(const unsigned char*, unsigned, ExceptionState&);
     void appendBufferAsyncPart();
-    void appendError(bool decodeError);
+    void appendError(AppendError);
 
     void removeAsyncPart();
 
     void appendStreamInternal(Stream*, ExceptionState&);
     void appendStreamAsyncPart();
-    void appendStreamDone(bool success);
+    void appendStreamDone(AppendStreamDoneAction);
     void clearAppendStreamState();
+
+    void cancelRemove();
+    void abortIfUpdating();
+
+    void removeMediaTracks();
+
+    const TrackDefault* getTrackDefault(const AtomicString& trackType, const AtomicString& byteStreamTrackID) const;
+    AtomicString defaultTrackLabel(const AtomicString& trackType, const AtomicString& byteStreamTrackID) const;
+    AtomicString defaultTrackLanguage(const AtomicString& trackType, const AtomicString& byteStreamTrackID) const;
 
     // FileReaderLoaderClient interface
     void didStartLoading() override;
@@ -133,14 +166,17 @@ private:
     void didFinishLoading() override;
     void didFail(FileError::ErrorCode) override;
 
-    OwnPtr<WebSourceBuffer> m_webSourceBuffer;
+    std::unique_ptr<WebSourceBuffer> m_webSourceBuffer;
     Member<MediaSource> m_source;
     Member<TrackDefaultList> m_trackDefaults;
-    RawPtrWillBeMember<GenericEventQueue> m_asyncEventQueue;
+    Member<GenericEventQueue> m_asyncEventQueue;
 
     AtomicString m_mode;
     bool m_updating;
     double m_timestampOffset;
+    Member<AudioTrackList> m_audioTracks;
+    Member<VideoTrackList> m_videoTracks;
+    bool m_activeTrack = false;
     double m_appendWindowStart;
     double m_appendWindowEnd;
     bool m_firstInitializationSegmentReceived;
@@ -157,7 +193,7 @@ private:
     unsigned long long m_streamMaxSize;
     Member<AsyncMethodRunner<SourceBuffer>> m_appendStreamAsyncPartRunner;
     Member<Stream> m_stream;
-    OwnPtr<FileReaderLoader> m_loader;
+    std::unique_ptr<FileReaderLoader> m_loader;
 };
 
 } // namespace blink

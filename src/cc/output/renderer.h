@@ -5,22 +5,25 @@
 #ifndef CC_OUTPUT_RENDERER_H_
 #define CC_OUTPUT_RENDERER_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "cc/base/cc_export.h"
+#include "cc/output/compositor_frame_metadata.h"
 #include "cc/output/renderer_capabilities.h"
 #include "cc/output/renderer_settings.h"
+#include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
 
 class CompositorFrameAck;
-class CompositorFrameMetadata;
 class RenderPass;
 class RenderPassId;
 class ScopedResource;
 class Task;
 
-typedef std::vector<scoped_ptr<RenderPass>> RenderPassList;
+typedef std::vector<std::unique_ptr<RenderPass>> RenderPassList;
 
 struct RendererCapabilitiesImpl {
   RendererCapabilitiesImpl();
@@ -68,6 +71,7 @@ class CC_EXPORT Renderer {
   // window space.
   virtual void DrawFrame(RenderPassList* render_passes_in_draw_order,
                          float device_scale_factor,
+                         const gfx::ColorSpace& device_color_space,
                          const gfx::Rect& device_viewport_rect,
                          const gfx::Rect& device_clip_rect,
                          bool disable_picture_quad_image_filtering) = 0;
@@ -76,7 +80,7 @@ class CC_EXPORT Renderer {
   virtual void Finish() = 0;
 
   // Puts backbuffer onscreen.
-  virtual void SwapBuffers(const CompositorFrameMetadata& metadata) = 0;
+  virtual void SwapBuffers(CompositorFrameMetadata metadata) = 0;
   virtual void ReceiveSwapBuffersAck(const CompositorFrameAck& ack) {}
 
   bool visible() const { return visible_; }

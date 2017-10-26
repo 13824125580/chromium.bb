@@ -28,13 +28,13 @@
 #include "core/dom/DocumentInit.h"
 
 #include "core/dom/Document.h"
-#include "core/dom/custom/CustomElementRegistrationContext.h"
+#include "core/dom/custom/V0CustomElementRegistrationContext.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/html/imports/HTMLImportsController.h"
 #include "core/loader/DocumentLoader.h"
 #include "platform/RuntimeEnabledFeatures.h"
-#include "public/platform/Platform.h"
+#include "platform/network/NetworkUtils.h"
 
 namespace blink {
 
@@ -49,25 +49,16 @@ static Document* parentDocument(LocalFrame* frame)
     return &ownerElement->document();
 }
 
-
-static Document* ownerDocument(LocalFrame* frame)
+DocumentInit::DocumentInit(const KURL& url, LocalFrame* frame, Document* contextDocument, HTMLImportsController* importsController)
+    : DocumentInit(nullptr, url, frame, contextDocument, importsController)
 {
-    if (!frame)
-        return 0;
-
-    Frame* ownerFrame = frame->tree().parent();
-    if (!ownerFrame)
-        ownerFrame = frame->loader().opener();
-    if (!ownerFrame || !ownerFrame->isLocalFrame())
-        return 0;
-    return toLocalFrame(ownerFrame)->document();
 }
 
-DocumentInit::DocumentInit(const KURL& url, LocalFrame* frame, WeakPtrWillBeRawPtr<Document> contextDocument, HTMLImportsController* importsController)
+DocumentInit::DocumentInit(Document* ownerDocument, const KURL& url, LocalFrame* frame, Document* contextDocument, HTMLImportsController* importsController)
     : m_url(url)
     , m_frame(frame)
     , m_parent(parentDocument(frame))
-    , m_owner(ownerDocument(frame))
+    , m_owner(ownerDocument)
     , m_contextDocument(contextDocument)
     , m_importsController(importsController)
     , m_createNewRegistrationContext(false)
@@ -103,25 +94,29 @@ LocalFrame* DocumentInit::frameForSecurityContext() const
 
 SandboxFlags DocumentInit::getSandboxFlags() const
 {
-    ASSERT(frameForSecurityContext());
-    return frameForSecurityContext()->loader().effectiveSandboxFlags();
+    DCHECK(frameForSecurityContext());
+    FrameLoader* loader = &frameForSecurityContext()->loader();
+    SandboxFlags flags = loader->effectiveSandboxFlags();
+
+    // If the load was blocked by X-Frame-Options or CSP, force the Document's
+    // origin to be unique, so that the blocked document appears to be a normal
+    // cross-origin document's load per CSP spec:
+    // https://www.w3.org/TR/CSP2/#directive-frame-ancestors
+    if (loader->documentLoader() && loader->documentLoader()->wasBlockedAfterXFrameOptionsOrCSP())
+        flags |= SandboxOrigin;
+
+    return flags;
 }
 
-bool DocumentInit::shouldEnforceStrictMixedContentChecking() const
+WebInsecureRequestPolicy DocumentInit::getInsecureRequestPolicy() const
 {
-    ASSERT(frameForSecurityContext());
-    return frameForSecurityContext()->loader().shouldEnforceStrictMixedContentChecking();
-}
-
-SecurityContext::InsecureRequestsPolicy DocumentInit::getInsecureRequestsPolicy() const
-{
-    ASSERT(frameForSecurityContext());
-    return frameForSecurityContext()->loader().getInsecureRequestsPolicy();
+    DCHECK(frameForSecurityContext());
+    return frameForSecurityContext()->loader().getInsecureRequestPolicy();
 }
 
 SecurityContext::InsecureNavigationsSet* DocumentInit::insecureNavigationsToUpgrade() const
 {
-    ASSERT(frameForSecurityContext());
+    DCHECK(frameForSecurityContext());
     return frameForSecurityContext()->loader().insecureNavigationsToUpgrade();
 }
 
@@ -130,7 +125,7 @@ bool DocumentInit::isHostedInReservedIPRange() const
     if (LocalFrame* frame = frameForSecurityContext()) {
         if (DocumentLoader* loader = frame->loader().provisionalDocumentLoader() ? frame->loader().provisionalDocumentLoader() : frame->loader().documentLoader()) {
             if (!loader->response().remoteIPAddress().isEmpty())
-                return Platform::current()->isReservedIPAddress(loader->response().remoteIPAddress());
+                return NetworkUtils::isReservedIPAddress(loader->response().remoteIPAddress());
         }
     }
     return false;
@@ -138,7 +133,7 @@ bool DocumentInit::isHostedInReservedIPRange() const
 
 Settings* DocumentInit::settings() const
 {
-    ASSERT(frameForSecurityContext());
+    DCHECK(frameForSecurityContext());
     return frameForSecurityContext()->settings();
 }
 
@@ -147,40 +142,41 @@ KURL DocumentInit::parentBaseURL() const
     return m_parent->baseURL();
 }
 
-DocumentInit& DocumentInit::withRegistrationContext(CustomElementRegistrationContext* registrationContext)
+DocumentInit& DocumentInit::withRegistrationContext(V0CustomElementRegistrationContext* registrationContext)
 {
-    ASSERT(!m_createNewRegistrationContext && !m_registrationContext);
+    DCHECK(!m_createNewRegistrationContext);
+    DCHECK(!m_registrationContext);
     m_registrationContext = registrationContext;
     return *this;
 }
 
 DocumentInit& DocumentInit::withNewRegistrationContext()
 {
-    ASSERT(!m_createNewRegistrationContext && !m_registrationContext);
+    DCHECK(!m_createNewRegistrationContext);
+    DCHECK(!m_registrationContext);
     m_createNewRegistrationContext = true;
     return *this;
 }
 
-PassRefPtrWillBeRawPtr<CustomElementRegistrationContext> DocumentInit::registrationContext(Document* document) const
+V0CustomElementRegistrationContext* DocumentInit::registrationContext(Document* document) const
 {
     if (!document->isHTMLDocument() && !document->isXHTMLDocument())
         return nullptr;
 
     if (m_createNewRegistrationContext)
-        return CustomElementRegistrationContext::create();
+        return V0CustomElementRegistrationContext::create();
 
     return m_registrationContext.get();
 }
 
-WeakPtrWillBeRawPtr<Document> DocumentInit::contextDocument() const
+Document* DocumentInit::contextDocument() const
 {
     return m_contextDocument;
 }
 
-DocumentInit DocumentInit::fromContext(WeakPtrWillBeRawPtr<Document> contextDocument, const KURL& url)
+DocumentInit DocumentInit::fromContext(Document* contextDocument, const KURL& url)
 {
     return DocumentInit(url, 0, contextDocument, 0);
 }
 
 } // namespace blink
-

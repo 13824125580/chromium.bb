@@ -7,6 +7,7 @@
 
 #include "core/CoreExport.h"
 #include "core/fetch/Resource.h"
+#include <memory>
 
 namespace blink {
 
@@ -22,11 +23,11 @@ public:
     String encoding() const override;
 
 protected:
-    TextResource(const ResourceRequest&, Type, const String& mimeType, const String& charset);
+    TextResource(const ResourceRequest&, Type, const ResourceLoaderOptions&, const String& mimeType, const String& charset);
     ~TextResource() override;
 
 private:
-    OwnPtr<TextResourceDecoder> m_decoder;
+    std::unique_ptr<TextResourceDecoder> m_decoder;
 };
 
 } // namespace blink

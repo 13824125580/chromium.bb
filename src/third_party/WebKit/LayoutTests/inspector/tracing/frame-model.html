@@ -276,12 +276,11 @@ function test()
         ],
     };
 
-    var frameModel = new WebInspector.TracingTimelineFrameModel();
+    var frameModel = new WebInspector.TimelineFrameModel(event => WebInspector.TimelineUIUtils.eventStyle(event).category.name);
 
     function loadEvents(events)
     {
-        var tracingTimelineModel = InspectorTest.tracingTimelineModel();
-        tracingTimelineModel.setEventsForTest(events);
+        var tracingTimelineModel = InspectorTest.createTimelineModelWithEvents(events);
         frameModel.reset();
         frameModel.addTraceEvents(WebInspector.targetManager.mainTarget(), tracingTimelineModel.inspectedTargetEvents(), sessionId);
     }

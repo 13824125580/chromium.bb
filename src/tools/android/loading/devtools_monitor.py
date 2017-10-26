@@ -5,11 +5,13 @@
 """Library handling DevTools websocket interaction.
 """
 
+import datetime
 import httplib
 import json
 import logging
 import os
 import sys
+import time
 
 file_dir = os.path.dirname(__file__)
 sys.path.append(os.path.join(file_dir, '..', '..', 'perf'))
@@ -19,14 +21,21 @@ sys.path.append(chromium_config.GetTelemetryDir())
 from telemetry.internal.backends.chrome_inspector import inspector_websocket
 from telemetry.internal.backends.chrome_inspector import websocket
 
+import common_util
 
-DEFAULT_TIMEOUT = 10 # seconds
+
+DEFAULT_TIMEOUT_SECONDS = 10
+
+_WEBSOCKET_TIMEOUT_SECONDS = 10
 
 
 class DevToolsConnectionException(Exception):
   def __init__(self, message):
     super(DevToolsConnectionException, self).__init__(message)
     logging.warning("DevToolsConnectionException: " + message)
+
+class DevToolsConnectionTargetCrashed(DevToolsConnectionException):
+  pass
 
 
 # Taken from telemetry.internal.backends.chrome_inspector.tracing_backend.
@@ -84,6 +93,8 @@ class DevToolsConnection(object):
   TRACING_DONE_EVENT = 'Tracing.tracingComplete'
   TRACING_STREAM_EVENT = 'Tracing.tracingComplete'  # Same as TRACING_DONE.
   TRACING_TIMEOUT = 300
+  HTTP_ATTEMPTS = 10
+  HTTP_ATTEMPT_INTERVAL_SECONDS = 0.1
 
   def __init__(self, hostname, port):
     """Initializes the connection with a DevTools server.
@@ -92,14 +103,21 @@ class DevToolsConnection(object):
       hostname: server hostname.
       port: port number.
     """
-    self._ws = self._Connect(hostname, port)
+    self._http_hostname = hostname
+    self._http_port = port
     self._event_listeners = {}
     self._domain_listeners = {}
     self._scoped_states = {}
     self._domains_to_enable = set()
     self._tearing_down_tracing = False
-    self._set_up = False
-    self._please_stop = False
+    self._ws = None
+    self._target_descriptor = None
+    self._stop_delay_multiplier = 0
+    self._monitoring_start_timestamp = None
+    self._monitoring_stop_timestamp = None
+
+    self._Connect()
+    self.RegisterListener('Inspector.targetCrashed', self)
 
   def RegisterListener(self, name, listener):
     """Registers a listener for an event.
@@ -171,7 +189,7 @@ class DevToolsConnection(object):
     request = {'method': method}
     if params:
       request['params'] = params
-    return self._ws.SyncRequest(request)
+    return self._ws.SyncRequest(request, timeout=_WEBSOCKET_TIMEOUT_SECONDS)
 
   def SendAndIgnoreResponse(self, method, params=None):
     """Issues a request to the DevTools server, do not wait for the response.
@@ -207,7 +225,20 @@ class DevToolsConnection(object):
     assert res['result'], 'Cache clearing is not supported by this browser.'
     self.SyncRequest('Network.clearBrowserCache')
 
-  def SetUpMonitoring(self):
+  def MonitorUrl(self, url, timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                 stop_delay_multiplier=0):
+    """Navigate to url and dispatch monitoring loop.
+
+    Unless you have registered a listener that will call StopMonitoring, this
+    will run until timeout from chrome.
+
+    Args:
+      url: (str) a URL to navigate to before starting monitoring loop.
+      timeout_seconds: timeout in seconds for monitoring loop.
+      stop_delay_multiplier: How long to wait after page load completed before
+        tearing down, relative to the time it took to reach the page load to
+        complete.
+    """
     for domain in self._domains_to_enable:
       self._ws.RegisterDomain(domain, self._OnDataReceived)
       if domain != self.TRACING_DOMAIN:
@@ -218,38 +249,104 @@ class DevToolsConnection(object):
       self.SyncRequestNoResponse(scoped_state,
                                  self._scoped_states[scoped_state][0])
     self._tearing_down_tracing = False
-    self._set_up = True
 
-  def StartMonitoring(self, timeout=DEFAULT_TIMEOUT):
-    """Starts monitoring.
-
-    DevToolsConnection.SetUpMonitoring() has to be called first.
-    """
-    assert self._set_up, 'DevToolsConnection.SetUpMonitoring not called.'
-    self._Dispatch(timeout=timeout)
+    logging.info('Navigate to %s' % url)
+    self.SendAndIgnoreResponse('Page.navigate', {'url': url})
+    self._monitoring_start_timestamp = datetime.datetime.now()
+    self._Dispatch(timeout=timeout_seconds,
+                   stop_delay_multiplier=stop_delay_multiplier)
+    self._monitoring_start_timestamp = None
+    logging.info('Tearing down monitoring.')
     self._TearDownMonitoring()
 
   def StopMonitoring(self):
-    """Stops the monitoring."""
-    self._please_stop = True
+    """Sets the timestamp when to stop monitoring.
 
-  def _Dispatch(self, kind='Monitoring',
-                timeout=DEFAULT_TIMEOUT):
-    self._please_stop = False
-    while not self._please_stop:
+    Args:
+      address_delayed_stop: Whether the MonitorUrl()'s stop_delay_multiplier
+        should be addressed or not.
+    """
+    if self._stop_delay_multiplier == 0:
+      self._StopMonitoringImmediately()
+    elif self._monitoring_stop_timestamp is None:
+      assert self._monitoring_start_timestamp is not None
+      current_time = datetime.datetime.now()
+      stop_delay_duration = self._stop_delay_multiplier * (
+          current_time - self._monitoring_start_timestamp)
+      logging.info('Delaying monitoring stop for %ds',
+                   stop_delay_duration.total_seconds())
+      self._monitoring_stop_timestamp = current_time + stop_delay_duration
+
+  def ExecuteJavaScript(self, expression):
+    """Run JavaScript expression.
+
+    Args:
+      expression: JavaScript expression to run.
+
+    Returns:
+      The return value from the JavaScript expression.
+    """
+    response = self.SyncRequest('Runtime.evaluate', {
+        'expression': expression,
+        'returnByValue': True})
+    if 'error' in response:
+      raise Exception(response['error']['message'])
+    if 'wasThrown' in response['result'] and response['result']['wasThrown']:
+      raise Exception(response['error']['result']['description'])
+    if response['result']['result']['type'] == 'undefined':
+      return None
+    return response['result']['result']['value']
+
+  def PollForJavaScriptExpression(self, expression, interval):
+    """Wait until JavaScript expression is true.
+
+    Args:
+      expression: JavaScript expression to run.
+      interval: Period between expression evaluation in seconds.
+    """
+    common_util.PollFor(lambda: bool(self.ExecuteJavaScript(expression)),
+                        'JavaScript: {}'.format(expression),
+                        interval)
+
+  def Close(self):
+    """Cleanly close chrome by closing the only tab."""
+    assert self._ws
+    response = self._HttpRequest('/close/' + self._target_descriptor['id'])
+    assert response == 'Target is closing'
+    self._ws = None
+
+  def _StopMonitoringImmediately(self):
+    self._monitoring_stop_timestamp = datetime.datetime.now()
+
+  def _Dispatch(self, timeout, kind='Monitoring', stop_delay_multiplier=0):
+    self._monitoring_stop_timestamp = None
+    self._stop_delay_multiplier = stop_delay_multiplier
+    while True:
       try:
         self._ws.DispatchNotifications(timeout=timeout)
       except websocket.WebSocketTimeoutException:
-        break
-    if not self._please_stop:
-      logging.warning('%s stopped on a timeout.' % kind)
+        if self._monitoring_stop_timestamp is None:
+          logging.warning('%s stopped on a timeout.' % kind)
+          break
+      if self._monitoring_stop_timestamp:
+        # After the first timeout reduce the timeout to check when to stop
+        # monitoring more often, because the page at this moment can already be
+        # loaded and not many events would be arriving from it.
+        timeout = 1
+        if datetime.datetime.now() >= self._monitoring_stop_timestamp:
+          break
+
+  def Handle(self, method, event):
+    del event # unused
+    if method == 'Inspector.targetCrashed':
+      raise DevToolsConnectionTargetCrashed('Renderer crashed.')
 
   def _TearDownMonitoring(self):
     if self.TRACING_DOMAIN in self._domains_to_enable:
       logging.info('Fetching tracing')
       self.SyncRequestNoResponse(self.TRACING_END_METHOD)
       self._tearing_down_tracing = True
-      self._Dispatch(kind='Tracing', timeout=self.TRACING_TIMEOUT)
+      self._Dispatch(timeout=self.TRACING_TIMEOUT, kind='Tracing')
     for scoped_state in self._scoped_states:
       self.SyncRequestNoResponse(scoped_state,
                                  self._scoped_states[scoped_state][1])
@@ -272,7 +369,7 @@ class DevToolsConnection(object):
       stream_handle = msg.get('params', {}).get('stream')
       if not stream_handle:
         self._tearing_down_tracing = False
-        self.StopMonitoring()
+        self._StopMonitoringImmediately()
         # Fall through to regular dispatching.
       else:
         _StreamReader(self._ws, stream_handle).Read(self._TracingStreamDone)
@@ -288,7 +385,7 @@ class DevToolsConnection(object):
       self._domain_listeners[domain].Handle(method, msg)
     if self._tearing_down_tracing and method == self.TRACING_DONE_EVENT:
       self._tearing_down_tracing = False
-      self.StopMonitoring()
+      self._StopMonitoringImmediately()
 
   def _TracingStreamDone(self, data):
     tracing_events = json.loads(data)
@@ -298,27 +395,43 @@ class DevToolsConnection(object):
       if self._please_stop:
         break
     self._tearing_down_tracing = False
-    self.StopMonitoring()
+    self._StopMonitoringImmediately()
 
-  @classmethod
-  def _GetWebSocketUrl(cls, hostname, port):
-    r = httplib.HTTPConnection(hostname, port)
-    r.request('GET', '/json')
-    response = r.getresponse()
-    if response.status != 200:
+  def _HttpRequest(self, path):
+    assert path[0] == '/'
+    for _ in xrange(self.HTTP_ATTEMPTS):
+      r = httplib.HTTPConnection(self._http_hostname, self._http_port)
+      try:
+        r.request('GET', '/json' + path)
+        response = r.getresponse()
+        if response.status != 200:
+          raise DevToolsConnectionException(
+              'Cannot connect to DevTools, reponse code %d' % response.status)
+        return response.read()
+      except httplib.BadStatusLine as exception:
+        logging.warning('Devtools HTTP connection failed: %s' % repr(exception))
+        time.sleep(self.HTTP_ATTEMPT_INTERVAL_SECONDS)
+      finally:
+        r.close()
+    # Raise the exception that has failed the last attempt.
+    raise
+
+  def _Connect(self):
+    assert not self._ws
+    assert not self._target_descriptor
+    for target_descriptor in json.loads(self._HttpRequest('/list')):
+      if target_descriptor['type'] == 'page':
+        self._target_descriptor = target_descriptor
+        break
+    if not self._target_descriptor:
       raise DevToolsConnectionException(
-          'Cannot connect to DevTools, reponse code %d' % response.status)
-    json_response = json.loads(response.read())
-    r.close()
-    websocket_url = json_response[0]['webSocketDebuggerUrl']
-    return websocket_url
-
-  @classmethod
-  def _Connect(cls, hostname, port):
-    websocket_url = cls._GetWebSocketUrl(hostname, port)
-    ws = inspector_websocket.InspectorWebsocket()
-    ws.Connect(websocket_url)
-    return ws
+        'No pages are open, connected to a wrong instance?')
+    if self._target_descriptor['url'] != 'about:blank':
+      raise DevToolsConnectionException(
+          'Looks like devtools connection was made to a different instance.')
+    self._ws = inspector_websocket.InspectorWebsocket()
+    self._ws.Connect(self._target_descriptor['webSocketDebuggerUrl'],
+                     timeout=_WEBSOCKET_TIMEOUT_SECONDS)
 
 
 class Listener(object):
@@ -338,14 +451,14 @@ class Listener(object):
       event_name: (str) Event name, as registered.
       event: (dict) complete event.
     """
-    pass
+    raise NotImplementedError
 
 
 class Track(Listener):
   """Collects data from a DevTools server."""
   def GetEvents(self):
     """Returns a list of collected events, finalizing the state if necessary."""
-    pass
+    raise NotImplementedError
 
   def ToJsonDict(self):
     """Serializes to a dictionary, to be dumped as JSON.
@@ -354,10 +467,10 @@ class Track(Listener):
       A dict that can be dumped by the json module, and loaded by
       FromJsonDict().
     """
-    pass
+    raise NotImplementedError
 
   @classmethod
-  def FromJsonDict(cls, json_dict):
+  def FromJsonDict(cls, _json_dict):
     """Returns a Track instance constructed from data dumped by
        Track.ToJsonDict().
 
@@ -367,4 +480,8 @@ class Track(Listener):
     Returns:
       a Track instance.
     """
-    pass
+    # There is no sensible way to deserialize this abstract class, but
+    # subclasses are not required to define a deserialization method. For
+    # example, for testing we have a FakeRequestTrack which is never
+    # deserialized; instead fake instances are deserialized as RequestTracks.
+    assert False

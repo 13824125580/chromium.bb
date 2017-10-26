@@ -68,7 +68,7 @@ public:
 
     void augmentRepeatInterval(double delta) {
         double now = timerMonotonicallyIncreasingTime();
-        setNextFireTime(now, m_nextFireTime - now + delta);
+        setNextFireTime(now, std::max(m_nextFireTime - now + delta, 0.0));
         m_repeatInterval += delta;
     }
 
@@ -130,7 +130,7 @@ private:
     CancellableTimerTask* m_cancellableTimerTask; // NOT OWNED
     WebTaskRunner* m_webTaskRunner; // Not owned.
 
-#if ENABLE(ASSERT)
+#if DCHECK_IS_ON()
     ThreadIdentifier m_thread;
 #endif
 
@@ -150,7 +150,7 @@ class TimerIsObjectAliveTrait<T, true> {
 public:
     static bool isHeapObjectAlive(T* objectPointer)
     {
-        return !Heap::willObjectBeLazilySwept(objectPointer);
+        return !ThreadHeap::willObjectBeLazilySwept(objectPointer);
     }
 };
 

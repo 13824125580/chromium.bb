@@ -6,10 +6,11 @@
 #define WebScheduler_h
 
 #include "WebCommon.h"
-#include "public/platform/WebPassOwnPtr.h"
 #include "public/platform/WebTaskRunner.h"
 #include "public/platform/WebThread.h"
 #include "public/platform/WebViewScheduler.h"
+
+#include <memory>
 
 namespace blink {
 
@@ -68,7 +69,7 @@ public:
 
     // Creates a new WebViewScheduler for a given WebView. Must be called from
     // the associated WebThread.
-    virtual WebPassOwnPtr<WebViewScheduler> createWebViewScheduler(blink::WebView*) = 0;
+    virtual std::unique_ptr<WebViewScheduler> createWebViewScheduler(blink::WebView*) = 0;
 
     // Suspends the timer queue and increments the timer queue suspension count.
     // May only be called from the main thread.
@@ -78,12 +79,17 @@ public:
     // if the suspension count is zero and the current scheduler policy allows it.
     virtual void resumeTimerQueue() = 0;
 
+    enum class NavigatingFrameType {
+        kMainFrame,
+        kChildFrame
+    };
+
     // Tells the scheduler that a navigation task is pending.
     // TODO(alexclarke): Long term should this be a task trait?
-    virtual void addPendingNavigation() = 0;
+    virtual void addPendingNavigation(NavigatingFrameType) = 0;
 
     // Tells the scheduler that a navigation task is no longer pending.
-    virtual void removePendingNavigation() = 0;
+    virtual void removePendingNavigation(NavigatingFrameType) = 0;
 
     // Tells the scheduler that an expected navigation was started.
     virtual void onNavigationStarted() = 0;
@@ -92,9 +98,9 @@ public:
     // Helpers for posting bound functions as tasks.
     typedef Function<void(double deadlineSeconds)> IdleTask;
 
-    void postIdleTask(const WebTraceLocation&, PassOwnPtr<IdleTask>);
-    void postNonNestableIdleTask(const WebTraceLocation&, PassOwnPtr<IdleTask>);
-    void postIdleTaskAfterWakeup(const WebTraceLocation&, PassOwnPtr<IdleTask>);
+    void postIdleTask(const WebTraceLocation&, std::unique_ptr<IdleTask>);
+    void postNonNestableIdleTask(const WebTraceLocation&, std::unique_ptr<IdleTask>);
+    void postIdleTaskAfterWakeup(const WebTraceLocation&, std::unique_ptr<IdleTask>);
 #endif
 };
 

@@ -7,14 +7,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
@@ -102,7 +103,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
         shingle_hashes,
         base::Bind(&PhishingTermFeatureExtractorTest::ExtractionDone,
                    base::Unretained(this)));
-    msg_loop_.Run();
+    base::RunLoop().Run();
     return success_;
   }
 
@@ -118,7 +119,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
     msg_loop_.task_runner()->PostTask(
         FROM_HERE, base::Bind(&PhishingTermFeatureExtractorTest::QuitExtraction,
                               base::Unretained(this)));
-    msg_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   // Completion callback for feature extraction.
@@ -134,7 +135,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
 
   base::MessageLoop msg_loop_;
   MockFeatureExtractorClock clock_;
-  scoped_ptr<PhishingTermFeatureExtractor> extractor_;
+  std::unique_ptr<PhishingTermFeatureExtractor> extractor_;
   base::hash_set<std::string> term_hashes_;
   base::hash_set<uint32_t> word_hashes_;
   bool success_;  // holds the success value from ExtractFeatures
@@ -422,7 +423,7 @@ TEST_F(PhishingTermFeatureExtractorTest, Continuation) {
 }
 
 TEST_F(PhishingTermFeatureExtractorTest, PartialExtractionTest) {
-  scoped_ptr<base::string16> page_text(
+  std::unique_ptr<base::string16> page_text(
       new base::string16(ASCIIToUTF16("one ")));
   for (int i = 0; i < 28; ++i) {
     page_text->append(ASCIIToUTF16(base::StringPrintf("%d ", i)));

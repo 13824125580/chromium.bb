@@ -24,13 +24,16 @@ import android.view.WindowManager;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LoaderErrors;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.WarmupManager;
-import org.chromium.chrome.browser.metrics.LaunchMetrics;
 import org.chromium.chrome.browser.metrics.MemoryUma;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
+import org.chromium.chrome.browser.upgrade.UpgradeActivity;
+import org.chromium.content.browser.ChildProcessCreationParams;
 import org.chromium.ui.base.DeviceFormFactor;
 
 import java.lang.reflect.Field;
@@ -40,9 +43,6 @@ import java.lang.reflect.Field;
  */
 public abstract class AsyncInitializationActivity extends AppCompatActivity implements
         ChromeActivityNativeDelegate, BrowserParts {
-
-    private static final LaunchMetrics.BooleanEvent sBadIntentMetric =
-            new LaunchMetrics.BooleanEvent("Launch.InvalidIntent");
 
     protected final Handler mHandler;
 
@@ -56,8 +56,8 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     private boolean mDestroyed;
     private NativeInitializationController mNativeInitializationController;
     private MemoryUma mMemoryUma;
-    private boolean mIsTablet;
     private long mLastUserInteractionTime;
+    private boolean mIsTablet;
 
     public AsyncInitializationActivity() {
         mHandler = new Handler();
@@ -73,11 +73,11 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(newBase);
 
-        // On N, Chrome should always retain the tab strip layout on tablets. Normally in
+        // On N+, Chrome should always retain the tab strip layout on tablets. Normally in
         // multi-window, if Chrome is launched into a smaller screen Android will load the tab
         // switcher resources. Overriding the smallestScreenWidthDp in the Configuration ensures
         // Android will load the tab strip resources. See crbug.com/588838.
-        if (Build.VERSION.CODENAME.equals("N")) {
+        if (Build.VERSION.CODENAME.equals("N") || Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
             int smallestDeviceWidthDp = DeviceFormFactor.getSmallestDeviceWidthDp(this);
 
             if (smallestDeviceWidthDp >= DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP) {
@@ -106,8 +106,20 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
 
         // Kick off long running IO tasks that can be done in parallel.
         mNativeInitializationController = new NativeInitializationController(this, this);
-        mNativeInitializationController.startBackgroundTasks();
+        initializeChildProcessCreationParams();
+        mNativeInitializationController.startBackgroundTasks(shouldAllocateChildConnection());
     }
+
+    /** Controls the parameter of {@link NativeInitializationController#startBackgroundTasks()}.*/
+    @VisibleForTesting
+    public boolean shouldAllocateChildConnection() {
+        return true;
+    }
+
+    /**
+     * Allow derived classes to initialize their own {@link ChildProcessCreationParams}.
+     */
+    protected void initializeChildProcessCreationParams() {}
 
     @Override
     public void postInflationStartup() {
@@ -189,8 +201,18 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
      */
     @Override
     protected final void onCreate(Bundle savedInstanceState) {
+        if (DocumentModeAssassin.getInstance().isMigrationNecessary()) {
+            super.onCreate(null);
+
+            // Kick the user to the MigrationActivity.
+            UpgradeActivity.launchInstance(this, getIntent());
+
+            // Don't remove this task -- it may be a DocumentActivity that exists only in Recents.
+            finish();
+            return;
+        }
+
         if (!isStartedUpCorrectly(getIntent())) {
-            sBadIntentMetric.recordHit();
             super.onCreate(null);
             ApiCompatibilityUtils.finishAndRemoveTask(this);
             return;
@@ -302,6 +324,16 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     @Override
     public boolean isActivityDestroyed() {
         return mDestroyed;
+    }
+
+    @Override
+    public boolean isActivityFinishing() {
+        return isFinishing();
+    }
+
+    @Override
+    public boolean shouldStartGpuProcess() {
+        return true;
     }
 
     @Override

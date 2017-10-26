@@ -143,15 +143,14 @@ class BookmarkBarView : public views::AccessiblePaneView,
 
   // Returns the tooltip text for the specified url and title. The returned
   // text is clipped to fit within the bounds of the monitor. |context| is
-  // used to determine which gfx::Screen is used to retrieve bounds.
+  // used to determine which display::Screen is used to retrieve bounds.
   //
   // Note that we adjust the direction of both the URL and the title based on
   // the locale so that pure LTR strings are displayed properly in RTL locales.
   static base::string16 CreateToolTipForURLAndTitle(const views::Widget* widget,
                                               const gfx::Point& screen_loc,
                                               const GURL& url,
-                                              const base::string16& title,
-                                              Profile* profile);
+                                              const base::string16& title);
 
   // Returns true if Bookmarks Bar is currently detached from the Toolbar.
   bool IsDetached() const;
@@ -178,7 +177,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   int OnPerformDrop(const ui::DropTargetEvent& event) override;
   void OnThemeChanged() override;
   const char* GetClassName() const override;
-  void SetVisible(bool visible) override;
+  void VisibilityChanged(View* starting_from, bool is_visible) override;
 
   // AccessiblePaneView:
   void GetAccessibleState(ui::AXViewState* state) override;
@@ -410,7 +409,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
 
   // If non-NULL we're showing a context menu for one of the items on the
   // bookmark bar.
-  scoped_ptr<BookmarkContextMenu> context_menu_;
+  std::unique_ptr<BookmarkContextMenu> context_menu_;
 
   // Shows the "Other Bookmarks" folder button.
   views::MenuButton* other_bookmarks_button_;
@@ -425,7 +424,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   views::LabelButton* apps_page_shortcut_;
 
   // Used to track drops on the bookmark bar view.
-  scoped_ptr<DropInfo> drop_info_;
+  std::unique_ptr<DropInfo> drop_info_;
 
   // Visible if not all the bookmark buttons fit.
   views::MenuButton* overflow_button_;

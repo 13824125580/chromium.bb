@@ -8,12 +8,12 @@
 #include "core/CSSValueKeywords.h"
 #include "core/StyleBuilderFunctions.h"
 #include "core/StylePropertyShorthand.h"
-#include "core/css/CSSValuePool.h"
+#include "core/css/CSSPendingSubstitutionValue.h"
+#include "core/css/CSSUnsetValue.h"
 #include "core/css/CSSVariableData.h"
 #include "core/css/CSSVariableReferenceValue.h"
 #include "core/css/parser/CSSParserToken.h"
 #include "core/css/parser/CSSParserTokenRange.h"
-#include "core/css/parser/CSSParserValues.h"
 #include "core/css/parser/CSSPropertyParser.h"
 #include "core/css/resolver/StyleBuilder.h"
 #include "core/css/resolver/StyleResolverState.h"
@@ -74,7 +74,7 @@ bool CSSVariableResolver::resolveVariableReference(CSSParserTokenRange range, Ve
 {
     range.consumeWhitespace();
     ASSERT(range.peek().type() == IdentToken);
-    AtomicString variableName = range.consumeIncludingWhitespace().value();
+    AtomicString variableName = range.consumeIncludingWhitespace().value().toAtomicString();
     ASSERT(range.atEnd() || (range.peek().type() == CommaToken));
 
     CSSVariableData* variableData = valueForCustomProperty(variableName);
@@ -87,6 +87,32 @@ bool CSSVariableResolver::resolveVariableReference(CSSParserTokenRange range, Ve
     return true;
 }
 
+void CSSVariableResolver::resolveApplyAtRule(CSSParserTokenRange& range,
+    Vector<CSSParserToken>& result)
+{
+    DCHECK(range.peek().type() == AtKeywordToken && equalIgnoringASCIICase(range.peek().value(), "apply"));
+    range.consumeIncludingWhitespace();
+    const CSSParserToken& variableName = range.consumeIncludingWhitespace();
+    // TODO(timloh): Should we actually be consuming this?
+    if (range.peek().type() == SemicolonToken)
+        range.consume();
+
+    CSSVariableData* variableData = valueForCustomProperty(variableName.value().toAtomicString());
+    if (!variableData)
+        return; // Invalid custom property
+
+    CSSParserTokenRange rule = variableData->tokenRange();
+    rule.consumeWhitespace();
+    if (rule.peek().type() != LeftBraceToken)
+        return;
+    CSSParserTokenRange ruleContents = rule.consumeBlock();
+    rule.consumeWhitespace();
+    if (!rule.atEnd())
+        return;
+
+    result.appendRange(ruleContents.begin(), ruleContents.end());
+}
+
 bool CSSVariableResolver::resolveTokenRange(CSSParserTokenRange range,
     Vector<CSSParserToken>& result)
 {
@@ -94,6 +120,9 @@ bool CSSVariableResolver::resolveTokenRange(CSSParserTokenRange range,
     while (!range.atEnd()) {
         if (range.peek().functionId() == CSSValueVar) {
             success &= resolveVariableReference(range.consumeBlock(), result);
+        } else if (range.peek().type() == AtKeywordToken && equalIgnoringASCIICase(range.peek().value(), "apply")
+            && RuntimeEnabledFeatures::cssApplyAtRulesEnabled()) {
+            resolveApplyAtRule(range, result);
         } else {
             result.append(range.consume());
         }
@@ -101,52 +130,72 @@ bool CSSVariableResolver::resolveTokenRange(CSSParserTokenRange range,
     return success;
 }
 
-PassRefPtrWillBeRawPtr<CSSValue> CSSVariableResolver::resolveVariableReferences(StyleVariableData* styleVariableData, CSSPropertyID id, const CSSVariableReferenceValue& value)
+CSSValue* CSSVariableResolver::resolveVariableReferences(StyleVariableData* styleVariableData, CSSPropertyID id, const CSSVariableReferenceValue& value)
 {
     ASSERT(!isShorthandProperty(id));
 
     CSSVariableResolver resolver(styleVariableData);
     Vector<CSSParserToken> tokens;
     if (!resolver.resolveTokenRange(value.variableDataValue()->tokens(), tokens))
-        return cssValuePool().createUnsetValue();
-
-    CSSParserContext context(HTMLStandardMode, nullptr);
-    WillBeHeapVector<CSSProperty, 256> parsedProperties;
-    // TODO(timloh): This should be CSSParser::parseSingleValue and not need a vector.
-    if (!CSSPropertyParser::parseValue(id, false, CSSParserTokenRange(tokens), context, parsedProperties, StyleRule::RuleType::Style))
-        return cssValuePool().createUnsetValue();
-    ASSERT(parsedProperties.size() == 1);
-    return parsedProperties[0].value();
+        return CSSUnsetValue::create();
+    CSSValue* result = CSSPropertyParser::parseSingleValue(id, tokens, strictCSSParserContext());
+    if (!result)
+        return CSSUnsetValue::create();
+    return result;
 }
 
-void CSSVariableResolver::resolveAndApplyVariableReferences(StyleResolverState& state, CSSPropertyID id, const CSSVariableReferenceValue& value)
+const CSSValue* CSSVariableResolver::resolveVariableReferences(StyleResolverState& state, CSSPropertyID id, const CSSVariableReferenceValue& value)
 {
+    // Non-shorthand variable references follow this path.
     CSSVariableResolver resolver(state.style()->variables());
 
     Vector<CSSParserToken> tokens;
     if (resolver.resolveTokenRange(value.variableDataValue()->tokens(), tokens)) {
-        CSSParserContext context(HTMLStandardMode, 0);
+        CSSParserContext context(HTMLStandardMode, nullptr);
 
-        WillBeHeapVector<CSSProperty, 256> parsedProperties;
-
-        if (CSSPropertyParser::parseValue(id, false, CSSParserTokenRange(tokens), context, parsedProperties, StyleRule::RuleType::Style)) {
-            unsigned parsedPropertiesCount = parsedProperties.size();
-            for (unsigned i = 0; i < parsedPropertiesCount; ++i)
-                StyleBuilder::applyProperty(parsedProperties[i].id(), state, parsedProperties[i].value());
-            return;
-        }
+        CSSValue* value = CSSPropertyParser::parseSingleValue(id, CSSParserTokenRange(tokens), context);
+        if (value)
+            return value;
     }
 
-    RefPtrWillBeRawPtr<CSSUnsetValue> unset = cssValuePool().createUnsetValue();
-    if (isShorthandProperty(id)) {
-        StylePropertyShorthand shorthand = shorthandForProperty(id);
-        for (unsigned i = 0; i < shorthand.length(); i++)
-            StyleBuilder::applyProperty(shorthand.properties()[i], state, unset.get());
-        return;
-    }
-
-    StyleBuilder::applyProperty(id, state, unset.get());
+    return CSSUnsetValue::create();
 }
+
+const CSSValue* CSSVariableResolver::resolvePendingSubstitutions(StyleResolverState& state, CSSPropertyID id, const CSSPendingSubstitutionValue& pendingValue)
+{
+    // Longhands from shorthand references follow this path.
+    HeapHashMap<CSSPropertyID, Member<const CSSValue>>& propertyCache = state.parsedPropertiesForPendingSubstitution(pendingValue);
+
+    const CSSValue* value = propertyCache.get(id);
+    if (!value) {
+        // TODO(timloh): We shouldn't retry this for all longhands if the shorthand ends up invalid
+        CSSVariableReferenceValue* shorthandValue = pendingValue.shorthandValue();
+        CSSPropertyID shorthandPropertyId = pendingValue.shorthandPropertyId();
+
+        CSSVariableResolver resolver(state.style()->variables());
+
+        Vector<CSSParserToken> tokens;
+        if (resolver.resolveTokenRange(shorthandValue->variableDataValue()->tokens(), tokens)) {
+            CSSParserContext context(HTMLStandardMode, 0);
+
+            HeapVector<CSSProperty, 256> parsedProperties;
+
+            if (CSSPropertyParser::parseValue(shorthandPropertyId, false, CSSParserTokenRange(tokens), context, parsedProperties, StyleRule::RuleType::Style)) {
+                unsigned parsedPropertiesCount = parsedProperties.size();
+                for (unsigned i = 0; i < parsedPropertiesCount; ++i) {
+                    propertyCache.set(parsedProperties[i].id(), parsedProperties[i].value());
+                }
+            }
+        }
+        value = propertyCache.get(id);
+    }
+
+    if (value)
+        return value;
+
+    return CSSUnsetValue::create();
+}
+
 
 void CSSVariableResolver::resolveVariableDefinitions(StyleVariableData* variables)
 {

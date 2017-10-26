@@ -31,11 +31,9 @@
 #ifndef FullscreenController_h
 #define FullscreenController_h
 
-#include "core/layout/LayoutFullScreen.h"
 #include "platform/geometry/FloatPoint.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
@@ -44,9 +42,9 @@ class Element;
 class LocalFrame;
 class WebViewImpl;
 
-class FullscreenController final : public NoBaseWillBeGarbageCollected<FullscreenController> {
+class FullscreenController final : public GarbageCollected<FullscreenController> {
 public:
-    static PassOwnPtrWillBeRawPtr<FullscreenController> create(WebViewImpl*);
+    static FullscreenController* create(WebViewImpl*);
 
     void didEnterFullScreen();
     void didExitFullScreen();
@@ -74,10 +72,10 @@ private:
     FloatPoint m_exitFullscreenVisualViewportOffset;
 
     // If set, the WebView is transitioning to fullscreen for this element.
-    RefPtrWillBeMember<Element> m_provisionalFullScreenElement;
+    Member<Element> m_provisionalFullScreenElement;
 
     // If set, the WebView is in fullscreen mode for an element in this frame.
-    RefPtrWillBeMember<LocalFrame> m_fullScreenFrame;
+    Member<LocalFrame> m_fullScreenFrame;
 
     bool m_isCancelingFullScreen;
 };

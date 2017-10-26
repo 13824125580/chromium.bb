@@ -27,7 +27,7 @@ namespace blink {
 
 class Document;
 
-class DOMParser final : public GarbageCollectedFinalized<DOMParser>, public ScriptWrappable {
+class DOMParser final : public GarbageCollected<DOMParser>, public ScriptWrappable {
     DEFINE_WRAPPERTYPEINFO();
 public:
     static DOMParser* create(Document& document)
@@ -35,14 +35,14 @@ public:
         return new DOMParser(document);
     }
 
-    PassRefPtrWillBeRawPtr<Document> parseFromString(const String&, const String& type);
+    Document* parseFromString(const String&, const String& type);
 
     DECLARE_TRACE();
 
 private:
     explicit DOMParser(Document&);
 
-    WeakPtrWillBeWeakMember<Document> m_contextDocument;
+    WeakMember<Document> m_contextDocument;
 };
 
 } // namespace blink

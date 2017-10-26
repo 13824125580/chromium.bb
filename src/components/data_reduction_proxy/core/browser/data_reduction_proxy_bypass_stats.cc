@@ -125,32 +125,19 @@ void DataReductionProxyBypassStats::OnUrlRequestCompleted(
   // over direct and a network error occurred while retrying it.
   if (data_reduction_proxy_config_->WasDataReductionProxyUsed(request,
                                                               &proxy_info) &&
-      (request->load_flags() & net::LOAD_BYPASS_PROXY) == 0) {
-    if (request->status().status() == net::URLRequestStatus::SUCCESS) {
-      successful_requests_through_proxy_count_++;
-      NotifyUnavailabilityIfChanged();
-    }
+      (request->load_flags() & net::LOAD_BYPASS_PROXY) == 0 &&
+      request->status().status() == net::URLRequestStatus::SUCCESS) {
+    successful_requests_through_proxy_count_++;
+    NotifyUnavailabilityIfChanged();
 
-    // Report any network errors that occurred for this request, including OK
-    // and ABORTED.
-    if (!proxy_info.is_fallback) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "DataReductionProxy.RequestCompletionErrorCodes.Primary",
-          std::abs(request->status().error()));
-      if (request->load_flags() & net::LOAD_MAIN_FRAME) {
-        UMA_HISTOGRAM_SPARSE_SLOWLY(
-            "DataReductionProxy.RequestCompletionErrorCodes.MainFrame.Primary",
-            std::abs(request->status().error()));
-      }
-    } else {
-      UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "DataReductionProxy.RequestCompletionErrorCodes.Fallback",
-          std::abs(request->status().error()));
-      if (request->load_flags() & net::LOAD_MAIN_FRAME) {
-        UMA_HISTOGRAM_SPARSE_SLOWLY(
-            "DataReductionProxy.RequestCompletionErrorCodes.MainFrame.Fallback",
-            std::abs(request->status().error()));
-      }
+    // Report the success counts.
+    UMA_HISTOGRAM_COUNTS_100(
+        "DataReductionProxy.SuccessfulRequestCompletionCounts",
+        proxy_info.proxy_index);
+    if (request->load_flags() & net::LOAD_MAIN_FRAME) {
+      UMA_HISTOGRAM_COUNTS_100(
+          "DataReductionProxy.SuccessfulRequestCompletionCounts.MainFrame",
+          proxy_info.proxy_index);
     }
   }
 }
@@ -182,9 +169,6 @@ void DataReductionProxyBypassStats::OnProxyFallback(
   if (bypassed_proxy.is_valid() && !bypassed_proxy.is_direct() &&
       data_reduction_proxy_config_->IsDataReductionProxy(
           bypassed_proxy.host_port_pair(), &data_reduction_proxy_info)) {
-    if (data_reduction_proxy_info.is_ssl)
-      return;
-
     proxy_net_errors_count_++;
 
     // To account for the case when the proxy is reachable for sometime, and
@@ -198,7 +182,7 @@ void DataReductionProxyBypassStats::OnProxyFallback(
       NotifyUnavailabilityIfChanged();
     }
 
-    if (!data_reduction_proxy_info.is_fallback) {
+    if (data_reduction_proxy_info.proxy_index == 0) {
       RecordDataReductionProxyBypassInfo(
           true, false, bypassed_proxy, BYPASS_EVENT_TYPE_NETWORK_ERROR);
       RecordDataReductionProxyBypassOnNetworkError(
@@ -209,16 +193,6 @@ void DataReductionProxyBypassStats::OnProxyFallback(
       RecordDataReductionProxyBypassOnNetworkError(
           false, bypassed_proxy, net_error);
     }
-  }
-}
-
-void DataReductionProxyBypassStats::OnConnectComplete(
-    const net::HostPortPair& proxy_server,
-    int net_error) {
-  if (data_reduction_proxy_config_->IsDataReductionProxy(proxy_server, NULL)) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
-      "DataReductionProxy.HTTPConnectCompleted",
-      std::abs(net_error));
   }
 }
 

@@ -5,16 +5,16 @@
 #include "chrome/browser/safe_browsing/client_side_detection_service.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -30,6 +30,7 @@
 #include "crypto/sha2.h"
 #include "google_apis/google_api_keys.h"
 #include "net/base/escape.h"
+#include "net/base/ip_address.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -189,14 +190,14 @@ void ClientSideDetectionService::SendClientReportMalwareRequest(
 
 bool ClientSideDetectionService::IsPrivateIPAddress(
     const std::string& ip_address) const {
-  net::IPAddressNumber ip_number;
-  if (!net::ParseIPLiteralToNumber(ip_address, &ip_number)) {
+  net::IPAddress address;
+  if (!address.AssignFromIPLiteral(ip_address)) {
     DVLOG(2) << "Unable to parse IP address: '" << ip_address << "'";
     // Err on the side of safety and assume this might be private.
     return true;
   }
 
-  return net::IsIPAddressReserved(ip_number);
+  return address.IsReserved();
 }
 
 void ClientSideDetectionService::OnURLFetchComplete(
@@ -205,14 +206,12 @@ void ClientSideDetectionService::OnURLFetchComplete(
   source->GetResponseAsString(&data);
 
   if (client_phishing_reports_.find(source) != client_phishing_reports_.end()) {
-    HandlePhishingVerdict(
-        source, source->GetURL(), source->GetStatus(),
-        source->GetResponseCode(), source->GetCookies(), data);
+    HandlePhishingVerdict(source, source->GetURL(), source->GetStatus(),
+                          source->GetResponseCode(), data);
   } else if (client_malware_reports_.find(source) !=
              client_malware_reports_.end()) {
-    HandleMalwareVerdict(
-        source, source->GetURL(), source->GetStatus(),
-        source->GetResponseCode(), source->GetCookies(), data);
+    HandleMalwareVerdict(source, source->GetURL(), source->GetStatus(),
+                         source->GetResponseCode(), data);
   } else {
     NOTREACHED();
   }
@@ -223,7 +222,7 @@ void ClientSideDetectionService::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(type == content::NOTIFICATION_RENDERER_PROCESS_CREATED);
+  DCHECK_EQ(content::NOTIFICATION_RENDERER_PROCESS_CREATED, type);
   SendModelToProcess(
       content::Source<content::RenderProcessHost>(source).ptr());
 }
@@ -267,7 +266,7 @@ void ClientSideDetectionService::StartClientReportPhishingRequest(
     bool is_extended_reporting,
     const ClientReportPhishingRequestCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  scoped_ptr<ClientPhishingRequest> request(verdict);
+  std::unique_ptr<ClientPhishingRequest> request(verdict);
 
   if (!enabled_) {
     if (!callback.is_null())
@@ -320,7 +319,7 @@ void ClientSideDetectionService::StartClientReportMalwareRequest(
     ClientMalwareRequest* verdict,
     const ClientReportMalwareRequestCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  scoped_ptr<ClientMalwareRequest> request(verdict);
+  std::unique_ptr<ClientMalwareRequest> request(verdict);
 
   if (!enabled_) {
     if (!callback.is_null())
@@ -369,10 +368,9 @@ void ClientSideDetectionService::HandlePhishingVerdict(
     const GURL& url,
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   ClientPhishingResponse response;
-  scoped_ptr<ClientReportInfo> info(client_phishing_reports_[source]);
+  std::unique_ptr<ClientReportInfo> info(client_phishing_reports_[source]);
   bool is_phishing = false;
   if (status.is_success() && net::HTTP_OK == response_code &&
       response.ParseFromString(data)) {
@@ -396,7 +394,6 @@ void ClientSideDetectionService::HandleMalwareVerdict(
     const GURL& url,
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   if (status.is_success()) {
     UMA_HISTOGRAM_SPARSE_SLOWLY(
@@ -407,7 +404,8 @@ void ClientSideDetectionService::HandleMalwareVerdict(
       "SBClientMalware.IPBlacklistRequestNetError", -status.error());
 
   ClientMalwareResponse response;
-  scoped_ptr<ClientMalwareReportInfo> info(client_malware_reports_[source]);
+  std::unique_ptr<ClientMalwareReportInfo> info(
+      client_malware_reports_[source]);
   bool should_blacklist = false;
   if (status.is_success() && net::HTTP_OK == response_code &&
       response.ParseFromString(data)) {

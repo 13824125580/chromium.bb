@@ -13,12 +13,12 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "webrtc/base/constructormagic.h"
-#include "webrtc/base/scoped_ptr.h"
 #include "webrtc/modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h"
 #include "webrtc/system_wrappers/include/clock.h"
 
@@ -173,8 +173,7 @@ class RemoteBitrateEstimatorTest : public ::testing::Test {
                       size_t payload_size,
                       int64_t arrival_time,
                       uint32_t rtp_timestamp,
-                      uint32_t absolute_send_time,
-                      bool was_paced);
+                      uint32_t absolute_send_time);
 
   // Generates a frame of packets belonging to a stream at a given bitrate and
   // with a given ssrc. The stream is pushed through a very simple simulated
@@ -210,9 +209,9 @@ class RemoteBitrateEstimatorTest : public ::testing::Test {
   static const int kArrivalTimeClockOffsetMs = 60000;
 
   SimulatedClock clock_;  // Time at the receiver.
-  rtc::scoped_ptr<testing::TestBitrateObserver> bitrate_observer_;
-  rtc::scoped_ptr<RemoteBitrateEstimator> bitrate_estimator_;
-  rtc::scoped_ptr<testing::StreamGenerator> stream_generator_;
+  std::unique_ptr<testing::TestBitrateObserver> bitrate_observer_;
+  std::unique_ptr<RemoteBitrateEstimator> bitrate_estimator_;
+  std::unique_ptr<testing::StreamGenerator> stream_generator_;
 
   RTC_DISALLOW_COPY_AND_ASSIGN(RemoteBitrateEstimatorTest);
 };

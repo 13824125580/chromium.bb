@@ -54,6 +54,7 @@
 #include "ppapi/proxy/video_destination_resource.h"
 #include "ppapi/proxy/video_encoder_resource.h"
 #include "ppapi/proxy/video_source_resource.h"
+#include "ppapi/proxy/vpn_provider_resource.h"
 #include "ppapi/proxy/websocket_resource.h"
 #include "ppapi/shared_impl/api_id.h"
 #include "ppapi/shared_impl/host_resource.h"
@@ -407,6 +408,10 @@ PP_Resource ResourceCreationProxy::CreateVideoEncoder(PP_Instance instance) {
 PP_Resource ResourceCreationProxy::CreateVideoSource(
     PP_Instance instance) {
   return (new VideoSourceResource(GetConnection(), instance))->GetReference();
+}
+
+PP_Resource ResourceCreationProxy::CreateVpnProvider(PP_Instance instance) {
+  return (new VpnProviderResource(GetConnection(), instance))->GetReference();
 }
 
 PP_Resource ResourceCreationProxy::CreateWebSocket(PP_Instance instance) {

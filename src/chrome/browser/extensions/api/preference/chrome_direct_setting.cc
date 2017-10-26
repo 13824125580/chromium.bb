@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/preference/chrome_direct_setting.h"
 
+#include <utility>
+
 #include "base/containers/hash_tables.h"
 #include "base/lazy_instance.h"
 #include "base/values.h"
@@ -36,9 +38,9 @@ bool GetDirectSettingFunction::RunSync() {
   EXTENSION_FUNCTION_VALIDATE(preference);
   const base::Value* value = preference->GetValue();
 
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
   result->Set(preference_api_constants::kValue, value->DeepCopy());
-  SetResult(result.release());
+  SetResult(std::move(result));
 
   return true;
 }

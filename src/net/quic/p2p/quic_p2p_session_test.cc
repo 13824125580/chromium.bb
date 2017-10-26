@@ -4,7 +4,10 @@
 
 #include "net/quic/p2p/quic_p2p_session.h"
 
+#include <algorithm>
+#include <deque>
 #include <utility>
+#include <vector>
 
 #include "base/callback_helpers.h"
 #include "base/location.h"
@@ -12,12 +15,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/quic/crypto/quic_random.h"
 #include "net/quic/p2p/quic_p2p_crypto_config.h"
 #include "net/quic/p2p/quic_p2p_stream.h"
+#include "net/quic/quic_chromium_alarm_factory.h"
 #include "net/quic/quic_chromium_connection_helper.h"
 #include "net/quic/quic_chromium_packet_writer.h"
 #include "net/quic/test_tools/quic_session_peer.h"
@@ -196,9 +200,9 @@ class QuicP2PSessionTest : public ::testing::Test {
 
  protected:
   QuicP2PSessionTest()
-      : quic_helper_(base::ThreadTaskRunnerHandle::Get().get(),
-                     &quic_clock_,
-                     QuicRandom::GetInstance()) {
+      : quic_helper_(&quic_clock_, QuicRandom::GetInstance()),
+        alarm_factory_(base::ThreadTaskRunnerHandle::Get().get(),
+                       &quic_clock_) {
     // Simulate out-of-bound config handshake.
     CryptoHandshakeMessage hello_message;
     config_.ToHandshakeMessage(&hello_message);
@@ -208,8 +212,8 @@ class QuicP2PSessionTest : public ::testing::Test {
   }
 
   void CreateSessions() {
-    scoped_ptr<FakeP2PDatagramSocket> socket1(new FakeP2PDatagramSocket());
-    scoped_ptr<FakeP2PDatagramSocket> socket2(new FakeP2PDatagramSocket());
+    std::unique_ptr<FakeP2PDatagramSocket> socket1(new FakeP2PDatagramSocket());
+    std::unique_ptr<FakeP2PDatagramSocket> socket2(new FakeP2PDatagramSocket());
     socket1->ConnectWith(socket2.get());
 
     socket1_ = socket1->GetWeakPtr();
@@ -223,17 +227,19 @@ class QuicP2PSessionTest : public ::testing::Test {
                                  Perspective::IS_CLIENT);
   }
 
-  scoped_ptr<QuicP2PSession> CreateP2PSession(scoped_ptr<Socket> socket,
-                                              QuicP2PCryptoConfig crypto_config,
-                                              Perspective perspective) {
+  std::unique_ptr<QuicP2PSession> CreateP2PSession(
+      std::unique_ptr<Socket> socket,
+      QuicP2PCryptoConfig crypto_config,
+      Perspective perspective) {
     QuicChromiumPacketWriter* writer =
         new QuicChromiumPacketWriter(socket.get());
-    scoped_ptr<QuicConnection> quic_connection1(new QuicConnection(
-        0, IPEndPoint(IPAddress(0, 0, 0, 0), 0), &quic_helper_, writer,
-        true /* owns_writer */, perspective, QuicSupportedVersions()));
+    std::unique_ptr<QuicConnection> quic_connection1(new QuicConnection(
+        0, IPEndPoint(IPAddress::IPv4AllZeros(), 0), &quic_helper_,
+        &alarm_factory_, writer, true /* owns_writer */, perspective,
+        QuicSupportedVersions()));
     writer->SetConnection(quic_connection1.get());
 
-    scoped_ptr<QuicP2PSession> result(
+    std::unique_ptr<QuicP2PSession> result(
         new QuicP2PSession(config_, crypto_config, std::move(quic_connection1),
                            std::move(socket)));
     result->Initialize();
@@ -246,13 +252,14 @@ class QuicP2PSessionTest : public ::testing::Test {
 
   QuicClock quic_clock_;
   QuicChromiumConnectionHelper quic_helper_;
+  QuicChromiumAlarmFactory alarm_factory_;
   QuicConfig config_;
 
   base::WeakPtr<FakeP2PDatagramSocket> socket1_;
-  scoped_ptr<QuicP2PSession> session1_;
+  std::unique_ptr<QuicP2PSession> session1_;
 
   base::WeakPtr<FakeP2PDatagramSocket> socket2_;
-  scoped_ptr<QuicP2PSession> session2_;
+  std::unique_ptr<QuicP2PSession> session2_;
 };
 
 void QuicP2PSessionTest::OnWriteResult(int result) {
@@ -328,8 +335,8 @@ TEST_F(QuicP2PSessionTest, DestroySocketWhenClosed) {
 
   // The socket must be destroyed when connection is closed.
   EXPECT_TRUE(socket1_);
-  session1_->connection()->CloseConnection(QUIC_NO_ERROR,
-                                           ConnectionCloseSource::FROM_SELF);
+  session1_->connection()->CloseConnection(
+      QUIC_NO_ERROR, "test", ConnectionCloseBehavior::SILENT_CLOSE);
   EXPECT_FALSE(socket1_);
 }
 

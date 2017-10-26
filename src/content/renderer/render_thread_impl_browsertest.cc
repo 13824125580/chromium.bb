@@ -14,7 +14,7 @@
 #include "base/memory/discardable_memory.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/scheduler/renderer/renderer_scheduler.h"
 #include "content/app/mojo/mojo_init.h"
 #include "content/common/in_process_child_thread_params.h"
@@ -101,24 +101,17 @@ class TestTaskCounter : public base::SingleThreadTaskRunner {
 
 class RenderThreadImplForTest : public RenderThreadImpl {
  public:
-  RenderThreadImplForTest(const InProcessChildThreadParams& params,
-                          scoped_ptr<scheduler::RendererScheduler> scheduler,
-                          scoped_refptr<TestTaskCounter> test_task_counter)
-      : RenderThreadImpl(params, std::move(scheduler)),
-        test_task_counter_(test_task_counter) {}
+  RenderThreadImplForTest(
+      const InProcessChildThreadParams& params,
+      std::unique_ptr<scheduler::RendererScheduler> scheduler,
+      scoped_refptr<base::SingleThreadTaskRunner>& test_task_counter)
+      : RenderThreadImpl(params, std::move(scheduler), test_task_counter) {}
 
   ~RenderThreadImplForTest() override {}
-
-  void SetResourceDispatchTaskQueue(
-      const scoped_refptr<base::SingleThreadTaskRunner>&) override {
-    // Use our TestTaskCounter instead.
-    RenderThreadImpl::SetResourceDispatchTaskQueue(test_task_counter_);
-  }
 
   using ChildThreadImpl::OnMessageReceived;
 
  private:
-  scoped_refptr<TestTaskCounter> test_task_counter_;
 };
 
 #if defined(COMPILER_MSVC)
@@ -182,16 +175,18 @@ class RenderThreadImplBrowserTest : public testing::Test {
     }
     cmd->AppendSwitchASCII(switches::kContentImageTextureTarget, image_targets);
 
-    scoped_ptr<scheduler::RendererScheduler> renderer_scheduler =
+    std::unique_ptr<scheduler::RendererScheduler> renderer_scheduler =
         scheduler::RendererScheduler::Create();
     InitializeMojo();
+    scoped_refptr<base::SingleThreadTaskRunner> test_task_counter(
+        test_task_counter_.get());
     thread_ = new RenderThreadImplForTest(
         InProcessChildThreadParams(test_helper_->GetChannelId(),
-                                   test_helper_->GetIOTaskRunner()),
-        std::move(renderer_scheduler), test_task_counter_);
+                                   test_helper_->GetIOTaskRunner(),
+                                   test_helper_->GetMojoIpcToken(),
+                                   test_helper_->GetMojoApplicationToken()),
+        std::move(renderer_scheduler), test_task_counter);
     cmd->InitFromArgv(old_argv);
-
-    thread_->EnsureWebKitInitialized();
 
     test_msg_filter_ = make_scoped_refptr(
         new QuitOnTestMsgFilter(test_helper_->GetMessageLoop()));
@@ -199,11 +194,11 @@ class RenderThreadImplBrowserTest : public testing::Test {
   }
 
   scoped_refptr<TestTaskCounter> test_task_counter_;
-  scoped_ptr<ContentClient> content_client_;
-  scoped_ptr<ContentBrowserClient> content_browser_client_;
-  scoped_ptr<ContentRendererClient> content_renderer_client_;
-  scoped_ptr<RenderThreadImplBrowserIPCTestHelper> test_helper_;
-  scoped_ptr<MockRenderProcess> mock_process_;
+  std::unique_ptr<ContentClient> content_client_;
+  std::unique_ptr<ContentBrowserClient> content_browser_client_;
+  std::unique_ptr<ContentRendererClient> content_renderer_client_;
+  std::unique_ptr<RenderThreadImplBrowserIPCTestHelper> test_helper_;
+  std::unique_ptr<MockRenderProcess> mock_process_;
   scoped_refptr<QuitOnTestMsgFilter> test_msg_filter_;
   RenderThreadImplForTest* thread_;  // Owned by mock_process_.
   std::string channel_id_;

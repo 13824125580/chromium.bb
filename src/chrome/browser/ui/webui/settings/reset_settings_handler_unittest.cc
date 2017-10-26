@@ -30,7 +30,7 @@ class MockProfileResetter : public ProfileResetter {
   }
 
   void Reset(ResettableFlags resettable_flags,
-             scoped_ptr<BrandcodedDefaultSettings> master_settings,
+             std::unique_ptr<BrandcodedDefaultSettings> master_settings,
              const base::Closure& callback) override {
     resets_++;
     callback.Run();
@@ -47,8 +47,8 @@ class MockProfileResetter : public ProfileResetter {
 class TestingResetSettingsHandler : public ResetSettingsHandler {
  public:
   TestingResetSettingsHandler(
-      TestingProfile* profile, bool allow_powerwash, content::WebUI* web_ui)
-      : ResetSettingsHandler(profile, allow_powerwash),
+      TestingProfile* profile, content::WebUI* web_ui)
+      : ResetSettingsHandler(profile),
         resetter_(profile) {
     set_web_ui(web_ui);
   }
@@ -70,7 +70,7 @@ private:
 
 class ResetSettingsHandlerTest : public testing::Test {
  public:
-  ResetSettingsHandlerTest() : handler_(&profile_, false, &web_ui_) {
+  ResetSettingsHandlerTest() : handler_(&profile_, &web_ui_) {
   }
 
   TestingResetSettingsHandler* handler() { return &handler_; }
@@ -86,13 +86,18 @@ class ResetSettingsHandlerTest : public testing::Test {
 
 TEST_F(ResetSettingsHandlerTest, HandleResetProfileSettings) {
   base::ListValue list;
+  std::string expected_callback_id("dummyCallbackId");
+  list.AppendString(expected_callback_id);
   list.AppendBoolean(false);
   handler()->HandleResetProfileSettings(&list);
   // Check that the delegate ProfileResetter was called.
   EXPECT_EQ(1u, handler()->resets());
   // Check that Javascript side is notified after resetting is done.
-  EXPECT_EQ("SettingsResetPage.doneResetting",
+  EXPECT_EQ("cr.webUIResponse",
             web_ui()->call_data()[0]->function_name());
+  std::string callback_id;
+  EXPECT_TRUE(web_ui()->call_data()[0]->arg1()->GetAsString(&callback_id));
+  EXPECT_EQ(expected_callback_id, callback_id);
 }
 
 }  // namespace

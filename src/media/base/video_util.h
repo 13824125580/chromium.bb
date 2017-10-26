@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include "base/memory/ref_counted.h"
 #include "media/base/media_export.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -91,6 +92,29 @@ MEDIA_EXPORT void CopyRGBToVideoFrame(const uint8_t* source,
                                       int stride,
                                       const gfx::Rect& region_in_frame,
                                       VideoFrame* frame);
+
+// Converts a frame with YV12A format into I420 by dropping alpha channel.
+MEDIA_EXPORT scoped_refptr<VideoFrame> WrapAsI420VideoFrame(
+    const scoped_refptr<VideoFrame>& frame);
+
+// Copy I420 video frame to match the required coded size and pad the region
+// outside the visible rect repeatly with the last column / row up to the coded
+// size of |dst_frame|. Return false when |dst_frame| is empty or visible rect
+// is empty.
+// One application is content mirroring using HW encoder. As the required coded
+// size for encoder is unknown before capturing, memory copy is needed when the
+// coded size does not match the requirement. Padding can improve the encoding
+// efficiency in this case, as the encoder will encode the whole coded region.
+// Performance-wise, this function could be expensive as it does memory copy of
+// the whole visible rect.
+// Note:
+// 1. |src_frame| and |dst_frame| should have same size of visible rect.
+// 2. The visible rect's origin of |dst_frame| should be (0,0).
+// 3. |dst_frame|'s coded size (both width and height) should be larger than or
+// equal to the visible size, since the visible region in both frames should be
+// identical.
+MEDIA_EXPORT bool I420CopyWithPadding(const VideoFrame& src_frame,
+                                      VideoFrame* dst_frame) WARN_UNUSED_RESULT;
 
 }  // namespace media
 

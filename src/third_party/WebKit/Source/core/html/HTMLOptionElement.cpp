@@ -63,17 +63,17 @@ HTMLOptionElement::~HTMLOptionElement()
 {
 }
 
-PassRefPtrWillBeRawPtr<HTMLOptionElement> HTMLOptionElement::create(Document& document)
+HTMLOptionElement* HTMLOptionElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<HTMLOptionElement> option = adoptRefWillBeNoop(new HTMLOptionElement(document));
+    HTMLOptionElement* option = new HTMLOptionElement(document);
     option->ensureUserAgentShadowRoot();
-    return option.release();
+    return option;
 }
 
-PassRefPtrWillBeRawPtr<HTMLOptionElement> HTMLOptionElement::createForJSConstructor(Document& document, const String& data, const AtomicString& value,
+HTMLOptionElement* HTMLOptionElement::createForJSConstructor(Document& document, const String& data, const AtomicString& value,
     bool defaultSelected, bool selected, ExceptionState& exceptionState)
 {
-    RefPtrWillBeRawPtr<HTMLOptionElement> element = adoptRefWillBeNoop(new HTMLOptionElement(document));
+    HTMLOptionElement* element = new HTMLOptionElement(document);
     element->ensureUserAgentShadowRoot();
     element->appendChild(Text::create(document, data.isNull() ? "" : data), exceptionState);
     if (exceptionState.hadException())
@@ -85,7 +85,7 @@ PassRefPtrWillBeRawPtr<HTMLOptionElement> HTMLOptionElement::createForJSConstruc
         element->setAttribute(selectedAttr, emptyAtom);
     element->setSelected(selected);
 
-    return element.release();
+    return element;
 }
 
 void HTMLOptionElement::attach(const AttachContext& context)
@@ -94,7 +94,7 @@ void HTMLOptionElement::attach(const AttachContext& context)
     if (context.resolvedStyle) {
         ASSERT(!m_style || m_style == context.resolvedStyle);
         m_style = context.resolvedStyle;
-    } else {
+    } else if (parentComputedStyle()) {
         updateNonComputedStyle();
         optionContext.resolvedStyle = m_style.get();
     }
@@ -109,10 +109,20 @@ void HTMLOptionElement::detach(const AttachContext& context)
 
 bool HTMLOptionElement::supportsFocus() const
 {
-    RefPtrWillBeRawPtr<HTMLSelectElement> select = ownerSelectElement();
+    HTMLSelectElement* select = ownerSelectElement();
     if (select && select->usesMenuList())
         return false;
     return HTMLElement::supportsFocus();
+}
+
+bool HTMLOptionElement::matchesDefaultPseudoClass() const
+{
+    return fastHasAttribute(selectedAttr);
+}
+
+bool HTMLOptionElement::matchesEnabledPseudoClass() const
+{
+    return !isDisabledFormControl();
 }
 
 String HTMLOptionElement::displayLabel() const
@@ -140,12 +150,10 @@ String HTMLOptionElement::text() const
 
 void HTMLOptionElement::setText(const String &text, ExceptionState& exceptionState)
 {
-    RefPtrWillBeRawPtr<Node> protectFromMutationEvents(this);
-
     // Changing the text causes a recalc of a select's items, which will reset the selected
     // index to the first item if the select is single selection with a menu list. We attempt to
     // preserve the selected item.
-    RefPtrWillBeRawPtr<HTMLSelectElement> select = ownerSelectElement();
+    HTMLSelectElement* select = ownerSelectElement();
     bool selectIsMenuList = select && select->usesMenuList();
     int oldSelectedIndex = selectIsMenuList ? select->selectedIndex() : -1;
 
@@ -176,7 +184,7 @@ int HTMLOptionElement::index() const
 
     int optionIndex = 0;
 
-    const WillBeHeapVector<RawPtrWillBeMember<HTMLElement>>& items = selectElement->listItems();
+    const HeapVector<Member<HTMLElement>>& items = selectElement->listItems();
     size_t length = items.size();
     for (size_t i = 0; i < length; ++i) {
         if (!isHTMLOptionElement(*items[i]))
@@ -211,6 +219,7 @@ void HTMLOptionElement::parseAttribute(const QualifiedName& name, const AtomicSt
     } else if (name == selectedAttr) {
         if (oldValue.isNull() != value.isNull() && !m_isDirty)
             setSelected(!value.isNull());
+        pseudoStateChanged(CSSSelector::PseudoDefault);
     } else if (name == labelAttr) {
         updateLabel();
     } else {
@@ -233,18 +242,6 @@ void HTMLOptionElement::setValue(const AtomicString& value)
 
 bool HTMLOptionElement::selected() const
 {
-    if (HTMLSelectElement* select = ownerSelectElement()) {
-        // If a stylesheet contains option:checked selectors, this function is
-        // called during parsing. updateListItemSelectedStates() is O(N) where N
-        // is the number of option elements, so the <select> parsing would be
-        // O(N^2) without the isFinishedParsingChildren check. Also,
-        // updateListItemSelectedStates() determines default selection, and we'd
-        // like to avoid to determine default selection with incomplete option
-        // list.
-        if (!select->isFinishedParsingChildren())
-            return m_isSelected;
-        select->updateListItemSelectedStates();
-    }
     return m_isSelected;
 }
 
@@ -313,7 +310,7 @@ void HTMLOptionElement::childrenChanged(const ChildrenChange& change)
     if (HTMLDataListElement* dataList = ownerDataListElement())
         dataList->optionElementChildrenChanged();
     else if (HTMLSelectElement* select = ownerSelectElement())
-        select->optionElementChildrenChanged();
+        select->optionElementChildrenChanged(*this);
     updateLabel();
     HTMLElement::childrenChanged(change);
 }

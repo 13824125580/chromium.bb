@@ -13,14 +13,16 @@ import datetime
 import itertools
 import os
 import re
+import shutil
 import sys
 import time
 from xml.etree import ElementTree
 from xml.dom import minidom
 
 from chromite.cbuildbot import chroot_lib
-from chromite.cbuildbot import failures_lib
+from chromite.cbuildbot import config_lib
 from chromite.cbuildbot import constants
+from chromite.cbuildbot import failures_lib
 from chromite.cbuildbot import lkgm_manager
 from chromite.cbuildbot import manifest_version
 from chromite.cbuildbot import repository
@@ -39,7 +41,16 @@ from chromite.lib import graphite
 from chromite.lib import osutils
 from chromite.lib import patch as cros_patch
 from chromite.lib import timeout_util
+from chromite.scripts import cros_mark_android_as_stable
 from chromite.scripts import cros_mark_chrome_as_stable
+
+try:
+  from infra_libs.ts_mon.common import metrics
+except (ImportError, RuntimeError):
+  metrics = None
+
+
+site_config = config_lib.GetConfig()
 
 
 PRE_CQ = validation_pool.PRE_CQ
@@ -136,9 +147,9 @@ class PatchChangesStage(generic_stages.BuilderStage):
 
       def ApplyChange(self, change):
         if isinstance(change, cros_patch.GerritPatch):
-          cros_build_lib.PrintBuildbotLink(str(change), change.url)
+          logging.PrintBuildbotLink(str(change), change.url)
         elif isinstance(change, cros_patch.UploadedLocalPatch):
-          cros_build_lib.PrintBuildbotStepText(str(change))
+          logging.PrintBuildbotStepText(str(change))
 
         return validation_pool.PatchSeries.ApplyChange(self, change)
 
@@ -164,12 +175,12 @@ class BootstrapStage(PatchChangesStage):
   """
   option_name = 'bootstrap'
 
-  def __init__(self, builder_run, chromite_patch_pool,
-               manifest_patch_pool=None, **kwargs):
+  def __init__(self, builder_run, patch_pool, **kwargs):
     super(BootstrapStage, self).__init__(
         builder_run, trybot_patch_pool.TrybotPatchPool(), **kwargs)
-    self.chromite_patch_pool = chromite_patch_pool
-    self.manifest_patch_pool = manifest_patch_pool
+
+    self.patch_pool = patch_pool
+    self.config_repo = self._run.options.config_repo
     self.returncode = None
     self.tempdir = None
 
@@ -191,13 +202,7 @@ class BootstrapStage(PatchChangesStage):
 
     patch_series = validation_pool.PatchSeries.WorkOnSingleRepo(
         checkout_dir, tracking_branch=self._run.manifest_branch)
-
     self._ApplyPatchSeries(patch_series, patch_pool)
-    # Create the branch that 'repo init -b <target_branch> -u <patched_repo>'
-    # will look for.
-    cmd = ['branch', '-f', self._run.manifest_branch,
-           constants.PATCH_BRANCH]
-    git.RunGit(checkout_dir, cmd)
 
     # Verify that the patched manifest loads properly. Propagate any errors as
     # exceptions.
@@ -234,16 +239,37 @@ class BootstrapStage(PatchChangesStage):
 
     return args
 
+  @classmethod
+  def BootstrapPatchesNeeded(cls, builder_run, patch_pool):
+    """See if bootstrapping is needed for any of the given patches.
+
+    Does NOT determine if they have already been applied.
+
+    Args:
+      builder_run: BuilderRun object for this build.
+      patch_pool: All patches to be applied this run.
+
+    Returns:
+      boolean True if bootstrapping is needed.
+    """
+    chromite_pool = patch_pool.Filter(project=constants.CHROMITE_PROJECT)
+    if builder_run.config.internal:
+      manifest_pool = patch_pool.FilterIntManifest()
+    else:
+      manifest_pool = patch_pool.FilterExtManifest()
+
+    return bool(chromite_pool or manifest_pool)
+
   def HandleApplyFailures(self, failures):
     """Handle the case where patches fail to apply."""
-    if self._run.options.pre_cq or self._run.config.pre_cq:
+    if self._run.config.pre_cq:
       # Let the PreCQSync stage handle this failure. The PreCQSync stage will
       # comment on CLs with the appropriate message when they fail to apply.
       #
       # WARNING: For manifest patches, the Pre-CQ attempts to apply external
       # patches to the internal manifest, and this means we may flag a conflict
       # here even if the patch applies cleanly. TODO(davidjames): Fix this.
-      cros_build_lib.PrintBuildbotStepWarnings()
+      logging.PrintBuildbotStepWarnings()
       logging.error('Failed applying patches: %s\n'.join(map(str, failures)))
     else:
       PatchChangesStage.HandleApplyFailures(self, failures)
@@ -257,31 +283,45 @@ class BootstrapStage(PatchChangesStage):
     if self._run.options.test_bootstrap:
       filter_branch = 'master'
 
+    # Filter all requested patches for the branch.
+    branch_pool = self.patch_pool.FilterBranch(filter_branch)
+
+    # Checkout the new version of chromite, and patch it.
     chromite_dir = os.path.join(self.tempdir, 'chromite')
-    reference_repo = os.path.join(constants.SOURCE_ROOT, 'chromite', '.git')
+    reference_repo = os.path.join(constants.CHROMITE_DIR, '.git')
     repository.CloneGitRepo(chromite_dir, constants.CHROMITE_URL,
                             reference=reference_repo)
     git.RunGit(chromite_dir, ['checkout', filter_branch])
 
-    def BranchAndChromiteFilter(patch):
-      return (trybot_patch_pool.BranchFilter(filter_branch, patch) and
-              trybot_patch_pool.ChromiteFilter(patch))
+    chromite_pool = branch_pool.Filter(project=constants.CHROMITE_PROJECT)
+    if chromite_pool:
+      patch_series = validation_pool.PatchSeries.WorkOnSingleRepo(
+          chromite_dir, filter_branch)
+      self._ApplyPatchSeries(patch_series, chromite_pool)
 
-    patch_series = validation_pool.PatchSeries.WorkOnSingleRepo(
-        chromite_dir, filter_branch,
-        deps_filter_fn=BranchAndChromiteFilter)
+    # Checkout the new version of site config (no patching logic, yet).
+    if self.config_repo:
+      site_config_dir = os.path.join(chromite_dir, 'config')
+      site_config_reference_repo = os.path.join(constants.SITE_CONFIG_DIR,
+                                                '.git')
+      repository.CloneGitRepo(site_config_dir, self.config_repo,
+                              reference=site_config_reference_repo)
+      git.RunGit(site_config_dir, ['checkout', filter_branch])
 
-    filtered_pool = self.chromite_patch_pool.FilterBranch(filter_branch)
-    if filtered_pool:
-      self._ApplyPatchSeries(patch_series, filtered_pool)
+      site_config_pool = branch_pool.FilterGitRemoteUrl(self.config_repo)
+      if site_config_pool:
+        site_patch_series = validation_pool.PatchSeries.WorkOnSingleRepo(
+            site_config_dir, filter_branch)
+        self._ApplyPatchSeries(site_patch_series, site_config_pool)
 
+    # Re-exec into new instance of cbuildbot, with proper command line args.
     cbuildbot_path = constants.PATH_TO_CBUILDBOT
     if not os.path.exists(os.path.join(self.tempdir, cbuildbot_path)):
       cbuildbot_path = 'chromite/cbuildbot/cbuildbot'
     cmd = self.FilterArgsForTargetCbuildbot(self.tempdir, cbuildbot_path,
                                             self._run.options)
 
-    extra_params = ['--sourceroot=%s' % self._run.options.sourceroot]
+    extra_params = ['--sourceroot', self._run.options.sourceroot]
     extra_params.extend(self._run.options.bootstrap_args)
     if self._run.options.test_bootstrap:
       # We don't want re-executed instance to see this.
@@ -291,8 +331,13 @@ class BootstrapStage(PatchChangesStage):
       # bootstrapping for the next execution.  Also pass in the patched manifest
       # repository.
       extra_params.append('--nobootstrap')
-      if self.manifest_patch_pool:
-        manifest_dir = self._ApplyManifestPatches(self.manifest_patch_pool)
+      if self._run.config.internal:
+        manifest_pool = branch_pool.FilterIntManifest()
+      else:
+        manifest_pool = branch_pool.FilterExtManifest()
+
+      if manifest_pool:
+        manifest_dir = self._ApplyManifestPatches(manifest_pool)
         extra_params.extend(['--manifest-repo-url', manifest_dir])
 
     cmd += extra_params
@@ -328,20 +373,36 @@ class SyncStage(generic_stages.BuilderStage):
 
     if internal:
       if test:
-        return constants.MANIFEST_VERSIONS_INT_GOB_URL_TEST
+        return site_config.params.MANIFEST_VERSIONS_INT_GOB_URL_TEST
       else:
-        return constants.MANIFEST_VERSIONS_INT_GOB_URL
+        return site_config.params.MANIFEST_VERSIONS_INT_GOB_URL
     else:
       if test:
-        return constants.MANIFEST_VERSIONS_GOB_URL_TEST
+        return site_config.params.MANIFEST_VERSIONS_GOB_URL_TEST
       else:
-        return constants.MANIFEST_VERSIONS_GOB_URL
+        return site_config.params.MANIFEST_VERSIONS_GOB_URL
 
   def Initialize(self):
     self._InitializeRepo()
 
   def _InitializeRepo(self):
     """Set up the RepoRepository object."""
+    # If we have no repository at all, but we have a warm cache path, copy in
+    # the warm cache. This is done so builders can try to avoid doing a sync
+    # from scratch on a new builder (especially GCE instances).
+    if (not repository.IsARepoRoot(self._build_root) and
+        self._run.options.repo_cache and
+        repository.IsARepoRoot(self._run.options.repo_cache)):
+      # If the warm cache is invalid, the wrong branch, or from the wrong
+      # manifest, Repository will repair it.
+      logging.info('Using warm cache "%s" to populate buildroot "%s"',
+                   self._run.options.repo_cache,
+                   self._build_root)
+
+      shutil.copytree(os.path.join(self._run.options.repo_cache, '.repo'),
+                      os.path.join(self._build_root, '.repo'),
+                      symlinks=True)
+
     self.repo = self.GetRepoRepository()
 
   def GetNextManifest(self):
@@ -386,6 +447,20 @@ class SyncStage(generic_stages.BuilderStage):
 
     return True
 
+  def WriteChangesToMetadata(self, changes):
+    """Write the changes under test into the metadata.
+
+    Args:
+      changes: A list of GerritPatch instances.
+    """
+    changes_list = self._run.attrs.metadata.GetDict().get('changes', [])
+    changes_list = changes_list + [c.GetAttributeDict() for c in set(changes)]
+    changes_list = sorted(changes_list,
+                          key=lambda x: (x[cros_patch.ATTR_GERRIT_NUMBER],
+                                         x[cros_patch.ATTR_PATCH_NUMBER],
+                                         x[cros_patch.ATTR_REMOTE]))
+    self._run.attrs.metadata.UpdateWithDict({'changes': changes_list})
+
   @failures_lib.SetFailureType(failures_lib.InfrastructureFailure)
   def PerformStage(self):
     self.Initialize()
@@ -407,7 +482,7 @@ class SyncStage(generic_stages.BuilderStage):
 
       # Print the blamelist.
       if fresh_sync:
-        cros_build_lib.PrintBuildbotStepText('(From scratch)')
+        logging.PrintBuildbotStepText('(From scratch)')
       elif self._run.options.buildbot:
         lkgm_manager.GenerateBlameList(self.repo, old_filename)
 
@@ -415,7 +490,7 @@ class SyncStage(generic_stages.BuilderStage):
       if self._run.config.build_before_patching:
         pre_build_passed = self.RunPrePatchBuild()
         if not pre_build_passed:
-          cros_build_lib.PrintBuildbotStepText('Pre-patch build failed.')
+          logging.PrintBuildbotStepText('Pre-patch build failed.')
 
 
 class LKGMSyncStage(SyncStage):
@@ -427,9 +502,9 @@ class LKGMSyncStage(SyncStage):
     """Override: Gets the LKGM."""
     # TODO(sosa):  Should really use an initialized manager here.
     if self.internal:
-      mv_dir = constants.INTERNAL_MANIFEST_VERSIONS_PATH
+      mv_dir = site_config.params.INTERNAL_MANIFEST_VERSIONS_PATH
     else:
-      mv_dir = constants.EXTERNAL_MANIFEST_VERSIONS_PATH
+      mv_dir = site_config.params.EXTERNAL_MANIFEST_VERSIONS_PATH
 
     manifest_path = os.path.join(self._build_root, mv_dir)
     manifest_repo = self._GetManifestVersionsRepoUrl()
@@ -453,12 +528,14 @@ class ManifestVersionedSyncStage(SyncStage):
     # repository. Otherwise, the push will be rejected by the server.
     self.manifest_repo = self._GetManifestVersionsRepoUrl()
 
-    # 1. If we're uprevving Chrome, Chrome might have changed even if the
-    #    manifest has not, so we should force a build to double check. This
-    #    means that we'll create a new manifest, even if there are no changes.
+    # 1. Our current logic for calculating whether to re-run a build assumes
+    #    that if the build is green, then it doesn't need to be re-run. This
+    #    isn't true for canary masters, because the canary master ignores the
+    #    status of its slaves and is green even if they fail. So set
+    #    force=True in this case.
     # 2. If we're running with --debug, we should always run through to
     #    completion, so as to ensure a complete test.
-    self._force = self._chrome_rev or self._run.options.debug
+    self._force = self._run.config.master or self._run.options.debug
 
   def HandleSkip(self):
     """Initializes a manifest manager to the specified version if skipped."""
@@ -469,7 +546,7 @@ class ManifestVersionedSyncStage(SyncStage):
 
   def ForceVersion(self, version):
     """Creates a manifest manager from given version and returns manifest."""
-    cros_build_lib.PrintBuildbotStepText(version)
+    logging.PrintBuildbotStepText(version)
     return self.manifest_manager.BootstrapFromVersion(version)
 
   def VersionIncrementType(self):
@@ -509,6 +586,28 @@ class ManifestVersionedSyncStage(SyncStage):
         dry_run=dry_run,
         master=self._run.config.master))
 
+  def _SetAndroidVersionIfApplicable(self, manifest):
+    """If 'android' is in |manifest|, write version to the BuilderRun object.
+
+    Args:
+      manifest: Path to the manifest.
+    """
+    manifest_dom = minidom.parse(manifest)
+    elements = manifest_dom.getElementsByTagName(lkgm_manager.ANDROID_ELEMENT)
+
+    if elements:
+      android_version = elements[0].getAttribute(
+          lkgm_manager.ANDROID_VERSION_ATTR)
+      logging.info(
+          'Android version was found in the manifest: %s', android_version)
+      # Update the metadata dictionary. This is necessary because the
+      # metadata dictionary is preserved through re-executions, so
+      # UprevAndroidStage can read the version from the dictionary
+      # later. This is easier than parsing the manifest again after
+      # the re-execution.
+      self._run.attrs.metadata.UpdateKeyDictWithDict(
+          'version', {'android': android_version})
+
   def _SetChromeVersionIfApplicable(self, manifest):
     """If 'chrome' is in |manifest|, write the version to the BuilderRun object.
 
@@ -543,15 +642,15 @@ class ManifestVersionedSyncStage(SyncStage):
     target_version = self.manifest_manager.current_version
 
     # Print the Blamelist here.
-    url_prefix = 'http://chromeos-images.corp.google.com/diff/report?'
-    url = url_prefix + 'from=%s&to=%s' % (previous_version, target_version)
-    cros_build_lib.PrintBuildbotLink('Blamelist', url)
+    url_prefix = 'https://crosland.corp.google.com/log/'
+    url = url_prefix + '%s..%s' % (previous_version, target_version)
+    logging.PrintBuildbotLink('Blamelist', url)
     # The testManifestVersionedSyncOnePartBranch interacts badly with this
     # function.  It doesn't fully initialize self.manifest_manager which
     # causes target_version to be None.  Since there isn't a clean fix in
     # either direction, just throw this through str().  In the normal case,
     # it's already a string anyways.
-    cros_build_lib.PrintBuildbotStepText(str(target_version))
+    logging.PrintBuildbotStepText(str(target_version))
 
     return to_return
 
@@ -571,7 +670,7 @@ class ManifestVersionedSyncStage(SyncStage):
         root = doc.getroot()
         for node in root.findall('project'):
           remote = node.attrib.get('remote')
-          if remote and remote not in constants.GIT_REMOTES:
+          if remote and remote not in site_config.params.GIT_REMOTES:
             root.remove(node)
         doc.write(filtered_manifest)
         yield filtered_manifest
@@ -617,7 +716,9 @@ class ManifestVersionedSyncStage(SyncStage):
     if db and master_id:
       assert not self._run.options.force_version
       master_build_status = db.GetBuildStatus(master_id)
-      latest = db.GetBuildHistory(master_build_status['build_config'], 1)
+      latest = db.GetBuildHistory(
+          master_build_status['build_config'], 1,
+          milestone_version=master_build_status['milestone_version'])
       if latest and latest[0]['id'] != master_id:
         raise failures_lib.MasterSlaveVersionMismatchFailure(
             'This slave\'s master (id=%s) has been supplanted by a newer '
@@ -647,13 +748,15 @@ class ManifestVersionedSyncStage(SyncStage):
       if self._run.attrs.manifest_manager.DidLastBuildFail():
         raise failures_lib.StepFailure('The previous build failed.')
       else:
-        sys.exit(0)
+        raise failures_lib.ExitEarlyException(
+            'ManifestVersionedSyncStage finished and exited early.')
 
     # Log this early on for the release team to grep out before we finish.
     if self.manifest_manager:
       self._Print('\nRELEASETAG: %s\n' % (
           self.manifest_manager.current_version))
 
+    self._SetAndroidVersionIfApplicable(next_manifest)
     self._SetChromeVersionIfApplicable(next_manifest)
     # To keep local trybots working, remove restricted checkouts from the
     # official manifest we get from manifest-versions.
@@ -675,10 +778,9 @@ class MasterSlaveLKGMSyncStage(ManifestVersionedSyncStage):
   This stage uses an LKGM manifest manager that handles LKGM
   candidates and their states.
   """
-
-  # TODO(mtennant): Turn this into self._run.attrs.sub_manager or similar.
-  # An instance of lkgm_manager.LKGMManager for slave builds.
-  sub_manager = None
+  # If we are using an internal manifest, but need to be able to create an
+  # external manifest, we create a second manager for that manifest.
+  external_manager = None
   MAX_BUILD_HISTORY_LENGTH = 10
   MilestoneVersion = collections.namedtuple(
       'MilestoneVersion', ['milestone', 'platform'])
@@ -687,6 +789,7 @@ class MasterSlaveLKGMSyncStage(ManifestVersionedSyncStage):
     super(MasterSlaveLKGMSyncStage, self).__init__(builder_run, **kwargs)
     # lkgm_manager deals with making sure we're synced to whatever manifest
     # we get back in GetNextManifest so syncing again is redundant.
+    self._android_version = None
     self._chrome_version = None
 
   def _GetInitializedManager(self, internal):
@@ -717,12 +820,13 @@ class MasterSlaveLKGMSyncStage(ManifestVersionedSyncStage):
     self.RegisterManifestManager(self._GetInitializedManager(self.internal))
     if self._run.config.master and self._GetSlaveConfigs():
       assert self.internal, 'Unified masters must use an internal checkout.'
-      MasterSlaveLKGMSyncStage.sub_manager = self._GetInitializedManager(False)
+      MasterSlaveLKGMSyncStage.external_manager = \
+          self._GetInitializedManager(False)
 
   def ForceVersion(self, version):
     manifest = super(MasterSlaveLKGMSyncStage, self).ForceVersion(version)
-    if MasterSlaveLKGMSyncStage.sub_manager:
-      MasterSlaveLKGMSyncStage.sub_manager.BootstrapFromVersion(version)
+    if MasterSlaveLKGMSyncStage.external_manager:
+      MasterSlaveLKGMSyncStage.external_manager.BootstrapFromVersion(version)
 
     return manifest
 
@@ -743,14 +847,25 @@ class MasterSlaveLKGMSyncStage(ManifestVersionedSyncStage):
     assert self._run.config.master
 
     build_id = self._run.attrs.metadata.GetDict().get('build_id')
+    logging.info('Creating new candidate manifest, including chrome version '
+                 '%s.', self._chrome_version)
+    if self._android_version:
+      logging.info('Adding Android version to new candidate manifest %s.',
+                   self._android_version)
     manifest = self.manifest_manager.CreateNewCandidate(
+        android_version=self._android_version,
         chrome_version=self._chrome_version,
         build_id=build_id)
-    if MasterSlaveLKGMSyncStage.sub_manager:
-      MasterSlaveLKGMSyncStage.sub_manager.CreateFromManifest(
+    if MasterSlaveLKGMSyncStage.external_manager:
+      MasterSlaveLKGMSyncStage.external_manager.CreateFromManifest(
           manifest, build_id=build_id)
 
     return manifest
+
+  def GetLatestAndroidVersion(self):
+    """Returns the version of Android to uprev."""
+    return cros_mark_android_as_stable.GetLatestBuild(
+        constants.ANDROID_BUCKET_URL, constants.ANDROID_BUILD_BRANCH)[0]
 
   def GetLatestChromeVersion(self):
     """Returns the version of Chrome to uprev."""
@@ -793,11 +908,18 @@ class MasterSlaveLKGMSyncStage(ManifestVersionedSyncStage):
   @failures_lib.SetFailureType(failures_lib.InfrastructureFailure)
   def PerformStage(self):
     """Performs the stage."""
+    if self._android_rev and self._run.config.master:
+      self._android_version = self.GetLatestAndroidVersion()
+      logging.info('Latest Android version is: %s', self._android_version)
+
     if (self._chrome_rev == constants.CHROME_REV_LATEST and
         self._run.config.master):
       # PFQ master needs to determine what version of Chrome to build
       # for all slaves.
+      logging.info('I am a master running with CHROME_REV_LATEST, '
+                   'therefore getting latest chrome version.')
       self._chrome_version = self.GetLatestChromeVersion()
+      logging.info('Latest chrome version is: %s', self._chrome_version)
 
     ManifestVersionedSyncStage.PerformStage(self)
 
@@ -854,11 +976,14 @@ class CommitQueueSyncStage(MasterSlaveLKGMSyncStage):
     changes_to_test = []
 
     _, db = self._run.GetCIDBHandle()
-    actions_for_changes = db.GetActionsForChanges(changes)
-    for change in changes:
-      status = clactions.GetCLPreCQStatus(change, actions_for_changes)
-      if status == constants.CL_STATUS_PASSED:
-        changes_to_test.append(change)
+    if db:
+      actions_for_changes = db.GetActionsForChanges(changes)
+      for change in changes:
+        status = clactions.GetCLPreCQStatus(change, actions_for_changes)
+        if status == constants.CL_STATUS_PASSED:
+          changes_to_test.append(change)
+    else:
+      logging.warning("DB not available, unable to filter for PreCQ passed.")
 
     # Allow Commit-Ready=+2 changes to bypass the Pre-CQ, if there are no other
     # changes.
@@ -915,7 +1040,7 @@ class CommitQueueSyncStage(MasterSlaveLKGMSyncStage):
       if self._run.options.cq_gerrit_override:
         query = (self._run.options.cq_gerrit_override, None)
 
-      self.pool = pool = validation_pool.ValidationPool.AcquirePool(
+      self.pool = validation_pool.ValidationPool.AcquirePool(
           self._run.config.overlays, self.repo,
           self._run.buildnumber, self._run.GetBuilderName(),
           query,
@@ -932,36 +1057,33 @@ class CommitQueueSyncStage(MasterSlaveLKGMSyncStage):
     # start.
     build_id, db = self._run.GetCIDBHandle()
     if db:
-      timeout = constants.MASTER_BUILD_TIMEOUT_SECONDS.get(
-          self._run.config.build_type,
-          constants.MASTER_BUILD_TIMEOUT_DEFAULT_SECONDS)
-      db.ExtendDeadline(build_id, timeout)
+      db.ExtendDeadline(build_id, self._run.config.build_timeout)
 
-    manifest = self.manifest_manager.CreateNewCandidate(validation_pool=pool,
-                                                        build_id=build_id)
-    if MasterSlaveLKGMSyncStage.sub_manager:
-      MasterSlaveLKGMSyncStage.sub_manager.CreateFromManifest(
+    logging.info('Creating new candidate manifest.')
+    manifest = self.manifest_manager.CreateNewCandidate(
+        validation_pool=self.pool, build_id=build_id)
+    if MasterSlaveLKGMSyncStage.external_manager:
+      MasterSlaveLKGMSyncStage.external_manager.CreateFromManifest(
           manifest, build_id=build_id)
 
     return manifest
 
   def ManifestCheckout(self, next_manifest):
     """Checks out the repository to the given manifest."""
-    if self._run.config.build_before_patching:
-      assert not self._run.config.master
-      pre_build_passed = self.RunPrePatchBuild()
-      cros_build_lib.PrintBuildbotStepName(
-          'CommitQueueSync : Apply Patches')
-      if not pre_build_passed:
-        cros_build_lib.PrintBuildbotStepText('Pre-patch build failed.')
-
-    # Make sure the chroot version is valid.
     lkgm_version = self._GetLGKMVersionFromManifest(next_manifest)
     chroot_manager = chroot_lib.ChrootManager(self._build_root)
+    # Make sure the chroot version is valid.
     chroot_manager.EnsureChrootAtVersion(lkgm_version)
 
     # Clear the chroot version as we are in the middle of building it.
     chroot_manager.ClearChrootVersion()
+
+    if self._run.config.build_before_patching:
+      assert not self._run.config.master
+      pre_build_passed = self.RunPrePatchBuild()
+      logging.PrintBuildbotStepName('CommitQueueSync : Apply Patches')
+      if not pre_build_passed:
+        logging.PrintBuildbotStepText('Pre-patch build failed.')
 
     # Syncing to a pinned manifest ensures that we have the specified
     # revisions, but, unfortunately, repo won't bother to update branches.
@@ -991,6 +1113,8 @@ class CommitQueueSyncStage(MasterSlaveLKGMSyncStage):
       self.HandleSkip()
     else:
       ManifestVersionedSyncStage.PerformStage(self)
+
+    self.WriteChangesToMetadata(self.pool.applied)
 
 
 class PreCQSyncStage(SyncStage):
@@ -1023,13 +1147,15 @@ class PreCQSyncStage(SyncStage):
     self.pool = validation_pool.ValidationPool.AcquirePreCQPool(
         self._run.config.overlays, self._build_root,
         self._run.buildnumber, self._run.config.name,
-        dryrun=self._run.options.debug_forced, changes=self.patches,
+        dryrun=self._run.options.debug_forced, candidates=self.patches,
         builder_run=self._run)
     self.pool.ApplyPoolIntoRepo()
 
-    if len(self.pool.changes) == 0 and self.patches:
+    if len(self.pool.applied) == 0 and self.patches:
       cros_build_lib.Die('No changes have been applied.')
 
+    changes = self.pool.applied or self.patches
+    self.WriteChangesToMetadata(changes)
 
 class PreCQLauncherStage(SyncStage):
   """Scans for CLs and automatically launches Pre-CQ jobs to test them."""
@@ -1090,7 +1216,7 @@ class PreCQLauncherStage(SyncStage):
         os.path.basename(patch.project),
         str(patch),
     )
-    cros_build_lib.PrintBuildbotLink(' | '.join(items), patch.url)
+    logging.PrintBuildbotLink(' | '.join(items), patch.url)
 
   def _ConfiguredVerificationsForChange(self, change):
     """Determine which configs to test |change| with.
@@ -1243,9 +1369,11 @@ class PreCQLauncherStage(SyncStage):
 
     # Create a list of disjoint transactions to test.
     manifest = git.ManifestCheckout.Cached(self._build_root)
+    logging.info('Creating disjoint transactions.')
     plans = pool.CreateDisjointTransactions(
         manifest, screened_changes,
         max_txn_length=self.MAX_PATCHES_PER_TRYBOT_RUN)
+    logging.info('Created %s disjoint transactions.', len(plans))
     for plan in plans:
       # If any of the CLs in the plan is not yet screened, wait for them to
       # be screened.
@@ -1331,9 +1459,6 @@ class PreCQLauncherStage(SyncStage):
       pool: The current validation pool.
       current_time: datetime.datetime timestamp giving current database time.
     """
-    # TODO(akeshet) restore trybot launch retries here (there was
-    # no straightforward existing mechanism to include them in the
-    # transition to parallel pre-cq).
     timeout_statuses = (constants.CL_PRECQ_CONFIG_STATUS_LAUNCHED,
                         constants.CL_PRECQ_CONFIG_STATUS_INFLIGHT)
     config_progress = progress_map[change]
@@ -1439,27 +1564,12 @@ class PreCQLauncherStage(SyncStage):
     can_submit = set(c for c in (verified.intersection(to_process)) if
                      c.IsMergeable() and self.CanSubmitChangeInPreCQ(c))
 
+    self.SendChangeCountStats(status_map)
+
     # Changes that will be submitted.
     will_submit = set()
     # Changes that will be passed.
     will_pass = set()
-
-    # Separately count and log the number of mergable and speculative changes in
-    # each of the possible pre-cq statuses (or in status None).
-    POSSIBLE_STATUSES = clactions.PRE_CQ_CL_STATUSES | {None}
-    status_counts = {}
-    for count_bin in itertools.product((True, False), POSSIBLE_STATUSES):
-      status_counts[count_bin] = 0
-    for c, status in status_map.iteritems():
-      count_bin = (c.IsMergeable(), status)
-      status_counts[count_bin] = status_counts[count_bin] + 1
-    for count_bin, count in sorted(status_counts.items()):
-      subtype = 'mergeable' if count_bin[0] else 'speculative'
-      status = count_bin[1]
-      name = '.'.join(['pre-cq-status', status if status else 'None'])
-      logging.info('Sending stat (name, subtype, count): (%s, %s, %s)',
-                   name, subtype, count)
-      graphite.StatsFactory.GetInstance().Gauge(name).send(subtype, count)
 
     for change in inflight:
       if status_map[change] != constants.CL_STATUS_INFLIGHT:
@@ -1467,13 +1577,15 @@ class PreCQLauncherStage(SyncStage):
         # Change the status to inflight.
         self.UpdateChangeStatuses([change], constants.CL_STATUS_INFLIGHT)
         build_dicts = db.GetBuildStatuses(build_ids)
-        urls = []
+        lines = []
         for b in build_dicts:
-          urls.append(tree_status.ConstructDashboardURL(
-              b['waterfall'], b['builder_name'], b['build_number']))
+          waterfall_url = constants.WATERFALL_TO_DASHBOARD[b['waterfall']]
+          url = tree_status.ConstructDashboardURL(
+              waterfall_url, b['builder_name'], b['build_number'])
+          lines.append('(%s) : %s' % (b['build_config'], url))
 
         # Send notifications.
-        pool.HandleApplySuccess(change, build_log='\n'.join(urls))
+        pool.HandleApplySuccess(change, build_log=('\n' + '\n'.join(lines)))
 
     for change in to_process:
       # Detect if change is ready to be marked as passed, or ready to submit.
@@ -1521,6 +1633,14 @@ class PreCQLauncherStage(SyncStage):
         launch_count += len(configs)
         cl_launch_count += len(configs) * len(plan)
 
+    if metrics:
+      metrics.CounterMetric('chromeos/cbuildbot/pre-cq/launch_count')\
+            .increment_by(launch_count)
+      metrics.CounterMetric('chromeos/cbuildbot/pre-cq/cl_launch_count')\
+            .increment_by(cl_launch_count)
+      metrics.CounterMetric('chromeos/cbuildbot/pre-cq/tick_count')\
+            .increment()
+
     graphite.StatsFactory.GetInstance().Counter('pre-cq').increment(
         'launch_count', launch_count)
     graphite.StatsFactory.GetInstance().Counter('pre-cq').increment(
@@ -1541,12 +1661,39 @@ class PreCQLauncherStage(SyncStage):
     if tree_status.IsTreeOpen(throttled_ok=True):
       pool.SubmitNonManifestChanges(check_tree_open=False,
                                     reason=constants.STRATEGY_NONMANIFEST)
-      pool.SubmitChanges(will_submit, check_tree_open=False,
-                         reason=constants.STRATEGY_PRECQ_SUBMIT)
+      submit_reason = constants.STRATEGY_PRECQ_SUBMIT
+      will_submit = {c:submit_reason for c in will_submit}
+      pool.SubmitChanges(will_submit, check_tree_open=False)
 
     # Tell ValidationPool to keep waiting for more changes until we hit
     # its internal timeout.
     return [], []
+
+  def SendChangeCountStats(self, status_map):
+    """Sends metrics of the CL counts to Monarch and statsd.
+
+    Args:
+      status_map: A map from CLs to statuses.
+    """
+    # Separately count and log the number of mergable and speculative changes in
+    # each of the possible pre-cq statuses (or in status None).
+    POSSIBLE_STATUSES = clactions.PRE_CQ_CL_STATUSES | {None}
+    status_counts = {}
+    for count_bin in itertools.product((True, False), POSSIBLE_STATUSES):
+      status_counts[count_bin] = 0
+    for c, status in status_map.iteritems():
+      count_bin = (c.IsMergeable(), status)
+      status_counts[count_bin] += 1
+    for (is_mergable, status), count in sorted(status_counts.items()):
+      subtype = 'mergeable' if is_mergable else 'speculative'
+      name = '.'.join(['pre-cq-status', status if status else 'None'])
+      logging.info('Sending stat (name, subtype, count): (%s, %s, %s)',
+                   name, subtype, count)
+      graphite.StatsFactory.GetInstance().Gauge(name).send(subtype, count)
+      metrics.GaugeMetric('chromeos/cbuildbot/pre-cq/cl-count').set(
+          count,
+          {'status': str(status),
+           'subtype': subtype})
 
   @failures_lib.SetFailureType(failures_lib.InfrastructureFailure)
   def PerformStage(self):
@@ -1561,7 +1708,7 @@ class PreCQLauncherStage(SyncStage):
     validation_pool.ValidationPool.AcquirePool(
         self._run.config.overlays, self.repo,
         self._run.buildnumber,
-        constants.PRE_CQ_LAUNCHER_NAME,
+        self._run.GetBuilderName(),
         query,
         dryrun=self._run.options.debug,
         check_tree_open=False, change_filter=self.ProcessChanges,

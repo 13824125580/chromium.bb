@@ -15,7 +15,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
@@ -308,7 +308,8 @@ bool NavigationEquals(const sessions::SerializedNavigationEntry& expected,
                << ", actual " << actual.title();
     return false;
   }
-  if (expected.transition_type() != actual.transition_type()) {
+  if (!ui::PageTransitionTypeIncludingQualifiersIs(expected.transition_type(),
+                                                   actual.transition_type())) {
     LOG(ERROR) << "Expected transition "
                << expected.transition_type()
                << ", actual "

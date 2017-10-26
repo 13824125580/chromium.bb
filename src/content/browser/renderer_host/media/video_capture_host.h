@@ -91,8 +91,7 @@ class CONTENT_EXPORT VideoCaptureHost
                          int buffer_id) override;
   void OnBufferReady(VideoCaptureControllerID id,
                      int buffer_id,
-                     const scoped_refptr<media::VideoFrame>& frame,
-                     const base::TimeTicks& timestamp) override;
+                     const scoped_refptr<media::VideoFrame>& frame) override;
   void OnEnded(VideoCaptureControllerID id) override;
 
  private:
@@ -126,6 +125,10 @@ class CONTENT_EXPORT VideoCaptureHost
   void OnResumeCapture(int device_id,
                        media::VideoCaptureSessionId session_id,
                        const media::VideoCaptureParams& params);
+
+  // IPC message: Requests that the video capture send a frame "soon" (e.g., to
+  // resolve picture loss or quality issues).
+  void OnRequestRefreshFrame(int device_id);
 
   // IPC message: Called when a renderer is finished using a buffer. Notifies
   // the controller.

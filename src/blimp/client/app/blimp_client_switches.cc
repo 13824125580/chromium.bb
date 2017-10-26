@@ -7,11 +7,19 @@
 namespace blimp {
 namespace switches {
 
-// Specifies the blimplet scheme, IP-address and port to connect to, e.g.:
-// --blimplet-host="tcp:127.0.0.1:25467".  Valid schemes are "ssl",
-// "tcp", and "quic".
-// TODO(nyquist): Add support for DNS-lookup. See http://crbug.com/576857.
-const char kBlimpletEndpoint[] = "blimplet-endpoint";
+const char kEngineCertPath[] = "engine-cert-path";
+
+// Specifies the engine's IP address. Must be used in conjunction with
+// --engine-port and --engine-transport.
+// This is the same command line flag as ENGINE_IP in
+// blimp/client/app/android/java/src/org/chromium/blimp/BlimpClientSwitches.java
+const char kEngineIP[] = "engine-ip";
+
+const char kEnginePort[] = "engine-port";
+
+const char kEngineTransport[] = "engine-transport";
+
+const char kDownloadWholeDocument[] = "download-whole-document";
 
 }  // namespace switches
 }  // namespace blimp

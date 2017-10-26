@@ -46,13 +46,13 @@
         '<(DEPTH)/extensions/extensions_resources.gyp:extensions_resources',
         '<(DEPTH)/extensions/shell/browser/api/api_registration.gyp:shell_api_registration',
         '<(DEPTH)/extensions/shell/common/api/api.gyp:shell_api',
-        '<(DEPTH)/mojo/mojo_base.gyp:mojo_environment_chromium',
         '<(DEPTH)/mojo/mojo_edk.gyp:mojo_system_impl',
         '<(DEPTH)/skia/skia.gyp:skia',
         '<(DEPTH)/third_party/WebKit/public/blink.gyp:blink',
+        '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld_2',
         '<(DEPTH)/ui/base/ime/ui_base_ime.gyp:ui_base_ime',
         '<(DEPTH)/ui/base/ui_base.gyp:ui_base',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'export_dependent_settings': [
         '<(DEPTH)/content/content.gyp:content_browser',
@@ -66,10 +66,6 @@
         '<@(app_shell_lib_sources)',
       ],
       'conditions': [
-        [ 'cld_version==2', {
-              'dependencies': [
-                '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld2_platform_impl', ],
-        }],
         ['use_aura==1', {
           'dependencies': [
             '<(DEPTH)/ui/wm/wm.gyp:wm',
@@ -173,6 +169,7 @@
               # Modify the Info.plist as needed.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['../../build/mac/tweak_info_plist.py',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--scm=1',
                          '--version=<(app_shell_version)'],
             },
@@ -308,6 +305,7 @@
               # but this seems like a really good place to store them.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['../../build/mac/tweak_info_plist.py',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--breakpad=1',
                          '--keystone=0',
                          '--scm=1',
@@ -380,6 +378,7 @@
               # never placed into the helper.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['../../build/mac/tweak_info_plist.py',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--breakpad=0',
                          '--keystone=0',
                          '--scm=0',

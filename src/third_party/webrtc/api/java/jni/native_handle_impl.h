@@ -18,14 +18,37 @@
 
 namespace webrtc_jni {
 
+// Open gl texture matrix, in column-major order. Operations are
+// in-place.
+class Matrix {
+ public:
+  Matrix(JNIEnv* jni, jfloatArray a);
+
+  jfloatArray ToJava(JNIEnv* jni);
+
+  // Crop arguments are relative to original size.
+  void Crop(float cropped_width,
+            float cropped_height,
+            float crop_x,
+            float crop_y);
+
+  void Rotate(webrtc::VideoRotation rotation);
+
+ private:
+  static void Multiply(const float a[16], const float b[16], float result[16]);
+  float elem_[16];
+};
+
 // Wrapper for texture object.
 struct NativeHandleImpl {
   NativeHandleImpl(JNIEnv* jni,
                    jint j_oes_texture_id,
                    jfloatArray j_transform_matrix);
 
+  NativeHandleImpl(int id, const Matrix& matrix);
+
   const int oes_texture_id;
-  float sampling_matrix[16];
+  Matrix sampling_matrix;
 };
 
 class AndroidTextureBuffer : public webrtc::NativeHandleBuffer {
@@ -38,8 +61,13 @@ class AndroidTextureBuffer : public webrtc::NativeHandleBuffer {
   ~AndroidTextureBuffer();
   rtc::scoped_refptr<VideoFrameBuffer> NativeToI420Buffer() override;
 
-  rtc::scoped_refptr<AndroidTextureBuffer> ScaleAndRotate(
-      int dst_widht,
+  // First crop, then scale to dst resolution, and then rotate.
+  rtc::scoped_refptr<AndroidTextureBuffer> CropScaleAndRotate(
+      int cropped_width,
+      int cropped_height,
+      int crop_x,
+      int crop_y,
+      int dst_width,
       int dst_height,
       webrtc::VideoRotation rotation);
 

@@ -7,7 +7,8 @@
 
 #include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "media/base/decoder_buffer.h"
 
 namespace media {
@@ -23,9 +24,9 @@ bool WebMCreateDecryptConfig(const uint8_t* data,
                              int data_size,
                              const uint8_t* key_id,
                              int key_id_size,
-                             scoped_ptr<DecryptConfig>* decrypt_config,
+                             std::unique_ptr<DecryptConfig>* decrypt_config,
                              int* data_offset);
 
 }  // namespace media
 
-#endif  // MEDIA_FORMATS_WEBM_WEBM_CRYPT_HELPERS_H_
+#endif  // MEDIA_FORMATS_WEBM_WEBM_CRYPTO_HELPERS_H_

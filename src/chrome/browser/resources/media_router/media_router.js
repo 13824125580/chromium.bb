@@ -20,7 +20,9 @@ cr.define('media_router', function() {
    * router content, such as the media sink and media route lists.
    */
   function initialize() {
-    media_router.browserApi.requestInitialData();
+    // For non-Mac platforms, request data immediately after initialization.
+    if (!cr.isMac)
+      onRequestInitialData();
 
     container = /** @type {!MediaRouterContainerElement} */
         ($('media-router-container'));
@@ -33,14 +35,18 @@ cr.define('media_router', function() {
                                onAcknowledgeFirstRunFlow);
     container.addEventListener('back-click', onNavigateToSinkList);
     container.addEventListener('cast-mode-selected', onCastModeSelected);
+    container.addEventListener('change-route-source-click',
+                               onChangeRouteSourceClick);
     container.addEventListener('close-dialog', onCloseDialog);
-    container.addEventListener('close-route-click', onCloseRouteClick);
+    container.addEventListener('close-route', onCloseRoute);
     container.addEventListener('create-route', onCreateRoute);
     container.addEventListener('issue-action-click', onIssueActionClick);
+    container.addEventListener('join-route-click', onJoinRouteClick);
     container.addEventListener('navigate-sink-list-to-details',
                                onNavigateToDetails);
     container.addEventListener('navigate-to-cast-mode-list',
                                onNavigateToCastMode);
+    container.addEventListener('report-filter', onFilter);
     container.addEventListener('report-initial-action', onInitialAction);
     container.addEventListener('report-initial-action-close',
                                onInitialActionClose);
@@ -48,12 +54,34 @@ cr.define('media_router', function() {
     container.addEventListener('report-sink-click-time',
                                onSinkClickTimeReported);
     container.addEventListener('report-sink-count', onSinkCountReported);
+    container.addEventListener('report-resolved-route',
+                               onReportRouteCreationOutcome);
+    container.addEventListener('request-initial-data',
+                               onRequestInitialData);
+    container.addEventListener('search-sinks-and-create-route',
+                               onSearchSinksAndCreateRoute);
     container.addEventListener('show-initial-state', onShowInitialState);
     container.addEventListener('sink-click', onSinkClick);
-    container.addEventListener('start-casting-to-route-click',
-                               onStartCastingToRouteClick);
 
     window.addEventListener('blur', onWindowBlur);
+  }
+
+  /**
+   * Requests that the Media Router searches for a sink with criteria
+   * |event.detail.name|.
+   * @param {!Event} event
+   * Parameters in |event|.detail:
+   *   id - id of the pseudo sink generating the request.
+   *   name - sink search criteria.
+   *   domain - user's current domain.
+   *   selectedCastMode - type of cast mode selected by the user.
+   */
+  function onSearchSinksAndCreateRoute(event) {
+    /** @type {{id: string, domain: string, name: string,
+     *          selectedCastMode: number}} */
+    var detail = event.detail;
+    media_router.browserApi.searchSinksAndCreateRoute(
+        detail.id, detail.name, detail.domain, detail.selectedCastMode);
   }
 
   /**
@@ -68,6 +96,22 @@ cr.define('media_router', function() {
     /** @type {{castModeType: number}} */
     var detail = event.detail;
     media_router.browserApi.reportSelectedCastMode(detail.castModeType);
+  }
+
+  /**
+   * Reports the route for which the users wants to replace the source and the
+   * cast mode that should be used for the new source.
+   *
+   * @param {!Event} event The event object.
+   * Parameters in |event|.detail:
+   *   route - route to modify.
+   *   selectedCastMode - type of cast mode selected by the user.
+   */
+  function onChangeRouteSourceClick(event) {
+    /** @type {{route: !media_router.Route, selectedCastMode: number}} */
+    var detail = event.detail;
+    media_router.browserApi.changeRouteSource(
+        detail.route, detail.selectedCastMode);
   }
 
   /**
@@ -103,6 +147,15 @@ cr.define('media_router', function() {
     container.maybeReportUserFirstAction(
         media_router.MediaRouterUserAction.CLOSE);
     media_router.browserApi.closeDialog(detail.pressEscToClose);
+  }
+
+  /**
+   * Reports when the user uses the filter input to filter the sink list. This
+   * is reported at most once each time the user enters the filter view, and
+   * only if text is actually entered in the filter input.
+   */
+  function onFilter() {
+    media_router.browserApi.reportFilter();
   }
 
   /**
@@ -178,7 +231,7 @@ cr.define('media_router', function() {
    * Parameters in |event|.detail:
    *   route - The route to close.
    */
-  function onCloseRouteClick(event) {
+  function onCloseRoute(event) {
     /** @type {{route: !media_router.Route}} */
     var detail = event.detail;
     media_router.browserApi.closeRoute(detail.route);
@@ -186,13 +239,14 @@ cr.define('media_router', function() {
 
   /**
    * Starts casting to an existing route.
-   * Called when the user requests to start casting to a media route.
+   * Called when the user requests to start casting to a media route that is
+   * joinable.
    *
    * @param {!Event} event
    * Parameters in |event|.detail:
    *   route - The route to connect to if possible.
    */
-  function onStartCastingToRouteClick(event) {
+  function onJoinRouteClick(event) {
     /** @type {{route: !media_router.Route}} */
     var detail = event.detail;
     media_router.browserApi.joinRoute(detail.route);
@@ -238,6 +292,30 @@ cr.define('media_router', function() {
   function onReportRouteCreation(event) {
     var detail = event.detail;
     media_router.browserApi.reportRouteCreation(detail.success);
+  }
+
+  /**
+   * Reports success or the type of failure for route creation response.
+   * Called when the route is resolved; either the route creation was a success
+   * or if there was no route or the route's corresponding sink is invalid;
+   * either the sink does not exist or was not the sink we were looking for.
+   *
+   * @param {!Event} event
+   * Parameters in |event|.detail:
+   *   outcome - the outcome of a create route response.
+   *
+   */
+  function onReportRouteCreationOutcome(event) {
+    /** @type {{outcome: number}} */
+    var detail = event.detail;
+    media_router.browserApi.reportRouteCreationOutcome(detail.outcome);
+  }
+
+  /**
+   * Requests for initial data to load into the dialog.
+   */
+  function onRequestInitialData() {
+    media_router.browserApi.requestInitialData();
   }
 
   /**

@@ -3,23 +3,13 @@
 # found in the LICENSE file.
 
 import("//build/buildflag_header.gni")
-import("//build/config/sanitizers/sanitizers.gni")
-
-declare_args() {
-  # Enable the Kasko crash reporter. Enabled by default on syzyasan build.
-  enable_kasko = is_syzyasan
-
-  # Enable the reporting of browser hangs with Kasko.
-  enable_kasko_hang_reports = false
-}
+import("//build/config/chrome_build.gni")
+import("//third_party/kasko/kasko.gni")
 
 # GYP version: target 'kasko_features' in third_party/kasko/kasko.gyp
 buildflag_header("kasko_features") {
   header = "kasko_features.h"
-  flags = [
-    "ENABLE_KASKO=$enable_kasko",
-    "ENABLE_KASKO_HANG_REPORTS=$enable_kasko_hang_reports",
-  ]
+  flags = [ "ENABLE_KASKO=$enable_kasko" ]
 }
 
 if (enable_kasko) {

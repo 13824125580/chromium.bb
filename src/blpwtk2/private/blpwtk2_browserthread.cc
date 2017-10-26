@@ -38,7 +38,8 @@ static base::WaitableEvent* s_initWaitEvent = 0;
 BrowserThread::BrowserThread(sandbox::SandboxInterfaceInfo* sandboxInfo)
 : d_sandboxInfo(sandboxInfo)
 {
-    base::WaitableEvent event(true, false);
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     s_initWaitEvent = &event;
     base::PlatformThread::Create(0, this, &d_threadHandle);
     s_initWaitEvent->Wait();
@@ -53,7 +54,8 @@ BrowserThread::~BrowserThread()
 
 void BrowserThread::sync()
 {
-    base::WaitableEvent event(true, false);
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     messageLoop()->PostTask(
         FROM_HERE,
         base::Bind(&base::WaitableEvent::Signal,

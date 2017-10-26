@@ -6,10 +6,9 @@
 #define ASH_WM_SCREEN_DIMMER_H_
 
 #include "ash/ash_export.h"
-#include "ash/shell_observer.h"
+#include "ash/common/shell_observer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/aura/window_observer.h"
 
 namespace ui {
@@ -54,7 +53,7 @@ class ASH_EXPORT ScreenDimmer : ShellObserver {
   explicit ScreenDimmer(int container_id);
 
   // ShellObserver:
-  void OnRootWindowAdded(aura::Window* root_window) override;
+  void OnRootWindowAdded(WmWindow* root_window) override;
 
   // Update the dimming state. This will also create a new DimWindow
   // if necessary. (Used when a new display is connected)

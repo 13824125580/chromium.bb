@@ -34,12 +34,10 @@
 #include "modules/canvas2d/CanvasPathMethods.h"
 #include "platform/heap/Handle.h"
 #include "platform/transforms/AffineTransform.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
-class Path2D final : public GarbageCollectedFinalized<Path2D>, public CanvasPathMethods, public ScriptWrappable {
+class MODULES_EXPORT Path2D final : public GarbageCollectedFinalized<Path2D>, public CanvasPathMethods, public ScriptWrappable {
     DEFINE_WRAPPERTYPEINFO();
     WTF_MAKE_NONCOPYABLE(Path2D);
 public:

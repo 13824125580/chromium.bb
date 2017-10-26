@@ -25,7 +25,6 @@
 
 #include <blpwtk2_config.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <content/public/browser/resource_context.h>
 
 namespace net {
@@ -53,7 +52,7 @@ class ResourceContextImpl : public content::ResourceContext {
 
   private:
     scoped_refptr<net::URLRequestContextGetter> d_requestContextGetter;
-    scoped_ptr<net::HostResolver> d_hostResolver;
+    std::unique_ptr<net::HostResolver> d_hostResolver;
 
     DISALLOW_COPY_AND_ASSIGN(ResourceContextImpl);
 };

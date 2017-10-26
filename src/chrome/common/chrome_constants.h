@@ -12,18 +12,6 @@
 #include "base/files/file_path.h"
 #include "build/build_config.h"
 
-#if defined(OS_WIN)
-// Do not use this, instead use BrowserDistribution's methods which will ensure
-// Google Chrome and Canary installs don't collide. http://crbug.com/577820
-#if defined(GOOGLE_CHROME_BUILD)
-#define PRODUCT_STRING_PATH L"Google\\Chrome"
-#elif defined(CHROMIUM_BUILD)
-#define PRODUCT_STRING_PATH L"Chromium"
-#else
-#error Unknown branding
-#endif
-#endif  // defined(OS_WIN)
-
 namespace chrome {
 
 extern const char kChromeVersion[];
@@ -67,8 +55,9 @@ extern const base::FilePath::CharType kLocalStateFilename[];
 extern const base::FilePath::CharType kLocalStorePoolName[];
 extern const base::FilePath::CharType kMediaCacheDirname[];
 extern const base::FilePath::CharType kNetworkPersistentStateFilename[];
-extern const base::FilePath::CharType kOfflinePageArchviesDirname[];
+extern const base::FilePath::CharType kOfflinePageArchivesDirname[];
 extern const base::FilePath::CharType kOfflinePageMetadataDirname[];
+extern const base::FilePath::CharType kOfflinePageRequestQueueDirname[];
 extern const base::FilePath::CharType kPreferencesFilename[];
 extern const base::FilePath::CharType kProtectedPreferencesFilenameDeprecated[];
 extern const base::FilePath::CharType kReadmeFilename[];
@@ -114,14 +103,6 @@ extern const int kHighestRendererOomScore;
 extern const wchar_t kMetroNavigationAndSearchMessage[];
 // Used by Metro Chrome to get information about the current tab.
 extern const wchar_t kMetroGetCurrentTabInfoMessage[];
-// Used to store crash report metrics using
-// content/browser_watcher/crash_reporting_metrics_win.h.
-extern const wchar_t kBrowserCrashDumpAttemptsRegistryPath[];
-extern const wchar_t kBrowserCrashDumpAttemptsRegistryPathSxS[];
-// Registry location where the browser watcher stores browser exit codes.
-// This is picked up and stored in histograms by the browser on the subsequent
-// launch.
-extern const wchar_t kBrowserExitCodesRegistryPath[];
 #endif
 
 #if defined(OS_CHROMEOS)

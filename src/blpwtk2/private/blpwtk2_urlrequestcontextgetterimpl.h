@@ -27,9 +27,8 @@
 
 #include <base/files/file_path.h>
 #include <base/memory/ref_counted.h>
-#include <base/memory/scoped_ptr.h>
 #include <base/synchronization/lock.h>
-#include <content/public/browser/content_browser_client.h>  // for ProtocolHandlerMap
+#include <content/public/browser/browser_context.h>  // for ProtocolHandlerMap
 #include <net/cookies/cookie_monster.h>
 #include <net/url_request/url_request_context_getter.h>
 #include <net/url_request/url_request_job_factory.h>
@@ -79,12 +78,12 @@ private:
     // Called on the IO thread.
     void initialize();
     void updateProxyConfig(
-        scoped_ptr<net::ProxyConfigService> proxyConfigService);
+        net::ProxyConfigService* proxyConfigService);
 
-    scoped_ptr<net::ProxyService> d_proxyService;
+    std::unique_ptr<net::ProxyService> d_proxyService;
     scoped_refptr<net::CookieMonster::PersistentCookieStore> d_cookieStore;
-    scoped_ptr<net::URLRequestContextStorage> d_storage;
-    scoped_ptr<net::URLRequestContext> d_urlRequestContext;
+    std::unique_ptr<net::URLRequestContextStorage> d_storage;
+    std::unique_ptr<net::URLRequestContext> d_urlRequestContext;
 
     // accessed on both UI and IO threads
     base::Lock d_protocolHandlersLock;

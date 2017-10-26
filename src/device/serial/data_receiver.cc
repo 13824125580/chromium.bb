@@ -5,10 +5,13 @@
 #include "device/serial/data_receiver.h"
 
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace device {
 
@@ -224,18 +227,17 @@ bool DataReceiver::PendingReceive::DispatchDataFrame(
 
   if (data->is_error) {
     data->dispatched = true;
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(receive_error_callback_, data->error));
     return true;
   }
   buffer_in_use_ = true;
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(
           receive_callback_,
-          base::Passed(scoped_ptr<ReadOnlyBuffer>(new Buffer(
-              receiver_,
-              this,
+          base::Passed(std::unique_ptr<ReadOnlyBuffer>(new Buffer(
+              receiver_, this,
               reinterpret_cast<char*>(&data->data[0]) + data->offset,
               static_cast<uint32_t>(data->data.size() - data->offset))))));
   return false;

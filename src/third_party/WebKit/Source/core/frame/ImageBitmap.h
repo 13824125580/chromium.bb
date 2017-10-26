@@ -17,49 +17,60 @@
 #include "platform/graphics/StaticBitmapImage.h"
 #include "platform/heap/Handle.h"
 #include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
+#include <memory>
 
 namespace blink {
 
 class HTMLCanvasElement;
 class HTMLVideoElement;
 class ImageData;
+class ImageDecoder;
 
 enum AlphaDisposition {
     PremultiplyAlpha,
     DontPremultiplyAlpha,
 };
 
-class CORE_EXPORT ImageBitmap final : public RefCountedWillBeGarbageCollectedFinalized<ImageBitmap>, public ScriptWrappable, public CanvasImageSource, public ImageBitmapSource {
+class CORE_EXPORT ImageBitmap final : public GarbageCollectedFinalized<ImageBitmap>, public ScriptWrappable, public CanvasImageSource, public ImageBitmapSource {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(HTMLImageElement*, const IntRect&, Document*, const ImageBitmapOptions& = ImageBitmapOptions());
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(HTMLVideoElement*, const IntRect&, Document*, const ImageBitmapOptions& = ImageBitmapOptions());
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(HTMLCanvasElement*, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(ImageData*, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(ImageBitmap*, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(PassRefPtr<StaticBitmapImage>);
-    static PassRefPtrWillBeRawPtr<ImageBitmap> create(PassRefPtr<StaticBitmapImage>, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
+    static ImageBitmap* create(HTMLImageElement*, const IntRect&, Document*, const ImageBitmapOptions& = ImageBitmapOptions());
+    static ImageBitmap* create(HTMLVideoElement*, const IntRect&, Document*, const ImageBitmapOptions& = ImageBitmapOptions());
+    static ImageBitmap* create(HTMLCanvasElement*, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
+    static ImageBitmap* create(ImageData*, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions(), const bool& isImageDataPremultiplied = false, const bool& isImageDataOriginClean = true);
+    static ImageBitmap* create(ImageBitmap*, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
+    static ImageBitmap* create(PassRefPtr<StaticBitmapImage>);
+    static ImageBitmap* create(PassRefPtr<StaticBitmapImage>, const IntRect&, const ImageBitmapOptions& = ImageBitmapOptions());
+    static ImageBitmap* create(WebExternalTextureMailbox&);
+    static PassRefPtr<SkImage> getSkImageFromDecoder(std::unique_ptr<ImageDecoder>);
+
+    // Type and helper function required by CallbackPromiseAdapter:
+    using WebType = sk_sp<SkImage>;
+    static ImageBitmap* take(ScriptPromiseResolver*, sk_sp<SkImage>);
 
     StaticBitmapImage* bitmapImage() const { return (m_image) ? m_image.get() : nullptr; }
-    PassOwnPtr<uint8_t[]> copyBitmapData(AlphaDisposition alphaOp = DontPremultiplyAlpha);
+    std::unique_ptr<uint8_t[]> copyBitmapData(AlphaDisposition alphaOp = DontPremultiplyAlpha);
     unsigned long width() const;
     unsigned long height() const;
     IntSize size() const;
 
     bool isNeutered() const { return m_isNeutered; }
     bool originClean() const { return m_image->originClean(); }
-    bool isPremultiplied() const { return m_isPremultiplied; }
+    bool isPremultiplied() const { return m_image->isPremultiplied(); }
     PassRefPtr<StaticBitmapImage> transfer();
     void close();
+    bool isTextureBacked() const;
 
     ~ImageBitmap() override;
 
     // CanvasImageSource implementation
-    PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint, SnapshotReason) const override;
+    PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint, SnapshotReason, const FloatSize&) const override;
     bool wouldTaintOrigin(SecurityOrigin*) const override { return !m_image->originClean(); }
     void adjustDrawRects(FloatRect* srcRect, FloatRect* dstRect) const override;
-    FloatSize elementSize() const override;
+    FloatSize elementSize(const FloatSize&) const override;
+    bool isImageBitmap() const override { return true; }
+    int sourceWidth() override { return m_image ? m_image->width() : 0; }
+    int sourceHeight() override { return m_image ? m_image->height() : 0; }
 
     // ImageBitmapSource implementation
     IntSize bitmapSourceSize() const override { return size(); }
@@ -71,16 +82,16 @@ private:
     ImageBitmap(HTMLImageElement*, const IntRect&, Document*, const ImageBitmapOptions&);
     ImageBitmap(HTMLVideoElement*, const IntRect&, Document*, const ImageBitmapOptions&);
     ImageBitmap(HTMLCanvasElement*, const IntRect&, const ImageBitmapOptions&);
-    ImageBitmap(ImageData*, const IntRect&, const ImageBitmapOptions&);
+    ImageBitmap(ImageData*, const IntRect&, const ImageBitmapOptions&, const bool&, const bool&);
     ImageBitmap(ImageBitmap*, const IntRect&, const ImageBitmapOptions&);
     ImageBitmap(PassRefPtr<StaticBitmapImage>);
     ImageBitmap(PassRefPtr<StaticBitmapImage>, const IntRect&, const ImageBitmapOptions&);
+    ImageBitmap(WebExternalTextureMailbox&);
 
-    void parseOptions(const ImageBitmapOptions&, bool&);
+    void parseOptions(const ImageBitmapOptions&, bool&, bool&);
 
     RefPtr<StaticBitmapImage> m_image;
     bool m_isNeutered = false;
-    bool m_isPremultiplied = true;
 };
 
 } // namespace blink

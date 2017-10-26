@@ -128,6 +128,8 @@ public:
 
     class PLATFORM_EXPORT ImageExtractor final {
         STACK_ALLOCATED();
+        WTF_MAKE_NONCOPYABLE(ImageExtractor);
+
     public:
         ImageExtractor(Image*, ImageHtmlDomSource, bool premultiplyAlpha, bool ignoreGammaAndColorProfile);
 
@@ -137,7 +139,6 @@ public:
         DataFormat imageSourceFormat() { return m_imageSourceFormat; }
         AlphaOp imageAlphaOp() { return m_alphaOp; }
         unsigned imageSourceUnpackAlignment() { return m_imageSourceUnpackAlignment; }
-        ImageHtmlDomSource imageHtmlDomSource() { return m_imageHtmlDomSource; }
     private:
         // Extract the image and keeps track of its status, such as width, height, Source Alignment,
         // format and AlphaOp etc. This needs to lock the resources or relevant data if needed.
@@ -192,7 +193,7 @@ public:
     // packing the pixel data according to the given format and type,
     // and obeying the flipY and premultiplyAlpha flags. Returns true
     // upon success.
-    static bool extractImageData(const uint8_t*, const IntSize&, GLenum format, GLenum type, bool flipY, bool premultiplyAlpha, Vector<uint8_t>& data);
+    static bool extractImageData(const uint8_t*, DataFormat sourceDataFormat, const IntSize&, GLenum format, GLenum type, bool flipY, bool premultiplyAlpha, Vector<uint8_t>& data);
 
     // Helper function which extracts the user-supplied texture
     // data, applying the flipY and premultiplyAlpha parameters.

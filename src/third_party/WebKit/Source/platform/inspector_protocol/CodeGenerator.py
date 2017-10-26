@@ -4,9 +4,7 @@
 
 import os.path
 import sys
-import string
 import optparse
-import re
 try:
     import json
 except ImportError:
@@ -22,37 +20,84 @@ except ImportError:
 # since some compile processes will try to read the partially written cache.
 module_path, module_filename = os.path.split(os.path.realpath(__file__))
 templates_dir = module_path
-third_party_dir = os.path.normpath(os.path.join(
-    module_path, os.pardir, os.pardir, os.pardir, os.pardir))
 
-# jinja2 is in chromium's third_party directory.
+# In Blink, jinja2 is in chromium's third_party directory.
 # Insert at 1 so at front to override system libraries, and
 # after path[0] == invoking script dir
-sys.path.insert(1, third_party_dir)
+third_party_dir = os.path.normpath(os.path.join(
+    module_path, os.pardir, os.pardir, os.pardir, os.pardir))
+if os.path.isdir(third_party_dir):
+    sys.path.insert(1, third_party_dir)
+
+# In Node, it is in deps folder
+deps_dir = os.path.normpath(os.path.join(
+    module_path, os.pardir, os.pardir, "deps"))
+if os.path.isdir(deps_dir):
+    sys.path.insert(1, os.path.join(deps_dir, "jinja2"))
+    sys.path.insert(1, os.path.join(deps_dir, "markupsafe"))
+
 import jinja2
 
 cmdline_parser = optparse.OptionParser()
+cmdline_parser.add_option("--protocol")
+cmdline_parser.add_option("--include")
+cmdline_parser.add_option("--string_type")
+cmdline_parser.add_option("--export_macro")
 cmdline_parser.add_option("--output_dir")
-cmdline_parser.add_option("--template_dir")
+cmdline_parser.add_option("--output_package")
 
 try:
     arg_options, arg_values = cmdline_parser.parse_args()
-    if (len(arg_values) != 1):
-        raise Exception("Exactly one plain argument expected (found %s)" % len(arg_values))
-    input_json_filename = arg_values[0]
+    protocol_file = arg_options.protocol
+    if not protocol_file:
+        raise Exception("Protocol directory must be specified")
+    include_file = arg_options.include
     output_dirname = arg_options.output_dir
     if not output_dirname:
         raise Exception("Output directory must be specified")
+    output_package = arg_options.output_package
+    if not output_package:
+        raise Exception("Output package must be specified")
+    string_type = arg_options.string_type
+    if not string_type:
+        raise Exception("String type must be specified")
+    export_macro = arg_options.export_macro
+    if not export_macro:
+        raise Exception("Export macro must be specified")
 except Exception:
     # Work with python 2 and 3 http://docs.python.org/py3k/howto/pyporting.html
     exc = sys.exc_info()[1]
     sys.stderr.write("Failed to parse command-line arguments: %s\n\n" % exc)
-    sys.stderr.write("Usage: <script> --output_dir <output_dir> protocol.json\n")
     exit(1)
 
-input_file = open(input_json_filename, "r")
+
+input_file = open(protocol_file, "r")
 json_string = input_file.read()
-json_api = json.loads(json_string)
+parsed_json = json.loads(json_string)
+
+
+# Make gyp / make generatos happy, otherwise make rebuilds world.
+def up_to_date():
+    template_ts = max(
+        os.path.getmtime(__file__),
+        os.path.getmtime(os.path.join(templates_dir, "TypeBuilder_h.template")),
+        os.path.getmtime(os.path.join(templates_dir, "TypeBuilder_cpp.template")),
+        os.path.getmtime(protocol_file))
+
+    for domain in parsed_json["domains"]:
+        name = domain["domain"]
+        h_path = os.path.join(output_dirname, name + ".h")
+        cpp_path = os.path.join(output_dirname, name + ".cpp")
+        if not os.path.exists(h_path) or not os.path.exists(cpp_path):
+            return False
+        generated_ts = max(os.path.getmtime(h_path), os.path.getmtime(cpp_path))
+        if generated_ts < template_ts:
+            return False
+    return True
+
+
+if up_to_date():
+    sys.exit()
 
 
 def to_title_case(name):
@@ -60,7 +105,7 @@ def to_title_case(name):
 
 
 def dash_to_camelcase(word):
-    return ''.join(to_title_case(x) or '-' for x in word.split('-'))
+    return "".join(to_title_case(x) or "-" for x in word.split("-"))
 
 
 def initialize_jinja_env(cache_dir):
@@ -73,7 +118,7 @@ def initialize_jinja_env(cache_dir):
         lstrip_blocks=True,  # so can indent control flow tags
         trim_blocks=True)
     jinja_env.filters.update({"to_title_case": to_title_case, "dash_to_camelcase": dash_to_camelcase})
-    jinja_env.add_extension('jinja2.ext.loopcontrols')
+    jinja_env.add_extension("jinja2.ext.loopcontrols")
     return jinja_env
 
 
@@ -90,6 +135,8 @@ def patch_full_qualified_refs():
         if not isinstance(json, dict):
             return
         for key in json:
+            if key == "type" and json[key] == "string":
+                json[key] = domain_name + ".string"
             if key != "$ref":
                 patch_full_qualified_refs_in_domain(json[key], domain_name)
                 continue
@@ -102,11 +149,12 @@ def patch_full_qualified_refs():
 
 def create_user_type_definition(domain_name, type):
     return {
-        "return_type": "PassOwnPtr<protocol::%s::%s>" % (domain_name, type["id"]),
-        "pass_type": "PassOwnPtr<protocol::%s::%s>" % (domain_name, type["id"]),
+        "return_type": "std::unique_ptr<protocol::%s::%s>" % (domain_name, type["id"]),
+        "pass_type": "std::unique_ptr<protocol::%s::%s>" % (domain_name, type["id"]),
         "to_raw_type": "%s.get()",
-        "to_pass_type": "%s.release()",
-        "type": "OwnPtr<protocol::%s::%s>" % (domain_name, type["id"]),
+        "to_pass_type": "std::move(%s)",
+        "to_rvalue": "std::move(%s)",
+        "type": "std::unique_ptr<protocol::%s::%s>" % (domain_name, type["id"]),
         "raw_type": "protocol::%s::%s" % (domain_name, type["id"]),
         "raw_pass_type": "protocol::%s::%s*" % (domain_name, type["id"]),
         "raw_return_type": "protocol::%s::%s*" % (domain_name, type["id"]),
@@ -115,47 +163,56 @@ def create_user_type_definition(domain_name, type):
 
 def create_object_type_definition():
     return {
-        "return_type": "PassRefPtr<protocol::DictionaryValue>",
-        "pass_type": "PassRefPtr<protocol::DictionaryValue>",
-        "to_raw_type": "%s",
-        "to_pass_type": "%s.release()",
-        "type": "RefPtr<protocol::DictionaryValue>",
-        "raw_type": "RefPtr<protocol::DictionaryValue>",
-        "raw_pass_type": "PassRefPtr<protocol::DictionaryValue>",
-        "raw_return_type": "RefPtr<protocol::DictionaryValue>",
+        "return_type": "std::unique_ptr<protocol::DictionaryValue>",
+        "pass_type": "std::unique_ptr<protocol::DictionaryValue>",
+        "to_raw_type": "%s.get()",
+        "to_pass_type": "std::move(%s)",
+        "to_rvalue": "std::move(%s)",
+        "type": "std::unique_ptr<protocol::DictionaryValue>",
+        "raw_type": "protocol::DictionaryValue",
+        "raw_pass_type": "protocol::DictionaryValue*",
+        "raw_return_type": "protocol::DictionaryValue*",
     }
 
 
 def create_any_type_definition():
     return {
-        "return_type": "PassRefPtr<protocol::Value>",
-        "pass_type": "PassRefPtr<protocol::Value>",
-        "to_pass_type": "%s.release()",
+        "return_type": "std::unique_ptr<protocol::Value>",
+        "pass_type": "std::unique_ptr<protocol::Value>",
+        "to_raw_type": "%s.get()",
+        "to_pass_type": "std::move(%s)",
+        "to_rvalue": "std::move(%s)",
+        "type": "std::unique_ptr<protocol::Value>",
+        "raw_type": "protocol::Value",
+        "raw_pass_type": "protocol::Value*",
+        "raw_return_type": "protocol::Value*",
+    }
+
+
+def create_string_type_definition(domain):
+    return {
+        "return_type": string_type,
+        "pass_type": ("const %s&" % string_type),
+        "to_pass_type": "%s",
         "to_raw_type": "%s",
-        "type": "RefPtr<protocol::Value>",
-        "raw_type": "RefPtr<protocol::Value>",
-        "raw_pass_type": "PassRefPtr<protocol::Value>",
-        "raw_return_type": "RefPtr<protocol::Value>",
+        "to_rvalue": "%s",
+        "type": string_type,
+        "raw_type": string_type,
+        "raw_pass_type": ("const %s&" % string_type),
+        "raw_return_type": string_type,
     }
 
 
 def create_primitive_type_definition(type):
-    if type == "string":
-        return {
-            "return_type": "String",
-            "pass_type": "const String&",
-            "to_pass_type": "%s",
-            "to_raw_type": "%s",
-            "type": "String",
-            "raw_type": "String",
-            "raw_pass_type": "const String&",
-            "raw_return_type": "String",
-        }
-
     typedefs = {
         "number": "double",
         "integer": "int",
         "boolean": "bool"
+    }
+    defaults = {
+        "number": "0",
+        "integer": "0",
+        "boolean": "false"
     }
     jsontypes = {
         "number": "TypeNumber",
@@ -167,14 +224,16 @@ def create_primitive_type_definition(type):
         "pass_type": typedefs[type],
         "to_pass_type": "%s",
         "to_raw_type": "%s",
+        "to_rvalue": "%s",
         "type": typedefs[type],
         "raw_type": typedefs[type],
         "raw_pass_type": typedefs[type],
         "raw_return_type": typedefs[type],
+        "default_value": defaults[type]
     }
 
+
 type_definitions = {}
-type_definitions["string"] = create_primitive_type_definition("string")
 type_definitions["number"] = create_primitive_type_definition("number")
 type_definitions["integer"] = create_primitive_type_definition("integer")
 type_definitions["boolean"] = create_primitive_type_definition("boolean")
@@ -184,21 +243,23 @@ type_definitions["any"] = create_any_type_definition()
 
 def wrap_array_definition(type):
     return {
-        "return_type": "PassOwnPtr<protocol::Array<%s>>" % type["raw_type"],
-        "pass_type": "PassOwnPtr<protocol::Array<%s>>" % type["raw_type"],
+        "return_type": "std::unique_ptr<protocol::Array<%s>>" % type["raw_type"],
+        "pass_type": "std::unique_ptr<protocol::Array<%s>>" % type["raw_type"],
         "to_raw_type": "%s.get()",
-        "to_pass_type": "%s.release()",
-        "type": "OwnPtr<protocol::Array<%s>>" % type["raw_type"],
+        "to_pass_type": "std::move(%s)",
+        "to_rvalue": "std::move(%s)",
+        "type": "std::unique_ptr<protocol::Array<%s>>" % type["raw_type"],
         "raw_type": "protocol::Array<%s>" % type["raw_type"],
         "raw_pass_type": "protocol::Array<%s>*" % type["raw_type"],
         "raw_return_type": "protocol::Array<%s>*" % type["raw_type"],
-        "create_type": "adoptPtr(new protocol::Array<%s>())" % type["raw_type"],
+        "create_type": "wrapUnique(new protocol::Array<%s>())" % type["raw_type"],
         "out_type": "protocol::Array<%s>&" % type["raw_type"],
     }
 
 
 def create_type_definitions():
     for domain in json_api["domains"]:
+        type_definitions[domain["domain"] + ".string"] = create_string_type_definition(domain["domain"])
         if not ("types" in domain):
             continue
         for type in domain["types"]:
@@ -207,11 +268,10 @@ def create_type_definitions():
             elif type["type"] == "array":
                 items_type = type["items"]["type"]
                 type_definitions[domain["domain"] + "." + type["id"]] = wrap_array_definition(type_definitions[items_type])
+            elif type["type"] == domain["domain"] + ".string":
+                type_definitions[domain["domain"] + "." + type["id"]] = create_string_type_definition(domain["domain"])
             else:
                 type_definitions[domain["domain"] + "." + type["id"]] = create_primitive_type_definition(type["type"])
-
-patch_full_qualified_refs()
-create_type_definitions()
 
 
 def type_definition(name):
@@ -234,25 +294,62 @@ def join_arrays(dict, keys):
     return result
 
 
-def generate(class_name):
+def has_disable(commands):
+    for command in commands:
+        if command["name"] == "disable":
+            return True
+    return False
+
+
+generate_domains = []
+json_api = {}
+json_api["domains"] = parsed_json["domains"]
+
+for domain in parsed_json["domains"]:
+    generate_domains.append(domain["domain"])
+
+if include_file:
+    input_file = open(include_file, "r")
+    json_string = input_file.read()
+    parsed_json = json.loads(json_string)
+    json_api["domains"] += parsed_json["domains"]
+
+
+patch_full_qualified_refs()
+create_type_definitions()
+
+if not os.path.exists(output_dirname):
+    os.mkdir(output_dirname)
+jinja_env = initialize_jinja_env(output_dirname)
+
+h_template_name = "/TypeBuilder_h.template"
+cpp_template_name = "/TypeBuilder_cpp.template"
+h_template = jinja_env.get_template(h_template_name)
+cpp_template = jinja_env.get_template(cpp_template_name)
+
+
+def generate(domain):
+    class_name = domain["domain"]
+    h_file_name = output_dirname + "/" + class_name + ".h"
+    cpp_file_name = output_dirname + "/" + class_name + ".cpp"
+
     template_context = {
-        "class_name": class_name,
-        "api": json_api,
+        "domain": domain,
         "join_arrays": join_arrays,
         "resolve_type": resolve_type,
-        "type_definition": type_definition
+        "type_definition": type_definition,
+        "has_disable": has_disable,
+        "export_macro": export_macro,
+        "output_package": output_package,
     }
-    h_template = jinja_env.get_template("/%s_h.template" % class_name)
-    cpp_template = jinja_env.get_template("/%s_cpp.template" % class_name)
-    h_file = output_file(output_dirname + "/" + class_name + ".h")
-    cpp_file = output_file(output_dirname + "/" + class_name + ".cpp")
+    h_file = output_file(h_file_name)
+    cpp_file = output_file(cpp_file_name)
     h_file.write(h_template.render(template_context))
     cpp_file.write(cpp_template.render(template_context))
     h_file.close()
     cpp_file.close()
 
 
-jinja_env = initialize_jinja_env(output_dirname)
-generate("Dispatcher")
-generate("Frontend")
-generate("TypeBuilder")
+for domain in json_api["domains"]:
+    if domain["domain"] in generate_domains:
+        generate(domain)

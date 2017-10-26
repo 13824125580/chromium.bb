@@ -25,6 +25,9 @@ namespace net {
 
 class RttStats;
 
+// Maximum window to allow when doing bandwidth resumption.
+const QuicPacketCount kMaxResumptionCongestionWindow = 200;
+
 namespace test {
 class TcpCubicSenderBasePeer;
 }  // namespace test
@@ -56,11 +59,9 @@ class NET_EXPORT_PRIVATE TcpCubicSenderBase : public SendAlgorithmInterface {
                     HasRetransmittableData is_retransmittable) override;
   void OnRetransmissionTimeout(bool packets_retransmitted) override;
   void OnConnectionMigration() override;
-  QuicTime::Delta TimeUntilSend(
-      QuicTime now,
-      QuicByteCount bytes_in_flight,
-      HasRetransmittableData has_retransmittable_data) const override;
-  QuicBandwidth PacingRate() const override;
+  QuicTime::Delta TimeUntilSend(QuicTime now,
+                                QuicByteCount bytes_in_flight) const override;
+  QuicBandwidth PacingRate(QuicByteCount bytes_in_flight) const override;
   QuicBandwidth BandwidthEstimate() const override;
   QuicTime::Delta RetransmissionDelay() const override;
   bool InSlowStart() const override;
@@ -84,6 +85,7 @@ class NET_EXPORT_PRIVATE TcpCubicSenderBase : public SendAlgorithmInterface {
 
   // Called when a packet is lost.
   virtual void OnPacketLost(QuicPacketNumber largest_loss,
+                            QuicByteCount lost_bytes,
                             QuicByteCount bytes_in_flight) = 0;
 
   // Called when a packet has been acked to possibly increase the congestion
@@ -140,6 +142,12 @@ class NET_EXPORT_PRIVATE TcpCubicSenderBase : public SendAlgorithmInterface {
 
   // When true, exit slow start with large cutback of congestion window.
   bool slow_start_large_reduction_;
+
+  // When true, use rate based sending instead of only sending if there's CWND.
+  bool rate_based_sending_;
+
+  // When true, use unity pacing instead of PRR.
+  bool no_prr_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TcpCubicSenderBase);

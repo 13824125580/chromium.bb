@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/geolocation/network_location_provider.h"
+
 #include <stddef.h>
+
+#include <memory>
+#include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -15,7 +19,6 @@
 #include "base/values.h"
 #include "content/browser/geolocation/fake_access_token_store.h"
 #include "content/browser/geolocation/location_arbitrator_impl.h"
-#include "content/browser/geolocation/network_location_provider.h"
 #include "content/browser/geolocation/wifi_data_provider.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/test_url_fetcher_factory.h"
@@ -173,13 +176,13 @@ class GeolocationNetworkProviderTest : public testing::Test {
       int ap_count, int start_index, base::ListValue* wifi_access_point_list) {
     std::vector<std::string> wifi_data;
     for (int i = 0; i < ap_count; ++i) {
-      base::DictionaryValue* ap = new base::DictionaryValue();
+      std::unique_ptr<base::DictionaryValue> ap(new base::DictionaryValue());
       ap->SetString("macAddress", base::StringPrintf("%02d-34-56-78-54-32", i));
       ap->SetInteger("signalStrength", start_index + ap_count - i);
       ap->SetInteger("age", 0);
       ap->SetInteger("channel", IndexToChannel(i));
       ap->SetInteger("signalToNoiseRatio", i + 42);
-      wifi_access_point_list->Append(ap);
+      wifi_access_point_list->Append(std::move(ap));
     }
   }
 
@@ -262,8 +265,9 @@ class GeolocationNetworkProviderTest : public testing::Test {
     const std::string& upload_data = request.upload_data();
     ASSERT_FALSE(upload_data.empty());
     std::string json_parse_error_msg;
-    scoped_ptr<base::Value> parsed_json = base::JSONReader::ReadAndReturnError(
-        upload_data, base::JSON_PARSE_RFC, NULL, &json_parse_error_msg);
+    std::unique_ptr<base::Value> parsed_json =
+        base::JSONReader::ReadAndReturnError(upload_data, base::JSON_PARSE_RFC,
+                                             NULL, &json_parse_error_msg);
     EXPECT_TRUE(json_parse_error_msg.empty());
     ASSERT_TRUE(parsed_json.get() != NULL);
 
@@ -320,14 +324,14 @@ class GeolocationNetworkProviderTest : public testing::Test {
 TEST_F(GeolocationNetworkProviderTest, CreateDestroy) {
   // Test fixture members were SetUp correctly.
   EXPECT_EQ(&main_message_loop_, base::MessageLoop::current());
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(NULL != provider.get());
   provider.reset();
   SUCCEED();
 }
 
 TEST_F(GeolocationNetworkProviderTest, StartProvider) {
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(provider->StartProvider(false));
   net::TestURLFetcher* fetcher = get_url_fetcher_and_advance_id();
   ASSERT_TRUE(fetcher != NULL);
@@ -336,7 +340,7 @@ TEST_F(GeolocationNetworkProviderTest, StartProvider) {
 
 TEST_F(GeolocationNetworkProviderTest, StartProviderDefaultUrl) {
   test_server_url_ = LocationArbitratorImpl::DefaultNetworkProviderURL();
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(provider->StartProvider(false));
   net::TestURLFetcher* fetcher = get_url_fetcher_and_advance_id();
   ASSERT_TRUE(fetcher != NULL);
@@ -344,7 +348,7 @@ TEST_F(GeolocationNetworkProviderTest, StartProviderDefaultUrl) {
 }
 
 TEST_F(GeolocationNetworkProviderTest, StartProviderLongRequest) {
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(provider->StartProvider(false));
   const int kFirstScanAps = 20;
   wifi_data_provider_->SetData(CreateReferenceWifiScanData(kFirstScanAps));
@@ -359,7 +363,7 @@ TEST_F(GeolocationNetworkProviderTest, StartProviderLongRequest) {
 }
 
 TEST_F(GeolocationNetworkProviderTest, MultipleWifiScansComplete) {
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(provider->StartProvider(false));
 
   net::TestURLFetcher* fetcher = get_url_fetcher_and_advance_id();
@@ -463,7 +467,7 @@ TEST_F(GeolocationNetworkProviderTest, MultipleWifiScansComplete) {
 TEST_F(GeolocationNetworkProviderTest, NoRequestOnStartupUntilWifiData) {
   MessageLoopQuitListener listener;
   wifi_data_provider_->set_got_data(false);
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(provider->StartProvider(false));
 
   provider->SetUpdateCallback(base::Bind(
@@ -481,7 +485,7 @@ TEST_F(GeolocationNetworkProviderTest, NoRequestOnStartupUntilWifiData) {
 
 TEST_F(GeolocationNetworkProviderTest, NewDataReplacesExistingNetworkRequest) {
   // Send initial request with empty data
-  scoped_ptr<LocationProvider> provider(CreateProvider(true));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(true));
   EXPECT_TRUE(provider->StartProvider(false));
   net::TestURLFetcher* fetcher = get_url_fetcher_and_advance_id();
   EXPECT_TRUE(fetcher);
@@ -494,7 +498,7 @@ TEST_F(GeolocationNetworkProviderTest, NewDataReplacesExistingNetworkRequest) {
 }
 
 TEST_F(GeolocationNetworkProviderTest, NetworkRequestDeferredForPermission) {
-  scoped_ptr<LocationProvider> provider(CreateProvider(false));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(false));
   EXPECT_TRUE(provider->StartProvider(false));
   net::TestURLFetcher* fetcher = get_url_fetcher_and_advance_id();
   EXPECT_FALSE(fetcher);
@@ -510,7 +514,7 @@ TEST_F(GeolocationNetworkProviderTest,
        NetworkRequestWithWifiDataDeferredForPermission) {
   access_token_store_->access_token_map_[test_server_url_] =
       base::UTF8ToUTF16(REFERENCE_ACCESS_TOKEN);
-  scoped_ptr<LocationProvider> provider(CreateProvider(false));
+  std::unique_ptr<LocationProvider> provider(CreateProvider(false));
   EXPECT_TRUE(provider->StartProvider(false));
   net::TestURLFetcher* fetcher = get_url_fetcher_and_advance_id();
   EXPECT_FALSE(fetcher);

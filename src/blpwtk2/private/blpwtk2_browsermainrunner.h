@@ -25,8 +25,8 @@
 
 #include <blpwtk2_config.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <content/public/common/main_function_params.h>
+#include <memory>
 
 namespace content {
     class BrowserMainRunner;
@@ -66,10 +66,10 @@ class BrowserMainRunner {
 
   private:
     content::MainFunctionParams d_mainParams;
-    scoped_ptr<content::BrowserMainRunner> d_impl;
-    scoped_ptr<BrowserContextImplManager> d_browserContextImplManager;
-    scoped_ptr<devtools_http_handler::DevToolsHttpHandler> d_devtoolsHttpHandler;
-    scoped_ptr<ViewsDelegateImpl> d_viewsDelegate;
+    std::unique_ptr<content::BrowserMainRunner> d_impl;
+    std::unique_ptr<BrowserContextImplManager> d_browserContextImplManager;
+    std::unique_ptr<devtools_http_handler::DevToolsHttpHandler> d_devtoolsHttpHandler;
+    std::unique_ptr<ViewsDelegateImpl> d_viewsDelegate;
 
     DISALLOW_COPY_AND_ASSIGN(BrowserMainRunner);
 };

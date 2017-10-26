@@ -13,6 +13,7 @@
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/common/form_field_data.h"
 
 namespace base {
 class TimeDelta;
@@ -259,6 +260,13 @@ class AutofillMetrics {
     NUM_FIELD_TYPE_QUALITY_METRICS,
   };
 
+  enum QualityMetricType {
+    TYPE_SUBMISSION = 0,      // Logged based on user's submitted data.
+    TYPE_NO_SUBMISSION,       // Logged based on user's entered data.
+    TYPE_AUTOCOMPLETE_BASED,  // Logged based on the value of autocomplete attr.
+    NUM_QUALITY_METRIC_TYPES,
+  };
+
   // Each of these is logged at most once per query to the server, which in turn
   // occurs at most once per page load.
   enum ServerQueryMetric {
@@ -400,13 +408,13 @@ class AutofillMetrics {
     // User chose to opt in (checked the checkbox when it was empty).
     // Only logged if there was an attempt to unmask.
     UNMASK_PROMPT_LOCAL_SAVE_DID_OPT_IN,
-    // User did not opt in when he had the chance (left the checkbox unchecked).
-    // Only logged if there was an attempt to unmask.
+    // User did not opt in when they had the chance (left the checkbox
+    // unchecked).  Only logged if there was an attempt to unmask.
     UNMASK_PROMPT_LOCAL_SAVE_DID_NOT_OPT_IN,
     // User chose to opt out (unchecked the checkbox when it was check).
     // Only logged if there was an attempt to unmask.
     UNMASK_PROMPT_LOCAL_SAVE_DID_OPT_OUT,
-    // User did not opt out when he had a chance (left the checkbox checked).
+    // User did not opt out when they had a chance (left the checkbox checked).
     // Only logged if there was an attempt to unmask.
     UNMASK_PROMPT_LOCAL_SAVE_DID_NOT_OPT_OUT,
     // The prompt was closed while chrome was unmasking the card (user pressed
@@ -521,45 +529,17 @@ class AutofillMetrics {
 
   static void LogHeuristicTypePrediction(FieldTypeQualityMetric metric,
                                          ServerFieldType field_type,
-                                         bool observed_submission);
+                                         QualityMetricType metric_type);
   static void LogOverallTypePrediction(FieldTypeQualityMetric metric,
                                        ServerFieldType field_type,
-                                       bool observed_submission);
+                                       QualityMetricType metric_type);
   static void LogServerTypePrediction(FieldTypeQualityMetric metric,
                                       ServerFieldType field_type,
-                                      bool observed_submission);
+                                      QualityMetricType metric_type);
 
   static void LogServerQueryMetric(ServerQueryMetric metric);
 
   static void LogUserHappinessMetric(UserHappinessMetric metric);
-
-  // Logs |state| to the dismissal states histogram.
-  static void LogDialogDismissalState(DialogDismissalState state);
-
-  // This should be called as soon as the user's signed-in status and Wallet
-  // item count is known.  Records that a user starting out in |user_state| is
-  // interacting with a dialog.
-  static void LogDialogInitialUserState(DialogInitialUserStateMetric user_type);
-
-  // Logs the time elapsed between the dialog being shown and when it is ready
-  // for user interaction.
-  static void LogDialogLatencyToShow(const base::TimeDelta& duration);
-
-  // Logs |event| to the popup events histogram.
-  static void LogDialogPopupEvent(DialogPopupEvent event);
-
-  // Logs |metric| to the security metrics histogram.
-  static void LogDialogSecurityMetric(DialogSecurityMetric metric);
-
-  // This should be called when the Autofill dialog is closed.  |duration|
-  // should be the time elapsed between the dialog being shown and it being
-  // closed.  |dismissal_action| should indicate whether the user dismissed
-  // the dialog by submitting the form data or by canceling.
-  static void LogDialogUiDuration(const base::TimeDelta& duration,
-                                  DialogDismissalAction dismissal_action);
-
-  // Logs |event| to the UI events histogram.
-  static void LogDialogUiEvent(DialogUiEvent event);
 
   // Logs |event| to the unmask prompt events histogram.
   static void LogUnmaskPromptEvent(UnmaskPromptEvent event);
@@ -584,23 +564,6 @@ class AutofillMetrics {
   // Logs |result| to the get real pan result histogram.
   static void LogUnmaskingDuration(const base::TimeDelta& duration,
                                    AutofillClient::PaymentsRpcResult result);
-
-  // Logs |metric| to the Wallet errors histogram.
-  static void LogWalletErrorMetric(WalletErrorMetric metric);
-
-  // Logs the network request time of Wallet API calls.
-  static void LogWalletApiCallDuration(WalletApiCallMetric metric,
-                                       const base::TimeDelta& duration);
-
-  // Logs that the Wallet API call corresponding to |metric| was malformed.
-  static void LogWalletMalformedResponseMetric(WalletApiCallMetric metric);
-
-  // Logs |required_action| to the required actions histogram.
-  static void LogWalletRequiredActionMetric(
-      WalletRequiredActionMetric required_action);
-
-  // Logs HTTP response codes recieved by wallet client.
-  static void LogWalletResponseCode(int response_code);
 
   // This should be called when a form that has been Autofilled is submitted.
   // |duration| should be the time elapsed between form load and submission.
@@ -633,6 +596,9 @@ class AutofillMetrics {
 
   // This should be called each time a new profile is launched.
   static void LogStoredProfileCount(size_t num_profiles);
+
+  // This should be called each time a new profile is launched.
+  static void LogStoredLocalCreditCardCount(size_t num_local_cards);
 
   // Log the number of profiles available when an autofillable form is
   // submitted.
@@ -667,6 +633,19 @@ class AutofillMetrics {
   // state of the form.
   static void LogAutofillFormSubmittedState(AutofillFormSubmittedState state);
 
+  // This should be called when determining the heuristic types for a form's
+  // fields.
+  static void LogDetermineHeuristicTypesTiming(const base::TimeDelta& duration);
+
+  // This should be called when parsing each form.
+  static void LogParseFormTiming(const base::TimeDelta& duration);
+
+  // Log how many profiles were considered for the deduplication process.
+  static void LogNumberOfProfilesConsideredForDedupe(size_t num_considered);
+
+  // Log how many profiles were removed as part of the deduplication process.
+  static void LogNumberOfProfilesRemovedDuringDedupe(size_t num_removed);
+
   // Utility to autofill form events in the relevant histograms depending on
   // the presence of server and/or local data.
   class FormEventLogger {
@@ -682,6 +661,8 @@ class AutofillMetrics {
     }
 
     void OnDidInteractWithAutofillableForm();
+
+    void OnDidPollSuggestions(const FormFieldData& field);
 
     void OnDidShowSuggestions();
 
@@ -711,6 +692,9 @@ class AutofillMetrics {
     bool has_logged_submitted_;
     bool logged_suggestion_filled_was_server_data_;
     bool logged_suggestion_filled_was_masked_server_card_;
+
+    // The last field that was polled for suggestions.
+    FormFieldData last_polled_field_;
   };
 
  private:

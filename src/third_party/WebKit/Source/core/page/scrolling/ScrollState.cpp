@@ -7,6 +7,9 @@
 #include "core/dom/DOMNodeIds.h"
 #include "core/dom/Element.h"
 #include "core/dom/ExceptionCode.h"
+#include "platform/graphics/CompositorElementId.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -24,13 +27,13 @@ Element* elementForId(int elementId)
 }
 } // namespace
 
-PassRefPtrWillBeRawPtr<ScrollState> ScrollState::create(ScrollStateInit init)
+ScrollState* ScrollState::create(ScrollStateInit init)
 {
-    OwnPtr<ScrollStateData> scrollStateData = adoptPtr(new ScrollStateData());
+    std::unique_ptr<ScrollStateData> scrollStateData = wrapUnique(new ScrollStateData());
     scrollStateData->delta_x = init.deltaX();
     scrollStateData->delta_y = init.deltaY();
-    scrollStateData->start_position_x = init.startPositionX();
-    scrollStateData->start_position_y = init.startPositionY();
+    scrollStateData->position_x = init.positionX();
+    scrollStateData->position_y = init.positionY();
     scrollStateData->velocity_x = init.velocityX();
     scrollStateData->velocity_y = init.velocityY();
     scrollStateData->is_beginning = init.isBeginning();
@@ -40,18 +43,18 @@ PassRefPtrWillBeRawPtr<ScrollState> ScrollState::create(ScrollStateInit init)
     scrollStateData->from_user_input = init.fromUserInput();
     scrollStateData->is_direct_manipulation = init.isDirectManipulation();
     scrollStateData->delta_granularity = init.deltaGranularity();
-    ScrollState* scrollState = new ScrollState(scrollStateData.release());
-    return adoptRefWillBeNoop(scrollState);
+    ScrollState* scrollState = new ScrollState(std::move(scrollStateData));
+    return scrollState;
 }
 
-PassRefPtrWillBeRawPtr<ScrollState> ScrollState::create(PassOwnPtr<ScrollStateData> data)
+ScrollState* ScrollState::create(std::unique_ptr<ScrollStateData> data)
 {
-    ScrollState* scrollState = new ScrollState(data);
-    return adoptRefWillBeNoop(scrollState);
+    ScrollState* scrollState = new ScrollState(std::move(data));
+    return scrollState;
 }
 
-ScrollState::ScrollState(PassOwnPtr<ScrollStateData> data)
-    : m_data(data)
+ScrollState::ScrollState(std::unique_ptr<ScrollStateData> data)
+    : m_data(std::move(data))
 {
 }
 
@@ -92,7 +95,7 @@ void ScrollState::consumeDeltaNative(double x, double y)
 
 Element* ScrollState::currentNativeScrollingElement() const
 {
-    uint64_t elementId = m_data->current_native_scrolling_element();
+    uint64_t elementId = m_data->current_native_scrolling_element().primaryId;
     if (elementId == 0)
         return nullptr;
     return elementForId(elementId);
@@ -100,12 +103,12 @@ Element* ScrollState::currentNativeScrollingElement() const
 
 void ScrollState::setCurrentNativeScrollingElement(Element* element)
 {
-    m_data->set_current_native_scrolling_element(DOMNodeIds::idForNode(element));
+    m_data->set_current_native_scrolling_element(createCompositorElementId(DOMNodeIds::idForNode(element), CompositorSubElementId::Scroll));
 }
 
 void ScrollState::setCurrentNativeScrollingElementById(int elementId)
 {
-    m_data->set_current_native_scrolling_element(elementId);
+    m_data->set_current_native_scrolling_element(createCompositorElementId(elementId, CompositorSubElementId::Scroll));
 }
 
 } // namespace blink

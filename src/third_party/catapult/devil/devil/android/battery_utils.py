@@ -116,6 +116,8 @@ _PWS_AGGREGATION_INDEX = _PWI_AGGREGATION_INDEX
 _PWI_POWER_CONSUMPTION_INDEX = 5
 _PWS_POWER_CONSUMPTION_INDEX = _PWI_POWER_CONSUMPTION_INDEX
 
+_MAX_CHARGE_ERROR = 20
+
 
 class BatteryUtils(object):
 
@@ -131,7 +133,6 @@ class BatteryUtils(object):
         default_retries: An integer containing the default number or times an
                          operation should be retried on failure if no explicit
                          value is provided.
-
       Raises:
         TypeError: If it is not passed a DeviceUtils instance.
     """
@@ -252,7 +253,7 @@ class BatteryUtils(object):
       if entry[_DUMP_VERSION_INDEX] not in ['8', '9']:
         # Wrong dumpsys version.
         raise device_errors.DeviceVersionError(
-            'Dumpsys version must be 8 or 9. %s found.'
+            'Dumpsys version must be 8 or 9. "%s" found.'
             % entry[_DUMP_VERSION_INDEX])
       if _ROW_TYPE_INDEX < len(entry) and entry[_ROW_TYPE_INDEX] == 'uid':
         current_package = entry[_PACKAGE_NAME_INDEX]
@@ -441,9 +442,14 @@ class BatteryUtils(object):
     Args:
       level: level of charge to wait for.
       wait_period: time in seconds to wait between checking.
+    Raises:
+      device_errors.DeviceChargingError: If error while charging is detected.
     """
     self.SetCharging(True)
-
+    charge_status = {
+        'charge_failure_count': 0,
+        'last_charge_value': 0
+    }
     def device_charged():
       battery_level = self.GetBatteryInfo().get('level')
       if battery_level is None:
@@ -452,6 +458,19 @@ class BatteryUtils(object):
       else:
         logging.info('current battery level: %s', battery_level)
         battery_level = int(battery_level)
+
+      # Use > so that it will not reset if charge is going down.
+      if battery_level > charge_status['last_charge_value']:
+        charge_status['last_charge_value'] = battery_level
+        charge_status['charge_failure_count'] = 0
+      else:
+        charge_status['charge_failure_count'] += 1
+
+      if (not battery_level >= level
+          and charge_status['charge_failure_count'] >= _MAX_CHARGE_ERROR):
+        raise device_errors.DeviceChargingError(
+            'Device not charging properly. Current level:%s Previous level:%s'
+             % (battery_level, charge_status['last_charge_value']))
       return battery_level >= level
 
     timeout_retry.WaitFor(device_charged, wait_period=wait_period)
@@ -589,22 +608,27 @@ class BatteryUtils(object):
         ['dumpsys', 'battery', 'set', 'usb', '1'], check_return=True)
     self._device.RunShellCommand(
         ['dumpsys', 'battery', 'set', 'ac', '1'], check_return=True)
-    self._device.RunShellCommand(
-        ['dumpsys', 'batterystats', '--reset'], check_return=True)
-    battery_data = self._device.RunShellCommand(
-        ['dumpsys', 'batterystats', '--charged', '-c'],
-        check_return=True, large_output=True)
-    for line in battery_data:
-      l = line.split(',')
-      if (len(l) > _PWI_POWER_CONSUMPTION_INDEX and l[_ROW_TYPE_INDEX] == 'pwi'
-          and l[_PWI_POWER_CONSUMPTION_INDEX] != 0):
-        self._device.RunShellCommand(
-            ['dumpsys', 'battery', 'reset'], check_return=True)
-        raise device_errors.CommandFailedError(
-            'Non-zero pmi value found after reset.')
-    self._device.RunShellCommand(
-        ['dumpsys', 'battery', 'reset'], check_return=True)
-    return True
+
+    def test_if_clear():
+      self._device.RunShellCommand(
+          ['dumpsys', 'batterystats', '--reset'], check_return=True)
+      battery_data = self._device.RunShellCommand(
+          ['dumpsys', 'batterystats', '--charged', '-c'],
+          check_return=True, large_output=True)
+      for line in battery_data:
+        l = line.split(',')
+        if (len(l) > _PWI_POWER_CONSUMPTION_INDEX
+            and l[_ROW_TYPE_INDEX] == 'pwi'
+            and float(l[_PWI_POWER_CONSUMPTION_INDEX]) != 0.0):
+          return False
+      return True
+
+    try:
+      timeout_retry.WaitFor(test_if_clear, wait_period=1)
+      return True
+    finally:
+      self._device.RunShellCommand(
+          ['dumpsys', 'battery', 'reset'], check_return=True)
 
   def _DiscoverDeviceProfile(self):
     """Checks and caches device information.

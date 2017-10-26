@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
@@ -11,9 +12,8 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -88,6 +88,19 @@ namespace chromeos {
 
 namespace {
 
+// Enum types for Login.PasswordChangeFlow.
+// Don't change the existing values and update LoginPasswordChangeFlow in
+// histogram.xml when making changes here.
+enum LoginPasswordChangeFlow {
+  // User is sent to the password changed flow. This is the normal case.
+  LOGIN_PASSWORD_CHANGE_FLOW_PASSWORD_CHANGED = 0,
+  // User is sent to the unrecoverable cryptohome failure flow. This is the
+  // case when http://crbug.com/547857 happens.
+  LOGIN_PASSWORD_CHANGE_FLOW_CRYPTOHOME_FAILURE = 1,
+
+  LOGIN_PASSWORD_CHANGE_FLOW_COUNT,  // Must be the last entry.
+};
+
 // Delay for transferring the auth cache to the system profile.
 const long int kAuthCacheTransferDelayMs = 2000;
 
@@ -139,6 +152,11 @@ bool CanShowDebuggingFeatures() {
          base::CommandLine::ForCurrentProcess()->HasSwitch(
              chromeos::switches::kLoginManager) &&
          !user_manager::UserManager::Get()->IsSessionStarted();
+}
+
+void RecordPasswordChangeFlow(LoginPasswordChangeFlow flow) {
+  UMA_HISTOGRAM_ENUMERATION("Login.PasswordChangeFlow", flow,
+                            LOGIN_PASSWORD_CHANGE_FLOW_COUNT);
 }
 
 }  // namespace
@@ -212,25 +230,29 @@ void ExistingUserController::UpdateLoginDisplay(
 
   cros_settings_->GetBoolean(kAccountsPrefShowUserNamesOnSignIn,
                              &show_users_on_signin);
-  for (user_manager::UserList::const_iterator it = users.begin();
-       it != users.end();
-       ++it) {
+  for (const auto& user : users) {
+    // Skip kiosk apps for login screen user list. Kiosk apps as pods (aka new
+    // kiosk UI) is currently disabled and it gets the apps directly from
+    // KioskAppManager.
+    if (user->GetType() == user_manager::USER_TYPE_KIOSK_APP)
+      continue;
+
     // TODO(xiyuan): Clean user profile whose email is not in whitelist.
-    bool meets_supervised_requirements =
-        (*it)->GetType() != user_manager::USER_TYPE_SUPERVISED ||
+    const bool meets_supervised_requirements =
+        user->GetType() != user_manager::USER_TYPE_SUPERVISED ||
         user_manager::UserManager::Get()->AreSupervisedUsersAllowed();
-    bool meets_whitelist_requirements =
-        CrosSettings::IsWhitelisted((*it)->email(), nullptr) ||
-        !(*it)->HasGaiaAccount();
+    const bool meets_whitelist_requirements =
+        CrosSettings::IsWhitelisted(user->email(), nullptr) ||
+        !user->HasGaiaAccount();
 
     // Public session accounts are always shown on login screen.
-    bool meets_show_users_requirements =
+    const bool meets_show_users_requirements =
         show_users_on_signin ||
-        (*it)->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT;
+        user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT;
     if (meets_supervised_requirements &&
         meets_whitelist_requirements &&
         meets_show_users_requirements) {
-      filtered_users.push_back(*it);
+      filtered_users.push_back(user);
     }
   }
 
@@ -288,8 +310,8 @@ void ExistingUserController::Observe(
     content::BrowserThread::PostDelayedTask(
         content::BrowserThread::IO, FROM_HERE,
         base::Bind(&TransferContextAuthenticationsOnIOThread,
-                   signin_profile_context_getter,
-                   browser_process_context_getter),
+                   base::RetainedRef(signin_profile_context_getter),
+                   base::RetainedRef(browser_process_context_getter)),
         base::TimeDelta::FromMilliseconds(kAuthCacheTransferDelayMs));
   }
 }
@@ -522,6 +544,8 @@ void ExistingUserController::ShowTPMError() {
 }
 
 void ExistingUserController::ShowPasswordChangedDialog() {
+  RecordPasswordChangeFlow(LOGIN_PASSWORD_CHANGE_FLOW_PASSWORD_CHANGED);
+
   VLOG(1) << "Show password changed dialog"
           << ", count=" << login_performer_->password_changed_callback_count();
 
@@ -788,8 +812,8 @@ bool ExistingUserController::password_changed() const {
 }
 
 void ExistingUserController::LoginAsGuest() {
-  PerformPreLoginActions(UserContext(user_manager::USER_TYPE_GUEST,
-                                     login::GuestAccountId().GetUserEmail()));
+  PerformPreLoginActions(
+      UserContext(user_manager::USER_TYPE_GUEST, login::GuestAccountId()));
 
   bool allow_guest;
   cros_settings_->GetBoolean(kAccountsPrefAllowGuest, &allow_guest);
@@ -892,20 +916,21 @@ void ExistingUserController::ConfigurePublicSessionAutoLogin() {
   const std::vector<policy::DeviceLocalAccount> device_local_accounts =
       policy::GetDeviceLocalAccounts(cros_settings_);
 
-  public_session_auto_login_username_.clear();
+  public_session_auto_login_account_id_ = EmptyAccountId();
   for (std::vector<policy::DeviceLocalAccount>::const_iterator
            it = device_local_accounts.begin();
        it != device_local_accounts.end(); ++it) {
     if (it->account_id == auto_login_account_id) {
-      public_session_auto_login_username_ = it->user_id;
+      public_session_auto_login_account_id_ =
+          AccountId::FromUserEmail(it->user_id);
       break;
     }
   }
 
   const user_manager::User* user = user_manager::UserManager::Get()->FindUser(
-      AccountId::FromUserEmail(public_session_auto_login_username_));
+      public_session_auto_login_account_id_);
   if (!user || user->GetType() != user_manager::USER_TYPE_PUBLIC_ACCOUNT)
-    public_session_auto_login_username_.clear();
+    public_session_auto_login_account_id_ = EmptyAccountId();
 
   if (!cros_settings_->GetInteger(
           kAccountsPrefDeviceLocalAccountAutoLoginDelay,
@@ -913,7 +938,7 @@ void ExistingUserController::ConfigurePublicSessionAutoLogin() {
     public_session_auto_login_delay_ = 0;
   }
 
-  if (!public_session_auto_login_username_.empty())
+  if (public_session_auto_login_account_id_.is_valid())
     StartPublicSessionAutoLoginTimer();
   else
     StopPublicSessionAutoLoginTimer();
@@ -928,9 +953,10 @@ void ExistingUserController::ResetPublicSessionAutoLoginTimer() {
 }
 
 void ExistingUserController::OnPublicSessionAutoLoginTimerFire() {
-  CHECK(signin_screen_ready_ && !public_session_auto_login_username_.empty());
+  CHECK(signin_screen_ready_ &&
+        public_session_auto_login_account_id_.is_valid());
   Login(UserContext(user_manager::USER_TYPE_PUBLIC_ACCOUNT,
-                    public_session_auto_login_username_),
+                    public_session_auto_login_account_id_),
         SigninSpecifics());
 }
 
@@ -940,9 +966,8 @@ void ExistingUserController::StopPublicSessionAutoLoginTimer() {
 }
 
 void ExistingUserController::StartPublicSessionAutoLoginTimer() {
-  if (!signin_screen_ready_ ||
-      is_login_in_progress_ ||
-      public_session_auto_login_username_.empty()) {
+  if (!signin_screen_ready_ || is_login_in_progress_ ||
+      !public_session_auto_login_account_id_.is_valid()) {
     return;
   }
 
@@ -1006,7 +1031,7 @@ void ExistingUserController::SendAccessibilityAlert(
 
 void ExistingUserController::SetPublicSessionKeyboardLayoutAndLogin(
     const UserContext& user_context,
-    scoped_ptr<base::ListValue> keyboard_layouts) {
+    std::unique_ptr<base::ListValue> keyboard_layouts) {
   UserContext new_user_context = user_context;
   std::string keyboard_layout;
   for (size_t i = 0; i < keyboard_layouts->GetSize(); ++i) {
@@ -1246,6 +1271,7 @@ void ExistingUserController::OnTokenHandleChecked(
 
   // Otherwise, show the unrecoverable cryptohome error UI and ask user's
   // permission to collect a feedback.
+  RecordPasswordChangeFlow(LOGIN_PASSWORD_CHANGE_FLOW_CRYPTOHOME_FAILURE);
   VLOG(1) << "Show unrecoverable cryptohome error dialog.";
   login_display_->ShowUnrecoverableCrypthomeErrorDialog();
 }

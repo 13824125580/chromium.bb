@@ -5,18 +5,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+#include <tuple>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/gpu/compositor_util.h"
-#include "content/browser/gpu/gpu_surface_tracker.h"
 #include "content/browser/renderer_host/input/input_router_impl.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
@@ -29,15 +31,15 @@
 #include "content/public/test/test_browser_context.h"
 #include "content/test/test_render_view_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/screen.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/screen.h"
 
 #if defined(OS_ANDROID)
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #endif
 
-#if defined(USE_AURA) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(USE_AURA) || defined(OS_MACOSX)
 #include "content/browser/compositor/test/no_transport_image_transport_factory.h"
 #endif
 
@@ -67,7 +69,7 @@ std::string GetInputMessageTypes(MockRenderProcessHost* process) {
     EXPECT_EQ(InputMsg_HandleInputEvent::ID, message->type());
     InputMsg_HandleInputEvent::Param params;
     EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
-    const WebInputEvent* event = base::get<0>(params);
+    const WebInputEvent* event = std::get<0>(params);
     if (i != 0)
       result += " ";
     result += WebInputEventTraits::GetName(event->type);
@@ -93,7 +95,7 @@ class MockInputRouter : public InputRouter {
   ~MockInputRouter() override {}
 
   // InputRouter
-  bool SendInput(scoped_ptr<IPC::Message> message) override {
+  bool SendInput(std::unique_ptr<IPC::Message> message) override {
     send_event_called_ = true;
     return true;
   }
@@ -403,7 +405,8 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
     return handle_wheel_event_;
   }
 
-  void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host) override {
+  void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host,
+                            RendererUnresponsiveType type) override {
     unresponsive_timer_fired_ = true;
   }
 
@@ -457,14 +460,14 @@ class RenderWidgetHostTest : public testing::Test {
     browser_context_.reset(new TestBrowserContext());
     delegate_.reset(new MockRenderWidgetHostDelegate());
     process_ = new RenderWidgetHostProcess(browser_context_.get());
-#if defined(USE_AURA) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(USE_AURA) || defined(OS_MACOSX)
     ImageTransportFactory::InitializeForUnitTests(
-        scoped_ptr<ImageTransportFactory>(
+        std::unique_ptr<ImageTransportFactory>(
             new NoTransportImageTransportFactory));
 #endif
 #if defined(USE_AURA)
     screen_.reset(aura::TestScreen::Create(gfx::Size()));
-    gfx::Screen::SetScreenInstance(screen_.get());
+    display::Screen::SetScreenInstance(screen_.get());
 #endif
     host_.reset(new MockRenderWidgetHost(delegate_.get(), process_,
                                          process_->GetNextRoutingID()));
@@ -484,15 +487,15 @@ class RenderWidgetHostTest : public testing::Test {
     browser_context_.reset();
 
 #if defined(USE_AURA)
-    gfx::Screen::SetScreenInstance(nullptr);
+    display::Screen::SetScreenInstance(nullptr);
     screen_.reset();
 #endif
-#if defined(USE_AURA) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(USE_AURA) || defined(OS_MACOSX)
     ImageTransportFactory::Terminate();
 #endif
 
     // Process all pending tasks to avoid leaks.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SetInitialRenderSizeParams() {
@@ -587,7 +590,7 @@ class RenderWidgetHostTest : public testing::Test {
   }
 
   // Set the timestamp for the touch-event.
-  void SetTouchTimestamp(base::TimeDelta timestamp) {
+  void SetTouchTimestamp(base::TimeTicks timestamp) {
     touch_event_.SetTimestamp(timestamp);
   }
 
@@ -624,12 +627,12 @@ class RenderWidgetHostTest : public testing::Test {
 
   base::MessageLoopForUI message_loop_;
 
-  scoped_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
   RenderWidgetHostProcess* process_;  // Deleted automatically by the widget.
-  scoped_ptr<MockRenderWidgetHostDelegate> delegate_;
-  scoped_ptr<MockRenderWidgetHost> host_;
-  scoped_ptr<TestView> view_;
-  scoped_ptr<gfx::Screen> screen_;
+  std::unique_ptr<MockRenderWidgetHostDelegate> delegate_;
+  std::unique_ptr<MockRenderWidgetHost> host_;
+  std::unique_ptr<TestView> view_;
+  std::unique_ptr<display::Screen> screen_;
   bool handle_key_press_event_;
   bool handle_mouse_event_;
   double last_simulated_event_time_seconds_;
@@ -840,7 +843,7 @@ TEST_F(RenderWidgetHostTest, ResizeThenCrash) {
 #if !defined(OS_MACOSX)
 // Tests setting background transparency.
 TEST_F(RenderWidgetHostTest, Background) {
-  scoped_ptr<RenderWidgetHostViewBase> view;
+  std::unique_ptr<RenderWidgetHostViewBase> view;
 #if defined(USE_AURA)
   view.reset(new RenderWidgetHostViewAura(host_.get(), false));
   // TODO(derat): Call this on all platforms: http://crbug.com/102450.
@@ -858,9 +861,9 @@ TEST_F(RenderWidgetHostTest, Background) {
       process_->sink().GetUniqueMessageMatching(
           ViewMsg_SetBackgroundOpaque::ID);
   ASSERT_TRUE(set_background);
-  base::Tuple<bool> sent_background;
+  std::tuple<bool> sent_background;
   ViewMsg_SetBackgroundOpaque::Read(set_background, &sent_background);
-  EXPECT_FALSE(base::get<0>(sent_background));
+  EXPECT_FALSE(std::get<0>(sent_background));
 
 #if defined(USE_AURA)
   // See the comment above |InitAsChild(NULL)|.
@@ -895,9 +898,9 @@ TEST_F(RenderWidgetHostTest, HiddenPaint) {
   const IPC::Message* restored = process_->sink().GetUniqueMessageMatching(
       ViewMsg_WasShown::ID);
   ASSERT_TRUE(restored);
-  base::Tuple<bool, ui::LatencyInfo> needs_repaint;
+  std::tuple<bool, ui::LatencyInfo> needs_repaint;
   ViewMsg_WasShown::Read(restored, &needs_repaint);
-  EXPECT_TRUE(base::get<0>(needs_repaint));
+  EXPECT_TRUE(std::get<0>(needs_repaint));
 }
 
 TEST_F(RenderWidgetHostTest, IgnoreKeyEventsHandledByRenderer) {
@@ -1068,11 +1071,15 @@ TEST_F(RenderWidgetHostTest, UnhandledGestureEvent) {
 // while one is in progress (see crbug.com/11007).
 TEST_F(RenderWidgetHostTest, DontPostponeHangMonitorTimeout) {
   // Start with a short timeout.
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(10));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(10),
+      RenderWidgetHostDelegate::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Immediately try to add a long 30 second timeout.
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
-  host_->StartHangMonitorTimeout(TimeDelta::FromSeconds(30));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromSeconds(30),
+      RenderWidgetHostDelegate::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Wait long enough for first timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
@@ -1086,12 +1093,16 @@ TEST_F(RenderWidgetHostTest, DontPostponeHangMonitorTimeout) {
 // and then started again.
 TEST_F(RenderWidgetHostTest, StopAndStartHangMonitorTimeout) {
   // Start with a short timeout, then stop it.
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(10));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(10),
+      RenderWidgetHostDelegate::RENDERER_UNRESPONSIVE_UNKNOWN);
   host_->StopHangMonitorTimeout();
 
   // Start it again to ensure it still works.
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(10));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(10),
+      RenderWidgetHostDelegate::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Wait long enough for first timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
@@ -1105,11 +1116,15 @@ TEST_F(RenderWidgetHostTest, StopAndStartHangMonitorTimeout) {
 // updated to a shorter duration.
 TEST_F(RenderWidgetHostTest, ShorterDelayHangMonitorTimeout) {
   // Start with a timeout.
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(100));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(100),
+      RenderWidgetHostDelegate::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Start it again with shorter delay.
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(20));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(20),
+      RenderWidgetHostDelegate::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Wait long enough for the second timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
@@ -1522,24 +1537,24 @@ TEST_F(RenderWidgetHostTest, InputRouterReceivesHasTouchEventHandlers) {
   EXPECT_TRUE(host_->mock_input_router()->message_received_);
 }
 
-ui::LatencyInfo GetLatencyInfoFromInputEvent(RenderWidgetHostProcess* process) {
-  const IPC::Message* message = process->sink().GetUniqueMessageMatching(
-      InputMsg_HandleInputEvent::ID);
-  EXPECT_TRUE(message);
-  InputMsg_HandleInputEvent::Param params;
-  EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
-  process->sink().ClearMessages();
-  return base::get<1>(params);
-}
-
 void CheckLatencyInfoComponentInMessage(RenderWidgetHostProcess* process,
                                         int64_t component_id,
-                                        WebInputEvent::Type input_type) {
-  ui::LatencyInfo latency_info = GetLatencyInfoFromInputEvent(process);
+                                        WebInputEvent::Type expected_type) {
+  EXPECT_EQ(process->sink().message_count(), 1U);
+
+  const IPC::Message* message = process->sink().GetMessageAt(0);
+  EXPECT_EQ(InputMsg_HandleInputEvent::ID, message->type());
+  InputMsg_HandleInputEvent::Param params;
+  EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
+
+  const WebInputEvent* event = std::get<0>(params);
+  ui::LatencyInfo latency_info = std::get<1>(params);
+
+  EXPECT_TRUE(event->type == expected_type);
   EXPECT_TRUE(latency_info.FindLatency(
-      ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
-      component_id,
-      NULL));
+      ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, component_id, NULL));
+
+  process->sink().ClearMessages();
 }
 
 // Tests that after input event passes through RWHI through ForwardXXXEvent()

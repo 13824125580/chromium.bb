@@ -7,10 +7,32 @@ import("//build/config/ui.gni")
 import("//testing/test.gni")
 import("//tools/grit/repack.gni")
 
+if (false) {
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
+if (is_ios) {
+  import("//ios/build/config.gni")
+}
+
+if (is_ios) {
+  bundle_data("components_tests_pak_bundle_data") {
+    public_deps = [
+      ":components_tests_pak",
+      "//ui/resources:ui_test_pak",
+    ]
+    sources = [
+      "$root_out_dir/components_tests_resources.pak",
+      "$root_out_dir/ui_test.pak",
+    ]
+    outputs = [
+      "{{bundle_resources_dir}}/{{source_file_part}}",
+    ]
+  }
+}
+
+if (false) {
 # To add a unit test to this target, make a "unit_test" source_set in your
 # component (it's important to use a source_set instead of a static library or
 # no tests will run) and add a reference here. You can add more than one unit
@@ -37,28 +59,77 @@ test("components_unittests") {
   deps = [
     "//base",
     "//base/test:test_support",
+    "//components/auto_login_parser:unit_tests",
+    "//components/autofill/core/browser:unit_tests",
+    "//components/autofill/core/common:unit_tests",
+    "//components/base32:unit_tests",
     "//components/bookmarks/browser:unit_tests",
     "//components/bookmarks/managed:unit_tests",
+    "//components/browser_sync/browser:unit_tests",
+    "//components/browsing_data_ui:unit_tests",
+    "//components/bubble:unit_tests",
+    "//components/captive_portal:unit_tests",
+    "//components/certificate_reporting:unit_tests",
+    "//components/client_update_protocol:unit_tests",
+    "//components/cloud_devices/common:unit_tests",
+    "//components/component_updater:unit_tests",
     "//components/content_settings/core/browser:unit_tests",
-    "//components/content_settings/core/common",
     "//components/content_settings/core/common:unit_tests",
+    "//components/crx_file:unit_tests",
+    "//components/data_reduction_proxy/core/browser:unit_tests",
+    "//components/data_reduction_proxy/core/common:unit_tests",
     "//components/data_usage/core:unit_tests",
+    "//components/device_event_log:unit_tests",
     "//components/dom_distiller/core:unit_tests",
+    "//components/favicon/core:unit_tests",
+    "//components/favicon_base:unit_tests",
     "//components/flags_ui:unit_tests",
+    "//components/gcm_driver:unit_tests",
+    "//components/gcm_driver/crypto:unit_tests",
     "//components/google/core/browser:unit_tests",
+    "//components/history/core/browser:unit_tests",
+    "//components/history/core/common:unit_tests",
+    "//components/image_fetcher:unit_tests",
+    "//components/json_schema:unit_tests",
     "//components/keyed_service/core:unit_tests",
+    "//components/language_usage_metrics:unit_tests",
     "//components/leveldb_proto:unit_tests",
+    "//components/login:unit_tests",
+    "//components/memory_pressure:unit_tests",
     "//components/metrics:unit_tests",
+    "//components/mime_util:unit_tests",
     "//components/net_log:unit_tests",
+    "//components/network_session_configurator:unit_tests",
     "//components/network_time:unit_tests",
     "//components/ntp_snippets:unit_tests",
+    "//components/offline_pages:unit_tests",
+    "//components/offline_pages/background:unit_tests",
+    "//components/omnibox/browser:unit_tests",
     "//components/open_from_clipboard:unit_tests",
     "//components/os_crypt:unit_tests",
+    "//components/password_manager/core/browser:unit_tests",
+    "//components/password_manager/core/common:unit_tests",
+    "//components/password_manager/sync/browser:unit_tests",
+    "//components/precache/core:unit_tests",
     "//components/prefs:unit_tests",
     "//components/proxy_config:unit_tests",
+    "//components/query_parser:unit_tests",
+    "//components/rappor:unit_tests",
+    "//components/search:unit_tests",
+    "//components/search_engines:unit_tests",
+    "//components/search_provider_logos:unit_tests",
     "//components/security_state:unit_tests",
     "//components/sessions:unit_tests",
+    "//components/signin/core/browser:unit_tests",
+    "//components/ssl_config:unit_tests",
+    "//components/ssl_errors:unit_tests",
+    "//components/subresource_filter/core/browser:unit_tests",
+    "//components/subresource_filter/core/common:unit_tests",
     "//components/suggestions:unit_tests",
+    "//components/supervised_user_error_page:unit_tests",
+    "//components/sync_bookmarks:unit_tests",
+    "//components/sync_driver:unit_tests",
+    "//components/sync_sessions:unit_tests",
     "//components/syncable_prefs:unit_tests",
     "//components/translate/core/browser:unit_tests",
     "//components/translate/core/common:unit_tests",
@@ -66,15 +137,26 @@ test("components_unittests") {
     "//components/undo:unit_tests",
     "//components/update_client:unit_tests",
     "//components/upload_list:unit_tests",
+    "//components/url_formatter:unit_tests",
+    "//components/url_matcher:unit_tests",
+    "//components/user_prefs/tracked:unit_tests",
     "//components/variations:unit_tests",
     "//components/variations/service:unit_tests",
     "//components/web_resource:unit_tests",
-    "//mojo/edk/embedder:headers",
+    "//components/webdata/common:unit_tests",
+
+    # Direct dependencies of components/test/run_all_unittests.cc.
+    "//components/content_settings/core/common",
+    "//mojo/edk/system",
     "//net",
     "//testing/gtest",
     "//ui/base",
     "//ui/resources:ui_test_pak",
   ]
+
+  if (enable_nacl) {
+    deps += [ "//components/nacl/browser:unit_tests" ]
+  }
 
   if (is_ios) {
     deps += [
@@ -82,87 +164,54 @@ test("components_unittests") {
       "//components/translate/ios/browser:unit_tests",
     ]
 
-    if (target_cpu != "arm") {
+    if (current_cpu != "arm") {
       # TODO(GYP): iOS arm builds of libwebp don't work yet.
       deps += [ "//components/webp_transcode:unit_tests" ]
     }
   } else {  # !iOS
     deps += [
-      "//components/auto_login_parser:unit_tests",
       "//components/autofill/content/browser:unit_tests",
+      "//components/autofill/content/public/cpp:unit_tests",
       "//components/autofill/content/renderer:unit_tests",
-      "//components/autofill/core/browser:unit_tests",
-      "//components/autofill/core/common:unit_tests",
-      "//components/browser_sync/browser:unit_tests",
-      "//components/bubble:unit_tests",
-      "//components/captive_portal:unit_tests",
+      "//components/cast_certificate:unit_tests",
       "//components/certificate_transparency:unit_tests",
-      "//components/cloud_devices/common:unit_tests",
-      "//components/component_updater:unit_tests",
-      "//components/crx_file:unit_tests",
+      "//components/crash/content/app:unit_tests",
+      "//components/crash/core/common:unit_tests",
       "//components/data_reduction_proxy/content/browser:unit_tests",
-      "//components/data_reduction_proxy/core/browser:unit_tests",
-      "//components/data_reduction_proxy/core/common:unit_tests",
       "//components/data_use_measurement/content:unit_tests",
-      "//components/device_event_log:unit_tests",
       "//components/devtools_http_handler:unit_tests",
+      "//components/display_compositor:unit_tests",
       "//components/dom_distiller/content/browser:unit_tests",
       "//components/domain_reliability:unit_tests",
       "//components/error_page/renderer:unit_tests",
       "//components/favicon/content:unit_tests",
-      "//components/favicon/core:unit_tests",
-      "//components/favicon_base:unit_tests",
-      "//components/gcm_driver:unit_tests",
-      "//components/gcm_driver/crypto:unit_tests",
+      "//components/gcm_driver/instance_id:unit_tests",
       "//components/guest_view/browser:unit_tests",
       "//components/history/content/browser:unit_tests",
-      "//components/history/core/browser:unit_tests",
-      "//components/history/core/common:unit_tests",
       "//components/invalidation/impl:unit_tests",
-      "//components/json_schema:unit_tests",
       "//components/keyed_service/content:unit_tests",
-      "//components/language_usage_metrics:unit_tests",
-      "//components/login:unit_tests",
-      "//components/memory_pressure:unit_tests",
-      "//components/mime_util:unit_tests",
+      "//components/link_header_util:unit_tests",
+      "//components/memory_coordinator/child:unit_tests",
       "//components/navigation_interception:unit_tests",
       "//components/network_hints/renderer:unit_tests",
-      "//components/offline_pages:unit_tests",
-      "//components/omnibox/browser:unit_tests",
+      "//components/ntp_tiles:unit_tests",
       "//components/packed_ct_ev_whitelist:unit_tests",
       "//components/page_load_metrics/browser:unit_tests",
       "//components/page_load_metrics/renderer:unit_tests",
       "//components/password_manager/content/browser:unit_tests",
-      "//components/password_manager/core/browser:unit_tests",
-      "//components/password_manager/core/common:unit_tests",
-      "//components/password_manager/sync/browser:unit_tests",
       "//components/power:unit_tests",
       "//components/precache/content:unit_tests",
-      "//components/precache/core:unit_tests",
-      "//components/query_parser:unit_tests",
-      "//components/rappor:unit_tests",
       "//components/safe_browsing_db:unit_tests",
       "//components/safe_json:unit_tests",
       "//components/scheduler:unit_tests",
-      "//components/search:unit_tests",
-      "//components/search_engines:unit_tests",
-      "//components/search_provider_logos:unit_tests",
-      "//components/signin/core/browser:unit_tests",
-      "//components/ssl_config:unit_tests",
-      "//components/sync_bookmarks:unit_tests",
-      "//components/sync_driver:unit_tests",
-      "//components/sync_sessions:unit_tests",
+      "//components/subresource_filter/content/browser:unit_tests",
       "//components/test_runner:test_runner",
       "//components/tracing:unit_tests",
-      "//components/ui/zoom:unit_tests",
-      "//components/url_formatter:unit_tests",
-      "//components/url_matcher:unit_tests",
-      "//components/user_prefs/tracked:unit_tests",
       "//components/visitedlink/test:unit_tests",
       "//components/wallpaper:unit_tests",
       "//components/web_cache/browser:unit_tests",
       "//components/webcrypto:unit_tests",
-      "//components/webdata/common:unit_tests",
+      "//components/zoom:unit_tests",
 
       # These are the deps required by the code in this target.
       "//components/policy:policy_component",
@@ -177,10 +226,19 @@ test("components_unittests") {
     ]
   }  # iOS/!iOS
 
-  if (is_android) {
-    isolate_file = "components_unittests.isolate"
+  if (is_ios) {
+    deps += [ ":components_tests_pak_bundle_data" ]
+  }
 
+  if (is_mac) {
+    data_deps += [ "//content/shell:pak" ]
+  }
+
+  if (is_android) {
     deps += [
+      "//components/gcm_driver/instance_id:test_support",
+      "//components/gcm_driver/instance_id/android:instance_id_driver_java",
+      "//components/gcm_driver/instance_id/android:instance_id_driver_test_support_java",
       "//components/invalidation/impl",
       "//components/invalidation/impl:java",
       "//components/safe_json",
@@ -188,7 +246,9 @@ test("components_unittests") {
       "//components/signin/core/browser",
       "//components/signin/core/browser/android:java",
       "//components/variations/android:variations_java",
-      "//content/public/android:content_java",
+      "//components/web_restrictions:test_support",
+      "//components/web_restrictions:test_support_java",
+      "//components/web_restrictions:unit_tests",
       "//content/public/android:content_java",
       "//content/public/browser",
       "//net",
@@ -208,7 +268,6 @@ test("components_unittests") {
       "//components/audio_modem:unit_tests",
       "//components/copresence:unit_tests",
       "//components/feedback:unit_tests",
-      "//components/gcm_driver/instance_id:unit_tests",
       "//components/proximity_auth:unit_tests",
       "//components/storage_monitor:unit_tests",
       "//components/web_modal:unit_tests",
@@ -219,16 +278,17 @@ test("components_unittests") {
   if (enable_rlz_support) {
     deps += [ "//components/rlz:unit_tests" ]
   }
+
   if (is_chromeos) {
     deps += [
       "//components/arc:unit_tests",
       "//components/ownership:unit_tests",
+      "//components/pairing:unit_tests",
+      "//components/timers:unit_tests",
       "//components/user_manager:unit_tests",
+      "//components/wifi_sync:unit_tests",
     ]
   }
-
-  # TODO(GYP) need this target.
-  #'breakpad/app/crash_keys_win_unittest.cc',
 
   if (enable_configuration_policy) {
     deps += [
@@ -238,9 +298,7 @@ test("components_unittests") {
   }
 
   if (toolkit_views) {
-    # TODO bug 522654 Enable this when the undefined symbol is fixed in
-    # web_modal such that this links.
-    #deps += [ "//components/constrained_window:unit_tests" ]
+    deps += [ "//components/constrained_window:unit_tests" ]
   }
 
   if (is_win) {
@@ -257,6 +315,10 @@ test("components_unittests") {
 
   if (safe_browsing_mode == 2) {
     deps += [ "//components/safe_browsing_db:unit_tests_mobile" ]
+  }
+
+  if (is_ios) {
+    assert_no_deps = ios_assert_no_deps
   }
 }
 
@@ -293,11 +355,15 @@ if (is_android) {
     deps = [
       ":components_browsertests_resources",
       "//base:base_java",
+      "//base:base_java_test_support",
       "//content/public/test/android:content_java_test_support",
       "//content/shell/android:content_shell_browsertests_java",
       "//testing/android/native_test:native_test_java",
     ]
-    DEPRECATED_java_in_dir = "//components/test/android/browsertests_apk/src"
+    java_files = [
+      "test/android/browsertests_apk/src/org/chromium/components_browsertests_apk/ComponentsBrowserTestsActivity.java",
+      "test/android/browsertests_apk/src/org/chromium/components_browsertests_apk/ComponentsBrowserTestsApplication.java",
+    ]
   }
 
   jinja_template("components_browsertests_manifest") {
@@ -313,25 +379,18 @@ if (is_android) {
     resource_dirs = [ "//components/test/android/browsertests_apk/res" ]
     custom_package = "org.chromium.components_browsertests_apk"
   }
+
+  # GYP: //components/components_tests.gyp:components_junit_tests
+  # TODO(GYP_GONE): Delete this target once recipes no longer require it.
+  junit_binary("components_junit_tests") {
+    java_files = [ "//testing/android/junit/DummyTest.java" ]
+  }
 }
 
-test("components_browsertests") {
-  sources = []
-  defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
-  data = []
-  deps = [
-    "//base",
-    "//base/test:test_support",
-    "//components/strings",
-    "//testing/gmock",
-    "//testing/gtest",
-  ]
+if (!is_ios) {
+  test("components_browsertests") {
+    defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
 
-  if (is_mac) {
-    data += [ "$root_out_dir/Content Shell.app/" ]
-  }
-
-  if (!is_ios) {
     sources = [
       "autofill/content/browser/risk/fingerprint_browsertest.cc",
       "autofill/content/renderer/password_form_conversion_utils_browsertest.cc",
@@ -339,10 +398,10 @@ test("components_browsertests") {
       "dom_distiller/content/browser/distiller_page_web_contents_browsertest.cc",
       "dom_distiller/content/browser/test/dom_distiller_js_browsertest.cc",
       "password_manager/content/renderer/credential_manager_client_browsertest.cc",
-      "tracing/child_trace_message_filter_browsertest.cc",
+      "tracing/child/child_trace_message_filter_browsertest.cc",
     ]
 
-    data += [
+    data = [
       "$root_out_dir/components_tests_resources.pak",
       "$root_out_dir/content_shell.pak",
       "test/data/",
@@ -350,7 +409,9 @@ test("components_browsertests") {
       "//third_party/dom_distiller_js/dist/test/data/",
     ]
 
-    deps += [
+    deps = [
+      "//base",
+      "//base/test:test_support",
       "//components/autofill/content/browser",
       "//components/autofill/content/renderer",
       "//components/autofill/core/browser",
@@ -359,8 +420,8 @@ test("components_browsertests") {
       "//components/dom_distiller/core",
       "//components/dom_distiller/core:test_support",
       "//components/password_manager/content/browser",
-      "//components/password_manager/content/common",
       "//components/password_manager/content/renderer",
+      "//components/strings",
       "//components/tracing",
       "//content/shell:content_shell_lib",
       "//content/test:browsertest_base",
@@ -369,6 +430,9 @@ test("components_browsertests") {
       "//device/bluetooth",
       "//ipc:test_support",
       "//net:test_support",
+      "//services/shell/public/cpp",
+      "//testing/gmock",
+      "//testing/gtest",
       "//ui/base",
     ]
 
@@ -376,66 +440,71 @@ test("components_browsertests") {
       ":components_tests_pak",
       "//third_party/mesa:osmesa",
     ]
+
+    if (is_mac) {
+      data_deps += [ "//content/shell:content_shell" ]
+      data += [ "$root_out_dir/Content Shell.app/" ]
+    }
+
+    if (is_android) {
+      sources += [ "test/android/browsertests_apk/components_browser_tests_jni_onload.cc" ]
+      sources -= [ "autofill/content/browser/risk/fingerprint_browsertest.cc" ]
+      deps += [
+        "//content/public/test/android:layouttest_java_support",
+        "//content/test:layouttest_support",
+        "//testing/android/native_test:native_test_support",
+      ]
+      use_default_launcher = false
+      android_manifest = "${target_gen_dir}/components_browsertests_manifest/AndroidManifest.xml"
+      android_manifest_dep = ":components_browsertests_manifest"
+      deps += [
+        ":components_browsertests_assets",
+        ":components_browsertests_java",
+      ]
+    }
+
+    if (is_linux) {
+      # content_extractor_browsertest is a standalone content extraction tool built as
+      # a MANUAL component_browsertest.
+      sources += [ "dom_distiller/standalone/content_extractor_browsertest.cc" ]
+      deps += [
+        "//components/leveldb_proto",
+        "//components/pref_registry:test_support",
+        "//components/prefs:test_support",
+      ]
+    }
+
+    if (enable_basic_printing || enable_print_preview) {
+      sources += [ "printing/test/print_web_view_helper_browsertest.cc" ]
+      deps += [ "//components/printing/test:test_support" ]
+    }
   }
-  if (is_android) {
-    sources += [ "test/android/browsertests_apk/components_browser_tests_jni_onload.cc" ]
-    sources -= [ "autofill/content/browser/risk/fingerprint_browsertest.cc" ]
-    deps += [
-      "//content/test:layouttest_support",
-      "//testing/android/native_test:native_test_support",
+
+  test("components_perftests") {
+    sources = [
+      "scheduler/base/task_queue_manager_delegate_for_test.cc",
+      "scheduler/base/task_queue_manager_delegate_for_test.h",
+      "scheduler/base/task_queue_manager_perftest.cc",
+      "visitedlink/test/visitedlink_perftest.cc",
     ]
-    use_default_launcher = false
-    isolate_file = "components_browsertests.isolate"
-    android_manifest =
-        "${target_gen_dir}/components_browsertests_manifest/AndroidManifest.xml"
-    deps += [
-      ":components_browsertests_assets",
-      ":components_browsertests_java",
-      ":components_browsertests_manifest",
-    ]
-  }
 
-  if (is_linux) {
-    # content_extractor_browsertest is a standalone content extraction tool built as
-    # a MANUAL component_browsertest.
-    sources += [ "dom_distiller/standalone/content_extractor_browsertest.cc" ]
-    deps += [
-      "//components/leveldb_proto",
-      "//components/pref_registry:test_support",
-      "//components/prefs:test_support",
-    ]
-  }
+    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+    configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 
-  if (enable_basic_printing || enable_print_preview) {
-    sources += [ "printing/test/print_web_view_helper_browsertest.cc" ]
-    deps += [ "//components/printing/test:test_support" ]
-  }
-}
-
-test("components_perftests") {
-  sources = [
-    "scheduler/base/task_queue_manager_delegate_for_test.cc",
-    "scheduler/base/task_queue_manager_delegate_for_test.h",
-    "scheduler/base/task_queue_manager_perftest.cc",
-    "visitedlink/test/visitedlink_perftest.cc",
-  ]
-
-  # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-  configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
-
-  deps = [
-    "//base/test:test_support",
-    "//testing/gtest",
-    "//testing/perf",
-    "//url",
-  ]
-  if (!is_ios) {
-    deps += [
+    deps = [
       "//base",
+      "//base/test:test_support",
       "//base/test:test_support_perf",
       "//components/scheduler",
       "//components/visitedlink/browser",
       "//content/test:test_support",
+      "//testing/gtest",
+      "//testing/perf",
+      "//url",
     ]
   }
 }
+}
+
+}
+

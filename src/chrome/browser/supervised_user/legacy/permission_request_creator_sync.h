@@ -5,9 +5,9 @@
 #ifndef CHROME_BROWSER_SUPERVISED_USER_LEGACY_PERMISSION_REQUEST_CREATOR_SYNC_H_
 #define CHROME_BROWSER_SUPERVISED_USER_LEGACY_PERMISSION_REQUEST_CREATOR_SYNC_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/supervised_user/permission_request_creator.h"
 
 class ProfileSyncService;
@@ -31,6 +31,8 @@ class PermissionRequestCreatorSync : public PermissionRequestCreator {
   bool IsEnabled() const override;
   void CreateURLAccessRequest(const GURL& url_requested,
                               const SuccessCallback& callback) override;
+  void CreateExtensionInstallRequest(const std::string& id,
+                                     const SuccessCallback& callback) override;
   void CreateExtensionUpdateRequest(const std::string& id,
                                     const SuccessCallback& callback) override;
 

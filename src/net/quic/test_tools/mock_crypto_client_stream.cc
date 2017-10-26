@@ -7,7 +7,7 @@
 #include "net/quic/crypto/quic_decrypter.h"
 #include "net/quic/crypto/quic_encrypter.h"
 #include "net/quic/quic_client_session_base.h"
-#include "net/quic/quic_server_id.h"
+#include "net/quic/test_tools/quic_config_peer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
@@ -46,7 +46,8 @@ void MockCryptoClientStream::CryptoConnect() {
       handshake_confirmed_ = false;
       encryption_established_ = false;
       session()->connection()->CloseConnection(
-          QUIC_PROOF_INVALID, ConnectionCloseSource::FROM_SELF);
+          QUIC_PROOF_INVALID, "proof invalid",
+          ConnectionCloseBehavior::SILENT_CLOSE);
       return;
     }
   }
@@ -124,6 +125,8 @@ void MockCryptoClientStream::SetConfigNegotiated() {
   config.SetMaxStreamsPerConnection(kDefaultMaxStreamsPerConnection / 2,
                                     kDefaultMaxStreamsPerConnection / 2);
   config.SetBytesForConnectionIdToSend(PACKET_8BYTE_CONNECTION_ID);
+  config.SetMaxIncomingDynamicStreamsToSend(kDefaultMaxStreamsPerConnection /
+                                            2);
 
   CryptoHandshakeMessage msg;
   config.ToHandshakeMessage(&msg);

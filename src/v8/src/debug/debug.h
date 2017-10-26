@@ -9,13 +9,13 @@
 #include "src/arguments.h"
 #include "src/assembler.h"
 #include "src/base/atomicops.h"
+#include "src/base/hashmap.h"
 #include "src/base/platform/platform.h"
 #include "src/debug/liveedit.h"
 #include "src/execution.h"
 #include "src/factory.h"
 #include "src/flags.h"
 #include "src/frames.h"
-#include "src/hashmap.h"
 #include "src/interpreter/source-position-table.h"
 #include "src/runtime/runtime.h"
 #include "src/string-stream.h"
@@ -38,9 +38,10 @@ enum StepAction : int8_t {
   StepNext = 1,   // Step to the next statement in the current function.
   StepIn = 2,     // Step into new functions invoked or the next statement
                   // in the current function.
-  StepFrame = 3   // Step into a new frame or return to previous frame.
-};
+  StepFrame = 3,  // Step into a new frame or return to previous frame.
 
+  LastStepAction = StepFrame
+};
 
 // Type of exception break. NOTE: These values are in macros.py as well.
 enum ExceptionBreakType {
@@ -70,10 +71,6 @@ class BreakLocation {
   static BreakLocation FromFrame(Handle<DebugInfo> debug_info,
                                  JavaScriptFrame* frame);
 
-  static void FromCodeOffsetSameStatement(Handle<DebugInfo> debug_info,
-                                          int offset,
-                                          List<BreakLocation>* result_out);
-
   static void AllForStatementPosition(Handle<DebugInfo> debug_info,
                                       int statement_position,
                                       List<BreakLocation>* result_out);
@@ -85,6 +82,9 @@ class BreakLocation {
 
   inline bool IsReturn() const { return type_ == DEBUG_BREAK_SLOT_AT_RETURN; }
   inline bool IsCall() const { return type_ == DEBUG_BREAK_SLOT_AT_CALL; }
+  inline bool IsTailCall() const {
+    return type_ == DEBUG_BREAK_SLOT_AT_TAIL_CALL;
+  }
   inline bool IsDebugBreakSlot() const { return type_ >= DEBUG_BREAK_SLOT; }
   inline bool IsDebuggerStatement() const {
     return type_ == DEBUGGER_STATEMENT;
@@ -117,7 +117,8 @@ class BreakLocation {
     DEBUGGER_STATEMENT,
     DEBUG_BREAK_SLOT,
     DEBUG_BREAK_SLOT_AT_CALL,
-    DEBUG_BREAK_SLOT_AT_RETURN
+    DEBUG_BREAK_SLOT_AT_RETURN,
+    DEBUG_BREAK_SLOT_AT_TAIL_CALL,
   };
 
   BreakLocation(Handle<DebugInfo> debug_info, DebugBreakType type,
@@ -142,6 +143,9 @@ class BreakLocation {
 
    protected:
     explicit Iterator(Handle<DebugInfo> debug_info);
+    int ReturnPosition();
+
+    Isolate* isolate() { return debug_info_->GetIsolate(); }
 
     Handle<DebugInfo> debug_info_;
     int break_index_;
@@ -169,7 +173,7 @@ class BreakLocation {
     }
 
    private:
-    static int GetModeMask(BreakLocatorType type);
+    int GetModeMask(BreakLocatorType type);
     RelocInfo::Mode rmode() { return reloc_iterator_.rinfo()->rmode(); }
     RelocInfo* rinfo() { return reloc_iterator_.rinfo(); }
 
@@ -302,6 +306,8 @@ class EventDetailsImpl : public v8::Debug::EventDetails {
   virtual v8::Local<v8::Context> GetEventContext() const;
   virtual v8::Local<v8::Value> GetCallbackData() const;
   virtual v8::Debug::ClientData* GetClientData() const;
+  virtual v8::Isolate* GetIsolate() const;
+
  private:
   DebugEvent event_;  // Debug event causing the break.
   Handle<JSObject> exec_state_;         // Current execution state.
@@ -414,7 +420,6 @@ class Debug {
   void OnCompileError(Handle<Script> script);
   void OnBeforeCompile(Handle<Script> script);
   void OnAfterCompile(Handle<Script> script);
-  void OnPromiseEvent(Handle<JSObject> data);
   void OnAsyncTaskEvent(Handle<JSObject> data);
 
   // API facing.
@@ -430,8 +435,8 @@ class Debug {
 
   // Internal logic
   bool Load();
-  void Break(Arguments args, JavaScriptFrame*);
-  Object* SetAfterBreakTarget(JavaScriptFrame* frame);
+  void Break(JavaScriptFrame* frame);
+  void SetAfterBreakTarget(JavaScriptFrame* frame);
 
   // Scripts handling.
   Handle<FixedArray> GetLoadedScripts();
@@ -454,15 +459,14 @@ class Debug {
   // Stepping handling.
   void PrepareStep(StepAction step_action);
   void PrepareStepIn(Handle<JSFunction> function);
+  void PrepareStepInSuspendedGenerator();
   void PrepareStepOnThrow();
   void ClearStepping();
   void ClearStepOut();
-  void EnableStepIn();
-
-  void GetStepinPositions(JavaScriptFrame* frame, StackFrame::Id frame_id,
-                          List<int>* results_out);
 
   bool PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared);
+
+  void RecordAsyncFunction(Handle<JSGeneratorObject> generator_object);
 
   // Returns whether the operation succeeded. Compilation can only be triggered
   // if a valid closure is passed as the second argument, otherwise the shared
@@ -498,9 +502,7 @@ class Debug {
   char* RestoreDebug(char* from);
   static int ArchiveSpacePerThread();
   void FreeThreadResources() { }
-
-  // Record function from which eval was called.
-  static void RecordEvalCaller(Handle<Script> script);
+  void Iterate(ObjectVisitor* v);
 
   bool CheckExecutionState(int id) {
     return is_active() && !debug_context().is_null() && break_id() != 0 &&
@@ -530,6 +532,11 @@ class Debug {
   StackFrame::Id break_frame_id() { return thread_local_.break_frame_id_; }
   int break_id() { return thread_local_.break_id_; }
 
+  Handle<Object> return_value() { return thread_local_.return_value_; }
+  void set_return_value(Handle<Object> value) {
+    thread_local_.return_value_ = value;
+  }
+
   // Support for embedding into generated code.
   Address is_active_address() {
     return reinterpret_cast<Address>(&is_active_);
@@ -539,8 +546,12 @@ class Debug {
     return reinterpret_cast<Address>(&after_break_target_);
   }
 
-  Address step_in_enabled_address() {
-    return reinterpret_cast<Address>(&thread_local_.step_in_enabled_);
+  Address last_step_action_address() {
+    return reinterpret_cast<Address>(&thread_local_.last_step_action_);
+  }
+
+  Address suspended_generator_address() {
+    return reinterpret_cast<Address>(&thread_local_.suspended_generator_);
   }
 
   StepAction last_step_action() { return thread_local_.last_step_action_; }
@@ -563,6 +574,14 @@ class Debug {
     return break_disabled_ || in_debug_event_listener_;
   }
 
+  void clear_suspended_generator() {
+    thread_local_.suspended_generator_ = Smi::FromInt(0);
+  }
+
+  bool has_suspended_generator() const {
+    return thread_local_.suspended_generator_ != Smi::FromInt(0);
+  }
+
   void OnException(Handle<Object> exception, Handle<Object> promise);
 
   // Constructors for debug event objects.
@@ -575,8 +594,6 @@ class Debug {
       Handle<Object> promise);
   MUST_USE_RESULT MaybeHandle<Object> MakeCompileEvent(
       Handle<Script> script, v8::DebugEvent type);
-  MUST_USE_RESULT MaybeHandle<Object> MakePromiseEvent(
-      Handle<JSObject> promise_event);
   MUST_USE_RESULT MaybeHandle<Object> MakeAsyncTaskEvent(
       Handle<JSObject> task_event);
 
@@ -616,6 +633,8 @@ class Debug {
   }
 
   void ThreadInit();
+
+  void PrintBreakLocation();
 
   // Global handles.
   Handle<Context> debug_context_;
@@ -674,14 +693,15 @@ class Debug {
     // Frame pointer of the target frame we want to arrive at.
     Address target_fp_;
 
-    // Whether functions are flooded on entry for step-in and step-frame.
-    // If we stepped out to the embedder, disable flooding to spill stepping
-    // to the next call that the embedder makes.
-    bool step_in_enabled_;
-
     // Stores the way how LiveEdit has patched the stack. It is used when
     // debugger returns control back to user script.
     LiveEdit::FrameDropMode frame_drop_mode_;
+
+    // Value of accumulator in interpreter frames. In non-interpreter frames
+    // this value will be the hole.
+    Handle<Object> return_value_;
+
+    Object* suspended_generator_;
   };
 
   // Storage location for registers when handling debug break calls
@@ -723,6 +743,7 @@ class DebugScope BASE_EMBEDDED {
   DebugScope* prev_;               // Previous scope if entered recursively.
   StackFrame::Id break_frame_id_;  // Previous break frame id.
   int break_id_;                   // Previous break id.
+  Handle<Object> return_value_;    // Previous result.
   bool failed_;                    // Did the debug context fail to load?
   SaveContext save_;               // Saves previous context.
   PostponeInterruptsScope no_termination_exceptons_;

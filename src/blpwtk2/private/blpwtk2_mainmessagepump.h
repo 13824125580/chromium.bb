@@ -26,48 +26,78 @@
 #include <blpwtk2_config.h>
 
 #include <base/message_loop/message_pump_win.h>
+#include <base/message_loop/message_loop.h>
 
 namespace base {
-    class RunLoop;
+class RunLoop;
 }  // close namespace base
 
 namespace blpwtk2 {
 
 // This message pump extends MessagePumpForUI and contains methods to
 // facilitate integration with an application's main message loop.
-class MainMessagePump : public base::MessagePumpForUI {
+class MainMessagePump final : public base::MessagePumpForUI {
   public:
     static MainMessagePump* current();
 
     MainMessagePump();
-    virtual ~MainMessagePump();
+    ~MainMessagePump() override;
 
     void init();
     void cleanup();
     bool preHandleMessage(const MSG& msg);
     void postHandleMessage(const MSG& msg);
+    void setTraceThreshold(unsigned int timeoutMS);
+
+    void ScheduleWork() override;
 
   private:
+    static const wchar_t* getClassName();
+    static LRESULT CALLBACK windowProcedure(NativeView window_handle,
+                                            UINT message,
+                                            WPARAM wparam,
+                                            LPARAM lparam);
+
+    static LRESULT CALLBACK messageFilter(int code,
+                                          WPARAM wParam,
+                                          LPARAM lParam);
+
+    static LRESULT CALLBACK windowProcedureHook(int code,
+                                                WPARAM wParam,
+                                                LPARAM lParam);
+
+    void schedulePumpIfNecessary();
+    void schedulePump();
     void doWork();
-    void scheduleMoreWorkIfNecessary();
-    void handleWorkMessage();
-    void handleTimerMessage();
+    void modalLoop(bool enabled);
+    void resetWorkState();
+    bool shouldTrace(unsigned int elapsedTime);
 
-    static LRESULT CALLBACK wndProcThunk(HWND hwnd,
-                                         UINT message,
-                                         WPARAM wparam,
-                                         LPARAM lparam);
-
-    // MessagePump overrides
-    void ScheduleDelayedWork(const base::TimeTicks& delayed_work_time) override;
-
-    scoped_ptr<base::RunLoop> d_runLoop;
+    NativeView d_window;
+    std::unique_ptr<base::RunLoop> d_runLoop;
+    std::unique_ptr<base::MessageLoop::ScopedNestableTaskAllower> d_scopedNestedTaskAllower;
     RunState d_runState;
-    bool d_hasAutoPumpTimer;
-    bool d_moreWorkIsPlausible;  // whether or not we need work scheduled
+    bool d_isInsideModalLoop;
+    LONG d_isInsideMainLoop;
+    LONG d_isPumped;
+    LONG d_needRepost;
+    DWORD d_scheduleTime;
+    bool d_skipIdleWork;
+    HHOOK d_windowProcedureHook;
+    HHOOK d_messageFilter;
+    unsigned int d_minTimer;
+    unsigned int d_maxTimer;
+    unsigned int d_maxPumpCountInsideModalLoop;
+    unsigned int d_traceThreshold;
 
     DISALLOW_COPY_AND_ASSIGN(MainMessagePump);
 };
+
+inline
+bool MainMessagePump::shouldTrace(unsigned int elapsedTime)
+{
+  return d_traceThreshold != 0 && elapsedTime >= d_traceThreshold;
+}
 
 }  // close namespace blpwtk2
 

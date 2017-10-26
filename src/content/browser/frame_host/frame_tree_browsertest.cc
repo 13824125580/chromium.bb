@@ -45,8 +45,8 @@ class FrameTreeBrowserTest : public ContentBrowserTest {
   std::string GetOriginFromRenderer(FrameTreeNode* node) {
     std::string origin;
     EXPECT_TRUE(ExecuteScriptAndExtractString(
-        node->current_frame_host(),
-        "window.domAutomationController.send(document.origin);", &origin));
+        node, "window.domAutomationController.send(document.origin);",
+        &origin));
     return origin;
   }
 
@@ -320,7 +320,7 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, NavigateGrandchildToBlob) {
 
   std::string blob_url_string;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      root->current_frame_host(),
+      root,
       "function receiveMessage(event) {"
       "  document.body.appendChild(document.createTextNode(event.data));"
       "  domAutomationController.send(event.source.location.href);"
@@ -341,7 +341,7 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, NavigateGrandchildToBlob) {
 
   std::string document_body;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      target->current_frame_host(),
+      target,
       "domAutomationController.send(document.body.children[0].innerHTML);",
       &document_body));
   EXPECT_EQ("This is blob content.", document_body);
@@ -362,13 +362,12 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, NavigateChildToAboutBlank) {
   FrameTreeNode* initiator = target->parent();
 
   // Give the target a name.
-  EXPECT_TRUE(
-      ExecuteScript(target->current_frame_host(), "window.name = 'target';"));
+  EXPECT_TRUE(ExecuteScript(target, "window.name = 'target';"));
 
   // Use window.open(about:blank), then poll the document for access.
   std::string about_blank_origin;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      initiator->current_frame_host(),
+      initiator,
       "var didNavigate = false;"
       "var intervalID = setInterval(function() {"
       "  if (!didNavigate) {"
@@ -392,8 +391,7 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, NavigateChildToAboutBlank) {
 
   std::string document_body;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      target->current_frame_host(),
-      "domAutomationController.send(document.body.innerHTML);",
+      target, "domAutomationController.send(document.body.innerHTML);",
       &document_body));
   EXPECT_EQ("Hi from b.com", document_body);
 }
@@ -416,13 +414,12 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest,
   FrameTreeNode* initiator = target->parent()->parent();
 
   // Give the target a name.
-  EXPECT_TRUE(
-      ExecuteScript(target->current_frame_host(), "window.name = 'target';"));
+  EXPECT_TRUE(ExecuteScript(target, "window.name = 'target';"));
 
   // Use window.open(about:blank), then poll the document for access.
   std::string about_blank_origin;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      initiator->current_frame_host(),
+      initiator,
       "var didNavigate = false;"
       "var intervalID = setInterval(function() {"
       "  if (!didNavigate) {"
@@ -444,10 +441,70 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest,
 
   std::string document_body;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      target->current_frame_host(),
-      "domAutomationController.send(document.body.innerHTML);",
+      target, "domAutomationController.send(document.body.innerHTML);",
       &document_body));
   EXPECT_EQ("Hi from a.com", document_body);
+}
+
+// Ensures that iframe with srcdoc is always put in the same origin as its
+// parent frame.
+IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, ChildFrameWithSrcdoc) {
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.com", "/cross_site_iframe_factory.html?a(b)"));
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+  WebContentsImpl* contents =
+      static_cast<WebContentsImpl*>(shell()->web_contents());
+  FrameTreeNode* root = contents->GetFrameTree()->root();
+  EXPECT_EQ(1U, root->child_count());
+
+  FrameTreeNode* child = root->child_at(0);
+  std::string frame_origin;
+  EXPECT_TRUE(ExecuteScriptAndExtractString(
+      child, "domAutomationController.send(document.origin);", &frame_origin));
+  EXPECT_TRUE(
+      child->current_frame_host()->GetLastCommittedOrigin().IsSameOriginWith(
+          url::Origin(GURL(frame_origin))));
+  EXPECT_FALSE(
+      root->current_frame_host()->GetLastCommittedOrigin().IsSameOriginWith(
+          url::Origin(GURL(frame_origin))));
+
+  // Create a new iframe with srcdoc and add it to the main frame. It should
+  // be created in the same SiteInstance as the parent.
+  {
+    std::string script("var f = document.createElement('iframe');"
+                       "f.srcdoc = 'some content';"
+                       "document.body.appendChild(f)");
+    TestNavigationObserver observer(shell()->web_contents());
+    EXPECT_TRUE(ExecuteScript(root, script));
+    EXPECT_EQ(2U, root->child_count());
+    observer.Wait();
+
+    EXPECT_EQ(GURL(url::kAboutBlankURL), root->child_at(1)->current_url());
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        root->child_at(1), "domAutomationController.send(document.origin);",
+        &frame_origin));
+    EXPECT_EQ(root->current_frame_host()->GetLastCommittedURL().GetOrigin(),
+              GURL(frame_origin));
+    EXPECT_NE(child->current_frame_host()->GetLastCommittedURL().GetOrigin(),
+              GURL(frame_origin));
+  }
+
+  // Set srcdoc on the existing cross-site frame. It should navigate the frame
+  // back to the origin of the parent.
+  {
+    std::string script("var f = document.getElementById('child-0');"
+                       "f.srcdoc = 'some content';");
+    TestNavigationObserver observer(shell()->web_contents());
+    EXPECT_TRUE(ExecuteScript(root, script));
+    observer.Wait();
+
+    EXPECT_EQ(GURL(url::kAboutBlankURL), child->current_url());
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        child, "domAutomationController.send(document.origin);",
+        &frame_origin));
+    EXPECT_EQ(root->current_frame_host()->GetLastCommittedURL().GetOrigin(),
+              GURL(frame_origin));
+  }
 }
 
 // Ensure that sandbox flags are correctly set when child frames are created.
@@ -503,7 +560,7 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, SubframeOpenerSetForNewWindow) {
   // Open a new window from a subframe.
   ShellAddedObserver new_shell_observer;
   GURL popup_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
-  EXPECT_TRUE(ExecuteScript(root->child_at(0)->current_frame_host(),
+  EXPECT_TRUE(ExecuteScript(root->child_at(0),
                             "window.open('" + popup_url.spec() + "');"));
   Shell* new_shell = new_shell_observer.GetShell();
   WebContents* new_contents = new_shell->web_contents();

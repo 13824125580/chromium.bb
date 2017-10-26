@@ -48,13 +48,6 @@ BrowserAccessibilityManager*
   return NULL;
 }
 
-#if defined(OS_WIN)
-gfx::NativeViewAccessible
-    RenderWidgetHostDelegate::GetParentNativeViewAccessible() {
-  return NULL;
-}
-#endif
-
 // If a delegate does not override this, the RenderWidgetHostView will
 // assume it is the sole platform event consumer.
 RenderWidgetHostInputEventRouter*
@@ -74,14 +67,22 @@ gfx::Rect RenderWidgetHostDelegate::GetRootWindowResizerRect(
   return gfx::Rect();
 };
 
-bool RenderWidgetHostDelegate::IsFullscreenForCurrentTab(
-    RenderWidgetHostImpl* render_widget_host) const {
+bool RenderWidgetHostDelegate::IsFullscreenForCurrentTab() const {
   return false;
 }
 
 blink::WebDisplayMode RenderWidgetHostDelegate::GetDisplayMode(
     RenderWidgetHostImpl* render_widget_host) const {
   return blink::WebDisplayModeBrowser;
+}
+
+bool RenderWidgetHostDelegate::HasMouseLock(
+    RenderWidgetHostImpl* render_widget_host) {
+  return false;
+}
+
+TextInputManager* RenderWidgetHostDelegate::GetTextInputManager() {
+  return nullptr;
 }
 
 }  // namespace content

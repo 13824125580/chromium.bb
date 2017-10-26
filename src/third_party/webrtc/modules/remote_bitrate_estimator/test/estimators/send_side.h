@@ -11,6 +11,7 @@
 #ifndef WEBRTC_MODULES_REMOTE_BITRATE_ESTIMATOR_TEST_ESTIMATORS_SEND_SIDE_H_
 #define WEBRTC_MODULES_REMOTE_BITRATE_ESTIMATOR_TEST_ESTIMATORS_SEND_SIDE_H_
 
+#include <memory>
 #include <vector>
 
 #include "webrtc/modules/remote_bitrate_estimator/include/send_time_history.h"
@@ -34,9 +35,9 @@ class FullBweSender : public BweSender, public RemoteBitrateObserver {
   void Process() override;
 
  protected:
-  rtc::scoped_ptr<BitrateController> bitrate_controller_;
-  rtc::scoped_ptr<RemoteBitrateEstimator> rbe_;
-  rtc::scoped_ptr<RtcpBandwidthObserver> feedback_observer_;
+  std::unique_ptr<BitrateController> bitrate_controller_;
+  std::unique_ptr<RemoteBitrateEstimator> rbe_;
+  std::unique_ptr<RtcpBandwidthObserver> feedback_observer_;
 
  private:
   Clock* const clock_;
@@ -44,6 +45,7 @@ class FullBweSender : public BweSender, public RemoteBitrateObserver {
   SendTimeHistory send_time_history_;
   bool has_received_ack_;
   uint16_t last_acked_seq_num_;
+  int64_t last_log_time_ms_;
 
   RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(FullBweSender);
 };

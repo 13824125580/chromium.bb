@@ -6,7 +6,6 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/ui/autofill/autofill_dialog_models.h"
-#include "chrome/browser/ui/autofill/autofill_dialog_types.h"
 #include "chrome/browser/ui/chrome_style.h"
 #import "chrome/browser/ui/cocoa/autofill/autofill_pop_up_button.h"
 #import "chrome/browser/ui/cocoa/autofill/autofill_textfield.h"
@@ -29,6 +28,7 @@
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
 #include "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/native_theme/native_theme_mac.h"
 
 namespace {
@@ -58,12 +58,6 @@ const SkColor kSubtleBorderColor = SkColorSetRGB(0xdf, 0xdf, 0xdf);
 }  // namespace
 
 namespace autofill {
-
-CardUnmaskPromptView* CreateCardUnmaskPromptView(
-    CardUnmaskPromptController* controller,
-    content::WebContents* web_contents) {
-  return new CardUnmaskPromptViewBridge(controller, web_contents);
-}
 
 #pragma mark CardUnmaskPromptViewBridge
 
@@ -304,8 +298,8 @@ void CardUnmaskPromptViewBridge::PerformClose() {
   if (!text.empty()) {
     if (!permanentErrorBox_) {
       permanentErrorBox_ = [CardUnmaskPromptViewCocoa createPlainBox];
-      [permanentErrorBox_ setFillColor:skia::SkColorToCalibratedNSColor(
-                                           autofill::kWarningColor)];
+      [permanentErrorBox_
+          setFillColor:skia::SkColorToCalibratedNSColor(gfx::kGoogleRed700)];
       [permanentErrorBox_
           setContentViewMargins:NSMakeSize(kPermanentErrorHorizontalPadding,
                                            kPermanentErrorVerticalPadding)];
@@ -479,7 +473,7 @@ void CardUnmaskPromptViewBridge::PerformClose() {
   storageView_.reset([[NSView alloc] initWithFrame:NSZeroRect]);
   [storageView_ setAutoresizingMask:NSViewWidthSizable];
 
-  base::scoped_nsobject<NSBox> box = [CardUnmaskPromptViewCocoa createPlainBox];
+  base::scoped_nsobject<NSBox> box([CardUnmaskPromptViewCocoa createPlainBox]);
   [box setAutoresizingMask:NSViewWidthSizable];
   [box setFillColor:skia::SkColorToCalibratedNSColor(kShadingColor)];
   [box setContentViewMargins:NSMakeSize(chrome_style::kHorizontalPadding,
@@ -512,8 +506,8 @@ void CardUnmaskPromptViewBridge::PerformClose() {
       NSMakePoint(NSMaxX([storageCheckbox_ frame]) + kButtonGap, 0)];
 
   // Add horizontal separator.
-  base::scoped_nsobject<NSBox> separator =
-      [CardUnmaskPromptViewCocoa createPlainBox];
+  base::scoped_nsobject<NSBox> separator(
+      [CardUnmaskPromptViewCocoa createPlainBox]);
   [separator setAutoresizingMask:NSViewWidthSizable];
   [separator setFillColor:skia::SkColorToCalibratedNSColor(kSubtleBorderColor)];
   [storageView_ addSubview:separator];
@@ -712,7 +706,7 @@ void CardUnmaskPromptViewBridge::PerformClose() {
   // Add error message label.
   errorLabel_.reset([constrained_window::CreateLabel() retain]);
   [errorLabel_
-      setTextColor:skia::SkColorToCalibratedNSColor(autofill::kWarningColor)];
+      setTextColor:skia::SkColorToCalibratedNSColor(gfx::kGoogleRed700)];
   [mainView addSubview:errorLabel_];
 
   // Add cancel button.
@@ -728,8 +722,8 @@ void CardUnmaskPromptViewBridge::PerformClose() {
   // Add verify button.
   verifyButton_.reset(
       [[ConstrainedWindowButton alloc] initWithFrame:NSZeroRect]);
-  [verifyButton_ setTitle:l10n_util::GetNSStringWithFixup(
-                              IDS_AUTOFILL_CARD_UNMASK_CONFIRM_BUTTON)];
+  [verifyButton_ setTitle:l10n_util::FixUpWindowsStyleLabel(
+      controller->GetOkButtonLabel())];
   [verifyButton_ setKeyEquivalent:kKeyEquivalentReturn];
   [verifyButton_ setTarget:self];
   [verifyButton_ setAction:@selector(onVerify:)];

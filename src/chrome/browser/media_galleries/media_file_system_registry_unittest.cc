@@ -4,9 +4,12 @@
 
 // MediaFileSystemRegistry unit tests.
 
+#include "chrome/browser/media_galleries/media_file_system_registry.h"
+
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 
 #include "base/bind_helpers.h"
@@ -15,9 +18,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -29,7 +30,6 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/media_galleries/media_file_system_context.h"
-#include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences_factory.h"
 #include "chrome/browser/media_galleries/media_galleries_test_util.h"
 #include "chrome/common/chrome_paths.h"
@@ -247,15 +247,15 @@ class ProfileState {
 
   int num_comparisons_;
 
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 
   scoped_refptr<extensions::Extension> all_permission_extension_;
   scoped_refptr<extensions::Extension> regular_permission_extension_;
   scoped_refptr<extensions::Extension> no_permissions_extension_;
 
-  scoped_ptr<content::WebContents> single_web_contents_;
-  scoped_ptr<content::WebContents> shared_web_contents1_;
-  scoped_ptr<content::WebContents> shared_web_contents2_;
+  std::unique_ptr<content::WebContents> single_web_contents_;
+  std::unique_ptr<content::WebContents> shared_web_contents1_;
+  std::unique_ptr<content::WebContents> shared_web_contents2_;
 
   // The RenderProcessHosts are freed when their respective WebContents /
   // RenderViewHosts go away.
@@ -375,7 +375,7 @@ class MediaFileSystemRegistryTest : public ChromeRenderViewHostTestHarness {
 #if defined(OS_CHROMEOS)
   chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
   chromeos::ScopedTestCrosSettings test_cros_settings_;
-  scoped_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
+  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 #endif
 
   MockProfileSharedRenderProcessHostFactory rph_factory_;
@@ -470,7 +470,7 @@ ProfileState::~ProfileState() {
   shared_web_contents2_.reset();
   profile_.reset();
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 MediaGalleriesPreferences* ProfileState::GetMediaGalleriesPrefs() {
@@ -498,7 +498,7 @@ void ProfileState::CheckGalleries(
                  base::StringPrintf("%s (no permission)", test.c_str()),
                  base::ConstRef(empty_names),
                  base::ConstRef(empty_expectation)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
   // Read permission only.
@@ -508,7 +508,7 @@ void ProfileState::CheckGalleries(
                  base::StringPrintf("%s (regular permission)", test.c_str()),
                  base::ConstRef(compare_names_read_),
                  base::ConstRef(regular_extension_galleries)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
   // All galleries permission.
@@ -518,7 +518,7 @@ void ProfileState::CheckGalleries(
                  base::StringPrintf("%s (all permission)", test.c_str()),
                  base::ConstRef(compare_names_all_),
                  base::ConstRef(all_extension_galleries)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 }
 
@@ -529,7 +529,7 @@ FSInfoMap ProfileState::GetGalleriesInfo(extensions::Extension* extension) {
   registry->GetMediaFileSystemsForExtension(
       single_web_contents_.get(), extension,
       base::Bind(&GetGalleryInfoCallback, base::Unretained(&results)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   return results;
 }
 
@@ -646,14 +646,14 @@ std::string MediaFileSystemRegistryTest::AttachDevice(
   DCHECK(StorageInfo::IsRemovableDevice(device_id));
   base::string16 label = location.BaseName().LossyDisplayName();
   ProcessAttach(device_id, label, location.value());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   return device_id;
 }
 
 void MediaFileSystemRegistryTest::DetachDevice(const std::string& device_id) {
   DCHECK(StorageInfo::IsRemovableDevice(device_id));
   ProcessDetach(device_id);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 void MediaFileSystemRegistryTest::SetGalleryPermission(
@@ -895,7 +895,7 @@ TEST_F(MediaFileSystemRegistryTest,
       break;
     }
   }
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(forget_gallery);
   EXPECT_EQ(gallery_count, GetAutoAddedGalleries(profile_state).size());
 

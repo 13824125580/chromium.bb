@@ -6,6 +6,7 @@
 
 #include <keyhi.h>
 #include <stdint.h>
+
 #include <algorithm>
 #include <string>
 #include <utility>
@@ -14,6 +15,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
@@ -277,7 +279,7 @@ bool OwnerSettingsServiceChromeOS::Set(const std::string& setting,
   if (!IsOwner() && !IsOwnerInTests(user_id_))
     return false;
 
-  pending_changes_.add(setting, make_scoped_ptr(value.DeepCopy()));
+  pending_changes_.add(setting, base::WrapUnique(value.DeepCopy()));
 
   em::ChromeDeviceSettingsProto settings;
   if (tentative_settings_.get()) {
@@ -303,7 +305,7 @@ bool OwnerSettingsServiceChromeOS::AppendToList(const std::string& setting,
   const base::Value* old_value = CrosSettings::Get()->GetPref(setting);
   if (old_value && !old_value->IsType(base::Value::TYPE_LIST))
     return false;
-  scoped_ptr<base::ListValue> new_value(
+  std::unique_ptr<base::ListValue> new_value(
       old_value ? static_cast<const base::ListValue*>(old_value)->DeepCopy()
                 : new base::ListValue());
   new_value->Append(value.DeepCopy());
@@ -316,7 +318,7 @@ bool OwnerSettingsServiceChromeOS::RemoveFromList(const std::string& setting,
   const base::Value* old_value = CrosSettings::Get()->GetPref(setting);
   if (old_value && !old_value->IsType(base::Value::TYPE_LIST))
     return false;
-  scoped_ptr<base::ListValue> new_value(
+  std::unique_ptr<base::ListValue> new_value(
       old_value ? static_cast<const base::ListValue*>(old_value)->DeepCopy()
                 : new base::ListValue());
   new_value->Remove(value, nullptr);
@@ -324,7 +326,7 @@ bool OwnerSettingsServiceChromeOS::RemoveFromList(const std::string& setting,
 }
 
 bool OwnerSettingsServiceChromeOS::CommitTentativeDeviceSettings(
-    scoped_ptr<enterprise_management::PolicyData> policy) {
+    std::unique_ptr<enterprise_management::PolicyData> policy) {
   if (!IsOwner() && !IsOwnerInTests(user_id_))
     return false;
   if (policy->username() != user_id_) {
@@ -343,10 +345,7 @@ void OwnerSettingsServiceChromeOS::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (type != chrome::NOTIFICATION_PROFILE_CREATED) {
-    NOTREACHED();
-    return;
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_CREATED, type);
 
   Profile* profile = content::Source<Profile>(source).ptr();
   if (profile != profile_) {
@@ -429,13 +428,13 @@ void OwnerSettingsServiceChromeOS::IsOwnerForSafeModeAsync(
 }
 
 // static
-scoped_ptr<em::PolicyData> OwnerSettingsServiceChromeOS::AssemblePolicy(
+std::unique_ptr<em::PolicyData> OwnerSettingsServiceChromeOS::AssemblePolicy(
     const std::string& user_id,
     const em::PolicyData* policy_data,
     bool apply_pending_management_settings,
     const ManagementSettings& pending_management_settings,
     em::ChromeDeviceSettingsProto* settings) {
-  scoped_ptr<em::PolicyData> policy(new em::PolicyData());
+  std::unique_ptr<em::PolicyData> policy(new em::PolicyData());
   if (policy_data) {
     // Preserve management settings.
     if (policy_data->has_management_mode())
@@ -472,7 +471,7 @@ scoped_ptr<em::PolicyData> OwnerSettingsServiceChromeOS::AssemblePolicy(
     FixupLocalOwnerPolicy(user_id, settings);
   }
   if (!settings->SerializeToString(policy->mutable_policy_value()))
-    return scoped_ptr<em::PolicyData>();
+    return std::unique_ptr<em::PolicyData>();
 
   return policy;
 }
@@ -771,7 +770,7 @@ void OwnerSettingsServiceChromeOS::StorePendingChanges() {
     UpdateDeviceSettings(change.first, *change.second, settings);
   pending_changes_.clear();
 
-  scoped_ptr<em::PolicyData> policy =
+  std::unique_ptr<em::PolicyData> policy =
       AssemblePolicy(user_id_, device_settings_service_->policy_data(),
                      has_pending_management_settings_,
                      pending_management_settings_, &settings);
@@ -787,7 +786,7 @@ void OwnerSettingsServiceChromeOS::StorePendingChanges() {
 }
 
 void OwnerSettingsServiceChromeOS::OnPolicyAssembledAndSigned(
-    scoped_ptr<em::PolicyFetchResponse> policy_response) {
+    std::unique_ptr<em::PolicyFetchResponse> policy_response) {
   if (!policy_response.get() || !device_settings_service_) {
     ReportStatusAndContinueStoring(false /* success */);
     return;

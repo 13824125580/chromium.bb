@@ -20,6 +20,15 @@ class WebContents(object):
         'network_quiescence.js')) as f:
       self._quiescence_js = f.read()
 
+    with open(os.path.join(os.path.dirname(__file__),
+        'wait_for_frame.js')) as f:
+      self._wait_for_frame_js = f.read()
+
+    # An incrementing ID used to query frame timing javascript. Using a new id
+    # with each request ensures that previously timed-out wait for frame
+    # requests don't impact new requests.
+    self._wait_for_frame_id = 0
+
   @property
   def id(self):
     """Return the unique id string for this tab object."""
@@ -72,8 +81,23 @@ class WebContents(object):
         'document.readyState == "interactive" || '
         'document.readyState == "complete"', timeout)
 
-  def WaitForJavaScriptExpression(self, expr, timeout,
-                                  dump_page_state_on_timeout=True):
+  def WaitForFrameToBeDisplayed(self,
+          timeout=DEFAULT_WEB_CONTENTS_TIMEOUT):
+    """Waits for a frame to be displayed before returning.
+
+    Raises:
+      exceptions.Error: See WaitForJavaScriptExpression() for a detailed list
+      of possible exceptions.
+    """
+    # Generate a new id for each call of this function to ensure that we track
+    # each request to wait seperately.
+    self._wait_for_frame_id += 1
+    self.WaitForJavaScriptExpression(self._wait_for_frame_js +
+        'window.__telemetry_testHasFramePassed("' +
+        str(self._wait_for_frame_id) + '")',
+        timeout)
+
+  def WaitForJavaScriptExpression(self, expr, timeout):
     """Waits for the given JavaScript expression to be True.
 
     This method is robust against any given Evaluation timing out.
@@ -81,8 +105,6 @@ class WebContents(object):
     Args:
       expr: The expression to evaluate.
       timeout: The number of seconds to wait for the expression to be True.
-      dump_page_state_on_timeout: Whether to provide additional information on
-          the page state if a TimeoutException is thrown.
 
     Raises:
       exceptions.TimeoutException: On a timeout.
@@ -100,33 +122,18 @@ class WebContents(object):
     try:
       util.WaitFor(IsJavaScriptExpressionTrue, timeout)
     except exceptions.TimeoutException as e:
-      if not dump_page_state_on_timeout:
-        raise
-
-      # Try to make timeouts a little more actionable by dumping |this|.
-      raise exceptions.TimeoutException(e.message + self.EvaluateJavaScript("""
-        (function() {
-          var error = '\\n\\nJavaScript |this|:\\n';
-          for (name in this) {
-            try {
-              error += '\\t' + name + ': ' + this[name] + '\\n';
-            } catch (e) {
-              error += '\\t' + name + ': ???\\n';
-            }
-          }
-          if (window && window.document) {
-            error += '\\n\\nJavaScript window.document:\\n';
-            for (name in window.document) {
-              try {
-                error += '\\t' + name + ': ' + window.document[name] + '\\n';
-              } catch (e) {
-                error += '\\t' + name + ': ???\\n';
-              }
-            }
-          }
-          return error;
-        })();
-      """))
+      # Try to make timeouts a little more actionable by dumping console output.
+      debug_message = None
+      try:
+        debug_message = (
+            'Console output:\n%s' %
+            self._inspector_backend.GetCurrentConsoleOutputBuffer())
+      except Exception as e:
+        debug_message = (
+            'Exception thrown when trying to capture console output: %s' %
+            repr(e))
+      raise exceptions.TimeoutException(
+          e.message + '\n' + debug_message)
 
   def HasReachedQuiescence(self):
     """Determine whether the page has reached quiescence after loading.
@@ -243,18 +250,6 @@ class WebContents(object):
       exceptions.DevtoolsTargetCrashException
     """
     self._inspector_backend.Navigate(url, script_to_evaluate_on_commit, timeout)
-
-  @property
-  def message_output_stream(self):
-    return self._inspector_backend.message_output_stream
-
-  @message_output_stream.setter
-  def message_output_stream(self, stream):
-    self._inspector_backend.message_output_stream = stream
-
-  @property
-  def timeline_model(self):
-    return self._inspector_backend.timeline_model
 
   def IsAlive(self):
     """Whether the WebContents is still operating normally.

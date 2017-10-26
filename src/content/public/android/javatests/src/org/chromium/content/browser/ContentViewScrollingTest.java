@@ -45,11 +45,6 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
         }
 
         @Override
-        public boolean super_dispatchKeyEventPreIme(KeyEvent event) {
-            return false;
-        }
-
-        @Override
         public boolean super_dispatchKeyEvent(KeyEvent event) {
             return false;
         }
@@ -92,7 +87,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
 
     private void assertWaitForScroll(final boolean hugLeft, final boolean hugTop)
             throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 // Scrolling and flinging don't result in exact coordinates.
@@ -329,7 +324,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
         });
         scrollTo(scrollToX, scrollToY);
         assertWaitForScroll(false, false);
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return containerViewInternals.isScrollChanged();

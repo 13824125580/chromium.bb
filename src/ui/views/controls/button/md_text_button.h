@@ -5,29 +5,65 @@
 #ifndef UI_VIEWS_CONTROLS_BUTTON_MD_TEXT_BUTTON_H_
 #define UI_VIEWS_CONTROLS_BUTTON_MD_TEXT_BUTTON_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "ui/views/controls/button/custom_button.h"
+#include <memory>
 
-namespace gfx {
-class RenderText;
-}
+#include "ui/views/controls/button/label_button.h"
 
 namespace views {
 
-// A button class that implements the Material Design text button spec.
-class VIEWS_EXPORT MdTextButton : public CustomButton {
- public:
-  MdTextButton(ButtonListener* listener, const base::string16& text);
-  ~MdTextButton() override;
+namespace internal {
+class MdFocusRing;
+}  // namespace internal
 
-  // View:
-  void OnPaint(gfx::Canvas* canvas) override;
-  gfx::Size GetPreferredSize() const override;
+// A button class that implements the Material Design text button spec.
+class VIEWS_EXPORT MdTextButton : public LabelButton {
+ public:
+  // Creates a normal STYLE_BUTTON LabelButton in pre-MD, or an MdTextButton
+  // in MD mode.
+  static LabelButton* CreateStandardButton(ButtonListener* listener,
+                                           const base::string16& text);
+  // As above, but only creates an MdTextButton if MD is enabled in the
+  // secondary UI (as opposed to just "top chrome"/"primary" UI).
+  static LabelButton* CreateSecondaryUiButton(ButtonListener* listener,
+                                              const base::string16& text);
+  static LabelButton* CreateSecondaryUiBlueButton(ButtonListener* listener,
+                                                  const base::string16& text);
+  static MdTextButton* CreateMdButton(ButtonListener* listener,
+                                      const base::string16& text);
+
+  // Paint an MD-style focus ring on the given canvas at the given bounds.
+  static void PaintMdFocusRing(gfx::Canvas* canvas,
+                               View* view,
+                               int thickness,
+                               SkAlpha alpha);
+
+  void SetCallToAction(bool cta);
+
+  // LabelButton:
+  void Layout() override;
+  void OnFocus() override;
+  void OnBlur() override;
+  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  std::unique_ptr<views::InkDropHighlight> CreateInkDropHighlight()
+      const override;
+  SkColor GetInkDropBaseColor() const override;
+  bool ShouldShowInkDropForFocus() const override;
+  void SetEnabledTextColors(SkColor color) override;
+  void UpdateStyleToIndicateDefaultStatus() override;
 
  private:
-  void UpdateColor();
+  MdTextButton(ButtonListener* listener);
+  ~MdTextButton() override;
 
-  scoped_ptr<gfx::RenderText> render_text_;
+  void UpdateColors();
+
+  // The MD-style focus ring. This is not done via a FocusPainter
+  // because it needs to paint to a layer so it can extend beyond the bounds of
+  // |this|.
+  internal::MdFocusRing* focus_ring_;
+
+  // True if this button uses call-to-action styling.
+  bool is_cta_;
 
   DISALLOW_COPY_AND_ASSIGN(MdTextButton);
 };

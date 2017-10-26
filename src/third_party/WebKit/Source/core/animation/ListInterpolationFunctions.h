@@ -8,6 +8,7 @@
 #include "core/animation/InterpolationValue.h"
 #include "core/animation/PairwiseInterpolationValue.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -21,14 +22,14 @@ public:
     static InterpolationValue createList(size_t length, CreateItemCallback);
     static InterpolationValue createEmptyList() { return InterpolationValue(InterpolableList::create(0)); }
 
-    using MergeSingleItemConversionsCallback = PairwiseInterpolationValue (*)(InterpolationValue& start, InterpolationValue& end);
-    static PairwiseInterpolationValue mergeSingleConversions(InterpolationValue& start, InterpolationValue& end, MergeSingleItemConversionsCallback);
+    using MergeSingleItemConversionsCallback = PairwiseInterpolationValue (*)(InterpolationValue&& start, InterpolationValue&& end);
+    static PairwiseInterpolationValue maybeMergeSingles(InterpolationValue&& start, InterpolationValue&& end, MergeSingleItemConversionsCallback);
 
     using EqualNonInterpolableValuesCallback = bool (*)(const NonInterpolableValue*, const NonInterpolableValue*);
     static bool equalValues(const InterpolationValue&, const InterpolationValue&, EqualNonInterpolableValuesCallback);
 
     using NonInterpolableValuesAreCompatibleCallback = bool (*)(const NonInterpolableValue*, const NonInterpolableValue*);
-    using CompositeItemCallback = void (*)(OwnPtr<InterpolableValue>&, RefPtr<NonInterpolableValue>&, double underlyingFraction, const InterpolableValue&, const NonInterpolableValue*);
+    using CompositeItemCallback = void (*)(std::unique_ptr<InterpolableValue>&, RefPtr<NonInterpolableValue>&, double underlyingFraction, const InterpolableValue&, const NonInterpolableValue*);
     static void composite(UnderlyingValueOwner&, double underlyingFraction, const InterpolationType&, const InterpolationValue&, NonInterpolableValuesAreCompatibleCallback, CompositeItemCallback);
 };
 
@@ -36,9 +37,13 @@ class NonInterpolableList : public NonInterpolableValue {
 public:
     ~NonInterpolableList() final { }
 
-    static PassRefPtr<NonInterpolableList> create(Vector<RefPtr<NonInterpolableValue>>& list)
+    static PassRefPtr<NonInterpolableList> create()
     {
-        return adoptRef(new NonInterpolableList(list));
+        return adoptRef(new NonInterpolableList());
+    }
+    static PassRefPtr<NonInterpolableList> create(Vector<RefPtr<NonInterpolableValue>>&& list)
+    {
+        return adoptRef(new NonInterpolableList(std::move(list)));
     }
 
     size_t length() const { return m_list.size(); }
@@ -49,10 +54,11 @@ public:
     DECLARE_NON_INTERPOLABLE_VALUE_TYPE();
 
 private:
-    NonInterpolableList(Vector<RefPtr<NonInterpolableValue>>& list)
-    {
-        m_list.swap(list);
-    }
+    NonInterpolableList()
+    { }
+    NonInterpolableList(Vector<RefPtr<NonInterpolableValue>>&& list)
+        : m_list(list)
+    { }
 
     Vector<RefPtr<NonInterpolableValue>> m_list;
 };
@@ -64,16 +70,16 @@ InterpolationValue ListInterpolationFunctions::createList(size_t length, CreateI
 {
     if (length == 0)
         return createEmptyList();
-    OwnPtr<InterpolableList> interpolableList = InterpolableList::create(length);
+    std::unique_ptr<InterpolableList> interpolableList = InterpolableList::create(length);
     Vector<RefPtr<NonInterpolableValue>> nonInterpolableValues(length);
     for (size_t i = 0; i < length; i++) {
         InterpolationValue item = createItem(i);
         if (!item)
             return nullptr;
-        interpolableList->set(i, item.interpolableValue.release());
+        interpolableList->set(i, std::move(item.interpolableValue));
         nonInterpolableValues[i] = item.nonInterpolableValue.release();
     }
-    return InterpolationValue(interpolableList.release(), NonInterpolableList::create(nonInterpolableValues));
+    return InterpolationValue(std::move(interpolableList), NonInterpolableList::create(std::move(nonInterpolableValues)));
 }
 
 } // namespace blink

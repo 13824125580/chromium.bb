@@ -9,16 +9,20 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/worker_pool.h"
 #include "chromecast/base/chromecast_switches.h"
 #include "chromecast/browser/cast_http_user_agent_settings.h"
 #include "chromecast/browser/cast_network_delegate.h"
+#include "components/network_session_configurator/switches.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/cert_net/nss_ocsp.h"
 #include "net/cookies/cookie_store.h"
 #include "net/dns/host_resolver.h"
@@ -85,7 +89,7 @@ class URLRequestContextFactory::URLRequestContextGetter
 
   const bool is_media_;
   URLRequestContextFactory* const factory_;
-  scoped_ptr<net::URLRequestContext> request_context_;
+  std::unique_ptr<net::URLRequestContext> request_context_;
 
   DISALLOW_COPY_AND_ASSIGN(URLRequestContextGetter);
 };
@@ -129,7 +133,7 @@ class URLRequestContextFactory::MainURLRequestContextGetter
   URLRequestContextFactory* const factory_;
   content::ProtocolHandlerMap protocol_handlers_;
   content::URLRequestInterceptorScopedVector request_interceptors_;
-  scoped_ptr<net::URLRequestContext> request_context_;
+  std::unique_ptr<net::URLRequestContext> request_context_;
 
   DISALLOW_COPY_AND_ASSIGN(MainURLRequestContextGetter);
 };
@@ -199,12 +203,12 @@ void URLRequestContextFactory::InitializeSystemContextDependencies() {
     return;
 
   host_resolver_ = net::HostResolver::CreateDefaultResolver(NULL);
-
   cert_verifier_ = net::CertVerifier::CreateDefault();
-
   ssl_config_service_ = new net::SSLConfigServiceDefaults;
-
   transport_security_state_.reset(new net::TransportSecurityState());
+  cert_transparency_verifier_.reset(new net::MultiLogCTVerifier());
+  ct_policy_enforcer_.reset(new net::CTPolicyEnforcer());
+
   http_auth_handler_factory_ =
       net::HttpAuthHandlerFactory::CreateDefault(host_resolver_.get());
 
@@ -226,7 +230,7 @@ void URLRequestContextFactory::InitializeMainContextDependencies(
     return;
 
   main_transaction_factory_.reset(transaction_factory);
-  scoped_ptr<net::URLRequestJobFactoryImpl> job_factory(
+  std::unique_ptr<net::URLRequestJobFactoryImpl> job_factory(
       new net::URLRequestJobFactoryImpl());
   // Keep ProtocolHandlers added in sync with
   // CastContentBrowserClient::IsHandledURL().
@@ -235,18 +239,18 @@ void URLRequestContextFactory::InitializeMainContextDependencies(
        it != protocol_handlers->end();
        ++it) {
     set_protocol = job_factory->SetProtocolHandler(
-        it->first, make_scoped_ptr(it->second.release()));
+        it->first, base::WrapUnique(it->second.release()));
     DCHECK(set_protocol);
   }
   set_protocol = job_factory->SetProtocolHandler(
-      url::kDataScheme, make_scoped_ptr(new net::DataProtocolHandler));
+      url::kDataScheme, base::WrapUnique(new net::DataProtocolHandler));
   DCHECK(set_protocol);
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kEnableLocalFileAccesses)) {
     set_protocol = job_factory->SetProtocolHandler(
         url::kFileScheme,
-        make_scoped_ptr(new net::FileProtocolHandler(
+        base::WrapUnique(new net::FileProtocolHandler(
             content::BrowserThread::GetBlockingPool()
                 ->GetTaskRunnerWithShutdownBehavior(
                     base::SequencedWorkerPool::SKIP_ON_SHUTDOWN))));
@@ -254,14 +258,14 @@ void URLRequestContextFactory::InitializeMainContextDependencies(
   }
 
   // Set up interceptors in the reverse order.
-  scoped_ptr<net::URLRequestJobFactory> top_job_factory =
+  std::unique_ptr<net::URLRequestJobFactory> top_job_factory =
       std::move(job_factory);
   for (content::URLRequestInterceptorScopedVector::reverse_iterator i =
            request_interceptors.rbegin();
        i != request_interceptors.rend();
        ++i) {
     top_job_factory.reset(new net::URLRequestInterceptingJobFactory(
-        std::move(top_job_factory), make_scoped_ptr(*i)));
+        std::move(top_job_factory), base::WrapUnique(*i)));
   }
   request_interceptors.weak_clear();
 
@@ -287,8 +291,10 @@ void URLRequestContextFactory::PopulateNetworkSessionParams(
   params->channel_id_service = channel_id_service_.get();
   params->ssl_config_service = ssl_config_service_.get();
   params->transport_security_state = transport_security_state_.get();
+  params->cert_transparency_verifier = cert_transparency_verifier_.get();
+  params->ct_policy_enforcer = ct_policy_enforcer_.get();
   params->http_auth_handler_factory = http_auth_handler_factory_.get();
-  params->http_server_properties = http_server_properties_->GetWeakPtr();
+  params->http_server_properties = http_server_properties_.get();
   params->ignore_certificate_errors = ignore_certificate_errors;
   params->proxy_service = proxy_service_.get();
 }
@@ -301,6 +307,8 @@ net::URLRequestContext* URLRequestContextFactory::CreateSystemRequestContext() {
   system_transaction_factory_.reset(new net::HttpNetworkLayer(
       new net::HttpNetworkSession(system_params)));
   system_job_factory_.reset(new net::URLRequestJobFactoryImpl());
+  system_cookie_store_ =
+      content::CreateCookieStore(content::CookieStoreConfig());
 
   net::URLRequestContext* system_context = new net::URLRequestContext();
   system_context->set_host_resolver(host_resolver_.get());
@@ -312,15 +320,13 @@ net::URLRequestContext* URLRequestContextFactory::CreateSystemRequestContext() {
       transport_security_state_.get());
   system_context->set_http_auth_handler_factory(
       http_auth_handler_factory_.get());
-  system_context->set_http_server_properties(
-      http_server_properties_->GetWeakPtr());
+  system_context->set_http_server_properties(http_server_properties_.get());
   system_context->set_http_transaction_factory(
       system_transaction_factory_.get());
   system_context->set_http_user_agent_settings(
       http_user_agent_settings_.get());
   system_context->set_job_factory(system_job_factory_.get());
-  system_context->set_cookie_store(
-      content::CreateCookieStore(content::CookieStoreConfig()));
+  system_context->set_cookie_store(system_cookie_store_.get());
   system_context->set_network_delegate(system_network_delegate_.get());
   system_context->set_net_log(net_log_);
   return system_context;
@@ -368,12 +374,8 @@ net::URLRequestContext* URLRequestContextFactory::CreateMainRequestContext(
 
   content::CookieStoreConfig cookie_config(
       browser_context->GetPath().Append(kCookieStoreFile),
-      content::CookieStoreConfig::PERSISTANT_SESSION_COOKIES,
-      NULL, NULL);
-  cookie_config.background_task_runner =
-      scoped_refptr<base::SequencedTaskRunner>();
-  scoped_refptr<net::CookieStore> cookie_store =
-      content::CreateCookieStore(cookie_config);
+      content::CookieStoreConfig::PERSISTANT_SESSION_COOKIES, nullptr, nullptr);
+  main_cookie_store_ = content::CreateCookieStore(cookie_config);
 
   net::URLRequestContext* main_context = new net::URLRequestContext();
   main_context->set_host_resolver(host_resolver_.get());
@@ -384,9 +386,8 @@ net::URLRequestContext* URLRequestContextFactory::CreateMainRequestContext(
   main_context->set_transport_security_state(transport_security_state_.get());
   main_context->set_http_auth_handler_factory(
       http_auth_handler_factory_.get());
-  main_context->set_http_server_properties(
-      http_server_properties_->GetWeakPtr());
-  main_context->set_cookie_store(cookie_store.get());
+  main_context->set_http_server_properties(http_server_properties_.get());
+  main_context->set_cookie_store(main_cookie_store_.get());
   main_context->set_http_user_agent_settings(
       http_user_agent_settings_.get());
 

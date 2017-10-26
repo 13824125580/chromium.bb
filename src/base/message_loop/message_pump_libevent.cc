@@ -7,12 +7,12 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include <memory>
+
 #include "base/auto_reset.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/observer_list.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/third_party/libevent/event.h"
 #include "base/time/time.h"
@@ -92,17 +92,13 @@ void MessagePumpLibevent::FileDescriptorWatcher::OnFileCanReadWithoutBlocking(
   // watching the file descriptor.
   if (!watcher_)
     return;
-  pump->WillProcessIOEvent();
   watcher_->OnFileCanReadWithoutBlocking(fd);
-  pump->DidProcessIOEvent();
 }
 
 void MessagePumpLibevent::FileDescriptorWatcher::OnFileCanWriteWithoutBlocking(
     int fd, MessagePumpLibevent* pump) {
   DCHECK(watcher_);
-  pump->WillProcessIOEvent();
   watcher_->OnFileCanWriteWithoutBlocking(fd);
-  pump->DidProcessIOEvent();
 }
 
 MessagePumpLibevent::MessagePumpLibevent()
@@ -153,7 +149,7 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
     event_mask |= EV_WRITE;
   }
 
-  scoped_ptr<event> evt(controller->ReleaseEvent());
+  std::unique_ptr<event> evt(controller->ReleaseEvent());
   if (evt.get() == NULL) {
     // Ownership is transferred to the controller.
     evt.reset(new event);
@@ -198,14 +194,6 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
   return true;
 }
 
-void MessagePumpLibevent::AddIOObserver(IOObserver *obs) {
-  io_observers_.AddObserver(obs);
-}
-
-void MessagePumpLibevent::RemoveIOObserver(IOObserver *obs) {
-  io_observers_.RemoveObserver(obs);
-}
-
 // Tell libevent to break out of inner loop.
 static void timer_callback(int fd, short events, void *context)
 {
@@ -219,7 +207,7 @@ void MessagePumpLibevent::Run(Delegate* delegate) {
 
   // event_base_loopexit() + EVLOOP_ONCE is leaky, see http://crbug.com/25641.
   // Instead, make our own timer and reuse it on each call to event_base_loop().
-  scoped_ptr<event> timer_event(new event);
+  std::unique_ptr<event> timer_event(new event);
 
   for (;;) {
 #if defined(OS_MACOSX)
@@ -298,14 +286,6 @@ void MessagePumpLibevent::ScheduleDelayedWork(
   // only be called on the same thread as Run, so we only need to update our
   // record of how long to sleep when we do sleep.
   delayed_work_time_ = delayed_work_time;
-}
-
-void MessagePumpLibevent::WillProcessIOEvent() {
-  FOR_EACH_OBSERVER(IOObserver, io_observers_, WillProcessIOEvent());
-}
-
-void MessagePumpLibevent::DidProcessIOEvent() {
-  FOR_EACH_OBSERVER(IOObserver, io_observers_, DidProcessIOEvent());
 }
 
 bool MessagePumpLibevent::Init() {

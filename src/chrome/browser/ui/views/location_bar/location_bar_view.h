@@ -22,7 +22,7 @@
 #include "components/prefs/pref_member.h"
 #include "components/search_engines/template_url_service_observer.h"
 #include "components/security_state/security_state_model.h"
-#include "components/ui/zoom/zoom_event_manager_observer.h"
+#include "components/zoom/zoom_event_manager_observer.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/font.h"
@@ -54,7 +54,6 @@ class SaveCardIconView;
 }
 
 namespace views {
-class BubbleDelegateView;
 class Label;
 class Widget;
 }
@@ -75,7 +74,7 @@ class LocationBarView : public LocationBar,
                         public ChromeOmniboxEditController,
                         public DropdownBarHostDelegate,
                         public TemplateURLServiceObserver,
-                        public ui_zoom::ZoomEventManagerObserver {
+                        public zoom::ZoomEventManagerObserver {
  public:
   class Delegate {
    public:
@@ -84,10 +83,6 @@ class LocationBarView : public LocationBar,
 
     virtual ToolbarModel* GetToolbarModel() = 0;
     virtual const ToolbarModel* GetToolbarModel() const = 0;
-
-    // Creates Widget for the given delegate.
-    virtual views::Widget* CreateViewsBubble(
-        views::BubbleDelegateView* bubble_delegate) = 0;
 
     // Creates PageActionImageView. Caller gets an ownership.
     virtual PageActionImageView* CreatePageActionImageView(
@@ -101,7 +96,7 @@ class LocationBarView : public LocationBar,
     // Shows permissions and settings for the given web contents.
     virtual void ShowWebsiteSettings(
         content::WebContents* web_contents,
-        const GURL& url,
+        const GURL& virtual_url,
         const security_state::SecurityStateModel::SecurityInfo&
             security_info) = 0;
 
@@ -190,6 +185,9 @@ class LocationBarView : public LocationBar,
   // Returns the screen coordinates of the omnibox (where the URL text appears,
   // not where the icons are shown).
   gfx::Point GetOmniboxViewOrigin() const;
+
+  // Returns the width of the location icon.
+  int GetLocationIconWidth() const;
 
   // Shows |text| as an inline autocompletion.  This is useful for IMEs, where
   // we can't show the autocompletion inside the actual OmniboxView.  See
@@ -383,7 +381,6 @@ class LocationBarView : public LocationBar,
 
   // ChromeOmniboxEditController:
   void OnChanged() override;
-  void OnSetFocus() override;
   const ToolbarModel* GetToolbarModel() const override;
 
   // DropdownBarHostDelegate:
@@ -403,7 +400,7 @@ class LocationBarView : public LocationBar,
   Delegate* delegate_;
 
   // Object used to paint the border. Not used for material design.
-  scoped_ptr<views::Painter> border_painter_;
+  std::unique_ptr<views::Painter> border_painter_;
 
   // An icon to the left of the edit field: the HTTPS lock, blank page icon,
   // search icon, EV HTTPS bubble, etc.

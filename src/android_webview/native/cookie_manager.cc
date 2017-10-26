@@ -4,6 +4,7 @@
 
 #include "android_webview/native/cookie_manager.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,7 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
@@ -81,7 +83,7 @@ class BoolCookieCallbackHolder {
   }
 
   static BoolCallback ConvertToCallback(
-      scoped_ptr<BoolCookieCallbackHolder> me) {
+      std::unique_ptr<BoolCookieCallbackHolder> me) {
     return base::Bind(&BoolCookieCallbackHolder::Invoke,
                       base::Owned(me.release()));
   }
@@ -165,11 +167,11 @@ class CookieManager {
   bool GetShouldAcceptCookies();
   void SetCookie(const GURL& host,
                  const std::string& cookie_value,
-                 scoped_ptr<BoolCookieCallbackHolder> callback);
+                 std::unique_ptr<BoolCookieCallbackHolder> callback);
   void SetCookieSync(const GURL& host, const std::string& cookie_value);
   std::string GetCookie(const GURL& host);
-  void RemoveSessionCookies(scoped_ptr<BoolCookieCallbackHolder> callback);
-  void RemoveAllCookies(scoped_ptr<BoolCookieCallbackHolder> callback);
+  void RemoveSessionCookies(std::unique_ptr<BoolCookieCallbackHolder> callback);
+  void RemoveAllCookies(std::unique_ptr<BoolCookieCallbackHolder> callback);
   void RemoveAllCookiesSync();
   void RemoveSessionCookiesSync();
   void RemoveExpiredCookies();
@@ -224,7 +226,7 @@ class CookieManager {
   base::Thread cookie_store_backend_thread_;
 
   scoped_refptr<base::SingleThreadTaskRunner> cookie_store_task_runner_;
-  scoped_refptr<net::CookieStore> cookie_store_;
+  std::unique_ptr<net::CookieStore> cookie_store_;
 
   DISALLOW_COPY_AND_ASSIGN(CookieManager);
 };
@@ -264,7 +266,8 @@ CookieManager::~CookieManager() {
 // Ignore a bool callback.
 void CookieManager::ExecCookieTaskSync(
     const base::Callback<void(BoolCallback)>& task) {
-  WaitableEvent completion(false, false);
+  WaitableEvent completion(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
   ExecCookieTask(
       base::Bind(task, BoolCallbackAdapter(SignalEventClosure(&completion))));
   ScopedAllowWaitForLegacyWebViewApi wait;
@@ -274,7 +277,8 @@ void CookieManager::ExecCookieTaskSync(
 // Ignore an int callback.
 void CookieManager::ExecCookieTaskSync(
     const base::Callback<void(IntCallback)>& task) {
-  WaitableEvent completion(false, false);
+  WaitableEvent completion(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
   ExecCookieTask(
       base::Bind(task, IntCallbackAdapter(SignalEventClosure(&completion))));
   ScopedAllowWaitForLegacyWebViewApi wait;
@@ -285,7 +289,8 @@ void CookieManager::ExecCookieTaskSync(
 // continue.
 void CookieManager::ExecCookieTaskSync(
     const base::Callback<void(base::Closure)>& task) {
-  WaitableEvent completion(false, false);
+  WaitableEvent completion(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
   ExecCookieTask(base::Bind(task, SignalEventClosure(&completion)));
   ScopedAllowWaitForLegacyWebViewApi wait;
   completion.Wait();
@@ -355,7 +360,7 @@ bool CookieManager::GetShouldAcceptCookies() {
 void CookieManager::SetCookie(
     const GURL& host,
     const std::string& cookie_value,
-    scoped_ptr<BoolCookieCallbackHolder> callback_holder) {
+    std::unique_ptr<BoolCookieCallbackHolder> callback_holder) {
   BoolCallback callback =
       BoolCookieCallbackHolder::ConvertToCallback(std::move(callback_holder));
   ExecCookieTask(base::Bind(&CookieManager::SetCookieHelper,
@@ -412,7 +417,7 @@ void CookieManager::GetCookieValueCompleted(base::Closure complete,
 }
 
 void CookieManager::RemoveSessionCookies(
-    scoped_ptr<BoolCookieCallbackHolder> callback_holder) {
+    std::unique_ptr<BoolCookieCallbackHolder> callback_holder) {
   BoolCallback callback =
       BoolCookieCallbackHolder::ConvertToCallback(std::move(callback_holder));
   ExecCookieTask(base::Bind(&CookieManager::RemoveSessionCookiesHelper,
@@ -439,7 +444,7 @@ void CookieManager::RemoveCookiesCompleted(
 }
 
 void CookieManager::RemoveAllCookies(
-    scoped_ptr<BoolCookieCallbackHolder> callback_holder) {
+    std::unique_ptr<BoolCookieCallbackHolder> callback_holder) {
   BoolCallback callback =
       BoolCookieCallbackHolder::ConvertToCallback(std::move(callback_holder));
   ExecCookieTask(base::Bind(&CookieManager::RemoveAllCookiesHelper,
@@ -528,7 +533,7 @@ static void SetCookie(JNIEnv* env,
                       const JavaParamRef<jobject>& java_callback) {
   GURL host(ConvertJavaStringToUTF16(env, url));
   std::string cookie_value(ConvertJavaStringToUTF8(env, value));
-  scoped_ptr<BoolCookieCallbackHolder> callback(
+  std::unique_ptr<BoolCookieCallbackHolder> callback(
       new BoolCookieCallbackHolder(env, java_callback));
   CookieManager::GetInstance()->SetCookie(host, cookie_value,
                                           std::move(callback));
@@ -556,7 +561,7 @@ static ScopedJavaLocalRef<jstring> GetCookie(JNIEnv* env,
 static void RemoveSessionCookies(JNIEnv* env,
                                  const JavaParamRef<jobject>& obj,
                                  const JavaParamRef<jobject>& java_callback) {
-  scoped_ptr<BoolCookieCallbackHolder> callback(
+  std::unique_ptr<BoolCookieCallbackHolder> callback(
       new BoolCookieCallbackHolder(env, java_callback));
   CookieManager::GetInstance()->RemoveSessionCookies(std::move(callback));
 }
@@ -569,7 +574,7 @@ static void RemoveSessionCookiesSync(JNIEnv* env,
 static void RemoveAllCookies(JNIEnv* env,
                              const JavaParamRef<jobject>& obj,
                              const JavaParamRef<jobject>& java_callback) {
-  scoped_ptr<BoolCookieCallbackHolder> callback(
+  std::unique_ptr<BoolCookieCallbackHolder> callback(
       new BoolCookieCallbackHolder(env, java_callback));
   CookieManager::GetInstance()->RemoveAllCookies(std::move(callback));
 }

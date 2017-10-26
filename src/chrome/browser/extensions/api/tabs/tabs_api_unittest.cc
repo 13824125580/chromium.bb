@@ -8,11 +8,9 @@
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/test/test_web_contents_factory.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/test_util.h"
@@ -21,13 +19,13 @@ namespace extensions {
 
 namespace {
 
-scoped_ptr<base::ListValue> RunTabsQueryFunction(
+std::unique_ptr<base::ListValue> RunTabsQueryFunction(
     Browser* browser,
     const Extension* extension,
     const std::string& query_info) {
   scoped_refptr<TabsQueryFunction> function(new TabsQueryFunction());
   function->set_extension(extension);
-  scoped_ptr<base::Value> value(
+  std::unique_ptr<base::Value> value(
       extension_function_test_utils::RunFunctionAndReturnSingleResult(
           function.get(), query_info, browser,
           extension_function_test_utils::NONE));
@@ -49,8 +47,8 @@ class TabsApiUnitTest : public ExtensionServiceTestBase {
   void TearDown() override;
 
   // The browser (and accompanying window).
-  scoped_ptr<TestBrowserWindow> browser_window_;
-  scoped_ptr<Browser> browser_;
+  std::unique_ptr<TestBrowserWindow> browser_window_;
+  std::unique_ptr<Browser> browser_;
 
   DISALLOW_COPY_AND_ASSIGN(TabsApiUnitTest);
 };
@@ -79,11 +77,11 @@ TEST_F(TabsApiUnitTest, QueryWithoutTabsPermission) {
   std::string tab_titles[] = {"", "Sample title", "Sample title"};
 
   // Add 3 web contentses to the browser.
-  content::TestWebContentsFactory factory;
-  content::WebContents* web_contentses[arraysize(tab_urls)];
+  std::unique_ptr<content::WebContents> web_contentses[arraysize(tab_urls)];
   for (size_t i = 0; i < arraysize(tab_urls); ++i) {
-    content::WebContents* web_contents = factory.CreateWebContents(profile());
-    web_contentses[i] = web_contents;
+    content::WebContents* web_contents =
+        content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
+    web_contentses[i].reset(web_contents);
     browser()->tab_strip_model()->AppendWebContents(web_contents, true);
     EXPECT_EQ(browser()->tab_strip_model()->GetActiveWebContents(),
               web_contents);
@@ -99,7 +97,7 @@ TEST_F(TabsApiUnitTest, QueryWithoutTabsPermission) {
 
   // An extension without "tabs" permission will see none of the 3 tabs.
   scoped_refptr<const Extension> extension = test_util::CreateEmptyExtension();
-  scoped_ptr<base::ListValue> tabs_list_without_permission(
+  std::unique_ptr<base::ListValue> tabs_list_without_permission(
       RunTabsQueryFunction(browser(), extension.get(), kTitleAndURLQueryInfo));
   ASSERT_TRUE(tabs_list_without_permission);
   EXPECT_EQ(0u, tabs_list_without_permission->GetSize());
@@ -107,15 +105,17 @@ TEST_F(TabsApiUnitTest, QueryWithoutTabsPermission) {
   // An extension with "tabs" permission however will see the third tab.
   scoped_refptr<const Extension> extension_with_permission =
       ExtensionBuilder()
-          .SetManifest(std::move(
+          .SetManifest(
               DictionaryBuilder()
                   .Set("name", "Extension with tabs permission")
                   .Set("version", "1.0")
                   .Set("manifest_version", 2)
-                  .Set("permissions", std::move(ListBuilder().Append("tabs")))))
+                  .Set("permissions", ListBuilder().Append("tabs").Build())
+                  .Build())
           .Build();
-  scoped_ptr<base::ListValue> tabs_list_with_permission(RunTabsQueryFunction(
-      browser(), extension_with_permission.get(), kTitleAndURLQueryInfo));
+  std::unique_ptr<base::ListValue> tabs_list_with_permission(
+      RunTabsQueryFunction(browser(), extension_with_permission.get(),
+                           kTitleAndURLQueryInfo));
   ASSERT_TRUE(tabs_list_with_permission);
   ASSERT_EQ(1u, tabs_list_with_permission->GetSize());
 
@@ -123,7 +123,7 @@ TEST_F(TabsApiUnitTest, QueryWithoutTabsPermission) {
   ASSERT_TRUE(tabs_list_with_permission->GetDictionary(0, &third_tab_info));
   int third_tab_id = -1;
   ASSERT_TRUE(third_tab_info->GetInteger("id", &third_tab_id));
-  EXPECT_EQ(ExtensionTabUtil::GetTabId(web_contentses[2]), third_tab_id);
+  EXPECT_EQ(ExtensionTabUtil::GetTabId(web_contentses[2].get()), third_tab_id);
 }
 
 TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
@@ -133,11 +133,11 @@ TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
   std::string tab_titles[] = {"", "Sample title", "Sample title"};
 
   // Add 3 web contentses to the browser.
-  content::TestWebContentsFactory factory;
-  content::WebContents* web_contentses[arraysize(tab_urls)];
+  std::unique_ptr<content::WebContents> web_contentses[arraysize(tab_urls)];
   for (size_t i = 0; i < arraysize(tab_urls); ++i) {
-    content::WebContents* web_contents = factory.CreateWebContents(profile());
-    web_contentses[i] = web_contents;
+    content::WebContents* web_contents =
+        content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
+    web_contentses[i].reset(web_contents);
     browser()->tab_strip_model()->AppendWebContents(web_contents, true);
     EXPECT_EQ(browser()->tab_strip_model()->GetActiveWebContents(),
               web_contents);
@@ -155,17 +155,19 @@ TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
   scoped_refptr<const Extension> extension_with_permission =
       ExtensionBuilder()
           .SetManifest(
-              std::move(DictionaryBuilder()
-                            .Set("name", "Extension with tabs permission")
-                            .Set("version", "1.0")
-                            .Set("manifest_version", 2)
-                            .Set("permissions", std::move(ListBuilder().Append(
-                                                    "*://www.google.com/*")))))
+              DictionaryBuilder()
+                  .Set("name", "Extension with tabs permission")
+                  .Set("version", "1.0")
+                  .Set("manifest_version", 2)
+                  .Set("permissions",
+                       ListBuilder().Append("*://www.google.com/*").Build())
+                  .Build())
           .Build();
 
   {
-    scoped_ptr<base::ListValue> tabs_list_with_permission(RunTabsQueryFunction(
-        browser(), extension_with_permission.get(), kTitleAndURLQueryInfo));
+    std::unique_ptr<base::ListValue> tabs_list_with_permission(
+        RunTabsQueryFunction(browser(), extension_with_permission.get(),
+                             kTitleAndURLQueryInfo));
     ASSERT_TRUE(tabs_list_with_permission);
     ASSERT_EQ(1u, tabs_list_with_permission->GetSize());
 
@@ -173,14 +175,16 @@ TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
     ASSERT_TRUE(tabs_list_with_permission->GetDictionary(0, &third_tab_info));
     int third_tab_id = -1;
     ASSERT_TRUE(third_tab_info->GetInteger("id", &third_tab_id));
-    EXPECT_EQ(ExtensionTabUtil::GetTabId(web_contentses[2]), third_tab_id);
+    EXPECT_EQ(ExtensionTabUtil::GetTabId(web_contentses[2].get()),
+              third_tab_id);
   }
 
   // Try the same without title, first and third tabs will match.
   const char* kURLQueryInfo = "[{\"url\": \"*://www.google.com/*\"}]";
   {
-    scoped_ptr<base::ListValue> tabs_list_with_permission(RunTabsQueryFunction(
-        browser(), extension_with_permission.get(), kURLQueryInfo));
+    std::unique_ptr<base::ListValue> tabs_list_with_permission(
+        RunTabsQueryFunction(browser(), extension_with_permission.get(),
+                             kURLQueryInfo));
     ASSERT_TRUE(tabs_list_with_permission);
     ASSERT_EQ(2u, tabs_list_with_permission->GetSize());
 
@@ -190,8 +194,10 @@ TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
     ASSERT_TRUE(tabs_list_with_permission->GetDictionary(1, &third_tab_info));
 
     std::vector<int> expected_tabs_ids;
-    expected_tabs_ids.push_back(ExtensionTabUtil::GetTabId(web_contentses[0]));
-    expected_tabs_ids.push_back(ExtensionTabUtil::GetTabId(web_contentses[2]));
+    expected_tabs_ids.push_back(
+        ExtensionTabUtil::GetTabId(web_contentses[0].get()));
+    expected_tabs_ids.push_back(
+        ExtensionTabUtil::GetTabId(web_contentses[2].get()));
 
     int first_tab_id = -1;
     ASSERT_TRUE(first_tab_info->GetInteger("id", &first_tab_id));

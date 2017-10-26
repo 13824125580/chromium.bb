@@ -10,14 +10,15 @@
 
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
@@ -32,6 +33,7 @@
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/connection_attempts.h"
+#include "net/socket/socket_performance_watcher.h"
 #include "net/socket/socks_client_socket_pool.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/ssl_client_socket_pool.h"
@@ -212,6 +214,8 @@ class SocketDataProvider {
   virtual bool AllReadDataConsumed() const = 0;
   virtual bool AllWriteDataConsumed() const = 0;
 
+  virtual void OnEnableTCPFastOpenIfSupported();
+
   // Returns true if the request should be considered idle, for the purposes of
   // IsConnectedAndIdle.
   virtual bool IsIdle() const;
@@ -347,6 +351,7 @@ class StaticSocketDataProvider : public SocketDataProvider {
 // to Connect().
 struct SSLSocketDataProvider {
   SSLSocketDataProvider(IoMode mode, int result);
+  SSLSocketDataProvider(const SSLSocketDataProvider& other);
   ~SSLSocketDataProvider();
 
   void SetNextProto(NextProto proto);
@@ -392,6 +397,7 @@ class SequencedSocketData : public SocketDataProvider {
   MockWriteResult OnWrite(const std::string& data) override;
   bool AllReadDataConsumed() const override;
   bool AllWriteDataConsumed() const override;
+  void OnEnableTCPFastOpenIfSupported() override;
   bool IsIdle() const override;
 
   // An ASYNC read event with a return value of ERR_IO_PENDING will cause the
@@ -408,6 +414,8 @@ class SequencedSocketData : public SocketDataProvider {
   // occur synchronously with the call if it can.
   void Resume();
   void RunUntilPaused();
+
+  bool IsUsingTCPFastOpen() const;
 
   // When true, IsConnectedAndIdle() will return false if the next event in the
   // sequence is a synchronous.  Otherwise, the socket claims to be idle as
@@ -444,9 +452,10 @@ class SequencedSocketData : public SocketDataProvider {
   IoState write_state_;
 
   bool busy_before_sync_reads_;
+  bool is_using_tcp_fast_open_;
 
   // Used by RunUntilPaused.  NULL at all other times.
-  scoped_ptr<base::RunLoop> run_until_paused_run_loop_;
+  std::unique_ptr<base::RunLoop> run_until_paused_run_loop_;
 
   base::WeakPtrFactory<SequencedSocketData> weak_factory_;
 
@@ -507,17 +516,18 @@ class MockClientSocketFactory : public ClientSocketFactory {
   }
 
   // ClientSocketFactory
-  scoped_ptr<DatagramClientSocket> CreateDatagramClientSocket(
+  std::unique_ptr<DatagramClientSocket> CreateDatagramClientSocket(
       DatagramSocket::BindType bind_type,
       const RandIntCallback& rand_int_cb,
       NetLog* net_log,
       const NetLog::Source& source) override;
-  scoped_ptr<StreamSocket> CreateTransportClientSocket(
+  std::unique_ptr<StreamSocket> CreateTransportClientSocket(
       const AddressList& addresses,
+      std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
       NetLog* net_log,
       const NetLog::Source& source) override;
-  scoped_ptr<SSLClientSocket> CreateSSLClientSocket(
-      scoped_ptr<ClientSocketHandle> transport_socket,
+  std::unique_ptr<SSLClientSocket> CreateSSLClientSocket(
+      std::unique_ptr<ClientSocketHandle> transport_socket,
       const HostPortPair& host_and_port,
       const SSLConfig& ssl_config,
       const SSLClientSocketContext& context) override;
@@ -537,9 +547,6 @@ class MockClientSocketFactory : public ClientSocketFactory {
 
 class MockClientSocket : public SSLClientSocket {
  public:
-  // Value returned by GetTLSUniqueChannelBinding().
-  static const char kTlsUnique[];
-
   // The BoundNetLog is needed to test LoadTimingInfo, which uses NetLog IDs as
   // unique socket IDs.
   explicit MockClientSocket(const BoundNetLog& net_log);
@@ -576,13 +583,11 @@ class MockClientSocket : public SSLClientSocket {
                            const base::StringPiece& context,
                            unsigned char* out,
                            unsigned int outlen) override;
-  int GetTLSUniqueChannelBinding(std::string* out) override;
   NextProtoStatus GetNextProto(std::string* proto) const override;
   ChannelIDService* GetChannelIDService() const override;
   Error GetSignedEKMForTokenBinding(crypto::ECPrivateKey* key,
                                     std::vector<uint8_t>* out) override;
   crypto::ECPrivateKey* GetChannelIDKey() const override;
-  SSLFailureState GetSSLFailureState() const override;
 
  protected:
   ~MockClientSocket() override;
@@ -627,7 +632,7 @@ class MockTCPClientSocket : public MockClientSocket, public AsyncSocket {
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(IPEndPoint* address) const override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
+  void EnableTCPFastOpenIfSupported() override;
   bool WasNpnNegotiated() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
@@ -670,7 +675,7 @@ class MockTCPClientSocket : public MockClientSocket, public AsyncSocket {
 
 class MockSSLClientSocket : public MockClientSocket, public AsyncSocket {
  public:
-  MockSSLClientSocket(scoped_ptr<ClientSocketHandle> transport_socket,
+  MockSSLClientSocket(std::unique_ptr<ClientSocketHandle> transport_socket,
                       const HostPortPair& host_and_port,
                       const SSLConfig& ssl_config,
                       SSLSocketDataProvider* socket);
@@ -690,7 +695,6 @@ class MockSSLClientSocket : public MockClientSocket, public AsyncSocket {
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   int GetPeerAddress(IPEndPoint* address) const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
 
@@ -716,7 +720,7 @@ class MockSSLClientSocket : public MockClientSocket, public AsyncSocket {
                               const CompletionCallback& callback,
                               int rv);
 
-  scoped_ptr<ClientSocketHandle> transport_;
+  std::unique_ptr<ClientSocketHandle> transport_;
   SSLSocketDataProvider* data_;
 
   DISALLOW_COPY_AND_ASSIGN(MockSSLClientSocket);
@@ -744,10 +748,11 @@ class MockUDPClientSocket : public DatagramClientSocket, public AsyncSocket {
   const BoundNetLog& NetLog() const override;
 
   // DatagramClientSocket implementation.
-  int BindToNetwork(NetworkChangeNotifier::NetworkHandle network) override;
-  int BindToDefaultNetwork() override;
-  NetworkChangeNotifier::NetworkHandle GetBoundNetwork() const override;
   int Connect(const IPEndPoint& address) override;
+  int ConnectUsingNetwork(NetworkChangeNotifier::NetworkHandle network,
+                          const IPEndPoint& address) override;
+  int ConnectUsingDefaultNetwork(const IPEndPoint& address) override;
+  NetworkChangeNotifier::NetworkHandle GetBoundNetwork() const override;
 
   // AsyncSocket implementation.
   void OnReadComplete(const MockRead& data) override;
@@ -836,7 +841,7 @@ class ClientSocketPoolTest {
     DCHECK(socket_pool);
     TestSocketRequest* request(
         new TestSocketRequest(&request_order_, &completion_count_));
-    requests_.push_back(make_scoped_ptr(request));
+    requests_.push_back(base::WrapUnique(request));
     int rv = request->handle()->Init(group_name, socket_params, priority,
                                      respect_limits, request->callback(),
                                      socket_pool, BoundNetLog());
@@ -863,11 +868,13 @@ class ClientSocketPoolTest {
   TestSocketRequest* request(int i) { return requests_[i].get(); }
 
   size_t requests_size() const { return requests_.size(); }
-  std::vector<scoped_ptr<TestSocketRequest>>* requests() { return &requests_; }
+  std::vector<std::unique_ptr<TestSocketRequest>>* requests() {
+    return &requests_;
+  }
   size_t completion_count() const { return completion_count_; }
 
  private:
-  std::vector<scoped_ptr<TestSocketRequest>> requests_;
+  std::vector<std::unique_ptr<TestSocketRequest>> requests_;
   std::vector<TestSocketRequest*> request_order_;
   size_t completion_count_;
 
@@ -889,7 +896,7 @@ class MockTransportClientSocketPool : public TransportClientSocketPool {
 
   class MockConnectJob {
    public:
-    MockConnectJob(scoped_ptr<StreamSocket> socket,
+    MockConnectJob(std::unique_ptr<StreamSocket> socket,
                    ClientSocketHandle* handle,
                    const CompletionCallback& callback);
     ~MockConnectJob();
@@ -900,7 +907,7 @@ class MockTransportClientSocketPool : public TransportClientSocketPool {
    private:
     void OnConnect(int rv);
 
-    scoped_ptr<StreamSocket> socket_;
+    std::unique_ptr<StreamSocket> socket_;
     ClientSocketHandle* handle_;
     CompletionCallback user_callback_;
 
@@ -931,12 +938,12 @@ class MockTransportClientSocketPool : public TransportClientSocketPool {
   void CancelRequest(const std::string& group_name,
                      ClientSocketHandle* handle) override;
   void ReleaseSocket(const std::string& group_name,
-                     scoped_ptr<StreamSocket> socket,
+                     std::unique_ptr<StreamSocket> socket,
                      int id) override;
 
  private:
   ClientSocketFactory* client_socket_factory_;
-  std::vector<scoped_ptr<MockConnectJob>> job_list_;
+  std::vector<std::unique_ptr<MockConnectJob>> job_list_;
   RequestPriority last_request_priority_;
   int release_count_;
   int cancel_count_;
@@ -964,7 +971,7 @@ class MockSOCKSClientSocketPool : public SOCKSClientSocketPool {
   void CancelRequest(const std::string& group_name,
                      ClientSocketHandle* handle) override;
   void ReleaseSocket(const std::string& group_name,
-                     scoped_ptr<StreamSocket> socket,
+                     std::unique_ptr<StreamSocket> socket,
                      int id) override;
 
  private:

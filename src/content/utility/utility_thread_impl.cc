@@ -18,6 +18,7 @@
 #include "content/utility/utility_blink_platform_impl.h"
 #include "content/utility/utility_process_control_impl.h"
 #include "ipc/ipc_sync_channel.h"
+#include "services/shell/public/cpp/interface_registry.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 
 #if defined(OS_POSIX) && defined(ENABLE_PLUGINS)
@@ -46,6 +47,7 @@ UtilityThreadImpl::UtilityThreadImpl()
 UtilityThreadImpl::UtilityThreadImpl(const InProcessChildThreadParams& params)
     : ChildThreadImpl(ChildThreadImpl::Options::Builder()
                           .InBrowserProcess(params)
+                          .UseMojoChannel(true)
                           .Build()) {
   Init();
 }
@@ -57,7 +59,7 @@ void UtilityThreadImpl::Shutdown() {
   ChildThreadImpl::Shutdown();
 
   if (blink_platform_impl_)
-    blink::shutdownWithoutV8();
+    blink::Platform::shutdown();
 }
 
 void UtilityThreadImpl::ReleaseProcessIfNeeded() {
@@ -85,7 +87,7 @@ void UtilityThreadImpl::EnsureBlinkInitialized() {
   }
 
   blink_platform_impl_.reset(new UtilityBlinkPlatformImpl);
-  blink::initializeWithoutV8(blink_platform_impl_.get());
+  blink::Platform::initialize(blink_platform_impl_.get());
 }
 
 void UtilityThreadImpl::Init() {
@@ -94,10 +96,11 @@ void UtilityThreadImpl::Init() {
   GetContentClient()->utility()->UtilityThreadStarted();
 
   process_control_.reset(new UtilityProcessControlImpl);
-  service_registry()->AddService(base::Bind(
+  GetInterfaceRegistry()->AddInterface(base::Bind(
       &UtilityThreadImpl::BindProcessControlRequest, base::Unretained(this)));
 
-  GetContentClient()->utility()->RegisterMojoServices(service_registry());
+  GetContentClient()->utility()->ExposeInterfacesToBrowser(
+      GetInterfaceRegistry());
 }
 
 bool UtilityThreadImpl::OnControlMessageReceived(const IPC::Message& msg) {
@@ -108,9 +111,6 @@ bool UtilityThreadImpl::OnControlMessageReceived(const IPC::Message& msg) {
   IPC_BEGIN_MESSAGE_MAP(UtilityThreadImpl, msg)
     IPC_MESSAGE_HANDLER(UtilityMsg_BatchMode_Started, OnBatchModeStarted)
     IPC_MESSAGE_HANDLER(UtilityMsg_BatchMode_Finished, OnBatchModeFinished)
-#if defined(OS_POSIX) && defined(ENABLE_PLUGINS)
-    IPC_MESSAGE_HANDLER(UtilityMsg_LoadPlugins, OnLoadPlugins)
-#endif
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -125,30 +125,8 @@ void UtilityThreadImpl::OnBatchModeFinished() {
   ReleaseProcessIfNeeded();
 }
 
-#if defined(OS_POSIX) && defined(ENABLE_PLUGINS)
-void UtilityThreadImpl::OnLoadPlugins(
-    const std::vector<base::FilePath>& plugin_paths) {
-  PluginList* plugin_list = PluginList::Singleton();
-
-  std::vector<WebPluginInfo> plugins;
-  // TODO(bauerb): If we restart loading plugins, we might mess up the logic in
-  // PluginList::ShouldLoadPlugin due to missing the previously loaded plugins
-  // in |plugin_groups|.
-  for (size_t i = 0; i < plugin_paths.size(); ++i) {
-    WebPluginInfo plugin;
-    if (!plugin_list->LoadPluginIntoPluginList(
-        plugin_paths[i], &plugins, &plugin))
-      Send(new UtilityHostMsg_LoadPluginFailed(i, plugin_paths[i]));
-    else
-      Send(new UtilityHostMsg_LoadedPlugin(i, plugin));
-  }
-
-  ReleaseProcessIfNeeded();
-}
-#endif
-
 void UtilityThreadImpl::BindProcessControlRequest(
-    mojo::InterfaceRequest<ProcessControl> request) {
+    mojo::InterfaceRequest<mojom::ProcessControl> request) {
   DCHECK(process_control_);
   process_control_bindings_.AddBinding(process_control_.get(),
                                        std::move(request));

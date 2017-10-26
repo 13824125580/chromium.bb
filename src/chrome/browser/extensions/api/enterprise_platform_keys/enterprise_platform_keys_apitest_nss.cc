@@ -5,9 +5,11 @@
 #include <cryptohi.h>
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/test/https_forwarder.h"
@@ -252,7 +254,7 @@ class EnterprisePlatformKeysTest
     chromeos::FakeSessionManagerClient* fake_session_manager_client =
         new chromeos::FakeSessionManagerClient;
     chromeos::DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        scoped_ptr<chromeos::SessionManagerClient>(
+        std::unique_ptr<chromeos::SessionManagerClient>(
             fake_session_manager_client));
 
     if (GetParam().device_status_ == DEVICE_STATUS_ENROLLED) {
@@ -326,7 +328,7 @@ class EnterprisePlatformKeysTest
 
     if (chromeos::LoginDisplayHost::default_host())
       chromeos::LoginDisplayHost::default_host()->Finalize();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     if (GetParam().system_token_ == SYSTEM_TOKEN_EXISTS) {
       base::RunLoop loop;
@@ -360,17 +362,14 @@ class EnterprisePlatformKeysTest
     GURL update_manifest_url(net::URLRequestMockHTTPJob::GetMockUrl(
         update_manifest_path.MaybeAsASCII()));
 
-    scoped_ptr<base::ListValue> forcelist(new base::ListValue);
+    std::unique_ptr<base::ListValue> forcelist(new base::ListValue);
     forcelist->AppendString(base::StringPrintf(
         "%s;%s", kTestExtensionID, update_manifest_url.spec().c_str()));
 
     policy::PolicyMap policy;
     policy.Set(policy::key::kExtensionInstallForcelist,
-               policy::POLICY_LEVEL_MANDATORY,
-               policy::POLICY_SCOPE_MACHINE,
-               policy::POLICY_SOURCE_CLOUD,
-               forcelist.release(),
-               NULL);
+               policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
+               policy::POLICY_SOURCE_CLOUD, std::move(forcelist), nullptr);
 
     // Set the policy and wait until the extension is installed.
     extensions::TestExtensionRegistryObserver observer(
@@ -426,7 +425,7 @@ class EnterprisePlatformKeysTest
   }
 
   policy::DevicePolicyCrosTestHelper device_policy_test_helper_;
-  scoped_ptr<crypto::ScopedTestSystemNSSKeySlot> test_system_slot_;
+  std::unique_ptr<crypto::ScopedTestSystemNSSKeySlot> test_system_slot_;
   policy::MockConfigurationPolicyProvider policy_provider_;
   FakeGaia fake_gaia_;
   chromeos::HTTPSForwarder gaia_https_forwarder_;

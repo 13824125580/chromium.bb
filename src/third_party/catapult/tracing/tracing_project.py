@@ -73,12 +73,17 @@ class TracingProject(object):
   glmatrix_path = os.path.join(
       tracing_third_party_path, 'gl-matrix', 'dist')
 
+  mannwhitneyu_path = os.path.join(
+      tracing_third_party_path, 'mannwhitneyu')
+
   ui_path = os.path.join(tracing_src_path, 'ui')
   d3_path = os.path.join(tracing_third_party_path, 'd3')
   chai_path = os.path.join(tracing_third_party_path, 'chai')
   mocha_path = os.path.join(tracing_third_party_path, 'mocha')
 
   mre_path = os.path.join(catapult_path, 'perf_insights')
+
+  metrics_path = os.path.join(tracing_src_path, 'metrics')
 
   value_ui_path = os.path.join(tracing_src_path, 'value', 'ui')
   metrics_ui_path = os.path.join(tracing_src_path, 'metrics', 'ui')
@@ -98,6 +103,7 @@ class TracingProject(object):
     self.source_paths.append(self.mre_path)
     self.source_paths.append(self.jszip_path)
     self.source_paths.append(self.glmatrix_path)
+    self.source_paths.append(self.mannwhitneyu_path)
     self.source_paths.append(self.d3_path)
     self.source_paths.append(self.chai_path)
     self.source_paths.append(self.mocha_path)
@@ -129,6 +135,16 @@ class TracingProject(object):
 
     return [os.path.relpath(x, self.tracing_root_path)
             for x in test_module_filenames]
+
+  def FindAllMetricsModuleRelPaths(self):
+    all_filenames = _FindAllFilesRecursive([self.tracing_src_path])
+    all_metrics_module_filenames = []
+    for x in all_filenames:
+      if x.startswith(self.metrics_path) and not _IsFilenameATest(x):
+        all_metrics_module_filenames.append(x)
+    all_metrics_module_filenames.sort()
+    return [os.path.relpath(x, self.tracing_root_path)
+            for x in all_metrics_module_filenames]
 
   def FindAllD8TestModuleRelPaths(self):
     return self.FindAllTestModuleRelPaths(pred=self.IsD8CompatibleFile)

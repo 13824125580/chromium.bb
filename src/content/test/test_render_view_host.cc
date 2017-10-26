@@ -4,9 +4,13 @@
 
 #include "content/test/test_render_view_host.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "cc/surfaces/surface_manager.h"
+#include "content/browser/compositor/image_transport_factory.h"
+#include "content/browser/compositor/surface_utils.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
@@ -25,6 +29,8 @@
 #include "content/test/test_render_frame_host.h"
 #include "content/test/test_web_contents.h"
 #include "media/base/video_frame.h"
+#include "ui/aura/env.h"
+#include "ui/compositor/compositor.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace content {
@@ -48,7 +54,7 @@ void InitNavigateParams(FrameHostMsg_DidCommitProvisionalLoad_Params* params,
   params->security_info = std::string();
   params->gesture = NavigationGestureUser;
   params->was_within_same_page = false;
-  params->is_post = false;
+  params->method = "GET";
   params->page_state = PageState::CreateFromURL(url);
 }
 
@@ -57,6 +63,14 @@ TestRenderWidgetHostView::TestRenderWidgetHostView(RenderWidgetHost* rwh)
       is_showing_(false),
       is_occluded_(false),
       did_swap_compositor_frame_(false) {
+#if defined(OS_ANDROID)
+    surface_id_allocator_ = CreateSurfaceIdAllocator();
+#else
+  // Not all tests initialize or need an image transport factory.
+  if (ImageTransportFactory::GetInstance())
+    surface_id_allocator_ = CreateSurfaceIdAllocator();
+#endif
+
   rwh_->SetView(this);
 }
 
@@ -72,15 +86,11 @@ gfx::Vector2dF TestRenderWidgetHostView::GetLastScrollOffset() const {
 }
 
 gfx::NativeView TestRenderWidgetHostView::GetNativeView() const {
-  return NULL;
-}
-
-gfx::NativeViewId TestRenderWidgetHostView::GetNativeViewId() const {
-  return 0;
+  return nullptr;
 }
 
 gfx::NativeViewAccessible TestRenderWidgetHostView::GetNativeViewAccessible() {
-  return NULL;
+  return nullptr;
 }
 
 ui::TextInputClient* TestRenderWidgetHostView::GetTextInputClient() {
@@ -153,6 +163,11 @@ bool TestRenderWidgetHostView::HasAcceleratedSurface(
 
 #if defined(OS_MACOSX)
 
+ui::AcceleratedWidgetMac* TestRenderWidgetHostView::GetAcceleratedWidgetMac()
+    const {
+  return nullptr;
+}
+
 void TestRenderWidgetHostView::SetActive(bool active) {
   // <viettrungluu@gmail.com>: Do I need to do anything here?
 }
@@ -171,18 +186,7 @@ bool TestRenderWidgetHostView::IsSpeaking() const {
 void TestRenderWidgetHostView::StopSpeaking() {
 }
 
-bool TestRenderWidgetHostView::PostProcessEventForPluginIme(
-    const NativeWebKeyboardEvent& event) {
-  return false;
-}
-
 #endif
-
-bool TestRenderWidgetHostView::GetScreenColorProfile(
-    std::vector<char>* color_profile) {
-  DCHECK(color_profile->empty());
-  return false;
-}
 
 gfx::Rect TestRenderWidgetHostView::GetBoundsInRootWindow() {
   return gfx::Rect();
@@ -190,7 +194,7 @@ gfx::Rect TestRenderWidgetHostView::GetBoundsInRootWindow() {
 
 void TestRenderWidgetHostView::OnSwapCompositorFrame(
     uint32_t output_surface_id,
-    scoped_ptr<cc::CompositorFrame> frame) {
+    cc::CompositorFrame frame) {
   did_swap_compositor_frame_ = true;
 }
 
@@ -201,29 +205,26 @@ bool TestRenderWidgetHostView::LockMouse() {
 void TestRenderWidgetHostView::UnlockMouse() {
 }
 
-#if defined(OS_WIN)
-void TestRenderWidgetHostView::SetParentNativeViewAccessible(
-    gfx::NativeViewAccessible accessible_parent) {
+uint32_t TestRenderWidgetHostView::GetSurfaceIdNamespace() {
+  // See constructor.  If a test needs this, its harness needs to construct an
+  // ImageTransportFactory.
+  DCHECK(surface_id_allocator_);
+  return surface_id_allocator_->id_namespace();
 }
 
-gfx::NativeViewId TestRenderWidgetHostView::GetParentForWindowlessPlugin()
-    const {
-  return 0;
-}
-#endif
-
-TestRenderViewHost::TestRenderViewHost(SiteInstance* instance,
-                                       scoped_ptr<RenderWidgetHostImpl> widget,
-                                       RenderViewHostDelegate* delegate,
-                                       int32_t main_frame_routing_id,
-                                       bool swapped_out)
+TestRenderViewHost::TestRenderViewHost(
+    SiteInstance* instance,
+    std::unique_ptr<RenderWidgetHostImpl> widget,
+    RenderViewHostDelegate* delegate,
+    int32_t main_frame_routing_id,
+    bool swapped_out)
     : RenderViewHostImpl(instance,
                          std::move(widget),
                          delegate,
                          main_frame_routing_id,
                          swapped_out,
                          false /* has_initialized_audio_host */),
-      delete_counter_(NULL),
+      delete_counter_(nullptr),
       opener_frame_route_id_(MSG_ROUTING_NONE) {
   // TestRenderWidgetHostView installs itself into this->view_ in its
   // constructor, and deletes itself when TestRenderWidgetHostView::Destroy() is
@@ -318,7 +319,7 @@ TestRenderViewHost* RenderViewHostImplTestHarness::test_rvh() {
 TestRenderViewHost* RenderViewHostImplTestHarness::pending_test_rvh() {
   return contents()->GetPendingMainFrame() ?
       contents()->GetPendingMainFrame()->GetRenderViewHost() :
-      NULL;
+      nullptr;
 }
 
 TestRenderViewHost* RenderViewHostImplTestHarness::active_test_rvh() {

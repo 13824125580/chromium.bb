@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_RENDERER_HOST_CHROME_RESOURCE_DISPATCHER_HOST_DELEGATE_H_
 
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/compiler_specific.h"
@@ -17,8 +18,16 @@
 class DelayedResourceQueue;
 class DownloadRequestLimiter;
 
+namespace content {
+class NavigationData;
+}
+
 namespace extensions {
 class UserScriptListener;
+}
+
+namespace net {
+class URLRequest;
 }
 
 namespace safe_browsing {
@@ -49,7 +58,6 @@ class ChromeResourceDispatcherHostDelegate
       content::ResourceContext* resource_context,
       int child_id,
       int route_id,
-      int request_id,
       bool is_content_initiated,
       bool must_download,
       ScopedVector<content::ResourceThrottle>* throttles) override;
@@ -63,7 +71,8 @@ class ChromeResourceDispatcherHostDelegate
           web_contents_getter,
       bool is_main_frame,
       ui::PageTransition page_transition,
-      bool has_user_gesture) override;
+      bool has_user_gesture,
+      content::ResourceContext* resource_context) override;
   bool ShouldForceDownloadResource(const GURL& url,
                                    const std::string& mime_type) override;
   bool ShouldInterceptResourceAsStream(net::URLRequest* request,
@@ -72,7 +81,7 @@ class ChromeResourceDispatcherHostDelegate
                                        GURL* origin,
                                        std::string* payload) override;
   void OnStreamCreated(net::URLRequest* request,
-                       scoped_ptr<content::StreamInfo> stream) override;
+                       std::unique_ptr<content::StreamInfo> stream) override;
   void OnResponseStarted(net::URLRequest* request,
                          content::ResourceContext* resource_context,
                          content::ResourceResponse* response,
@@ -84,6 +93,10 @@ class ChromeResourceDispatcherHostDelegate
   void RequestComplete(net::URLRequest* url_request) override;
   bool ShouldEnableLoFiMode(
       const net::URLRequest& url_request,
+      content::ResourceContext* resource_context) override;
+  content::NavigationData* GetNavigationData(
+      net::URLRequest* request) const override;
+  std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
       content::ResourceContext* resource_context) override;
 
   // Called on the UI thread. Allows switching out the

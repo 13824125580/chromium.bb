@@ -26,16 +26,17 @@
 #ifndef LinkHighlightImpl_h
 #define LinkHighlightImpl_h
 
+#include "platform/animation/CompositorAnimationDelegate.h"
 #include "platform/animation/CompositorAnimationPlayer.h"
 #include "platform/animation/CompositorAnimationPlayerClient.h"
 #include "platform/graphics/LinkHighlight.h"
 #include "platform/graphics/Path.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebCompositorAnimationDelegate.h"
 #include "public/platform/WebContentLayer.h"
 #include "public/platform/WebContentLayerClient.h"
+#include "web/WebExport.h"
 #include "wtf/Forward.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -46,12 +47,12 @@ class WebContentLayer;
 class WebLayer;
 class WebViewImpl;
 
-class LinkHighlightImpl final : public LinkHighlight
+class WEB_EXPORT LinkHighlightImpl final : public LinkHighlight
     , public WebContentLayerClient
-    , public WebCompositorAnimationDelegate
+    , public CompositorAnimationDelegate
     , public CompositorAnimationPlayerClient {
 public:
-    static PassOwnPtr<LinkHighlightImpl> create(Node*, WebViewImpl*);
+    static std::unique_ptr<LinkHighlightImpl> create(Node*, WebViewImpl*);
     ~LinkHighlightImpl() override;
 
     WebContentLayer* contentLayer();
@@ -63,7 +64,7 @@ public:
     gfx::Rect paintableRegion() override;
     void paintContents(WebDisplayItemList*, WebContentLayerClient::PaintingControlSetting) override;
 
-    // WebCompositorAnimationDelegate implementation.
+    // CompositorAnimationDelegate implementation.
     void notifyAnimationStarted(double monotonicTime, int group) override;
     void notifyAnimationFinished(double monotonicTime, int group) override;
     void notifyAnimationAborted(double monotonicTime, int group) override { }
@@ -90,14 +91,15 @@ private:
     // size since the last call to this function.
     bool computeHighlightLayerPathAndPosition(const LayoutBoxModelObject&);
 
-    OwnPtr<WebContentLayer> m_contentLayer;
-    OwnPtr<WebLayer> m_clipLayer;
+    std::unique_ptr<WebContentLayer> m_contentLayer;
+    std::unique_ptr<WebLayer> m_clipLayer;
     Path m_path;
 
-    RefPtrWillBePersistent<Node> m_node;
+    Persistent<Node> m_node;
     WebViewImpl* m_owningWebViewImpl;
     GraphicsLayer* m_currentGraphicsLayer;
-    OwnPtr<CompositorAnimationPlayer> m_compositorPlayer;
+    bool m_isScrollingGraphicsLayer;
+    std::unique_ptr<CompositorAnimationPlayer> m_compositorPlayer;
 
     bool m_geometryNeedsUpdate;
     bool m_isAnimating;

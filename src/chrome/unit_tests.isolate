@@ -47,7 +47,6 @@
           '../third_party/hunspell_dictionaries/',
           '../third_party/zlib/google/test/data/',
           '../tools/metrics/histograms/histograms.xml',
-          '<(PRODUCT_DIR)/resources.pak',
           'test/data/',
           'third_party/mock4js/',
         ],
@@ -58,6 +57,14 @@
         'files': [
           '<(PRODUCT_DIR)/chrome_100_percent.pak',
           '<(PRODUCT_DIR)/locales/en-US.pak',
+          '<(PRODUCT_DIR)/resources.pak',
+        ],
+      },
+    }],
+    ['OS=="linux" or OS=="win"', {
+      'variables': {
+        'files': [
+          '<(PRODUCT_DIR)/chrome_200_percent.pak',
         ],
       },
     }],
@@ -96,7 +103,6 @@
       'variables': {
         'files': [
           '<(PRODUCT_DIR)/<(mac_product_name) Framework.framework/',
-          '<(PRODUCT_DIR)/exif.so',
           '<(PRODUCT_DIR)/osmesa.so',
           '<(PRODUCT_DIR)/test_data/chrome/safe_browsing_dmg/',
         ],
@@ -106,7 +112,6 @@
       'variables': {
         'files': [
           '<(PRODUCT_DIR)/<(mac_product_name) Framework.framework.dSYM/',
-          '<(PRODUCT_DIR)/exif.so.dSYM/',
           '<(PRODUCT_DIR)/osmesa.so.dSYM/',
           '<(PRODUCT_DIR)/unit_tests.dSYM/',
         ],
@@ -120,7 +125,6 @@
           '../ui/base/glib/',
           '<(PRODUCT_DIR)/blacklist_test_dll_1.dll',
           '<(PRODUCT_DIR)/chrome_elf.dll',
-          '<(PRODUCT_DIR)/libexif.dll',
           '<(PRODUCT_DIR)/osmesa.dll',
           '<(PRODUCT_DIR)/verifier_test_dll_1.dll',
           '<(PRODUCT_DIR)/verifier_test_dll_2.dll',
@@ -149,7 +153,6 @@
         'files': [
           '../chromeos/test/data/network/',
           '<(PRODUCT_DIR)/keyboard_resources.pak',
-          '<(PRODUCT_DIR)/libexif.so',
           '<(PRODUCT_DIR)/test_data/chrome/browser/resources/chromeos/',
         ],
       },

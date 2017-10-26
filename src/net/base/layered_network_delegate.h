@@ -7,11 +7,13 @@
 
 #include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/string16.h"
 #include "net/base/completion_callback.h"
 #include "net/base/network_delegate.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/proxy/proxy_retry_info.h"
 
 class GURL;
 
@@ -34,21 +36,22 @@ class URLRequest;
 class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
  public:
   explicit LayeredNetworkDelegate(
-      scoped_ptr<NetworkDelegate> nested_network_delegate);
+      std::unique_ptr<NetworkDelegate> nested_network_delegate);
   ~LayeredNetworkDelegate() override;
 
   // NetworkDelegate implementation:
   int OnBeforeURLRequest(URLRequest* request,
                          const CompletionCallback& callback,
                          GURL* new_url) final;
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) final;
-  void OnBeforeSendProxyHeaders(URLRequest* request,
-                                const ProxyInfo& proxy_info,
-                                HttpRequestHeaders* headers) final;
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) final;
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) final;
+  void OnBeforeSendHeaders(URLRequest* request,
+                           const ProxyInfo& proxy_info,
+                           const ProxyRetryInfoMap& proxy_retry_info,
+                           HttpRequestHeaders* headers) final;
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) final;
   int OnHeadersReceived(
       URLRequest* request,
       const CompletionCallback& callback,
@@ -88,16 +91,19 @@ class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
                                           const CompletionCallback& callback,
                                           GURL* new_url);
 
-  virtual void OnBeforeSendHeadersInternal(URLRequest* request,
-                                           const CompletionCallback& callback,
-                                           HttpRequestHeaders* headers);
+  virtual void OnBeforeStartTransactionInternal(
+      URLRequest* request,
+      const CompletionCallback& callback,
+      HttpRequestHeaders* headers);
 
-  virtual void OnBeforeSendProxyHeadersInternal(URLRequest* request,
-                                                const ProxyInfo& proxy_info,
-                                                HttpRequestHeaders* headers);
+  virtual void OnBeforeSendHeadersInternal(
+      URLRequest* request,
+      const ProxyInfo& proxy_info,
+      const ProxyRetryInfoMap& proxy_retry_info,
+      HttpRequestHeaders* headers);
 
-  virtual void OnSendHeadersInternal(URLRequest* request,
-                                     const HttpRequestHeaders& headers);
+  virtual void OnStartTransactionInternal(URLRequest* request,
+                                          const HttpRequestHeaders& headers);
 
   virtual void OnHeadersReceivedInternal(
       URLRequest* request,
@@ -152,7 +158,7 @@ class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
       const GURL& referrer_url) const;
 
  private:
-  scoped_ptr<NetworkDelegate> nested_network_delegate_;
+  std::unique_ptr<NetworkDelegate> nested_network_delegate_;
 };
 
 }  // namespace net

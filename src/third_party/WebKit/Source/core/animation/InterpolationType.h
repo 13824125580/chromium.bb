@@ -13,6 +13,7 @@
 #include "core/animation/UnderlyingValueOwner.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Allocator.h"
+#include <memory>
 
 namespace blink {
 
@@ -26,9 +27,9 @@ class InterpolationType {
     USING_FAST_MALLOC(InterpolationType);
     WTF_MAKE_NONCOPYABLE(InterpolationType);
 public:
-    virtual ~InterpolationType() { ASSERT_NOT_REACHED(); }
+    virtual ~InterpolationType() { NOTREACHED(); }
 
-    PropertyHandle property() const { return m_property; }
+    PropertyHandle getProperty() const { return m_property; }
 
     // ConversionCheckers are returned from calls to maybeConvertPairwise() and maybeConvertSingle() to enable the caller to check
     // whether the result is still valid given changes in the InterpolationEnvironment and underlying InterpolationValue.
@@ -46,7 +47,7 @@ public:
         { }
         const InterpolationType* m_type;
     };
-    using ConversionCheckers = Vector<OwnPtr<ConversionChecker>>;
+    using ConversionCheckers = Vector<std::unique_ptr<ConversionChecker>>;
 
     virtual PairwiseInterpolationValue maybeConvertPairwise(const PropertySpecificKeyframe& startKeyframe, const PropertySpecificKeyframe& endKeyframe, const InterpolationEnvironment& environment, const InterpolationValue& underlying, ConversionCheckers& conversionCheckers) const
     {
@@ -56,14 +57,14 @@ public:
         InterpolationValue end = maybeConvertSingle(endKeyframe, environment, underlying, conversionCheckers);
         if (!end)
             return nullptr;
-        return mergeSingleConversions(start, end);
+        return maybeMergeSingles(std::move(start), std::move(end));
     }
 
     virtual InterpolationValue maybeConvertSingle(const PropertySpecificKeyframe&, const InterpolationEnvironment&, const InterpolationValue& underlying, ConversionCheckers&) const = 0;
 
     virtual InterpolationValue maybeConvertUnderlyingValue(const InterpolationEnvironment&) const = 0;
 
-    virtual void composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value) const
+    virtual void composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value, double interpolationFraction) const
     {
         ASSERT(!underlyingValueOwner.value().nonInterpolableValue);
         ASSERT(!value.nonInterpolableValue);
@@ -81,13 +82,13 @@ protected:
         : m_property(property)
     { }
 
-    virtual PairwiseInterpolationValue mergeSingleConversions(InterpolationValue& start, InterpolationValue& end) const
+    virtual PairwiseInterpolationValue maybeMergeSingles(InterpolationValue&& start, InterpolationValue&& end) const
     {
         ASSERT(!start.nonInterpolableValue);
         ASSERT(!end.nonInterpolableValue);
         return PairwiseInterpolationValue(
-            start.interpolableValue.release(),
-            end.interpolableValue.release(),
+            std::move(start.interpolableValue),
+            std::move(end.interpolableValue),
             nullptr);
     }
 

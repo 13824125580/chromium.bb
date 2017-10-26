@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/formats/mp2t/mp2t_stream_parser.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
@@ -15,11 +18,13 @@
 #include "base/time/time.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/decoder_buffer.h"
+#include "media/base/media_log.h"
+#include "media/base/media_track.h"
+#include "media/base/media_tracks.h"
 #include "media/base/stream_parser_buffer.h"
 #include "media/base/test_data_util.h"
 #include "media/base/text_track_config.h"
 #include "media/base/video_decoder_config.h"
-#include "media/formats/mp2t/mp2t_stream_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -65,7 +70,7 @@ class Mp2tStreamParserTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<Mp2tStreamParser> parser_;
+  std::unique_ptr<Mp2tStreamParser> parser_;
   int segment_count_;
   int config_count_;
   int audio_frame_count_;
@@ -111,14 +116,28 @@ class Mp2tStreamParserTest : public testing::Test {
              << ", autoTimestampOffset=" << params.auto_update_timestamp_offset;
   }
 
-  bool OnNewConfig(const AudioDecoderConfig& ac,
-                   const VideoDecoderConfig& vc,
+  bool OnNewConfig(std::unique_ptr<MediaTracks> tracks,
                    const StreamParser::TextTrackConfigMap& tc) {
-    DVLOG(1) << "OnNewConfig: audio=" << ac.IsValidConfig()
-             << ", video=" << vc.IsValidConfig();
+    DVLOG(1) << "OnNewConfig: got " << tracks->tracks().size() << " tracks";
+    bool found_audio_track = false;
+    bool found_video_track = false;
+    for (const auto& track : tracks->tracks()) {
+      const auto& track_id = track->bytestream_track_id();
+      if (track->type() == MediaTrack::Audio) {
+        found_audio_track = true;
+        EXPECT_TRUE(tracks->getAudioConfig(track_id).IsValidConfig());
+      } else if (track->type() == MediaTrack::Video) {
+        found_video_track = true;
+        EXPECT_TRUE(tracks->getVideoConfig(track_id).IsValidConfig());
+      } else {
+        // Unexpected track type.
+        LOG(ERROR) << "Unexpected track type " << track->type();
+        EXPECT_TRUE(false);
+      }
+    }
+    EXPECT_TRUE(found_audio_track);
+    EXPECT_EQ(has_video_, found_video_track);
     config_count_++;
-    EXPECT_TRUE(ac.IsValidConfig());
-    EXPECT_EQ(vc.IsValidConfig(), has_video_);
     return true;
   }
 
@@ -178,7 +197,8 @@ class Mp2tStreamParserTest : public testing::Test {
 
   void OnKeyNeeded(EmeInitDataType type,
                    const std::vector<uint8_t>& init_data) {
-    NOTREACHED() << "OnKeyNeeded not expected in the Mpeg2 TS parser";
+    LOG(ERROR) << "OnKeyNeeded not expected in the Mpeg2 TS parser";
+    EXPECT_TRUE(false);
   }
 
   void OnNewSegment() {
@@ -187,7 +207,8 @@ class Mp2tStreamParserTest : public testing::Test {
   }
 
   void OnEndOfSegment() {
-    NOTREACHED() << "OnEndOfSegment not expected in the Mpeg2 TS parser";
+    LOG(ERROR) << "OnEndOfSegment not expected in the Mpeg2 TS parser";
+    EXPECT_TRUE(false);
   }
 
   void InitializeParser() {

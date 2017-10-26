@@ -40,14 +40,12 @@
 
 // Define ourselves as the clientPtr.  Mozilla just hacked their C++ callback class into this old C decoder,
 // so we will too.
-#include "platform/SharedBuffer.h"
 #include "platform/image-decoders/FastSharedBufferReader.h"
 #include "platform/image-decoders/gif/GIFImageDecoder.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 #define MAX_DICTIONARY_ENTRY_BITS 12
 #define MAX_DICTIONARY_ENTRIES    4096 // 2^MAX_DICTIONARY_ENTRY_BITS
@@ -171,7 +169,7 @@ public:
 
     // Build RGBA table using the data stream.
     void buildTable(blink::FastSharedBufferReader*);
-    const Table& table() const { return m_table; }
+    const Table& getTable() const { return m_table; }
 
 private:
     bool m_isDefined;
@@ -229,7 +227,7 @@ public:
     unsigned height() const { return m_height; }
     size_t transparentPixel() const { return m_transparentPixel; }
     void setTransparentPixel(size_t pixel) { m_transparentPixel = pixel; }
-    blink::ImageFrame::DisposalMethod disposalMethod() const { return m_disposalMethod; }
+    blink::ImageFrame::DisposalMethod getDisposalMethod() const { return m_disposalMethod; }
     void setDisposalMethod(blink::ImageFrame::DisposalMethod disposalMethod) { m_disposalMethod = disposalMethod; }
     unsigned delayTime() const { return m_delayTime; }
     void setDelayTime(unsigned delay) { m_delayTime = delay; }
@@ -249,7 +247,7 @@ public:
     bool interlaced() const { return m_interlaced; }
     void setInterlaced(bool interlaced) { m_interlaced = interlaced; }
 
-    void clearDecodeState() { m_lzwContext.clear(); }
+    void clearDecodeState() { m_lzwContext.reset(); }
     const GIFColorMap& localColorMap() const { return m_localColorMap; }
     GIFColorMap& localColorMap() { return m_localColorMap; }
 
@@ -268,7 +266,7 @@ private:
 
     unsigned m_delayTime; // Display time, in milliseconds, for this image in a multi-image GIF.
 
-    OwnPtr<GIFLZWContext> m_lzwContext;
+    std::unique_ptr<GIFLZWContext> m_lzwContext;
     Vector<GIFLZWBlock> m_lzwBlocks; // LZW blocks for this frame.
     GIFColorMap m_localColorMap;
 
@@ -299,7 +297,7 @@ public:
     {
     }
 
-    void setData(PassRefPtr<blink::SharedBuffer> data) { m_data = data; }
+    void setData(PassRefPtr<blink::SegmentReader> data) { m_data = data; }
     bool parse(blink::GIFImageDecoder::GIFParseQuery);
     bool decode(size_t frameIndex);
 
@@ -354,9 +352,9 @@ private:
     GIFColorMap m_globalColorMap;
     int m_loopCount; // Netscape specific extension block to control the number of animation loops a GIF renders.
 
-    Vector<OwnPtr<GIFFrameContext>> m_frames;
+    Vector<std::unique_ptr<GIFFrameContext>> m_frames;
 
-    RefPtr<blink::SharedBuffer> m_data;
+    RefPtr<blink::SegmentReader> m_data;
     bool m_parseCompleted;
 };
 

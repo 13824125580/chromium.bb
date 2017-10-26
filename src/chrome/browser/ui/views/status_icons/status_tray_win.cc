@@ -6,6 +6,8 @@
 
 #include <commctrl.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -17,7 +19,8 @@
 #include "chrome/browser/ui/views/status_icons/status_icon_win.h"
 #include "chrome/browser/ui/views/status_icons/status_tray_state_changer_win.h"
 #include "chrome/common/chrome_constants.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/screen.h"
+#include "ui/gfx/geometry/point.h"
 #include "ui/gfx/win/hwnd_util.h"
 
 static const UINT kStatusIconMessage = WM_APP + 1;
@@ -192,7 +195,8 @@ LRESULT CALLBACK StatusTrayWin::WndProc(HWND hwnd,
       case WM_CONTEXTMENU:
         // Walk our icons, find which one was clicked on, and invoke its
         // HandleClickEvent() method.
-        gfx::Point cursor_pos(gfx::Screen::GetScreen()->GetCursorScreenPoint());
+        gfx::Point cursor_pos(
+            display::Screen::GetScreen()->GetCursorScreenPoint());
         win_icon->HandleClickEvent(cursor_pos, lparam == WM_LBUTTONDOWN);
         return TRUE;
     }
@@ -229,8 +233,8 @@ UINT StatusTrayWin::NextIconId() {
 }
 
 void StatusTrayWin::SetStatusTrayStateChangerProxyForTest(
-    scoped_ptr<StatusTrayStateChangerProxy> proxy) {
-  state_changer_proxy_ = proxy.Pass();
+    std::unique_ptr<StatusTrayStateChangerProxy> proxy) {
+  state_changer_proxy_ = std::move(proxy);
 }
 
 StatusTray* StatusTray::Create() {

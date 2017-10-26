@@ -24,35 +24,24 @@
 
 #include "core/layout/LayoutMenuList.h"
 
-#include "core/HTMLNames.h"
-#include "core/css/CSSFontSelector.h"
-#include "core/css/resolver/StyleResolver.h"
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/NodeComputedStyle.h"
-#include "core/html/HTMLOptGroupElement.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/HTMLSelectElement.h"
-#include "core/layout/LayoutBR.h"
-#include "core/layout/LayoutScrollbar.h"
+#include "core/layout/LayoutText.h"
 #include "core/layout/LayoutTheme.h"
-#include "core/layout/LayoutView.h"
-#include "platform/fonts/FontCache.h"
-#include "platform/geometry/IntSize.h"
-#include "platform/text/BidiTextRun.h"
 #include "platform/text/PlatformLocale.h"
 #include <math.h>
 
 namespace blink {
 
-using namespace HTMLNames;
-
 LayoutMenuList::LayoutMenuList(Element* element)
     : LayoutFlexibleBox(element)
     , m_buttonText(nullptr)
     , m_innerBlock(nullptr)
-    , m_optionsChanged(true)
     , m_isEmpty(false)
     , m_hasUpdatedActiveOption(false)
+    , m_innerBlockHeight(LayoutUnit())
     , m_optionsWidth(0)
     , m_lastActiveIndex(-1)
 {
@@ -156,63 +145,38 @@ void LayoutMenuList::styleDidChange(StyleDifference diff, const ComputedStyle* o
 
     m_buttonText->setStyle(mutableStyle());
     adjustInnerStyle();
-
-    bool fontChanged = !oldStyle || oldStyle->font() != style()->font();
-    if (fontChanged)
-        updateOptionsWidth();
+    updateInnerBlockHeight();
 }
 
-void LayoutMenuList::updateOptionsWidth()
+void LayoutMenuList::updateInnerBlockHeight()
+{
+    m_innerBlockHeight = style()->getFontMetrics().height() + m_innerBlock->borderAndPaddingHeight();
+}
+
+void LayoutMenuList::updateOptionsWidth() const
 {
     float maxOptionWidth = 0;
-    const WillBeHeapVector<RawPtrWillBeMember<HTMLElement>>& listItems = selectElement()->listItems();
-    int size = listItems.size();
 
-    for (int i = 0; i < size; ++i) {
-        HTMLElement* element = listItems[i];
-        if (!isHTMLOptionElement(*element))
+    for (const auto& element : selectElement()->listItems()) {
+        if (!isHTMLOptionElement(element))
             continue;
 
         String text = toHTMLOptionElement(element)->textIndentedToRespectGroupLabel();
-        applyTextTransform(style(), text, ' ');
-        if (LayoutTheme::theme().popupOptionSupportsTextIndent()) {
-            // Add in the option's text indent.  We can't calculate percentage values for now.
-            float optionWidth = 0;
-            if (const ComputedStyle* optionStyle = element->computedStyle())
-                optionWidth += minimumValueForLength(optionStyle->textIndent(), LayoutUnit());
-            if (!text.isEmpty())
-                optionWidth += computeTextWidth(text);
-            maxOptionWidth = std::max(maxOptionWidth, optionWidth);
-        } else if (!text.isEmpty()) {
-            maxOptionWidth = std::max(maxOptionWidth, computeTextWidth(text));
-        }
+        const ComputedStyle* itemStyle = element->computedStyle() ? element->computedStyle() : style();
+        applyTextTransform(itemStyle, text, ' ');
+        TextRun textRun = constructTextRun(itemStyle->font(), text, *itemStyle);
+
+        maxOptionWidth = std::max(maxOptionWidth, computeTextWidth(textRun, *itemStyle));
     }
-
-    int width = static_cast<int>(ceilf(maxOptionWidth));
-    if (m_optionsWidth == width)
-        return;
-
-    m_optionsWidth = width;
-    if (parent())
-        setNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(LayoutInvalidationReason::MenuWidthChanged);
+    m_optionsWidth = static_cast<int>(ceilf(maxOptionWidth));
 }
 
-float LayoutMenuList::computeTextWidth(const String& text) const
+float LayoutMenuList::computeTextWidth(const TextRun& textRun, const ComputedStyle& computedStyle) const
 {
-    return style()->font().width(constructTextRun(style()->font(), text, styleRef()));
+    return computedStyle.font().width(textRun);
 }
 
 void LayoutMenuList::updateFromElement()
-{
-    if (m_optionsChanged) {
-        updateOptionsWidth();
-        m_optionsChanged = false;
-    }
-
-    updateText();
-}
-
-void LayoutMenuList::updateText()
 {
     setTextFromOption(selectElement()->optionIndexToBeShown());
 }
@@ -220,7 +184,7 @@ void LayoutMenuList::updateText()
 void LayoutMenuList::setTextFromOption(int optionIndex)
 {
     HTMLSelectElement* select = selectElement();
-    const WillBeHeapVector<RawPtrWillBeMember<HTMLElement>>& listItems = select->listItems();
+    const HeapVector<Member<HTMLElement>>& listItems = select->listItems();
     const int size = listItems.size();
 
     String text = emptyString();
@@ -308,9 +272,21 @@ LayoutRect LayoutMenuList::controlClipRect(const LayoutPoint& additionalOffset) 
 
 void LayoutMenuList::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
 {
-    maxLogicalWidth = std::max(m_optionsWidth, LayoutTheme::theme().minimumMenuListSize(styleRef())) + m_innerBlock->paddingLeft() + m_innerBlock->paddingRight();
+    updateOptionsWidth();
+
+    maxLogicalWidth = std::max(m_optionsWidth, LayoutTheme::theme().minimumMenuListSize(styleRef()))
+        + m_innerBlock->paddingLeft() + m_innerBlock->paddingRight();
     if (!style()->width().hasPercent())
         minLogicalWidth = maxLogicalWidth;
+    else
+        minLogicalWidth = LayoutUnit();
+}
+
+void LayoutMenuList::computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop,
+    LogicalExtentComputedValues& computedValues) const
+{
+    logicalHeight = m_innerBlockHeight + borderAndPaddingHeight();
+    LayoutBox::computeLogicalHeight(logicalHeight, logicalTop, computedValues);
 }
 
 void LayoutMenuList::didSetSelectedIndex(int optionIndex)
@@ -347,19 +323,8 @@ LayoutUnit LayoutMenuList::clientPaddingLeft() const
     return paddingLeft() + m_innerBlock->paddingLeft();
 }
 
-const int endOfLinePadding = 2;
 LayoutUnit LayoutMenuList::clientPaddingRight() const
 {
-    if (style()->appearance() == MenulistPart || style()->appearance() == MenulistButtonPart) {
-        // For these appearance values, the theme applies padding to leave room for the
-        // drop-down button. But leaving room for the button inside the popup menu itself
-        // looks strange, so we return a small default padding to avoid having a large empty
-        // space appear on the side of the popup menu.
-        return LayoutUnit(endOfLinePadding);
-    }
-
-    // If the appearance isn't MenulistPart, then the select is styled (non-native), so
-    // we want to return the user specified padding.
     return paddingRight() + m_innerBlock->paddingRight();
 }
 

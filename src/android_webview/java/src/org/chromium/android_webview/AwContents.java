@@ -5,6 +5,7 @@
 package org.chromium.android_webview;
 
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ComponentCallbacks2;
 import android.content.Context;
@@ -32,6 +33,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewStructure;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeProvider;
@@ -58,7 +60,6 @@ import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.ContentViewStatics;
 import org.chromium.content.browser.SmartClipProvider;
 import org.chromium.content.common.CleanupReference;
-import org.chromium.content_public.browser.AccessibilitySnapshotCallback;
 import org.chromium.content_public.browser.GestureStateListener;
 import org.chromium.content_public.browser.JavaScriptCallback;
 import org.chromium.content_public.browser.LoadUrlParams;
@@ -82,6 +83,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 
 /**
@@ -165,28 +167,63 @@ public class AwContents implements SmartClipProvider,
     }
 
     /**
+     * Factory interface used for constructing functors that the Android framework uses for
+     * calling back into Chromium code to render the the contents of a Chromium frame into
+     * an Android view.
+     */
+    public interface NativeDrawGLFunctorFactory {
+        /**
+         * Create a functor associated with native context |context|.
+         */
+        NativeDrawGLFunctor createFunctor(long context);
+    }
+
+    /**
      * Interface that consumers of {@link AwContents} must implement to support
      * native GL rendering.
      */
-    public interface NativeGLDelegate {
+    public interface NativeDrawGLFunctor {
         /**
-         * Requests a callback on the native DrawGL method (see getAwDrawGLFunction)
-         * if called from within onDraw, |canvas| will be non-null and hardware accelerated.
-         * Otherwise, |canvas| will be null, and the container view itself will be hardware
-         * accelerated. If |waitForCompletion| is true, this method will not return until
-         * functor has returned.
-         * Should avoid setting |waitForCompletion| when |canvas| is not null.
-         * |containerView| is the view where the AwContents should be drawn.
+         * Requests a callback on the native DrawGL method (see getAwDrawGLFunction).
+         *
+         * If called from within onDraw, |canvas| should be non-null and must be hardware
+         * accelerated. |releasedCallback| should be null if |canvas| is null, or if
+         * supportsDrawGLFunctorReleasedCallback returns false.
          *
          * @return false indicates the GL draw request was not accepted, and the caller
          *         should fallback to the SW path.
          */
-        boolean requestDrawGL(Canvas canvas, boolean waitForCompletion, View containerView);
+        boolean requestDrawGL(Canvas canvas, Runnable releasedCallback);
+
+        /**
+         * Requests a callback on the native DrawGL method (see getAwDrawGLFunction).
+         *
+         * |containerView| must be hardware accelerated. If |waitForCompletion| is true, this method
+         * will not return until functor has returned.
+         */
+        boolean requestInvokeGL(View containerView, boolean waitForCompletion);
+
+        /**
+         * Test whether the Android framework supports notifying when a functor is free
+         * to be destroyed via the callback mechanism provided to the functor factory.
+         *
+         * @return true if destruction needs to wait on a framework callback, or false
+         *         if it can occur immediately.
+         */
+        boolean supportsDrawGLFunctorReleasedCallback();
 
         /**
          * Detaches the GLFunctor from the view tree.
          */
-        void detachGLFunctor();
+        void detach(View containerView);
+
+        /**
+         * Get a Runnable that is used to destroy the native portion of the functor. After the
+         * run method of this Runnable is called, no other methods should be called on the Java
+         * object.
+         */
+        Runnable getDestroyRunnable();
+
     }
 
     /**
@@ -219,7 +256,11 @@ public class AwContents implements SmartClipProvider,
 
     private long mNativeAwContents;
     private final AwBrowserContext mBrowserContext;
+    // mContainerView and mCurrentFunctor form a pair that needs to stay in sync.
     private ViewGroup mContainerView;
+    private AwGLFunctor mCurrentFunctor;
+    private AwGLFunctor mInitialFunctor;
+    private AwGLFunctor mFullScreenFunctor; // Only non-null when in fullscreen mode.
     private final Context mContext;
     private final int mAppTargetSdkVersion;
     private ContentViewCore mContentViewCore;
@@ -235,7 +276,7 @@ public class AwContents implements SmartClipProvider,
     private final AwContentsIoThreadClient mIoThreadClient;
     private final InterceptNavigationDelegateImpl mInterceptNavigationDelegate;
     private InternalAccessDelegate mInternalAccessAdapter;
-    private final NativeGLDelegate mNativeGLDelegate;
+    private final NativeDrawGLFunctorFactory mNativeDrawGLFunctorFactory;
     private final AwLayoutSizer mLayoutSizer;
     private final AwZoomControls mZoomControls;
     private final AwScrollOffsetManager mScrollOffsetManager;
@@ -311,21 +352,32 @@ public class AwContents implements SmartClipProvider,
     // Do not use directly, call isDestroyed() instead.
     private boolean mIsDestroyed = false;
 
+    private AwContentsDestroyRunnable mAwContentsDestroyRunnable;
+
     private static String sCurrentLocale = "";
 
-    private static final class DestroyRunnable implements Runnable {
+    private static final class AwContentsDestroyRunnable implements Runnable {
         private final long mNativeAwContents;
         // Hold onto a reference to the window (via its wrapper), so that it is not destroyed
         // until we are done here.
         private final WindowAndroidWrapper mWindowAndroid;
+        private boolean mHasRun;
 
-        private DestroyRunnable(long nativeAwContents, WindowAndroidWrapper windowAndroid) {
+        private AwContentsDestroyRunnable(
+                long nativeAwContents, WindowAndroidWrapper windowAndroid) {
             mNativeAwContents = nativeAwContents;
             mWindowAndroid = windowAndroid;
         }
+
         @Override
         public void run() {
             nativeDestroy(mNativeAwContents);
+            mHasRun = true;
+        }
+
+        // TODO(boliu): Generalize this as a CleanupReference feature.
+        public boolean hasRun() {
+            return mHasRun;
         }
     }
 
@@ -631,12 +683,18 @@ public class AwContents implements SmartClipProvider,
     private class AwComponentCallbacks implements ComponentCallbacks2 {
         @Override
         public void onTrimMemory(final int level) {
-            if (isDestroyed(NO_WARN)) return;
             boolean visibleRectEmpty = getGlobalVisibleRect().isEmpty();
             final boolean visible = mIsViewVisible && mIsWindowVisible && !visibleRectEmpty;
             ThreadUtils.runOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
+                    if (isDestroyed(NO_WARN)) return;
+                    if (level >= TRIM_MEMORY_MODERATE) {
+                        mInitialFunctor.deleteHardwareRenderer();
+                        if (mFullScreenFunctor != null) {
+                            mFullScreenFunctor.deleteHardwareRenderer();
+                        }
+                    }
                     nativeTrimMemory(mNativeAwContents, level, visible);
                 }
             });
@@ -665,10 +723,11 @@ public class AwContents implements SmartClipProvider,
      * This constructor uses the default view sizing policy.
      */
     public AwContents(AwBrowserContext browserContext, ViewGroup containerView, Context context,
-            InternalAccessDelegate internalAccessAdapter, NativeGLDelegate nativeGLDelegate,
-            AwContentsClient contentsClient, AwSettings awSettings) {
-        this(browserContext, containerView, context, internalAccessAdapter, nativeGLDelegate,
-                contentsClient, awSettings, new DependencyFactory());
+            InternalAccessDelegate internalAccessAdapter,
+            NativeDrawGLFunctorFactory nativeDrawGLFunctorFactory, AwContentsClient contentsClient,
+            AwSettings awSettings) {
+        this(browserContext, containerView, context, internalAccessAdapter,
+                nativeDrawGLFunctorFactory, contentsClient, awSettings, new DependencyFactory());
     }
 
     /**
@@ -679,9 +738,9 @@ public class AwContents implements SmartClipProvider,
      * documented classes.
      */
     public AwContents(AwBrowserContext browserContext, ViewGroup containerView, Context context,
-            InternalAccessDelegate internalAccessAdapter, NativeGLDelegate nativeGLDelegate,
-            AwContentsClient contentsClient, AwSettings settings,
-            DependencyFactory dependencyFactory) {
+            InternalAccessDelegate internalAccessAdapter,
+            NativeDrawGLFunctorFactory nativeDrawGLFunctorFactory, AwContentsClient contentsClient,
+            AwSettings settings, DependencyFactory dependencyFactory) {
         setLocale(LocaleUtils.getDefaultLocale());
         settings.updateAcceptLanguages();
 
@@ -697,7 +756,9 @@ public class AwContents implements SmartClipProvider,
         mContext = context;
         mAppTargetSdkVersion = mContext.getApplicationInfo().targetSdkVersion;
         mInternalAccessAdapter = internalAccessAdapter;
-        mNativeGLDelegate = nativeGLDelegate;
+        mNativeDrawGLFunctorFactory = nativeDrawGLFunctorFactory;
+        mInitialFunctor = new AwGLFunctor(mNativeDrawGLFunctorFactory, mContainerView);
+        mCurrentFunctor = mInitialFunctor;
         mContentsClient = contentsClient;
         mAwViewMethods = new AwViewMethodsImpl();
         mFullScreenTransitionsState = new FullScreenTransitionsState(
@@ -793,12 +854,13 @@ public class AwContents implements SmartClipProvider,
         if (wasInitialContainerViewFocused) {
             fullScreenView.requestFocus();
         }
+        mFullScreenFunctor = new AwGLFunctor(mNativeDrawGLFunctorFactory, fullScreenView);
         mFullScreenTransitionsState.enterFullScreen(fullScreenView, wasInitialContainerViewFocused);
         mAwViewMethods = new NullAwViewMethods(this, mInternalAccessAdapter, mContainerView);
 
         // Associate this AwContents with the FullScreenView.
         setInternalAccessAdapter(fullScreenView.getInternalAccessAdapter());
-        setContainerView(fullScreenView);
+        setContainerView(fullScreenView, mFullScreenFunctor);
 
         return fullScreenView;
     }
@@ -839,13 +901,15 @@ public class AwContents implements SmartClipProvider,
 
         // Re-associate this AwContents with the WebView.
         setInternalAccessAdapter(mFullScreenTransitionsState.getInitialInternalAccessDelegate());
-        setContainerView(initialContainerView);
+        setContainerView(initialContainerView, mInitialFunctor);
 
         // Return focus to the WebView.
         if (mFullScreenTransitionsState.wasInitialContainerViewFocused()) {
             mContainerView.requestFocus();
         }
         mFullScreenTransitionsState.exitFullScreen();
+        // Drop AwContents last reference to this functor. AwGLFunctor is responsible for cleanup.
+        mFullScreenFunctor = null;
     }
 
     private void setInternalAccessAdapter(InternalAccessDelegate internalAccessAdapter) {
@@ -853,11 +917,13 @@ public class AwContents implements SmartClipProvider,
         mContentViewCore.setContainerViewInternals(mInternalAccessAdapter);
     }
 
-    private void setContainerView(ViewGroup newContainerView) {
+    private void setContainerView(ViewGroup newContainerView, AwGLFunctor currentFunctor) {
         // setWillNotDraw(false) is required since WebView draws it's own contents using it's
         // container view. If this is ever not the case we should remove this, as it removes
         // Android's gatherTransparentRegion optimization for the view.
         mContainerView = newContainerView;
+        mCurrentFunctor = currentFunctor;
+        updateNativeAwGLFunctor();
         mContainerView.setWillNotDraw(false);
 
         mContentViewCore.setContainerView(mContainerView);
@@ -865,7 +931,6 @@ public class AwContents implements SmartClipProvider,
             mAwPdfExporter.setContainerView(mContainerView);
         }
         mWebContentsDelegate.setContainerView(mContainerView);
-
         onContainerViewChanged();
     }
 
@@ -920,16 +985,26 @@ public class AwContents implements SmartClipProvider,
             return mWindowAndroid;
         }
     }
+    private static WeakHashMap<Context, WindowAndroidWrapper> sContextWindowMap;
 
-    private static WindowAndroidWrapper createWindowAndroid(Context context) {
-        // TODO(boliu): WebView does not currently initialize ApplicationStatus, crbug.com/470582.
+    // getWindowAndroid is only called on UI thread, so there are no threading issues with lazy
+    // initialization.
+    @SuppressFBWarnings("LI_LAZY_INIT_STATIC")
+    private static WindowAndroidWrapper getWindowAndroid(Context context) {
+        if (sContextWindowMap == null) sContextWindowMap = new WeakHashMap<>();
+        WindowAndroidWrapper wrapper = sContextWindowMap.get(context);
+        if (wrapper != null) return wrapper;
+
         boolean contextWrapsActivity = activityFromContext(context) != null;
-        if (!contextWrapsActivity) {
-            return new WindowAndroidWrapper(new WindowAndroid(context));
+        if (contextWrapsActivity) {
+            final boolean listenToActivityState = false;
+            wrapper = new WindowAndroidWrapper(
+                    new ActivityWindowAndroid(context, listenToActivityState));
+        } else {
+            wrapper = new WindowAndroidWrapper(new WindowAndroid(context));
         }
-
-        final boolean listenToActivityState = false;
-        return new WindowAndroidWrapper(new ActivityWindowAndroid(context, listenToActivityState));
+        sContextWindowMap.put(context, wrapper);
+        return wrapper;
     }
 
     @VisibleForTesting
@@ -938,6 +1013,11 @@ public class AwContents implements SmartClipProvider,
             sCurrentLocale = locale;
             nativeSetLocale(sCurrentLocale);
         }
+    }
+
+    private void updateNativeAwGLFunctor() {
+        nativeSetAwGLFunctor(mNativeAwContents,
+                mCurrentFunctor != null ? mCurrentFunctor.getNativeAwGLFunctor() : 0);
     }
 
     /* Common initialization routine for adopting a native AwContents instance into this
@@ -957,13 +1037,15 @@ public class AwContents implements SmartClipProvider,
         assert mNativeAwContents == 0 && mCleanupReference == null && mContentViewCore == null;
 
         mNativeAwContents = newAwContentsPtr;
+        nativeSetAwGLFunctor(mNativeAwContents, mInitialFunctor.getNativeAwGLFunctor());
+        updateNativeAwGLFunctor();
         // TODO(joth): when the native and java counterparts of AwBrowserContext are hooked up to
         // each other, we should update |mBrowserContext| according to the newly received native
         // WebContent's browser context.
 
         WebContents webContents = nativeGetWebContents(mNativeAwContents);
 
-        mWindowAndroid = createWindowAndroid(mContext);
+        mWindowAndroid = getWindowAndroid(mContext);
         mContentViewCore = createAndInitializeContentViewCore(mContainerView, mContext,
                 mInternalAccessAdapter, webContents, new AwGestureStateListener(),
                 mContentViewClient, mZoomControls, mWindowAndroid.getWindowAndroid());
@@ -978,8 +1060,9 @@ public class AwContents implements SmartClipProvider,
 
         // The native side object has been bound to this java instance, so now is the time to
         // bind all the native->java relationships.
-        mCleanupReference =
-                new CleanupReference(this, new DestroyRunnable(mNativeAwContents, mWindowAndroid));
+        mAwContentsDestroyRunnable =
+                new AwContentsDestroyRunnable(mNativeAwContents, mWindowAndroid);
+        mCleanupReference = new CleanupReference(this, mAwContentsDestroyRunnable);
     }
 
     private void installWebContentsObserver() {
@@ -994,7 +1077,7 @@ public class AwContents implements SmartClipProvider,
      * provide the AwContents to host the pop up content.
      */
     public void supplyContentsForPopup(AwContents newContents) {
-        assert !isDestroyed(NO_WARN);
+        if (isDestroyed(WARN)) return;
         long popupNativeAwContents = nativeReleasePopupAwContents(mNativeAwContents);
         if (popupNativeAwContents == 0) {
             Log.w(TAG, "Popup WebView bind failed: no pending content.");
@@ -1012,6 +1095,7 @@ public class AwContents implements SmartClipProvider,
     // Recap: supplyContentsForPopup() is called on the parent window's content, this method is
     // called on the popup window's content.
     private void receivePopupContents(long popupNativeAwContents) {
+        if (isDestroyed(WARN)) return;
         mDeferredShouldOverrideUrlLoadingIsPendingForPopup = true;
         // Save existing view state.
         final boolean wasAttached = mIsAttachedToWindow;
@@ -1081,11 +1165,10 @@ public class AwContents implements SmartClipProvider,
             mPostMessageSender = null;
         }
 
-        // If we are attached, we have to call native detach to clean up
-        // hardware resources.
         if (mIsAttachedToWindow) {
             Log.w(TAG, "WebView.destroy() called while WebView is still attached to window.");
-            nativeOnDetachedFromWindow(mNativeAwContents);
+            // Need to call detach to avoid leaks because the real detach later will be ignored.
+            onDetachedFromWindow();
         }
         mIsDestroyed = true;
         mHandler.post(new Runnable() {
@@ -1140,7 +1223,13 @@ public class AwContents implements SmartClipProvider,
         } else if (warnIfDestroyed == WARN) {
             Log.w(TAG, "Application attempted to call on a destroyed WebView", new Throwable());
         }
-        return mIsDestroyed;
+        boolean destroyRunnableHasRun =
+                mAwContentsDestroyRunnable != null && mAwContentsDestroyRunnable.hasRun();
+        if (TRACE && destroyRunnableHasRun && !mIsDestroyed) {
+            // Swallow the error. App developers are not going to do anything with an error msg.
+            Log.d(TAG, "AwContents is kept alive past CleanupReference by finalizer");
+        }
+        return mIsDestroyed || destroyRunnableHasRun;
     }
 
     @VisibleForTesting
@@ -1183,7 +1272,7 @@ public class AwContents implements SmartClipProvider,
     }
 
     public static long getAwDrawGLFunction() {
-        return nativeGetAwDrawGLFunction();
+        return AwGLFunctor.getAwDrawGLFunction();
     }
 
     public static void setShouldDownloadFavicons() {
@@ -1210,16 +1299,6 @@ public class AwContents implements SmartClipProvider,
     @VisibleForTesting
     public static int getNativeInstanceCount() {
         return nativeGetNativeInstanceCount();
-    }
-
-    public long getAwDrawGLViewContext() {
-        // Only called during early construction, so client should not have had a chance to
-        // call destroy yet.
-        assert !isDestroyed(NO_WARN);
-
-        // Using the native pointer as the returned viewContext. This is matched by the
-        // reinterpret_cast back to BrowserViewRenderer pointer in the native DrawGLFunction.
-        return nativeGetAwDrawGLViewContext(mNativeAwContents);
     }
 
     // This is only to avoid heap allocations inside getGlobalVisibleRect. It should treated
@@ -1331,6 +1410,14 @@ public class AwContents implements SmartClipProvider,
         ValueCallback<String[]> callback = new ValueCallback<String[]>() {
             @Override
             public void onReceiveValue(final String[] value) {
+                if (value != null) {
+                    // Replace null values with empty strings, because they can't be represented as
+                    // native strings.
+                    for (int i = 0; i < value.length; i++) {
+                        if (value[i] == null) value[i] = "";
+                    }
+                }
+
                 ThreadUtils.runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -1417,6 +1504,7 @@ public class AwContents implements SmartClipProvider,
      */
     public void loadData(String data, String mimeType, String encoding) {
         if (TRACE) Log.d(TAG, "loadData");
+        if (isDestroyed(WARN)) return;
         loadUrl(LoadUrlParams.createLoadDataParams(
                 fixupData(data), fixupMimeType(mimeType), isBase64Encoded(encoding)));
     }
@@ -2096,7 +2184,7 @@ public class AwContents implements SmartClipProvider,
         if (delta < 0.01f || delta > 100.0f) {
             throw new IllegalStateException("zoom delta value outside [0.01, 100] range.");
         }
-        mContentViewCore.pinchByDelta(delta);
+        nativeZoomBy(mNativeAwContents, delta);
     }
 
     /**
@@ -2208,13 +2296,17 @@ public class AwContents implements SmartClipProvider,
         return mWebContents.hasAccessedInitialDocument();
     }
 
-    public void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback) {
+    @TargetApi(Build.VERSION_CODES.M)
+    public void onProvideVirtualStructure(ViewStructure structure) {
         if (isDestroyed(WARN)) return;
         if (!mWebContentsObserver.didEverCommitNavigation()) {
-            callback.onAccessibilitySnapshot(null);
+            // TODO(sgurun) write a test case for this condition crbug/605251
+            structure.setChildCount(0);
             return;
         }
-        mWebContents.requestAccessibilitySnapshot(callback, 0, 0);
+        // for webview, the platform already calculates the scroll (as it is a view) in
+        // ViewStructure tree. Do not offset for it in the snapshop x,y position calculations.
+        mContentViewCore.onProvideVirtualStructure(structure, true);
     }
 
     public boolean isSelectActionModeAllowed(int actionModeItem) {
@@ -2242,7 +2334,7 @@ public class AwContents implements SmartClipProvider,
         // So set the readonly flag for M.
         // TODO(hush): remove the part about VERSION.CODENAME equality with N, after N release.
         // crbug.com/543272
-        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.M && !"N".equals(Build.VERSION.CODENAME)) {
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.M && !Build.VERSION.CODENAME.equals("N")) {
             intent.putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true);
         }
 
@@ -2686,25 +2778,12 @@ public class AwContents implements SmartClipProvider,
     }
 
     @CalledByNative
-    private boolean requestDrawGL(boolean waitForCompletion) {
-        return mNativeGLDelegate.requestDrawGL(null, waitForCompletion, mContainerView);
-    }
-
-    @CalledByNative
     private void postInvalidateOnAnimation() {
         if (!mWindowAndroid.getWindowAndroid().isInsideVSync()) {
             mContainerView.postInvalidateOnAnimation();
         } else {
             mContainerView.invalidate();
         }
-    }
-
-    // Call postInvalidateOnAnimation for invalidations. This is only used to synchronize
-    // draw functor destruction.
-    @CalledByNative
-    private void detachFunctorFromView() {
-        mNativeGLDelegate.detachGLFunctor();
-        mContainerView.invalidate();
     }
 
     @CalledByNative
@@ -2913,7 +2992,7 @@ public class AwContents implements SmartClipProvider,
                     canvas.isHardwareAccelerated(), scrollX, scrollY, globalVisibleRect.left,
                     globalVisibleRect.top, globalVisibleRect.right, globalVisibleRect.bottom);
             if (did_draw && canvas.isHardwareAccelerated() && !FORCE_AUXILIARY_BITMAP_RENDERING) {
-                did_draw = mNativeGLDelegate.requestDrawGL(canvas, false, mContainerView);
+                did_draw = mCurrentFunctor.requestDrawGL(canvas);
             }
             if (did_draw) {
                 int scrollXDiff = mContainerView.getScrollX() - scrollX;
@@ -3063,6 +3142,7 @@ public class AwContents implements SmartClipProvider,
                     mContainerView.getHeight());
             updateHardwareAcceleratedFeaturesToggle();
             postUpdateContentViewCoreVisibility();
+            mCurrentFunctor.onAttachedToWindow();
 
             setLocale(LocaleUtils.getDefaultLocale());
             mSettings.updateAcceptLanguages();
@@ -3086,6 +3166,7 @@ public class AwContents implements SmartClipProvider,
             mContentViewCore.onDetachedFromWindow();
             updateHardwareAcceleratedFeaturesToggle();
             postUpdateContentViewCoreVisibility();
+            mCurrentFunctor.onDetachedFromWindow();
 
             if (mComponentCallbacks != null) {
                 mContext.unregisterComponentCallbacks(mComponentCallbacks);
@@ -3213,7 +3294,6 @@ public class AwContents implements SmartClipProvider,
             boolean forceAuxiliaryBitmapRendering);
     private static native void nativeSetAwDrawSWFunctionTable(long functionTablePointer);
     private static native void nativeSetAwDrawGLFunctionTable(long functionTablePointer);
-    private static native long nativeGetAwDrawGLFunction();
     private static native int nativeGetNativeInstanceCount();
     private static native void nativeSetShouldDownloadFavicons();
     private static native void nativeSetLocale(String locale);
@@ -3224,12 +3304,14 @@ public class AwContents implements SmartClipProvider,
             AwContentsIoThreadClient ioThreadClient,
             InterceptNavigationDelegate navigationInterceptionDelegate);
     private native WebContents nativeGetWebContents(long nativeAwContents);
+    private native void nativeSetAwGLFunctor(long nativeAwContents, long nativeAwGLFunctor);
 
     private native void nativeDocumentHasImages(long nativeAwContents, Message message);
     private native void nativeGenerateMHTML(
             long nativeAwContents, String path, ValueCallback<String> callback);
 
     private native void nativeAddVisitedLinks(long nativeAwContents, String[] visitedLinks);
+    private native void nativeZoomBy(long nativeAwContents, float delta);
     private native void nativeOnComputeScroll(
             long nativeAwContents, long currentAnimationTimeMillis);
     private native boolean nativeOnDraw(long nativeAwContents, Canvas canvas,
@@ -3268,7 +3350,6 @@ public class AwContents implements SmartClipProvider,
     private native void nativeFocusFirstNode(long nativeAwContents);
     private native void nativeSetBackgroundColor(long nativeAwContents, int color);
 
-    private native long nativeGetAwDrawGLViewContext(long nativeAwContents);
     private native long nativeCapturePicture(long nativeAwContents, int width, int height);
     private native void nativeEnableOnNewPicture(long nativeAwContents, boolean enabled);
     private native void nativeInsertVisualStateCallback(

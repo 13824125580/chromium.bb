@@ -2,15 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/policy/policy_path_parser.h"
+
 #include <shlobj.h>
 #include <stddef.h>
 #include <wtsapi32.h>
-#pragma comment(lib, "wtsapi32.lib")
 
-#include "chrome/browser/policy/policy_path_parser.h"
+#include <memory>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "chrome/common/chrome_switches.h"
@@ -19,9 +19,11 @@
 namespace {
 
 // Checks if the key exists in the given hive and expands any string variables.
-bool LoadUserDataDirPolicyFromRegistry(HKEY hive, base::FilePath* dir) {
+bool LoadUserDataDirPolicyFromRegistry(HKEY hive,
+                                       const char* key_name_str,
+                                       base::FilePath* dir) {
   base::string16 value;
-  base::string16 key_name(base::ASCIIToUTF16(policy::key::kUserDataDir));
+  base::string16 key_name(base::ASCIIToUTF16(key_name_str));
   base::win::RegKey key(hive, policy::kRegistryChromePolicyKey, KEY_READ);
   if (key.ReadValue(key_name.c_str(), &value) == ERROR_SUCCESS) {
     *dir = base::FilePath(policy::path_parser::ExpandPathVariables(value));
@@ -94,7 +96,7 @@ base::FilePath::StringType ExpandPathVariables(
     DWORD return_length = 0;
     ::GetUserName(NULL, &return_length);
     if (return_length != 0) {
-      scoped_ptr<WCHAR[]> username(new WCHAR[return_length]);
+      std::unique_ptr<WCHAR[]> username(new WCHAR[return_length]);
       ::GetUserName(username.get(), &return_length);
       std::wstring username_string(username.get());
       result.replace(position, wcslen(kUserNamePolicyVarName), username_string);
@@ -105,7 +107,7 @@ base::FilePath::StringType ExpandPathVariables(
     DWORD return_length = 0;
     ::GetComputerNameEx(ComputerNamePhysicalDnsHostname, NULL, &return_length);
     if (return_length != 0) {
-      scoped_ptr<WCHAR[]> machinename(new WCHAR[return_length]);
+      std::unique_ptr<WCHAR[]> machinename(new WCHAR[return_length]);
       ::GetComputerNameEx(ComputerNamePhysicalDnsHostname,
                           machinename.get(), &return_length);
       std::wstring machinename_string(machinename.get());
@@ -147,8 +149,20 @@ base::FilePath::StringType ExpandPathVariables(
 void CheckUserDataDirPolicy(base::FilePath* user_data_dir) {
   DCHECK(user_data_dir);
   // Policy from the HKLM hive has precedence over HKCU.
-  if (!LoadUserDataDirPolicyFromRegistry(HKEY_LOCAL_MACHINE, user_data_dir))
-    LoadUserDataDirPolicyFromRegistry(HKEY_CURRENT_USER, user_data_dir);
+  if (!LoadUserDataDirPolicyFromRegistry(HKEY_LOCAL_MACHINE, key::kUserDataDir,
+                                         user_data_dir)) {
+    LoadUserDataDirPolicyFromRegistry(HKEY_CURRENT_USER, key::kUserDataDir,
+                                      user_data_dir);
+  }
+}
+
+void CheckDiskCacheDirPolicy(base::FilePath* disk_cache_dir) {
+  DCHECK(disk_cache_dir);
+  if (!LoadUserDataDirPolicyFromRegistry(HKEY_LOCAL_MACHINE, key::kDiskCacheDir,
+                                         disk_cache_dir)) {
+    LoadUserDataDirPolicyFromRegistry(HKEY_CURRENT_USER, key::kDiskCacheDir,
+                                      disk_cache_dir);
+  }
 }
 
 }  // namespace path_parser

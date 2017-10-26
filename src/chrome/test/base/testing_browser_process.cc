@@ -10,6 +10,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_impl.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/notifications/notification_platform_bridge.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -17,22 +19,17 @@
 #include "chrome/common/features.h"
 #include "chrome/test/base/testing_browser_process_platform_part.h"
 #include "components/network_time/network_time_tracker.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/prefs/pref_service.h"
+#include "components/subresource_filter/core/browser/ruleset_service.h"
 #include "content/public/browser/notification_service.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/message_center.h"
 
-
 #if BUILDFLAG(ENABLE_BACKGROUND)
 #include "chrome/browser/background/background_mode_manager.h"
 #endif
-
-#if defined(ENABLE_CONFIGURATION_POLICY)
-#include "components/policy/core/browser/browser_policy_connector.h"
-#else
-#include "components/policy/core/common/policy_service_stub.h"
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
 #if defined(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/chrome_extensions_browser_client.h"
@@ -68,8 +65,8 @@ void TestingBrowserProcess::DeleteInstance() {
 
 TestingBrowserProcess::TestingBrowserProcess()
     : notification_service_(content::NotificationService::Create()),
-      module_ref_count_(0),
       app_locale_("en"),
+      is_shutting_down_(false),
       local_state_(nullptr),
       io_thread_(nullptr),
       system_request_context_(nullptr),
@@ -85,9 +82,7 @@ TestingBrowserProcess::TestingBrowserProcess()
 
 TestingBrowserProcess::~TestingBrowserProcess() {
   EXPECT_FALSE(local_state_);
-#if defined(ENABLE_CONFIGURATION_POLICY)
   ShutdownBrowserPolicyConnector();
-#endif
 #if defined(ENABLE_EXTENSIONS)
   extensions::ExtensionsBrowserClient::Set(nullptr);
 #endif
@@ -147,33 +142,25 @@ variations::VariationsService* TestingBrowserProcess::variations_service() {
   return nullptr;
 }
 
-web_resource::PromoResourceService*
-TestingBrowserProcess::promo_resource_service() {
-  return nullptr;
-}
-
 policy::BrowserPolicyConnector*
     TestingBrowserProcess::browser_policy_connector() {
-#if defined(ENABLE_CONFIGURATION_POLICY)
   if (!browser_policy_connector_) {
     EXPECT_FALSE(created_browser_policy_connector_);
     created_browser_policy_connector_ = true;
     browser_policy_connector_ = platform_part_->CreateBrowserPolicyConnector();
+
+    // Note: creating the ChromeBrowserPolicyConnector invokes BrowserThread::
+    // GetMessageLoopProxyForThread(), which initializes a base::LazyInstance of
+    // BrowserThreadTaskRunners. However, the threads that these task runners
+    // would run tasks on are *also* created lazily and might not exist yet.
+    // Creating them requires a MessageLoop, which a test can optionally create
+    // and manage itself, so don't do it here.
   }
   return browser_policy_connector_.get();
-#else
-  return nullptr;
-#endif
 }
 
 policy::PolicyService* TestingBrowserProcess::policy_service() {
-#if defined(ENABLE_CONFIGURATION_POLICY)
   return browser_policy_connector()->GetPolicyService();
-#else
-  if (!policy_service_)
-    policy_service_.reset(new policy::PolicyServiceStub());
-  return policy_service_.get();
-#endif
 }
 
 IconManager* TestingBrowserProcess::icon_manager() {
@@ -193,7 +180,7 @@ BackgroundModeManager* TestingBrowserProcess::background_mode_manager() {
 }
 
 void TestingBrowserProcess::set_background_mode_manager_for_test(
-    scoped_ptr<BackgroundModeManager> manager) {
+    std::unique_ptr<BackgroundModeManager> manager) {
   NOTREACHED();
 }
 
@@ -211,6 +198,11 @@ TestingBrowserProcess::safe_browsing_detection_service() {
   return nullptr;
 }
 
+subresource_filter::RulesetService*
+TestingBrowserProcess::subresource_filter_ruleset_service() {
+  return subresource_filter_ruleset_service_.get();
+}
+
 net::URLRequestContextGetter* TestingBrowserProcess::system_request_context() {
   return system_request_context_;
 }
@@ -225,7 +217,7 @@ TestingBrowserProcess::extension_event_router_forwarder() {
 }
 
 NotificationUIManager* TestingBrowserProcess::notification_ui_manager() {
-#if defined(ENABLE_NOTIFICATIONS)
+#if defined(ENABLE_NOTIFICATIONS) && !defined(OS_ANDROID)
   if (!notification_ui_manager_.get())
     notification_ui_manager_.reset(
         NotificationUIManager::Create(local_state()));
@@ -234,6 +226,11 @@ NotificationUIManager* TestingBrowserProcess::notification_ui_manager() {
   NOTIMPLEMENTED();
   return nullptr;
 #endif
+}
+
+NotificationPlatformBridge*
+TestingBrowserProcess::notification_platform_bridge() {
+  return notification_platform_bridge_.get();
 }
 
 message_center::MessageCenter* TestingBrowserProcess::message_center() {
@@ -252,17 +249,8 @@ void TestingBrowserProcess::CreateDevToolsHttpProtocolHandler(
 void TestingBrowserProcess::CreateDevToolsAutoOpener() {
 }
 
-unsigned int TestingBrowserProcess::AddRefModule() {
-  return ++module_ref_count_;
-}
-
-unsigned int TestingBrowserProcess::ReleaseModule() {
-  DCHECK_GT(module_ref_count_, 0U);
-  return --module_ref_count_;
-}
-
 bool TestingBrowserProcess::IsShuttingDown() {
-  return false;
+  return is_shutting_down_;
 }
 
 printing::PrintJobManager* TestingBrowserProcess::print_job_manager() {
@@ -369,9 +357,9 @@ TestingBrowserProcess::network_time_tracker() {
   if (!network_time_tracker_) {
     DCHECK(local_state_);
     network_time_tracker_.reset(new network_time::NetworkTimeTracker(
-        scoped_ptr<base::Clock>(new base::DefaultClock()),
-        scoped_ptr<base::TickClock>(new base::DefaultTickClock()),
-        local_state_));
+        std::unique_ptr<base::Clock>(new base::DefaultClock()),
+        std::unique_ptr<base::TickClock>(new base::DefaultTickClock()),
+        local_state_, system_request_context()));
   }
   return network_time_tracker_.get();
 }
@@ -394,8 +382,13 @@ void TestingBrowserProcess::SetSystemRequestContext(
 }
 
 void TestingBrowserProcess::SetNotificationUIManager(
-    scoped_ptr<NotificationUIManager> notification_ui_manager) {
+    std::unique_ptr<NotificationUIManager> notification_ui_manager) {
   notification_ui_manager_.swap(notification_ui_manager);
+}
+
+void TestingBrowserProcess::SetNotificationPlatformBridge(
+    std::unique_ptr<NotificationPlatformBridge> notification_platform_bridge) {
+  notification_platform_bridge_.swap(notification_platform_bridge);
 }
 
 void TestingBrowserProcess::SetLocalState(PrefService* local_state) {
@@ -411,10 +404,8 @@ void TestingBrowserProcess::SetLocalState(PrefService* local_state) {
     // are also freed.
     network_time_tracker_.reset();
     notification_ui_manager_.reset();
-#if defined(ENABLE_CONFIGURATION_POLICY)
     ShutdownBrowserPolicyConnector();
     created_browser_policy_connector_ = false;
-#endif
   }
   local_state_ = local_state;
 }
@@ -424,13 +415,9 @@ void TestingBrowserProcess::SetIOThread(IOThread* io_thread) {
 }
 
 void TestingBrowserProcess::ShutdownBrowserPolicyConnector() {
-#if defined(ENABLE_CONFIGURATION_POLICY)
   if (browser_policy_connector_)
     browser_policy_connector_->Shutdown();
   browser_policy_connector_.reset();
-#else
-  CHECK(false);
-#endif
 }
 
 void TestingBrowserProcess::SetSafeBrowsingService(
@@ -438,9 +425,18 @@ void TestingBrowserProcess::SetSafeBrowsingService(
   sb_service_ = sb_service;
 }
 
+void TestingBrowserProcess::SetRulesetService(
+    std::unique_ptr<subresource_filter::RulesetService> ruleset_service) {
+  subresource_filter_ruleset_service_.swap(ruleset_service);
+}
+
 void TestingBrowserProcess::SetRapporService(
     rappor::RapporService* rappor_service) {
   rappor_service_ = rappor_service;
+}
+
+void TestingBrowserProcess::SetShuttingDown(bool is_shutting_down) {
+  is_shutting_down_ = is_shutting_down;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

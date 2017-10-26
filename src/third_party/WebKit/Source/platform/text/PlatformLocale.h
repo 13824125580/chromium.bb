@@ -30,8 +30,8 @@
 #include "platform/Language.h"
 #include "public/platform/WebLocalizedString.h"
 #include "wtf/Allocator.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -39,7 +39,7 @@ class PLATFORM_EXPORT Locale {
     WTF_MAKE_NONCOPYABLE(Locale);
     USING_FAST_MALLOC(Locale);
 public:
-    static PassOwnPtr<Locale> create(const String& localeIdentifier);
+    static std::unique_ptr<Locale> create(const String& localeIdentifier);
     static Locale& defaultLocale();
 
     String queryString(WebLocalizedString::Name);
@@ -65,10 +65,8 @@ public:
     // locale-specific number characters and |standardChars|.
     String stripInvalidNumberCharacters(const String& input, const String& standardChars) const;
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
     // Returns localized decimal separator, e.g. "." for English, "," for French.
     String localizedDecimalSeparator();
-#endif
 
     // Returns date format in Unicode TR35 LDML[1] containing day of month,
     // month, and year, e.g. "dd/mm/yyyy"

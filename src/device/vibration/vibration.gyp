@@ -19,13 +19,26 @@
       ],
     },
     {
+      # GN version: //device/vibration:mojo_bindings_blink
+      'target_name': 'device_vibration_mojo_bindings_for_blink',
+      'type': 'static_library',
+      'variables': {
+        'for_blink': 'true',
+      },
+      'includes': [
+        '../../mojo/mojom_bindings_generator.gypi',
+      ],
+      'sources': [
+        'vibration_manager.mojom',
+      ],
+    },
+    {
       # GN version: //device/vibration
       'target_name': 'device_vibration',
       'type': '<(component)',
       'dependencies': [
         '../../base/base.gyp:base',
         '../../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
-        '../../mojo/mojo_base.gyp:mojo_environment_chromium',
         '../../mojo/mojo_edk.gyp:mojo_system_impl',
         '../../mojo/mojo_public.gyp:mojo_cpp_bindings',
         'device_vibration_mojo_bindings',

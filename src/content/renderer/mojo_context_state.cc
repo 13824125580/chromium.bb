@@ -52,7 +52,7 @@ void RunMain(base::WeakPtr<gin::Runner> runner,
 using ModuleSourceMap =
     std::map<std::string, scoped_refptr<base::RefCountedMemory>>;
 
-base::LazyInstance<scoped_ptr<ModuleSourceMap>>::Leaky g_module_sources;
+base::LazyInstance<std::unique_ptr<ModuleSourceMap>>::Leaky g_module_sources;
 
 scoped_refptr<base::RefCountedMemory> GetBuiltinModuleData(
     const std::string& path) {
@@ -70,7 +70,7 @@ scoped_refptr<base::RefCountedMemory> GetBuiltinModuleData(
     { mojo::kValidatorModuleName, IDR_MOJO_VALIDATOR_JS },
   };
 
-  scoped_ptr<ModuleSourceMap>& module_sources = g_module_sources.Get();
+  std::unique_ptr<ModuleSourceMap>& module_sources = g_module_sources.Get();
   if (!module_sources) {
     // Initialize the module source map on first access.
     module_sources.reset(new ModuleSourceMap);
@@ -99,7 +99,8 @@ MojoContextState::MojoContextState(blink::WebFrame* frame,
       module_added_(false),
       module_prefix_(for_layout_tests
                          ? "layout-test-mojom://"
-                         : frame_->securityOrigin().toString().utf8() + "/") {
+                         : frame_->getSecurityOrigin().toString().utf8() +
+                               "/") {
   gin::PerContextData* context_data = gin::PerContextData::From(context);
   gin::ContextHolder* context_holder = context_data->context_holder();
   runner_.reset(new MojoMainRunner(frame_, context_holder));
@@ -170,28 +171,30 @@ void MojoContextState::FetchModule(const std::string& id) {
                  blink::WebURLRequest::FrameTypeNone,
                  ResourceFetcher::PLATFORM_LOADER,
                  base::Bind(&MojoContextState::OnFetchModuleComplete,
-                            base::Unretained(this), fetcher));
+                            base::Unretained(this), fetcher, id));
 }
 
 void MojoContextState::OnFetchModuleComplete(
     ResourceFetcher* fetcher,
+    const std::string& id,
     const blink::WebURLResponse& response,
     const std::string& data) {
-  DCHECK_EQ(module_prefix_,
-            response.url().string().utf8().substr(0, module_prefix_.size()));
-  const std::string module =
-      response.url().string().utf8().substr(module_prefix_.size());
+  if (response.isNull()) {
+    LOG(ERROR) << "Failed to fetch source for module \"" << id << "\"";
+    return;
+  }
+  DCHECK_EQ(module_prefix_ + id, response.url().string().utf8());
   // We can't delete fetch right now as the arguments to this function come from
   // it and are used below. Instead use a scope_ptr to cleanup.
-  scoped_ptr<ResourceFetcher> deleter(fetcher);
+  std::unique_ptr<ResourceFetcher> deleter(fetcher);
   module_fetchers_.weak_erase(
       std::find(module_fetchers_.begin(), module_fetchers_.end(), fetcher));
   if (data.empty()) {
-    NOTREACHED();
-    return;  // TODO(sky): log something?
+    LOG(ERROR) << "Fetched empty source for module \"" << id << "\"";
+    return;
   }
 
-  runner_->Run(data, module);
+  runner_->Run(data, id);
 }
 
 void MojoContextState::OnDidAddPendingModule(

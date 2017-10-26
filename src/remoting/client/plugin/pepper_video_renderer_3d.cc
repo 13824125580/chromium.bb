@@ -6,10 +6,9 @@
 
 #include <math.h>
 
+#include <algorithm>
 #include <utility>
 
-#include "base/callback_helpers.h"
-#include "base/stl_util.h"
 #include "ppapi/c/pp_codecs.h"
 #include "ppapi/c/ppb_opengles2.h"
 #include "ppapi/c/ppb_video_decoder.h"
@@ -17,8 +16,10 @@
 #include "ppapi/lib/gl/include/GLES2/gl2.h"
 #include "ppapi/lib/gl/include/GLES2/gl2ext.h"
 #include "remoting/proto/video.pb.h"
+#include "remoting/protocol/frame_stats.h"
 #include "remoting/protocol/performance_tracker.h"
 #include "remoting/protocol/session_config.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_region.h"
 
 namespace remoting {
 
@@ -27,25 +28,35 @@ namespace remoting {
 // 1.1, so we have to pass 0 for backwards compatibility with older versions of
 // the browser. Currently all API implementations allocate more than 3 buffers
 // by default.
-//
-// TODO(sergeyu): Change this to 3 once PPB_VideoDecoder v1.1 is enabled on
-// stable channel (crbug.com/520323).
-const uint32_t kMinimumPictureCount = 0;  // 3
+const uint32_t kMinimumPictureCount = 3;
 
-class PepperVideoRenderer3D::PendingPacket {
+class PepperVideoRenderer3D::FrameTracker {
  public:
-  PendingPacket(scoped_ptr<VideoPacket> packet, const base::Closure& done)
-      : packet_(std::move(packet)), done_runner_(done) {}
+  FrameTracker(std::unique_ptr<VideoPacket> packet,
+               protocol::PerformanceTracker* perf_tracker,
+               const base::Closure& done)
+      : packet_(std::move(packet)), perf_tracker_(perf_tracker), done_(done) {
+    stats_ = protocol::FrameStats::GetForVideoPacket(*packet_);
+  }
 
-  ~PendingPacket() {}
+  ~FrameTracker() {
+    if (perf_tracker_)
+      perf_tracker_->RecordVideoFrameStats(stats_);
+    if (!done_.is_null())
+      done_.Run();
+  }
 
-  const VideoPacket* packet() const { return packet_.get(); }
+  void OnDecoded() { stats_.time_decoded = base::TimeTicks::Now(); }
+  void OnRendered() { stats_.time_rendered = base::TimeTicks::Now(); }
+
+  VideoPacket* packet() { return packet_.get(); }
 
  private:
-  scoped_ptr<VideoPacket> packet_;
-  base::ScopedClosureRunner done_runner_;
+  std::unique_ptr<VideoPacket> packet_;
+  protocol::PerformanceTracker* perf_tracker_;
+  protocol::FrameStats stats_;
+  base::Closure done_;
 };
-
 
 class PepperVideoRenderer3D::Picture {
  public:
@@ -65,19 +76,35 @@ PepperVideoRenderer3D::PepperVideoRenderer3D() : callback_factory_(this) {}
 PepperVideoRenderer3D::~PepperVideoRenderer3D() {
   if (shader_program_)
     gles2_if_->DeleteProgram(graphics_.pp_resource(), shader_program_);
-
-  STLDeleteElements(&pending_packets_);
 }
 
-bool PepperVideoRenderer3D::Initialize(
+void PepperVideoRenderer3D::SetPepperContext(
     pp::Instance* instance,
-    const ClientContext& context,
-    EventHandler* event_handler,
-    protocol::PerformanceTracker* perf_tracker) {
+    EventHandler* event_handler) {
   DCHECK(event_handler);
   DCHECK(!event_handler_);
 
   event_handler_ = event_handler;
+  pp_instance_ = instance;
+}
+
+void PepperVideoRenderer3D::OnViewChanged(const pp::View& view) {
+  pp::Size size = view.GetRect().size();
+  float scale = view.GetDeviceScale();
+  view_size_.set(ceilf(size.width() * scale), ceilf(size.height() * scale));
+  graphics_.ResizeBuffers(view_size_.width(), view_size_.height());
+
+  force_repaint_ = true;
+  PaintIfNeeded();
+}
+
+void PepperVideoRenderer3D::EnableDebugDirtyRegion(bool enable) {
+  debug_dirty_region_ = enable;
+}
+
+bool PepperVideoRenderer3D::Initialize(
+    const ClientContext& context,
+    protocol::PerformanceTracker* perf_tracker) {
   perf_tracker_ = perf_tracker;
 
   const int32_t context_attributes[] = {
@@ -93,13 +120,13 @@ bool PepperVideoRenderer3D::Initialize(
       PP_GRAPHICS3DATTRIB_HEIGHT,         480,
       PP_GRAPHICS3DATTRIB_NONE,
   };
-  graphics_ = pp::Graphics3D(instance, context_attributes);
+  graphics_ = pp::Graphics3D(pp_instance_, context_attributes);
 
   if (graphics_.is_null()) {
     LOG(WARNING) << "Graphics3D interface is not available.";
     return false;
   }
-  if (!instance->BindGraphics(graphics_)) {
+  if (!pp_instance_->BindGraphics(graphics_)) {
     LOG(WARNING) << "Failed to bind Graphics3D.";
     return false;
   }
@@ -109,7 +136,7 @@ bool PepperVideoRenderer3D::Initialize(
       pp::Module::Get()->GetBrowserInterface(PPB_OPENGLES2_INTERFACE));
   CHECK(gles2_if_);
 
-  video_decoder_ = pp::VideoDecoder(instance);
+  video_decoder_ = pp::VideoDecoder(pp_instance_);
   if (video_decoder_.is_null()) {
     LOG(WARNING) << "VideoDecoder interface is not available.";
     return false;
@@ -136,20 +163,6 @@ bool PepperVideoRenderer3D::Initialize(
   CheckGLError();
 
   return true;
-}
-
-void PepperVideoRenderer3D::OnViewChanged(const pp::View& view) {
-  pp::Size size = view.GetRect().size();
-  float scale = view.GetDeviceScale();
-  view_size_.set(ceilf(size.width() * scale), ceilf(size.height() * scale));
-  graphics_.ResizeBuffers(view_size_.width(), view_size_.height());
-
-  force_repaint_ = true;
-  PaintIfNeeded();
-}
-
-void PepperVideoRenderer3D::EnableDebugDirtyRegion(bool enable) {
-  debug_dirty_region_ = enable;
 }
 
 void PepperVideoRenderer3D::OnSessionConfig(
@@ -185,75 +198,42 @@ protocol::FrameConsumer* PepperVideoRenderer3D::GetFrameConsumer() {
   return nullptr;
 }
 
-void PepperVideoRenderer3D::ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
-                                               const base::Closure& done) {
-  base::ScopedClosureRunner done_runner(done);
-
-  perf_tracker_->RecordVideoPacketStats(*packet);
+void PepperVideoRenderer3D::ProcessVideoPacket(
+    std::unique_ptr<VideoPacket> packet,
+    const base::Closure& done) {
+  VideoPacket* packet_ptr = packet.get();
+  std::unique_ptr<FrameTracker> frame_tracker(
+      new FrameTracker(std::move(packet), perf_tracker_, done));
 
   // Don't need to do anything if the packet is empty. Host sends empty video
   // packets when the screen is not changing.
-  if (!packet->data().size())
+  if (!packet_ptr->data().size())
     return;
 
-  bool resolution_changed = false;
-
-  if (packet->format().has_screen_width() &&
-      packet->format().has_screen_height()) {
-    webrtc::DesktopSize frame_size(packet->format().screen_width(),
-                                   packet->format().screen_height());
-    if (!frame_size_.equals(frame_size)) {
-      frame_size_ = frame_size;
-      resolution_changed = true;
-    }
+  if (!frame_received_) {
+    event_handler_->OnVideoFirstFrameReceived();
+    frame_received_ = true;
   }
 
-  if (packet->format().has_x_dpi() && packet->format().has_y_dpi()) {
-    webrtc::DesktopVector frame_dpi(packet->format().x_dpi(),
-                                    packet->format().y_dpi());
-    if (!frame_dpi_.equals(frame_dpi)) {
-      frame_dpi_ = frame_dpi;
-      resolution_changed = true;
-    }
-  }
-
-  if (resolution_changed)
-    event_handler_->OnVideoSize(frame_size_, frame_dpi_);
-
-  // Process the frame shape, if supplied.
-  if (packet->has_use_desktop_shape()) {
-    if (packet->use_desktop_shape()) {
-      scoped_ptr<webrtc::DesktopRegion> shape(new webrtc::DesktopRegion);
-      for (int i = 0; i < packet->desktop_shape_rects_size(); ++i) {
-        Rect remoting_rect = packet->desktop_shape_rects(i);
-        shape->AddRect(webrtc::DesktopRect::MakeXYWH(
-            remoting_rect.x(), remoting_rect.y(), remoting_rect.width(),
-            remoting_rect.height()));
-      }
-      if (!frame_shape_ || !frame_shape_->Equals(*shape)) {
-        frame_shape_ = std::move(shape);
-        event_handler_->OnVideoShape(frame_shape_.get());
-      }
-    } else if (frame_shape_) {
-      frame_shape_ = nullptr;
-      event_handler_->OnVideoShape(nullptr);
-    }
+  if (packet_ptr->format().has_screen_width() &&
+      packet_ptr->format().has_screen_height()) {
+    frame_size_.set(packet_ptr->format().screen_width(),
+                    packet_ptr->format().screen_height());
   }
 
   // Report the dirty region, for debugging, if requested.
   if (debug_dirty_region_) {
     webrtc::DesktopRegion dirty_region;
-    for (int i = 0; i < packet->dirty_rects_size(); ++i) {
-      Rect remoting_rect = packet->dirty_rects(i);
+    for (int i = 0; i < packet_ptr->dirty_rects_size(); ++i) {
+      Rect remoting_rect = packet_ptr->dirty_rects(i);
       dirty_region.AddRect(webrtc::DesktopRect::MakeXYWH(
-          remoting_rect.x(), remoting_rect.y(),
-          remoting_rect.width(), remoting_rect.height()));
+          remoting_rect.x(), remoting_rect.y(), remoting_rect.width(),
+          remoting_rect.height()));
     }
     event_handler_->OnVideoFrameDirtyRegion(dirty_region);
   }
 
-  pending_packets_.push_back(
-      new PendingPacket(std::move(packet), done_runner.Release()));
+  pending_frames_.push_back(std::move(frame_tracker));
   DecodeNextPacket();
 }
 
@@ -267,10 +247,10 @@ void PepperVideoRenderer3D::OnInitialized(int32_t result) {
 }
 
 void PepperVideoRenderer3D::DecodeNextPacket() {
-  if (!initialization_finished_ || decode_pending_ || pending_packets_.empty())
+  if (!initialization_finished_ || decode_pending_ || pending_frames_.empty())
     return;
 
-  const VideoPacket* packet = pending_packets_.front()->packet();
+  const VideoPacket* packet = pending_frames_.front()->packet();
 
   int32_t result = video_decoder_.Decode(
       packet->frame_id(), packet->data().size(), packet->data().data(),
@@ -289,8 +269,10 @@ void PepperVideoRenderer3D::OnDecodeDone(int32_t result) {
     return;
   }
 
-  delete pending_packets_.front();
-  pending_packets_.pop_front();
+  pending_frames_.front()->OnDecoded();
+  // Move the frame from |pending_frames_| to |decoded_frames_|.
+  decoded_frames_.splice(decoded_frames_.end(), pending_frames_,
+                         pending_frames_.begin());
 
   DecodeNextPacket();
   GetNextPicture();
@@ -318,8 +300,6 @@ void PepperVideoRenderer3D::OnPictureReady(int32_t result,
     return;
   }
 
-  perf_tracker_->OnFrameDecoded(picture.decode_id);
-
   // Workaround crbug.com/542945 by filling in visible_rect if it isn't set.
   if (picture.visible_rect.size.width == 0 ||
       picture.visible_rect.size.height == 0) {
@@ -335,6 +315,13 @@ void PepperVideoRenderer3D::OnPictureReady(int32_t result,
         std::min(frame_size_.height(), picture.texture_size.height);
   }
 
+  DCHECK_EQ(static_cast<int32_t>(picture.decode_id),
+            decoded_frames_.front()->packet()->frame_id());
+
+  // Move the frame from |decoded_frames_| to |next_picture_frames_|.
+  next_picture_frames_.splice(next_picture_frames_.end(), decoded_frames_,
+                              decoded_frames_.begin());
+
   next_picture_.reset(new Picture(&video_decoder_, picture));
 
   PaintIfNeeded();
@@ -346,8 +333,11 @@ void PepperVideoRenderer3D::PaintIfNeeded() {
   if (paint_pending_ || !need_repaint)
     return;
 
-  if (next_picture_)
+  if (next_picture_) {
     current_picture_ = std::move(next_picture_);
+    current_picture_frames_.splice(current_picture_frames_.end(),
+                                   next_picture_frames_);
+  }
 
   force_repaint_ = false;
 
@@ -413,7 +403,12 @@ void PepperVideoRenderer3D::OnPaintDone(int32_t result) {
   CHECK_EQ(result, PP_OK) << "Graphics3D::SwapBuffers() failed";
 
   paint_pending_ = false;
-  perf_tracker_->OnFramePainted(current_picture_->picture().decode_id);
+
+  for (const auto& tracker : current_picture_frames_) {
+    tracker->OnRendered();
+  }
+  current_picture_frames_.clear();
+
   PaintIfNeeded();
 }
 

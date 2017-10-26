@@ -33,10 +33,9 @@ class MediaQuerySet;
 class StyleSheetContents;
 
 class StyleRuleImport : public StyleRuleBase {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(StyleRuleImport);
-    WILL_BE_USING_PRE_FINALIZER(StyleRuleImport, dispose);
+    USING_PRE_FINALIZER(StyleRuleImport, dispose);
 public:
-    static PassRefPtrWillBeRawPtr<StyleRuleImport> create(const String& href, PassRefPtrWillBeRawPtr<MediaQuerySet>);
+    static StyleRuleImport* create(const String& href, MediaQuerySet*);
 
     ~StyleRuleImport();
 
@@ -55,11 +54,11 @@ public:
     DECLARE_TRACE_AFTER_DISPATCH();
 
 private:
-    // FIXME: inherit from StyleSheetResourceClient directly to eliminate raw back pointer, as there are no space savings in this.
+    // FIXME: inherit from StyleSheetResourceClient directly to eliminate back pointer, as there are no space savings in this.
     // NOTE: We put the StyleSheetResourceClient in a member instead of inheriting from it
     // to avoid adding a vptr to StyleRuleImport.
-    class ImportedStyleSheetClient final : public StyleSheetResourceClient {
-        DISALLOW_NEW();
+    class ImportedStyleSheetClient final : public GarbageCollectedFinalized<ImportedStyleSheetClient>, public StyleSheetResourceClient {
+        USING_GARBAGE_COLLECTED_MIXIN(ImportedStyleSheetClient);
     public:
         ImportedStyleSheetClient(StyleRuleImport* ownerRule) : m_ownerRule(ownerRule) { }
         ~ImportedStyleSheetClient() override { }
@@ -72,26 +71,26 @@ private:
         DEFINE_INLINE_TRACE()
         {
             visitor->trace(m_ownerRule);
+            StyleSheetResourceClient::trace(visitor);
         }
 
     private:
-        RawPtrWillBeMember<StyleRuleImport> m_ownerRule;
+        Member<StyleRuleImport> m_ownerRule;
     };
 
     void setCSSStyleSheet(const String& href, const KURL& baseURL, const String& charset, const CSSStyleSheetResource*);
-    friend class ImportedStyleSheetClient;
 
-    StyleRuleImport(const String& href, PassRefPtrWillBeRawPtr<MediaQuerySet>);
+    StyleRuleImport(const String& href, MediaQuerySet*);
 
     void dispose();
 
-    RawPtrWillBeMember<StyleSheetContents> m_parentStyleSheet;
+    Member<StyleSheetContents> m_parentStyleSheet;
 
-    ImportedStyleSheetClient m_styleSheetClient;
+    Member<ImportedStyleSheetClient> m_styleSheetClient;
     String m_strHref;
-    RefPtrWillBeMember<MediaQuerySet> m_mediaQueries;
-    RefPtrWillBeMember<StyleSheetContents> m_styleSheet;
-    RefPtrWillBeMember<CSSStyleSheetResource> m_resource;
+    Member<MediaQuerySet> m_mediaQueries;
+    Member<StyleSheetContents> m_styleSheet;
+    Member<CSSStyleSheetResource> m_resource;
     bool m_loading;
 };
 

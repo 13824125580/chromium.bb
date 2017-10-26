@@ -15,15 +15,13 @@ class SimDisplayItemList final : public WebDisplayItemList {
 public:
     SimDisplayItemList();
 
-    void appendDrawingItem(const WebRect&, const SkPicture*) override;
+    void appendDrawingItem(const WebRect&, sk_sp<const SkPicture>) override;
 
     int drawCount() const { return m_commands.size(); }
 
-    bool containsText() const { return m_containsText; }
     bool contains(SimCanvas::CommandType, const String& colorString = String()) const;
 
 private:
-    bool m_containsText;
     Vector<SimCanvas::Command> m_commands;
 };
 

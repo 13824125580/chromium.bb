@@ -7,10 +7,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -26,10 +27,12 @@ class DesktopResizer;
 
 // Uses the specified DesktopResizer to match host desktop size to the client
 // view size as closely as is possible. When the connection closes, restores
-// the original desktop size.
+// the original desktop size if restore is true.
 class ResizingHostObserver : public ScreenControls {
  public:
-  explicit ResizingHostObserver(scoped_ptr<DesktopResizer> desktop_resizer);
+  explicit ResizingHostObserver(
+      std::unique_ptr<DesktopResizer> desktop_resizer,
+      bool restore);
   ~ResizingHostObserver() override;
 
   // ScreenControls interface.
@@ -42,8 +45,9 @@ class ResizingHostObserver : public ScreenControls {
       const base::Callback<base::Time(void)>& now_function);
 
  private:
-  scoped_ptr<DesktopResizer> desktop_resizer_;
+  std::unique_ptr<DesktopResizer> desktop_resizer_;
   ScreenResolution original_resolution_;
+  bool restore_;
 
   // State to manage rate-limiting of desktop resizes.
   base::OneShotTimer deferred_resize_timer_;

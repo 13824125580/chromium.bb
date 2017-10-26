@@ -34,10 +34,9 @@
 #include "core/dom/DocumentInit.h"
 #include "core/dom/DocumentType.h"
 #include "core/dom/Element.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/dom/Text.h"
 #include "core/dom/XMLDocument.h"
-#include "core/dom/custom/CustomElementRegistrationContext.h"
+#include "core/dom/custom/V0CustomElementRegistrationContext.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLDocument.h"
@@ -65,7 +64,7 @@ DOMImplementation::DOMImplementation(Document& document)
 {
 }
 
-PassRefPtrWillBeRawPtr<DocumentType> DOMImplementation::createDocumentType(const AtomicString& qualifiedName,
+DocumentType* DOMImplementation::createDocumentType(const AtomicString& qualifiedName,
     const String& publicId, const String& systemId, ExceptionState& exceptionState)
 {
     AtomicString prefix, localName;
@@ -75,10 +74,10 @@ PassRefPtrWillBeRawPtr<DocumentType> DOMImplementation::createDocumentType(const
     return DocumentType::create(m_document, qualifiedName, publicId, systemId);
 }
 
-PassRefPtrWillBeRawPtr<XMLDocument> DOMImplementation::createDocument(const AtomicString& namespaceURI,
+XMLDocument* DOMImplementation::createDocument(const AtomicString& namespaceURI,
     const AtomicString& qualifiedName, DocumentType* doctype, ExceptionState& exceptionState)
 {
-    RefPtrWillBeRawPtr<XMLDocument> doc = nullptr;
+    XMLDocument* doc = nullptr;
     DocumentInit init = DocumentInit::fromContext(document().contextDocument());
     if (namespaceURI == SVGNames::svgNamespaceURI) {
         doc = XMLDocument::createSVG(init);
@@ -88,10 +87,10 @@ PassRefPtrWillBeRawPtr<XMLDocument> DOMImplementation::createDocument(const Atom
         doc = XMLDocument::create(init);
     }
 
-    doc->setSecurityOrigin(document().securityOrigin()->isolatedCopy());
+    doc->setSecurityOrigin(document().getSecurityOrigin());
     doc->setContextFeatures(document().contextFeatures());
 
-    RefPtrWillBeRawPtr<Node> documentElement = nullptr;
+    Node* documentElement = nullptr;
     if (!qualifiedName.isEmpty()) {
         documentElement = doc->createElementNS(namespaceURI, qualifiedName, exceptionState);
         if (exceptionState.hadException())
@@ -101,9 +100,9 @@ PassRefPtrWillBeRawPtr<XMLDocument> DOMImplementation::createDocument(const Atom
     if (doctype)
         doc->appendChild(doctype);
     if (documentElement)
-        doc->appendChild(documentElement.release());
+        doc->appendChild(documentElement);
 
-    return doc.release();
+    return doc;
 }
 
 bool DOMImplementation::isXMLMIMEType(const String& mimeType)
@@ -196,26 +195,26 @@ bool DOMImplementation::isTextMIMEType(const String& mimeType)
     return MIMETypeRegistry::isSupportedJavaScriptMIMEType(mimeType) || isJSONMIMEType(mimeType) || isTextPlainType(mimeType);
 }
 
-PassRefPtrWillBeRawPtr<HTMLDocument> DOMImplementation::createHTMLDocument(const String& title)
+HTMLDocument* DOMImplementation::createHTMLDocument(const String& title)
 {
     DocumentInit init = DocumentInit::fromContext(document().contextDocument())
         .withRegistrationContext(document().registrationContext());
-    RefPtrWillBeRawPtr<HTMLDocument> d = HTMLDocument::create(init);
+    HTMLDocument* d = HTMLDocument::create(init);
     d->open();
     d->write("<!doctype html><html><head></head><body></body></html>");
     if (!title.isNull()) {
         HTMLHeadElement* headElement = d->head();
-        ASSERT(headElement);
-        RefPtrWillBeRawPtr<HTMLTitleElement> titleElement = HTMLTitleElement::create(*d);
+        DCHECK(headElement);
+        HTMLTitleElement* titleElement = HTMLTitleElement::create(*d);
         headElement->appendChild(titleElement);
         titleElement->appendChild(d->createTextNode(title), ASSERT_NO_EXCEPTION);
     }
-    d->setSecurityOrigin(document().securityOrigin()->isolatedCopy());
+    d->setSecurityOrigin(document().getSecurityOrigin());
     d->setContextFeatures(document().contextFeatures());
-    return d.release();
+    return d;
 }
 
-PassRefPtrWillBeRawPtr<Document> DOMImplementation::createDocument(const String& type, const DocumentInit& init, bool inViewSourceMode)
+Document* DOMImplementation::createDocument(const String& type, const DocumentInit& init, bool inViewSourceMode)
 {
     if (inViewSourceMode)
         return HTMLViewSourceDocument::create(init, type);
@@ -228,13 +227,14 @@ PassRefPtrWillBeRawPtr<Document> DOMImplementation::createDocument(const String&
 
     PluginData* pluginData = 0;
     if (init.frame() && init.frame()->page() && init.frame()->loader().allowPlugins(NotAboutToInstantiatePlugin))
-        pluginData = init.frame()->page()->pluginData();
+        pluginData = init.frame()->pluginData();
 
     // PDF is one image type for which a plugin can override built-in support.
     // We do not want QuickTime to take over all image types, obviously.
     if ((type == "application/pdf" || type == "text/pdf") && pluginData && pluginData->supportsMimeType(type))
         return PluginDocument::create(init);
-    if (Image::supportsType(type))
+    // multipart/x-mixed-replace is only supported for images.
+    if (Image::supportsType(type) || type == "multipart/x-mixed-replace")
         return ImageDocument::create(init);
 
     // Check to see if the type can be played by our media player, if so create a MediaDocument

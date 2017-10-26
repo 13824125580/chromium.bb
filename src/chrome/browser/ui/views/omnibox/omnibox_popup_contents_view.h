@@ -73,8 +73,6 @@ class OmniboxPopupContentsView : public views::View,
   bool IsStarredMatch(const AutocompleteMatch& match) const;
 
   int max_match_contents_width() const { return max_match_contents_width_; }
-  int start_margin() const { return start_margin_; }
-  int end_margin() const { return end_margin_; }
 
  protected:
   OmniboxPopupContentsView(const gfx::FontList& font_list,
@@ -127,7 +125,7 @@ class OmniboxPopupContentsView : public views::View,
 
   OmniboxResultView* result_view_at(size_t i);
 
-  scoped_ptr<OmniboxPopupModel> model_;
+  std::unique_ptr<OmniboxPopupModel> model_;
 
   // The popup that contains this view.  We create this, but it deletes itself
   // when its window is destroyed.  This is a WeakPtr because it's possible for

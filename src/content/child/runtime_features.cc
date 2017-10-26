@@ -19,25 +19,16 @@
 #include "ui/gl/gl_switches.h"
 #include "ui/native_theme/native_theme_switches.h"
 
-#if defined(OS_ANDROID)
-#include <cpu-features.h>
-#include "base/android/build_info.h"
-#include "media/base/android/media_codec_util.h"
-#endif
-
 using blink::WebRuntimeFeatures;
 
 namespace content {
 
 static void SetRuntimeFeatureDefaultsForPlatform() {
 #if defined(OS_ANDROID)
-  // EME implementation needs Android MediaCodec API.
-  if (!media::MediaCodecUtil::IsMediaCodecAvailable()) {
-    WebRuntimeFeatures::enableEncryptedMedia(false);
-  }
-
   // Android does not have support for PagePopup
   WebRuntimeFeatures::enablePagePopup(false);
+  // No plan to support complex UI for date/time INPUT types.
+  WebRuntimeFeatures::enableInputMultipleFieldsUI(false);
   // Android does not yet support SharedWorker. crbug.com/154571
   WebRuntimeFeatures::enableSharedWorker(false);
   // Android does not yet support NavigatorContentUtils.
@@ -59,8 +50,8 @@ static void SetRuntimeFeatureDefaultsForPlatform() {
   WebRuntimeFeatures::enableCompositedSelectionUpdate(true);
 #endif
 
-#if !(defined OS_ANDROID || defined OS_CHROMEOS || defined OS_IOS)
-    // Only Android, ChromeOS, and IOS support NetInfo right now.
+#if !(defined OS_ANDROID || defined OS_CHROMEOS)
+    // Only Android, ChromeOS support NetInfo right now.
     WebRuntimeFeatures::enableNetworkInformation(false);
 #endif
 }
@@ -69,20 +60,20 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     const base::CommandLine& command_line) {
   if (command_line.HasSwitch(switches::kEnableExperimentalWebPlatformFeatures))
     WebRuntimeFeatures::enableExperimentalFeatures(true);
-// TODO: Fix this
-//  WebRuntimeFeatures::enableExperimentalFramework(
-//      base::FeatureList::IsEnabled(features::kExperimentalFramework));
+
+  WebRuntimeFeatures::enableOriginTrials(
+      base::FeatureList::IsEnabled(features::kOriginTrials));
 
   if (command_line.HasSwitch(switches::kEnableWebBluetooth))
     WebRuntimeFeatures::enableWebBluetooth(true);
+
+  if (!base::FeatureList::IsEnabled(features::kWebUsb))
+    WebRuntimeFeatures::enableWebUsb(false);
 
   SetRuntimeFeatureDefaultsForPlatform();
 
   if (command_line.HasSwitch(switches::kDisableDatabases))
     WebRuntimeFeatures::enableDatabase(false);
-
-  if (command_line.HasSwitch(switches::kDisableMediaSource))
-    WebRuntimeFeatures::enableMediaSource(false);
 
   if (command_line.HasSwitch(switches::kDisableNotifications)) {
     WebRuntimeFeatures::enableNotifications(false);
@@ -90,9 +81,6 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     // Chrome's Push Messaging implementation relies on Web Notifications.
     WebRuntimeFeatures::enablePushMessaging(false);
   }
-
-  if (command_line.HasSwitch(switches::kEnableNotificationActionIcons))
-    WebRuntimeFeatures::enableNotificationActionIcons(true);
 
   if (command_line.HasSwitch(switches::kDisableSharedWorkers))
     WebRuntimeFeatures::enableSharedWorker(false);
@@ -121,8 +109,37 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableWebGLDraftExtensions))
     WebRuntimeFeatures::enableWebGLDraftExtensions(true);
 
-  if (command_line.HasSwitch(switches::kEnableWebGLImageChromium))
-    WebRuntimeFeatures::enableWebGLImageChromium(true);
+#if defined(OS_MACOSX)
+  bool enable_canvas_2d_image_chromium = command_line.HasSwitch(
+      switches::kEnableGpuMemoryBufferCompositorResources) &&
+      !command_line.HasSwitch(switches::kDisable2dCanvasImageChromium) &&
+      !command_line.HasSwitch(switches::kDisableGpu);
+
+  if (enable_canvas_2d_image_chromium) {
+    enable_canvas_2d_image_chromium =
+        base::FeatureList::IsEnabled(features::kCanvas2DImageChromium);
+  }
+#else
+  bool enable_canvas_2d_image_chromium = false;
+#endif
+  WebRuntimeFeatures::enableCanvas2dImageChromium(
+      enable_canvas_2d_image_chromium);
+
+#if defined(OS_MACOSX)
+  bool enable_web_gl_image_chromium = command_line.HasSwitch(
+      switches::kEnableGpuMemoryBufferCompositorResources) &&
+      !command_line.HasSwitch(switches::kDisableWebGLImageChromium) &&
+      !command_line.HasSwitch(switches::kDisableGpu);
+
+  if (enable_web_gl_image_chromium) {
+    enable_web_gl_image_chromium =
+        base::FeatureList::IsEnabled(features::kWebGLImageChromium);
+  }
+#else
+  bool enable_web_gl_image_chromium =
+      command_line.HasSwitch(switches::kEnableWebGLImageChromium);
+#endif
+  WebRuntimeFeatures::enableWebGLImageChromium(enable_web_gl_image_chromium);
 
   if (command_line.HasSwitch(switches::kEnableCSS3TextDecorations))
     WebRuntimeFeatures::enableCSS3TextDecorations(true);
@@ -148,8 +165,8 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::enableNetworkInformation(true);
   }
 
-  if (command_line.HasSwitch(switches::kEnableCredentialManagerAPI))
-    WebRuntimeFeatures::enableCredentialManagerAPI(true);
+  if (!base::FeatureList::IsEnabled(features::kCredentialManagementAPI))
+    WebRuntimeFeatures::enableCredentialManagerAPI(false);
 
   if (command_line.HasSwitch(switches::kReducedReferrerGranularity))
     WebRuntimeFeatures::enableReducedReferrerGranularity(true);
@@ -165,21 +182,44 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableUnsafeES3APIs))
     WebRuntimeFeatures::enableUnsafeES3APIs(true);
 
-  if (command_line.HasSwitch(switches::kEnableWebVR)) {
+  if (command_line.HasSwitch(switches::kEnableWebVR))
     WebRuntimeFeatures::enableWebVR(true);
-    WebRuntimeFeatures::enableFeatureFromString(
-        std::string("GeometryInterfaces"), true);
-  }
 
   if (command_line.HasSwitch(switches::kDisablePresentationAPI))
     WebRuntimeFeatures::enablePresentationAPI(false);
 
-/// TODO: Fix this
-//  if (base::FeatureList::IsEnabled(features::kWebFontsIntervention)) {
-//    WebRuntimeFeatures::enableWebFontsIntervention(true);
-//    if (command_line.HasSwitch(switches::kEnableWebFontsInterventionTrigger))
-//      WebRuntimeFeatures::enableWebFontsInterventionTrigger(true);
-//  }
+  if (base::FeatureList::IsEnabled(features::kWeakMemoryCache))
+    WebRuntimeFeatures::enableWeakMemoryCache(true);
+
+  if (base::FeatureList::IsEnabled(features::kDoNotUnlockSharedBuffer))
+    WebRuntimeFeatures::enableDoNotUnlockSharedBuffer(true);
+
+  const std::string webfonts_intervention_v2_group_name =
+      base::FieldTrialList::FindFullName("WebFontsInterventionV2");
+  const std::string webfonts_intervention_v2_about_flag =
+      command_line.GetSwitchValueASCII(switches::kEnableWebFontsInterventionV2);
+  if (!webfonts_intervention_v2_about_flag.empty()) {
+    WebRuntimeFeatures::enableWebFontsInterventionV2With2G(
+        webfonts_intervention_v2_about_flag.compare(
+            switches::kEnableWebFontsInterventionV2SwitchValueEnabledWith2G) ==
+        0);
+    WebRuntimeFeatures::enableWebFontsInterventionV2WithSlow2G(
+        webfonts_intervention_v2_about_flag.compare(
+            switches::
+                kEnableWebFontsInterventionV2SwitchValueEnabledWithSlow2G) ==
+        0);
+  } else {
+    WebRuntimeFeatures::enableWebFontsInterventionV2With2G(base::StartsWith(
+        webfonts_intervention_v2_group_name,
+        switches::kEnableWebFontsInterventionV2SwitchValueEnabledWith2G,
+        base::CompareCase::INSENSITIVE_ASCII));
+    WebRuntimeFeatures::enableWebFontsInterventionV2WithSlow2G(base::StartsWith(
+        webfonts_intervention_v2_group_name,
+        switches::kEnableWebFontsInterventionV2SwitchValueEnabledWithSlow2G,
+        base::CompareCase::INSENSITIVE_ASCII));
+  }
+  if (command_line.HasSwitch(switches::kEnableWebFontsInterventionTrigger))
+    WebRuntimeFeatures::enableWebFontsInterventionTrigger(true);
 
 /// TODO: Fix this
 //  if (base::FeatureList::IsEnabled(features::kScrollAnchoring))
@@ -188,9 +228,34 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableSlimmingPaintV2))
     WebRuntimeFeatures::enableSlimmingPaintV2(true);
 
-/// TODO: Fix this
-//  if (base::FeatureList::IsEnabled(features::kRenderingPipelineThrottling))
-//    WebRuntimeFeatures::enableRenderingPipelineThrottling(true);
+  // Note that it might already by true for OS_ANDROID, above.  This is for
+  // non-android versions.
+  if (base::FeatureList::IsEnabled(features::kNewMediaPlaybackUi))
+    WebRuntimeFeatures::enableNewMediaPlaybackUi(true);
+
+  if (base::FeatureList::IsEnabled(features::kDocumentWriteEvaluator))
+    WebRuntimeFeatures::enableDocumentWriteEvaluator(true);
+
+  WebRuntimeFeatures::enableMediaDocumentDownloadButton(
+      base::FeatureList::IsEnabled(features::kMediaDocumentDownloadButton));
+
+  if (base::FeatureList::IsEnabled(features::kPointerEvents))
+    WebRuntimeFeatures::enableFeatureFromString("PointerEvent", true);
+
+  WebRuntimeFeatures::enableFeatureFromString(
+      "FontCacheScaling",
+      base::FeatureList::IsEnabled(features::kFontCacheScaling));
+
+  if (!base::FeatureList::IsEnabled(features::kPaintOptimizations))
+    WebRuntimeFeatures::enableFeatureFromString("PaintOptimizations", false);
+
+  if (base::FeatureList::IsEnabled(features::kParseHTMLOnMainThread))
+    WebRuntimeFeatures::enableFeatureFromString("ParseHTMLOnMainThread", true);
+
+#if defined(OS_ANDROID)
+  WebRuntimeFeatures::enablePaymentRequest(
+      base::FeatureList::IsEnabled(features::kWebPayments));
+#endif
 
   // Enable explicitly enabled features, and then disable explicitly disabled
   // ones.

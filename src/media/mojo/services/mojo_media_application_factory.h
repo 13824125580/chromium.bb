@@ -5,13 +5,17 @@
 #ifndef MEDIA_MOJO_SERVICES_MOJO_MEDIA_APPLICATION_FACTORY_H_
 #define MEDIA_MOJO_SERVICES_MOJO_MEDIA_APPLICATION_FACTORY_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "mojo/shell/public/cpp/shell_client.h"
+#include <memory>
+
+#include "base/callback_forward.h"
+#include "media/mojo/services/media_mojo_export.h"
+#include "services/shell/public/cpp/shell_client.h"
 
 namespace media {
 
 // Creates a MojoMediaApplication instance using the default MojoMediaClient.
-scoped_ptr<mojo::ShellClient> CreateMojoMediaApplication();
+std::unique_ptr<shell::ShellClient> MEDIA_MOJO_EXPORT
+CreateMojoMediaApplication(const base::Closure& quit_closure);
 
 }  // namespace media
 

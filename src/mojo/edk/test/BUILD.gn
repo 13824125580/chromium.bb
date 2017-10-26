@@ -9,8 +9,6 @@ source_set("test_support") {
   sources = [
     "mojo_test_base.cc",
     "mojo_test_base.h",
-    "multiprocess_test_helper.cc",
-    "multiprocess_test_helper.h",
     "scoped_ipc_support.cc",
     "scoped_ipc_support.h",
     "test_utils.h",
@@ -18,12 +16,21 @@ source_set("test_support") {
     "test_utils_win.cc",
   ]
 
+  if (!is_ios) {
+    sources += [
+      "multiprocess_test_helper.cc",
+      "multiprocess_test_helper.h",
+    ]
+  }
+
   deps = [
     "//base",
-    "//base/test:test_support",
     "//mojo/edk/system",
     "//mojo/public/cpp/system",
-    "//testing/gtest",
+
+    # blpwtk2: Remove test-only code
+#    "//testing/gtest",
+#    "//base/test:test_support",
   ]
 }
 
@@ -37,10 +44,12 @@ source_set("run_all_unittests") {
     ":test_support",
     ":test_support_impl",
     "//base",
-    "//base/test:test_support",
     "//mojo/edk/system",
     "//mojo/public/c/test_support",
-    "//testing/gtest",
+
+    # blpwtk2: Remove test-only code
+#    "//testing/gtest",
+#    "//base/test:test_support",
   ]
 
   if (is_linux && !is_component_build) {
@@ -92,10 +101,16 @@ group("public_tests") {
   testonly = true
   deps = [
     ":mojo_public_bindings_unittests",
-    ":mojo_public_environment_unittests",
     ":mojo_public_system_perftests",
     ":mojo_public_system_unittests",
-    ":mojo_public_utility_unittests",
+  ]
+}
+
+test("mojo_public_bindings_perftests") {
+  deps = [
+    ":run_all_perftests",
+    "//mojo/edk/test:test_support",
+    "//mojo/public/cpp/bindings/tests:perftests",
   ]
 }
 
@@ -104,13 +119,6 @@ test("mojo_public_bindings_unittests") {
     ":run_all_unittests",
     "//mojo/edk/test:test_support",
     "//mojo/public/cpp/bindings/tests",
-  ]
-}
-
-test("mojo_public_environment_unittests") {
-  deps = [
-    ":run_all_unittests",
-    "//mojo/public/cpp/environment/tests",
   ]
 }
 
@@ -125,12 +133,5 @@ test("mojo_public_system_unittests") {
   deps = [
     ":run_all_unittests",
     "//mojo/public/cpp/system/tests",
-  ]
-}
-
-test("mojo_public_utility_unittests") {
-  deps = [
-    ":run_all_unittests",
-    "//mojo/public/cpp/utility/tests",
   ]
 }

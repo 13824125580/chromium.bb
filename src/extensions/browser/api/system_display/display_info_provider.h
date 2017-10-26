@@ -11,9 +11,8 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 
-namespace gfx {
+namespace display {
 class Display;
 }
 
@@ -21,16 +20,18 @@ namespace extensions {
 
 namespace api {
 namespace system_display {
+struct DisplayLayout;
 struct DisplayProperties;
 struct DisplayUnitInfo;
+struct Insets;
 }
 }
-
-typedef std::vector<linked_ptr<api::system_display::DisplayUnitInfo>>
-    DisplayInfo;
 
 class DisplayInfoProvider {
  public:
+  using DisplayUnitInfoList = std::vector<api::system_display::DisplayUnitInfo>;
+  using DisplayLayoutList = std::vector<api::system_display::DisplayLayout>;
+
   virtual ~DisplayInfoProvider();
 
   // Returns a pointer to DisplayInfoProvider or NULL if Create()
@@ -48,19 +49,35 @@ class DisplayInfoProvider {
                        const api::system_display::DisplayProperties& info,
                        std::string* error) = 0;
 
-  // Enable the unified desktop feature.
+  // Implements SetDisplayLayout methods. See system_display.idl. Returns
+  // false if the layout input is invalid.
+  virtual bool SetDisplayLayout(const DisplayLayoutList& layouts);
+
+  // Enables the unified desktop feature.
   virtual void EnableUnifiedDesktop(bool enable);
 
-  // Get display information.
-  virtual DisplayInfo GetAllDisplaysInfo();
+  // Gets display information.
+  virtual DisplayUnitInfoList GetAllDisplaysInfo();
+
+  // Gets display layout information.
+  virtual DisplayLayoutList GetDisplayLayout();
+
+  // Implements overscan calbiration methods. See system_display.idl. These
+  // return false if |id| is invalid.
+  virtual bool OverscanCalibrationStart(const std::string& id);
+  virtual bool OverscanCalibrationAdjust(
+      const std::string& id,
+      const api::system_display::Insets& delta);
+  virtual bool OverscanCalibrationReset(const std::string& id);
+  virtual bool OverscanCalibrationComplete(const std::string& id);
 
  protected:
   DisplayInfoProvider();
 
-  // Create a DisplayUnitInfo from a gfx::Display for implementations of
+  // Create a DisplayUnitInfo from a display::Display for implementations of
   // GetAllDisplaysInfo()
-  static api::system_display::DisplayUnitInfo* CreateDisplayUnitInfo(
-      const gfx::Display& display,
+  static api::system_display::DisplayUnitInfo CreateDisplayUnitInfo(
+      const display::Display& display,
       int64_t primary_display_id);
 
  private:
@@ -69,7 +86,7 @@ class DisplayInfoProvider {
   // Update the content of the |unit| obtained for |display| using
   // platform specific method.
   virtual void UpdateDisplayUnitInfoForPlatform(
-      const gfx::Display& display,
+      const display::Display& display,
       api::system_display::DisplayUnitInfo* unit) = 0;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayInfoProvider);

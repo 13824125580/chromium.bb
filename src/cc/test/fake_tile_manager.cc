@@ -11,83 +11,51 @@
 #include <limits>
 
 #include "base/lazy_instance.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/raster/raster_buffer.h"
-#include "cc/raster/tile_task_runner.h"
+#include "cc/test/fake_tile_task_manager.h"
+#include "cc/trees/layer_tree_settings.h"
 
 namespace cc {
 
 namespace {
 
-class FakeTileTaskRunnerImpl : public TileTaskRunner, public TileTaskClient {
- public:
-  // Overridden from TileTaskRunner:
-  void Shutdown() override {}
-  void ScheduleTasks(TaskGraph* graph) override {
-    for (const auto& node : graph->nodes) {
-      RasterTask* task = static_cast<RasterTask*>(node.task);
+base::LazyInstance<FakeTileTaskManagerImpl> g_fake_tile_task_manager =
+    LAZY_INSTANCE_INITIALIZER;
 
-      task->WillSchedule();
-      task->ScheduleOnOriginThread(this);
-      task->DidSchedule();
-
-      completed_tasks_.push_back(task);
-    }
-  }
-  void CheckForCompletedTasks() override {
-    for (RasterTask::Vector::iterator it = completed_tasks_.begin();
-         it != completed_tasks_.end();
-         ++it) {
-      RasterTask* task = it->get();
-
-      task->WillComplete();
-      task->CompleteOnOriginThread(this);
-      task->DidComplete();
-    }
-    completed_tasks_.clear();
-  }
-  ResourceFormat GetResourceFormat(bool must_support_alpha) const override {
-    return RGBA_8888;
-  }
-  bool GetResourceRequiresSwizzle(bool must_support_alpha) const override {
-    return !PlatformColor::SameComponentOrder(
-        GetResourceFormat(must_support_alpha));
-  }
-
-  // Overridden from TileTaskClient:
-  scoped_ptr<RasterBuffer> AcquireBufferForRaster(
-      const Resource* resource,
-      uint64_t resource_content_id,
-      uint64_t previous_content_id) override {
-    return nullptr;
-  }
-  void ReleaseBufferForRaster(scoped_ptr<RasterBuffer> buffer) override {}
-
- private:
-  RasterTask::Vector completed_tasks_;
-};
-base::LazyInstance<FakeTileTaskRunnerImpl> g_fake_tile_task_runner =
+base::LazyInstance<FakeRasterBufferProviderImpl> g_fake_raster_buffer_provider =
     LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
 FakeTileManager::FakeTileManager(TileManagerClient* client)
     : TileManager(client,
-                  base::ThreadTaskRunnerHandle::Get(),
+                  base::ThreadTaskRunnerHandle::Get().get(),
                   std::numeric_limits<size_t>::max(),
-                  false /* use_partial_raster */) {
-  SetResources(nullptr, g_fake_tile_task_runner.Pointer(),
-               std::numeric_limits<size_t>::max(),
-               false /* use_gpu_rasterization */);
+                  false /* use_partial_raster */,
+                  LayerTreeSettings().max_preraster_distance_in_screen_pixels),
+      image_decode_controller_(
+          ResourceFormat::RGBA_8888,
+          LayerTreeSettings().software_decoded_image_budget_bytes) {
+  SetResources(
+      nullptr, &image_decode_controller_, g_fake_tile_task_manager.Pointer(),
+      g_fake_raster_buffer_provider.Pointer(),
+      std::numeric_limits<size_t>::max(), false /* use_gpu_rasterization */);
 }
 
 FakeTileManager::FakeTileManager(TileManagerClient* client,
                                  ResourcePool* resource_pool)
     : TileManager(client,
-                  base::ThreadTaskRunnerHandle::Get(),
+                  base::ThreadTaskRunnerHandle::Get().get(),
                   std::numeric_limits<size_t>::max(),
-                  false /* use_partial_raster */) {
-  SetResources(resource_pool, g_fake_tile_task_runner.Pointer(),
+                  false /* use_partial_raster */,
+                  LayerTreeSettings().max_preraster_distance_in_screen_pixels),
+      image_decode_controller_(
+          ResourceFormat::RGBA_8888,
+          LayerTreeSettings().software_decoded_image_budget_bytes) {
+  SetResources(resource_pool, &image_decode_controller_,
+               g_fake_tile_task_manager.Pointer(),
+               g_fake_raster_buffer_provider.Pointer(),
                std::numeric_limits<size_t>::max(),
                false /* use_gpu_rasterization */);
 }

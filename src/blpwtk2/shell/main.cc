@@ -52,8 +52,6 @@ bool g_no_disk_cookies = false;
 bool g_in_process_renderer = false;
 bool g_custom_hit_test = false;
 bool g_custom_tooltip = false;
-bool g_no_plugin_discovery = false;
-bool g_disable_work_message_while_doing_work = false;
 bool g_in_thread_renderer = false;
 HANDLE g_hJob;
 
@@ -62,7 +60,6 @@ HANDLE g_hJob;
 #define FIND_ENTRY_WIDTH (BUTTON_WIDTH*6/4)
 #define FIND_BUTTON_WIDTH (BUTTON_WIDTH/4)
 #define URLBAR_HEIGHT  24
-//#define AUTO_PUMP 1
 
 // control ids
 enum {
@@ -725,7 +722,7 @@ public:
         ofn.lpstrTitle = title.c_str();
         ofn.Flags = OFN_EXPLORER | OFN_LONGNAMES | OFN_NOCHANGEDIR;
 
-        BOOL retVal;
+        BOOL retVal = FALSE;
         switch (params.mode()) {
         case blpwtk2::FileChooserParams::OPEN:
             ofn.Flags |= OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -981,12 +978,6 @@ std::set<Shell*> Shell::s_shells;
 void runMessageLoop()
 {
     MSG msg;
-#if AUTO_PUMP
-    while (GetMessage(&msg, NULL, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-#else
     while (GetMessage(&msg, NULL, 0, 0) > 0) {
         if (!g_toolkit->preHandleMessage(&msg)) {
             TranslateMessage(&msg);
@@ -994,7 +985,6 @@ void runMessageLoop()
         }
         g_toolkit->postHandleMessage(&msg);
     }
-#endif
 }
 
 struct HostWatcherThreadData {
@@ -1049,12 +1039,7 @@ HANDLE spawnProcess()
     if (g_custom_tooltip) {
         cmdline.append(" --custom-tooltip");
     }
-    if (g_no_plugin_discovery) {
-        cmdline.append(" --no-plugin-discovery");
-    }
-    if (g_disable_work_message_while_doing_work) {
-        cmdline.append(" --disable-work-message-while-doing-work");
-    }
+
     for (size_t i = 0; i < g_sideLoadedFonts.size(); ++i) {
         cmdline.append(" --sideload-font=");
         cmdline.append(g_sideLoadedFonts[i]);
@@ -1095,7 +1080,7 @@ HANDLE spawnProcess()
         char buf[1024];
         sprintf_s(buf, sizeof(buf), "AssignProcessToJobObject failed: %d\n", lastError);
         OutputDebugStringA(buf);
-        ::TerminateProcess(procInfo.hProcess, -1);
+        ::TerminateProcess(procInfo.hProcess, 1);
         return NULL;
     }
 
@@ -1248,12 +1233,6 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
             else if (0 == wcscmp(L"--custom-tooltip", argv[i])) {
                 g_custom_tooltip = true;
             }
-            else if (0 == wcscmp(L"--no-plugin-discovery", argv[i])) {
-                g_no_plugin_discovery = true;
-            }
-            else if (0 == wcscmp(L"--disable-work-message-while-doing-work", argv[i])) {
-                g_disable_work_message_while_doing_work = true;
-            }
             else if (argv[i][0] != '-') {
                 char buf[1024];
                 sprintf_s(buf, sizeof(buf), "%S", argv[i]);
@@ -1288,18 +1267,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
     }
     else {
         toolkitParams.setThreadMode(blpwtk2::ThreadMode::ORIGINAL);
-    }
-
-#if AUTO_PUMP
-    toolkitParams.setPumpMode(blpwtk2::PumpMode::AUTOMATIC);
-#endif
-
-    if (g_no_plugin_discovery) {
-        toolkitParams.disablePluginDiscovery();
-    }
-
-    if (g_disable_work_message_while_doing_work) {
-        toolkitParams.disableWorkMessageWhileDoingWork();
+        toolkitParams.disableInProcessRenderer();
     }
 
     for (size_t i = 0; i < g_sideLoadedFonts.size(); ++i) {

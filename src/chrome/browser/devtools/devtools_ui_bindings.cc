@@ -5,10 +5,13 @@
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
 
 #include <stddef.h>
+
 #include <utility>
 
+#include "base/base64.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/json/string_escape.h"
 #include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
@@ -38,7 +41,7 @@
 #include "components/infobars/core/infobar.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/ui/zoom/page_zoom.h"
+#include "components/zoom/page_zoom.h"
 #include "content/public/browser/devtools_external_agent_proxy.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
 #include "content/public/browser/invalidate_type.h"
@@ -199,6 +202,7 @@ class DefaultBindingsDelegate : public DevToolsUIBindings::Delegate {
 
   void InspectedContentsClosing() override;
   void OnLoadCompleted() override {}
+  void ReadyForTest() override {}
   InfoBarService* GetInfoBarService() override;
   void RenderProcessGone(bool crashed) override {}
 
@@ -264,15 +268,22 @@ int ResponseWriter::Initialize(const net::CompletionCallback& callback) {
 int ResponseWriter::Write(net::IOBuffer* buffer,
                           int num_bytes,
                           const net::CompletionCallback& callback) {
+  std::string chunk = std::string(buffer->data(), num_bytes);
+  bool encoded = false;
+  if (!base::IsStringUTF8(chunk)) {
+    encoded = true;
+    base::Base64Encode(chunk, &chunk);
+  }
+
   base::FundamentalValue* id = new base::FundamentalValue(stream_id_);
-  base::StringValue* chunk =
-      new base::StringValue(std::string(buffer->data(), num_bytes));
+  base::StringValue* chunkValue = new base::StringValue(chunk);
+  base::FundamentalValue* encodedValue = new base::FundamentalValue(encoded);
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&DevToolsUIBindings::CallClientFunction,
-                 bindings_, "DevToolsAPI.streamWrite",
-                 base::Owned(id), base::Owned(chunk), nullptr));
+      base::Bind(&DevToolsUIBindings::CallClientFunction, bindings_,
+                 "DevToolsAPI.streamWrite", base::Owned(id),
+                 base::Owned(chunkValue), base::Owned(encodedValue)));
   return num_bytes;
 }
 
@@ -364,120 +375,6 @@ void DevToolsUIBindings::FrontendWebContentsObserver::
   devtools_bindings_->DidNavigateMainFrame();
 }
 
-// WebSocketAPIChannel --------------------------------------------------------
-
-class WebSocketAPIChannel :
-    public content::DevToolsExternalAgentProxyDelegate {
- public :
-  WebSocketAPIChannel();
-  ~WebSocketAPIChannel() override;
-  void DispatchOnClientHost(const std::string& message);
-  void ConnectionClosed();
-  void AttachedToBindings(DevToolsUIBindings* bindings);
-
- private:
-  // content::DevToolsExternalAgentProxyDelegate implementation.
-  void Attach(content::DevToolsExternalAgentProxy* proxy) override;
-  void Detach() override;
-  void SendMessageToBackend(const std::string& message) override;
-
-  std::set<std::string> suggested_folders_;
-  content::DevToolsExternalAgentProxy* attached_proxy_;
-  DISALLOW_COPY_AND_ASSIGN(WebSocketAPIChannel);
-};
-
-// static
-WebSocketAPIChannel* g_web_socket_api_channel = nullptr;
-
-WebSocketAPIChannel::WebSocketAPIChannel()
-    : attached_proxy_(nullptr) {
-  CHECK(!g_web_socket_api_channel);
-  g_web_socket_api_channel = this;
-}
-
-WebSocketAPIChannel::~WebSocketAPIChannel() {
-  g_web_socket_api_channel = nullptr;
-}
-
-void WebSocketAPIChannel::DispatchOnClientHost(
-    const std::string& message) {
-  if (attached_proxy_)
-    attached_proxy_->DispatchOnClientHost(message);
-}
-
-void WebSocketAPIChannel::ConnectionClosed() {
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer()) {
-    bindings->CallClientFunction("DevToolsAPI.frontendAPIDetached",
-                                 nullptr, nullptr, nullptr);
-  }
-  if (attached_proxy_)
-    attached_proxy_->ConnectionClosed();
-}
-
-void WebSocketAPIChannel::AttachedToBindings(DevToolsUIBindings* bindings) {
-  bindings->CallClientFunction("DevToolsAPI.frontendAPIAttached",
-                               nullptr, nullptr, nullptr);
-}
-
-void WebSocketAPIChannel::Attach(
-    content::DevToolsExternalAgentProxy* proxy) {
-  attached_proxy_ = proxy;
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer())
-    AttachedToBindings(bindings);
-}
-
-void WebSocketAPIChannel::Detach() {
-  attached_proxy_ = nullptr;
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer()) {
-    bindings->CallClientFunction("DevToolsAPI.frontendAPIDetached",
-                                 nullptr, nullptr, nullptr);
-  }
-}
-
-void WebSocketAPIChannel::SendMessageToBackend(
-    const std::string& message) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(message);
-  if (!value || !value->IsType(base::Value::TYPE_DICTIONARY))
-    return;
-
-  int id = 0;
-  std::string method;
-  base::DictionaryValue* params = nullptr;
-  if (!DevToolsProtocol::ParseCommand(
-      static_cast<base::DictionaryValue*>(value.get()), &id, &method, &params))
-    return;
-
-  if (method == "Frontend.addFileSystem") {
-    base::ListValue* list;
-    params->GetList("paths", &list);
-    for (size_t i = 0; list && i < list->GetSize(); ++i) {
-      std::string path;
-      if (!list->GetString(i, &path))
-        continue;
-      if (suggested_folders_.find(path) != suggested_folders_.end())
-        continue;
-      suggested_folders_.insert(path);
-
-      // All bindings are synchronized via preferences, only add once.
-      DCHECK(!g_instances.Pointer()->empty());
-      (*g_instances.Pointer())[0]->AddFileSystem(path);
-    }
-    scoped_ptr<base::DictionaryValue> response =
-        DevToolsProtocol::CreateSuccessResponse(id, nullptr);
-    std::string response_message;
-    base::JSONWriter::Write(*response.get(), &response_message);
-    attached_proxy_->DispatchOnClientHost(response_message);
-    return;
-  }
-
-  // Handle rest of the commands on the front-end.
-  base::StringValue message_value(message);
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer()) {
-    bindings->CallClientFunction("DevToolsAPI.dispatchFrontendAPIMessage",
-                                 &message_value, nullptr, nullptr);
-  }
-}
-
 // DevToolsUIBindings ---------------------------------------------------------
 
 DevToolsUIBindings* DevToolsUIBindings::ForWebContents(
@@ -526,7 +423,7 @@ DevToolsUIBindings::~DevToolsUIBindings() {
     delete pair.first;
 
   if (agent_host_.get())
-    agent_host_->DetachClient();
+    agent_host_->DetachClient(this);
 
   for (IndexingJobsMap::const_iterator jobs_it(indexing_jobs_.begin());
        jobs_it != indexing_jobs_.end(); ++jobs_it) {
@@ -541,9 +438,6 @@ DevToolsUIBindings::~DevToolsUIBindings() {
       std::find(instances->begin(), instances->end(), this));
   DCHECK(it != instances->end());
   instances->erase(it);
-
-  if (instances->empty() && g_web_socket_api_channel)
-    g_web_socket_api_channel->ConnectionClosed();
 }
 
 // content::DevToolsFrontendHost::Delegate implementation ---------------------
@@ -554,7 +448,7 @@ void DevToolsUIBindings::HandleMessageFromDevToolsFrontend(
   base::ListValue* params = &empty_params;
 
   base::DictionaryValue* dict = NULL;
-  scoped_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
   if (!parsed_message ||
       !parsed_message->GetAsDictionary(&dict) ||
       !dict->GetString(kFrontendHostMethod, &method) ||
@@ -579,8 +473,10 @@ void DevToolsUIBindings::DispatchProtocolMessage(
   DCHECK(agent_host == agent_host_.get());
 
   if (message.length() < kMaxMessageChunkSize) {
-    base::string16 javascript = base::UTF8ToUTF16(
-        "DevToolsAPI.dispatchMessage(" + message + ");");
+    std::string param;
+    base::EscapeJSONString(message, true, &param);
+    base::string16 javascript =
+        base::UTF8ToUTF16("DevToolsAPI.dispatchMessage(" + param + ");");
     web_contents_->GetMainFrame()->ExecuteJavaScript(javascript);
     return;
   }
@@ -662,8 +558,9 @@ void DevToolsUIBindings::LoadNetworkResource(const DispatchCallback& callback,
   pending_requests_[fetcher] = callback;
   fetcher->SetRequestContext(profile_->GetRequestContext());
   fetcher->SetExtraRequestHeaders(headers);
-  fetcher->SaveResponseWithWriter(scoped_ptr<net::URLFetcherResponseWriter>(
-      new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
+  fetcher->SaveResponseWithWriter(
+      std::unique_ptr<net::URLFetcherResponseWriter>(
+          new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
   fetcher->Start();
 }
 
@@ -782,15 +679,15 @@ void DevToolsUIBindings::SetWhitelistedShortcuts(const std::string& message) {
 }
 
 void DevToolsUIBindings::ZoomIn() {
-  ui_zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_IN);
+  zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_IN);
 }
 
 void DevToolsUIBindings::ZoomOut() {
-  ui_zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_OUT);
+  zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_OUT);
 }
 
 void DevToolsUIBindings::ResetZoom() {
-  ui_zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_RESET);
+  zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_RESET);
 }
 
 void DevToolsUIBindings::SetDevicesDiscoveryConfig(
@@ -798,7 +695,7 @@ void DevToolsUIBindings::SetDevicesDiscoveryConfig(
     bool port_forwarding_enabled,
     const std::string& port_forwarding_config) {
   base::DictionaryValue* config_dict = nullptr;
-  scoped_ptr<base::Value> parsed_config =
+  std::unique_ptr<base::Value> parsed_config =
       base::JSONReader::Read(port_forwarding_config);
   if (!parsed_config || !parsed_config->GetAsDictionary(&config_dict))
     return;
@@ -908,10 +805,14 @@ void DevToolsUIBindings::ClearPreferences() {
   update.Get()->Clear();
 }
 
+void DevToolsUIBindings::ReadyForTest() {
+  delegate_->ReadyForTest();
+}
+
 void DevToolsUIBindings::DispatchProtocolMessageFromDevToolsFrontend(
     const std::string& message) {
   if (agent_host_.get())
-    agent_host_->DispatchProtocolMessage(message);
+    agent_host_->DispatchProtocolMessage(this, message);
 }
 
 void DevToolsUIBindings::RecordEnumeratedHistogram(const std::string& name,
@@ -944,13 +845,6 @@ void DevToolsUIBindings::SendJsonRequest(const DispatchCallback& callback,
       base::Bind(&DevToolsUIBindings::JsonReceived,
                  weak_factory_.GetWeakPtr(),
                  callback));
-}
-
-void DevToolsUIBindings::SendFrontendAPINotification(
-    const std::string& message) {
-  if (!g_web_socket_api_channel)
-    return;
-  g_web_socket_api_channel->DispatchOnClientHost(message);
 }
 
 void DevToolsUIBindings::JsonReceived(const DispatchCallback& callback,
@@ -1018,7 +912,7 @@ void DevToolsUIBindings::AppendedTo(const std::string& url) {
 
 void DevToolsUIBindings::FileSystemAdded(
     const DevToolsFileHelper::FileSystem& file_system) {
-  scoped_ptr<base::DictionaryValue> file_system_value(
+  std::unique_ptr<base::DictionaryValue> file_system_value(
       CreateFileSystemValue(file_system));
   CallClientFunction("DevToolsAPI.fileSystemAdded",
                      file_system_value.get(), NULL, NULL);
@@ -1097,7 +991,7 @@ void DevToolsUIBindings::ShowDevToolsConfirmInfoBar(
     callback.Run(false);
     return;
   }
-  scoped_ptr<DevToolsConfirmInfoBarDelegate> delegate(
+  std::unique_ptr<DevToolsConfirmInfoBarDelegate> delegate(
       new DevToolsConfirmInfoBarDelegate(callback, message));
   GlobalConfirmInfoBar::Show(std::move(delegate));
 }
@@ -1114,7 +1008,8 @@ void DevToolsUIBindings::AddDevToolsExtensionsToClient() {
     if (extensions::chrome_manifest_urls::GetDevToolsPage(extension.get())
             .is_empty())
       continue;
-    base::DictionaryValue* extension_info = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> extension_info(
+        new base::DictionaryValue());
     extension_info->Set(
         "startPage",
         new base::StringValue(extensions::chrome_manifest_urls::GetDevToolsPage(
@@ -1124,7 +1019,7 @@ void DevToolsUIBindings::AddDevToolsExtensionsToClient() {
                         new base::FundamentalValue(
                             extension->permissions_data()->HasAPIPermission(
                                 extensions::APIPermission::kExperimental)));
-    results.Append(extension_info);
+    results.Append(std::move(extension_info));
   }
   CallClientFunction("DevToolsAPI.addExtensions",
                      &results, NULL, NULL);
@@ -1139,7 +1034,9 @@ void DevToolsUIBindings::AttachTo(
   if (agent_host_.get())
     Detach();
   agent_host_ = agent_host;
-  agent_host_->AttachClient(this);
+  // DevToolsUIBindings terminates existing debugging connections and starts
+  // debugging.
+  agent_host_->ForceAttachClient(this);
 }
 
 void DevToolsUIBindings::Reattach() {
@@ -1149,22 +1046,12 @@ void DevToolsUIBindings::Reattach() {
 
 void DevToolsUIBindings::Detach() {
   if (agent_host_.get())
-    agent_host_->DetachClient();
+    agent_host_->DetachClient(this);
   agent_host_ = NULL;
 }
 
 bool DevToolsUIBindings::IsAttachedTo(content::DevToolsAgentHost* agent_host) {
   return agent_host_.get() == agent_host;
-}
-
-// static
-content::DevToolsExternalAgentProxyDelegate*
-DevToolsUIBindings::CreateWebSocketAPIChannel() {
-  if (g_web_socket_api_channel)
-    g_web_socket_api_channel->ConnectionClosed();
-  if (!g_instances.Pointer()->empty())
-    g_web_socket_api_channel = new WebSocketAPIChannel();
-  return g_web_socket_api_channel;
 }
 
 void DevToolsUIBindings::CallClientFunction(const std::string& function_name,
@@ -1194,7 +1081,7 @@ void DevToolsUIBindings::DocumentAvailableInMainFrame() {
   if (!reattaching_)
     return;
   reattaching_ = false;
-  agent_host_->DetachClient();
+  agent_host_->DetachClient(this);
   agent_host_->AttachClient(this);
 }
 
@@ -1220,6 +1107,4 @@ void DevToolsUIBindings::FrontendLoaded() {
   delegate_->OnLoadCompleted();
 
   AddDevToolsExtensionsToClient();
-  if (g_web_socket_api_channel)
-    g_web_socket_api_channel->AttachedToBindings(this);
 }

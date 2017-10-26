@@ -37,7 +37,7 @@
 
 namespace blink {
 
-SVGAngleTearOff::SVGAngleTearOff(PassRefPtrWillBeRawPtr<SVGAngle> targetProperty, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName)
+SVGAngleTearOff::SVGAngleTearOff(SVGAngle* targetProperty, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName)
     : SVGPropertyTearOff<SVGAngle>(targetProperty, contextElement, propertyIsAnimVal, attributeName)
 {
 }
@@ -126,6 +126,11 @@ void SVGAngleTearOff::setValueAsString(const String& value, ExceptionState& exce
     }
 
     commitChange();
+}
+
+DEFINE_TRACE_WRAPPERS(SVGAngleTearOff)
+{
+    visitor->traceWrappers(contextElement());
 }
 
 } // namespace blink

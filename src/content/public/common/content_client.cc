@@ -64,7 +64,6 @@ ContentUtilityClient* SetUtilityClientForTesting(ContentUtilityClient* u) {
 ContentClient::ContentClient()
     : browser_(NULL),
       gpu_(NULL),
-      plugin_(NULL),
       renderer_(NULL),
       utility_(NULL) {}
 
@@ -93,9 +92,9 @@ base::StringPiece ContentClient::GetDataResource(
   return base::StringPiece();
 }
 
-base::RefCountedStaticMemory* ContentClient::GetDataResourceBytes(
+base::RefCountedMemory* ContentClient::GetDataResourceBytes(
     int resource_id) const {
-  return NULL;
+  return nullptr;
 }
 
 gfx::Image& ContentClient::GetNativeImageNamed(int resource_id) const {
@@ -108,7 +107,7 @@ std::string ContentClient::GetProcessTypeNameInEnglish(int type) {
   return std::string();
 }
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MACOSX)
 bool ContentClient::GetSandboxProfileForSandboxType(
     int sandbox_type,
     int* sandbox_profile_resource_id) const {
@@ -119,5 +118,24 @@ bool ContentClient::GetSandboxProfileForSandboxType(
 bool ContentClient::IsSupplementarySiteIsolationModeEnabled() {
   return false;
 }
+
+OriginTrialPolicy* ContentClient::GetOriginTrialPolicy() {
+  return nullptr;
+}
+
+bool ContentClient::AllowScriptExtensionForServiceWorker(
+    const GURL& script_url) {
+  return false;
+}
+
+#if defined(OS_ANDROID)
+bool ContentClient::UsingSynchronousCompositing() {
+  return false;
+}
+
+media::MediaClientAndroid* ContentClient::GetMediaClientAndroid() {
+  return nullptr;
+}
+#endif  // OS_ANDROID
 
 }  // namespace content

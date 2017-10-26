@@ -7,12 +7,14 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
 #include "content/renderer/pepper/fullscreen_container.h"
 #include "content/renderer/render_widget_fullscreen.h"
 #include "third_party/WebKit/public/web/WebWidget.h"
+#include "url/gurl.h"
 
 namespace blink {
 class WebLayer;
@@ -39,7 +41,7 @@ class RenderWidgetFullscreenPepper : public RenderWidgetFullscreen,
   void InvalidateRect(const blink::WebRect& rect) override;
   void ScrollRect(int dx, int dy, const blink::WebRect& rect) override;
   void Destroy() override;
-  void DidChangeCursor(const blink::WebCursorInfo& cursor) override;
+  void PepperDidChangeCursor(const blink::WebCursorInfo& cursor) override;
   void SetLayer(blink::WebLayer* layer) override;
 
   // IPC::Listener implementation. This overrides the implementation
@@ -82,7 +84,7 @@ class RenderWidgetFullscreenPepper : public RenderWidgetFullscreen,
 
   blink::WebLayer* layer_;
 
-  scoped_ptr<MouseLockDispatcher> mouse_lock_dispatcher_;
+  std::unique_ptr<MouseLockDispatcher> mouse_lock_dispatcher_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetFullscreenPepper);
 };

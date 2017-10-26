@@ -4,15 +4,16 @@
 
 #include "chrome/browser/printing/print_view_manager_base.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -53,10 +54,6 @@ void ShowWarningMessageBox(const base::string16& message) {
     return;
   // Block opening dialog from nested task.
   base::AutoReset<bool> auto_reset(&is_dialog_shown, true);
-
-  // TODO(SHEZ): Replace this with a callback
-  // chrome::ShowMessageBox(nullptr, base::string16(), message,
-  //                        chrome::MESSAGE_BOX_TYPE_WARNING);
 }
 
 }  // namespace
@@ -150,7 +147,7 @@ void PrintViewManagerBase::OnDidPrintPage(
 #endif
 
   // Only used when |metafile_must_be_valid| is true.
-  scoped_ptr<base::SharedMemory> shared_buf;
+  std::unique_ptr<base::SharedMemory> shared_buf;
   if (metafile_must_be_valid) {
     if (!base::SharedMemory::IsHandleValid(params.metafile_data_handle)) {
       NOTREACHED() << "invalid memory handle";
@@ -172,7 +169,8 @@ void PrintViewManagerBase::OnDidPrintPage(
     }
   }
 
-  scoped_ptr<PdfMetafileSkia> metafile(new PdfMetafileSkia);
+  std::unique_ptr<PdfMetafileSkia> metafile(
+      new PdfMetafileSkia(PDF_SKIA_DOCUMENT_TYPE));
   if (metafile_must_be_valid) {
     if (!metafile->InitFromData(shared_buf->memory(), params.data_size)) {
       NOTREACHED() << "Invalid metafile header";
@@ -242,16 +240,8 @@ void PrintViewManagerBase::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_PRINT_JOB_EVENT: {
+  DCHECK_EQ(chrome::NOTIFICATION_PRINT_JOB_EVENT, type);
       OnNotifyPrintJobEvent(*content::Details<JobEventDetails>(details).ptr());
-      break;
-    }
-    default: {
-      NOTREACHED();
-      break;
-    }
-  }
 }
 
 void PrintViewManagerBase::OnNotifyPrintJobEvent(
@@ -463,7 +453,7 @@ bool PrintViewManagerBase::RunInnerMessageLoop() {
   {
     base::MessageLoop::ScopedNestableTaskAllower allow(
         base::MessageLoop::current());
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   bool success = true;

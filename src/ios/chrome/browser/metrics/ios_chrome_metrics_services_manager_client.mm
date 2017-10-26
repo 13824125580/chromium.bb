@@ -6,6 +6,8 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "components/metrics/enabled_state_provider.h"
 #include "components/metrics/metrics_state_manager.h"
 #include "components/prefs/pref_service.h"
 #include "components/rappor/rappor_service.h"
@@ -23,31 +25,43 @@ namespace {
 
 void PostStoreMetricsClientInfo(const metrics::ClientInfo& client_info) {}
 
-scoped_ptr<metrics::ClientInfo> LoadMetricsClientInfo() {
-  return scoped_ptr<metrics::ClientInfo>();
+std::unique_ptr<metrics::ClientInfo> LoadMetricsClientInfo() {
+  return std::unique_ptr<metrics::ClientInfo>();
 }
 
 }  // namespace
 
+class IOSChromeMetricsServicesManagerClient::IOSChromeEnabledStateProvider
+    : public metrics::EnabledStateProvider {
+ public:
+  IOSChromeEnabledStateProvider() {}
+  ~IOSChromeEnabledStateProvider() override {}
+
+  bool IsConsentGiven() override {
+    return IOSChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
+  }
+
+  DISALLOW_COPY_AND_ASSIGN(IOSChromeEnabledStateProvider);
+};
+
 IOSChromeMetricsServicesManagerClient::IOSChromeMetricsServicesManagerClient(
     PrefService* local_state)
-    : local_state_(local_state) {
+    : enabled_state_provider_(new IOSChromeEnabledStateProvider()),
+      local_state_(local_state) {
   DCHECK(local_state);
 }
 
 IOSChromeMetricsServicesManagerClient::
-    ~IOSChromeMetricsServicesManagerClient() {
-  ios::GetChromeBrowserProvider()->OnMetricsServicesManagerClientDestroyed();
-}
+    ~IOSChromeMetricsServicesManagerClient() = default;
 
-scoped_ptr<rappor::RapporService>
+std::unique_ptr<rappor::RapporService>
 IOSChromeMetricsServicesManagerClient::CreateRapporService() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return make_scoped_ptr(new rappor::RapporService(
+  return base::WrapUnique(new rappor::RapporService(
       local_state_, base::Bind(&::IsOffTheRecordSessionActive)));
 }
 
-scoped_ptr<variations::VariationsService>
+std::unique_ptr<variations::VariationsService>
 IOSChromeMetricsServicesManagerClient::CreateVariationsService() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -55,12 +69,12 @@ IOSChromeMetricsServicesManagerClient::CreateVariationsService() {
   // a dummy value for the name of the switch that disables background
   // networking.
   return variations::VariationsService::Create(
-      make_scoped_ptr(new IOSChromeVariationsServiceClient), local_state_,
+      base::WrapUnique(new IOSChromeVariationsServiceClient), local_state_,
       GetMetricsStateManager(), "dummy-disable-background-switch",
       ::CreateUIStringOverrider());
 }
 
-scoped_ptr<metrics::MetricsServiceClient>
+std::unique_ptr<metrics::MetricsServiceClient>
 IOSChromeMetricsServicesManagerClient::CreateMetricsServiceClient() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return IOSChromeMetricsServiceClient::Create(GetMetricsStateManager(),
@@ -79,7 +93,7 @@ bool IOSChromeMetricsServicesManagerClient::IsSafeBrowsingEnabled(
 }
 
 bool IOSChromeMetricsServicesManagerClient::IsMetricsReportingEnabled() {
-  return IOSChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
+  return enabled_state_provider_->IsReportingEnabled();
 }
 
 bool IOSChromeMetricsServicesManagerClient::OnlyDoMetricsRecording() {
@@ -92,8 +106,7 @@ IOSChromeMetricsServicesManagerClient::GetMetricsStateManager() {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!metrics_state_manager_) {
     metrics_state_manager_ = metrics::MetricsStateManager::Create(
-        local_state_, base::Bind(&IOSChromeMetricsServiceAccessor::
-                                     IsMetricsAndCrashReportingEnabled),
+        local_state_, enabled_state_provider_.get(),
         base::Bind(&PostStoreMetricsClientInfo),
         base::Bind(&LoadMetricsClientInfo));
   }

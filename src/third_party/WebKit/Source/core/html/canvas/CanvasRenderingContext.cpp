@@ -31,9 +31,24 @@
 
 namespace blink {
 
-CanvasRenderingContext::CanvasRenderingContext(HTMLCanvasElement* canvas)
+CanvasRenderingContext::CanvasRenderingContext(HTMLCanvasElement* canvas, OffscreenCanvas* offscreenCanvas)
     : m_canvas(canvas)
+    , m_offscreenCanvas(offscreenCanvas)
 {
+}
+
+void CanvasRenderingContext::dispose()
+{
+    // HTMLCanvasElement and CanvasRenderingContext have a circular reference.
+    // When the pair is no longer reachable, their destruction order is non-
+    // deterministic, so the first of the two to be destroyed needs to notify
+    // the other in order to break the circular reference.  This is to avoid
+    // an error when CanvasRenderingContext2D::didProcessTask() is invoked
+    // after the HTMLCanvasElement is destroyed.
+    if (canvas()) {
+        canvas()->detachContext();
+        m_canvas = nullptr;
+    }
 }
 
 CanvasRenderingContext::ContextType CanvasRenderingContext::contextTypeFromId(const String& id)
@@ -46,7 +61,7 @@ CanvasRenderingContext::ContextType CanvasRenderingContext::contextTypeFromId(co
         return ContextWebgl;
     if (id == "webgl2")
         return ContextWebgl2;
-    if (id == "imagebitmap" && RuntimeEnabledFeatures::experimentalCanvasFeaturesEnabled()) {
+    if (id == "bitmaprenderer" && RuntimeEnabledFeatures::experimentalCanvasFeaturesEnabled()) {
         return ContextImageBitmap;
     }
     return ContextTypeCount;
@@ -59,25 +74,26 @@ CanvasRenderingContext::ContextType CanvasRenderingContext::resolveContextTypeAl
     return type;
 }
 
-bool CanvasRenderingContext::wouldTaintOrigin(CanvasImageSource* imageSource)
+bool CanvasRenderingContext::wouldTaintOrigin(CanvasImageSource* imageSource, SecurityOrigin* destinationSecurityOrigin)
 {
     const KURL& sourceURL = imageSource->sourceURL();
     bool hasURL = (sourceURL.isValid() && !sourceURL.isAboutBlankURL());
 
     if (hasURL) {
-        if (sourceURL.protocolIsData() || m_cleanURLs.contains(sourceURL.string()))
+        if (sourceURL.protocolIsData() || m_cleanURLs.contains(sourceURL.getString()))
             return false;
-        if (m_dirtyURLs.contains(sourceURL.string()))
+        if (m_dirtyURLs.contains(sourceURL.getString()))
             return true;
     }
 
-    bool taintOrigin = imageSource->wouldTaintOrigin(canvas()->securityOrigin());
+    DCHECK_EQ(!canvas(), !!destinationSecurityOrigin); // Must have one or the other
+    bool taintOrigin = imageSource->wouldTaintOrigin(destinationSecurityOrigin ? destinationSecurityOrigin : canvas()->getSecurityOrigin());
 
     if (hasURL) {
         if (taintOrigin)
-            m_dirtyURLs.add(sourceURL.string());
+            m_dirtyURLs.add(sourceURL.getString());
         else
-            m_cleanURLs.add(sourceURL.string());
+            m_cleanURLs.add(sourceURL.getString());
     }
     return taintOrigin;
 }
@@ -85,6 +101,7 @@ bool CanvasRenderingContext::wouldTaintOrigin(CanvasImageSource* imageSource)
 DEFINE_TRACE(CanvasRenderingContext)
 {
     visitor->trace(m_canvas);
+    visitor->trace(m_offscreenCanvas);
 }
 
 } // namespace blink

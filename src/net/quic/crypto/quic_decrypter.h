@@ -42,6 +42,22 @@ class NET_EXPORT_PRIVATE QuicDecrypter {
   // packet number, even when retransmitting a lost packet.
   virtual bool SetNoncePrefix(base::StringPiece nonce_prefix) = 0;
 
+  // Sets the encryption key. Returns true on success, false on failure.
+  // |DecryptPacket| may not be called until |SetDiversificationNonce| is
+  // called and the preliminary keying material will be combined with that
+  // nonce in order to create the actual key and nonce-prefix.
+  //
+  // If this function is called, neither |SetKey| nor |SetNoncePrefix| may be
+  // called.
+  virtual bool SetPreliminaryKey(base::StringPiece key) = 0;
+
+  // SetDiversificationNonce uses |nonce| to derive final keys based on the
+  // input keying material given by calling |SetPreliminaryKey|.
+  //
+  // Calling this function is a no-op if |SetPreliminaryKey| hasn't been
+  // called.
+  virtual bool SetDiversificationNonce(DiversificationNonce nonce) = 0;
+
   // Populates |output| with the decrypted |ciphertext| and populates
   // |output_length| with the length.  Returns 0 if there is an error.
   // |output| size is specified by |max_output_length| and must be
@@ -52,8 +68,8 @@ class NET_EXPORT_PRIVATE QuicDecrypter {
   // to non-authentic inputs, as opposed to other reasons for failure.
   virtual bool DecryptPacket(QuicPathId path_id,
                              QuicPacketNumber packet_number,
-                             const base::StringPiece& associated_data,
-                             const base::StringPiece& ciphertext,
+                             base::StringPiece associated_data,
+                             base::StringPiece ciphertext,
                              char* output,
                              size_t* output_length,
                              size_t max_output_length) = 0;
@@ -67,6 +83,14 @@ class NET_EXPORT_PRIVATE QuicDecrypter {
   // For use by unit tests only.
   virtual base::StringPiece GetKey() const = 0;
   virtual base::StringPiece GetNoncePrefix() const = 0;
+
+  static void DiversifyPreliminaryKey(base::StringPiece preliminary_key,
+                                      base::StringPiece nonce_prefix,
+                                      DiversificationNonce nonce,
+                                      size_t key_size,
+                                      size_t nonce_prefix_size,
+                                      std::string* out_key,
+                                      std::string* out_nonce_prefix);
 };
 
 }  // namespace net

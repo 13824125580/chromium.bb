@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
@@ -22,7 +23,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process_handle.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "content/common/content_export.h"
 
@@ -43,7 +44,7 @@ class CONTENT_EXPORT HostDiscardableSharedMemoryManager
   static HostDiscardableSharedMemoryManager* current();
 
   // Overridden from base::DiscardableMemoryAllocator:
-  scoped_ptr<base::DiscardableMemory> AllocateLockedDiscardableMemory(
+  std::unique_ptr<base::DiscardableMemory> AllocateLockedDiscardableMemory(
       size_t size) override;
 
   // Overridden from base::trace_event::MemoryDumpProvider:
@@ -82,7 +83,7 @@ class CONTENT_EXPORT HostDiscardableSharedMemoryManager
  private:
   class MemorySegment : public base::RefCountedThreadSafe<MemorySegment> {
    public:
-    MemorySegment(scoped_ptr<base::DiscardableSharedMemory> memory);
+    MemorySegment(std::unique_ptr<base::DiscardableSharedMemory> memory);
 
     base::DiscardableSharedMemory* memory() const { return memory_.get(); }
 
@@ -91,7 +92,7 @@ class CONTENT_EXPORT HostDiscardableSharedMemoryManager
 
     ~MemorySegment();
 
-    scoped_ptr<base::DiscardableSharedMemory> memory_;
+    std::unique_ptr<base::DiscardableSharedMemory> memory_;
 
     DISALLOW_COPY_AND_ASSIGN(MemorySegment);
   };
@@ -132,7 +133,7 @@ class CONTENT_EXPORT HostDiscardableSharedMemoryManager
   MemorySegmentVector segments_;
   size_t memory_limit_;
   size_t bytes_allocated_;
-  scoped_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
   scoped_refptr<base::SingleThreadTaskRunner>
       enforce_memory_policy_task_runner_;
   base::Closure enforce_memory_policy_callback_;

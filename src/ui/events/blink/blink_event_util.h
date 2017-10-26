@@ -5,7 +5,10 @@
 #ifndef UI_EVENTS_BLINK_BLINK_EVENT_UTIL_H_
 #define UI_EVENTS_BLINK_BLINK_EVENT_UTIL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "ui/events/gesture_detection/motion_event.h"
 
 namespace base {
 class TimeDelta;
@@ -31,10 +34,11 @@ blink::WebTouchEvent CreateWebTouchEventFromMotionEvent(
     bool may_cause_scrolling);
 
 blink::WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
-                                             base::TimeDelta timestamp,
+                                             base::TimeTicks timestamp,
                                              const gfx::PointF& location,
                                              const gfx::PointF& raw_location,
-                                             int flags);
+                                             int flags,
+                                             uint32_t unique_touch_event_id);
 
 // Convenience wrapper for |CreateWebGestureEvent| using the supplied |data|.
 blink::WebGestureEvent CreateWebGestureEventFromGestureEventData(
@@ -42,9 +46,12 @@ blink::WebGestureEvent CreateWebGestureEventFromGestureEventData(
 
 int EventFlagsToWebEventModifiers(int flags);
 
-scoped_ptr<blink::WebInputEvent> ScaleWebInputEvent(
+std::unique_ptr<blink::WebInputEvent> ScaleWebInputEvent(
     const blink::WebInputEvent& event,
     float scale);
+
+blink::WebPointerProperties::PointerType ToWebPointerType(
+    MotionEvent::ToolType tool_type);
 
 }  // namespace ui
 

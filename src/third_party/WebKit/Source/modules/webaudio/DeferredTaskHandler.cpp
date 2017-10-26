@@ -26,9 +26,8 @@
 #include "modules/webaudio/AudioNode.h"
 #include "modules/webaudio/AudioNodeOutput.h"
 #include "modules/webaudio/OfflineAudioContext.h"
-#include "platform/ThreadSafeFunctional.h"
+#include "platform/CrossThreadFunctional.h"
 #include "public/platform/Platform.h"
-#include "wtf/MainThread.h"
 
 namespace blink {
 
@@ -60,11 +59,11 @@ void DeferredTaskHandler::unlock()
 
 void DeferredTaskHandler::offlineLock()
 {
-    // RELEASE_ASSERT is here to make sure to explicitly crash if this is called
-    // from other than the offline render thread, which is considered as the
-    // audio thread in OfflineAudioContext.
-    RELEASE_ASSERT_WITH_MESSAGE(isAudioThread(),
-        "DeferredTaskHandler::offlineLock() must be called within the offline audio thread.");
+    // CHECK is here to make sure to explicitly crash if this is called from
+    // other than the offline render thread, which is considered as the audio
+    // thread in OfflineAudioContext.
+    CHECK(isAudioThread())
+        << "DeferredTaskHandler::offlineLock() must be called within the offline audio thread.";
 
     m_contextGraphMutex.lock();
 }
@@ -132,9 +131,14 @@ void DeferredTaskHandler::handleDirtyAudioNodeOutputs()
 {
     ASSERT(isGraphOwner());
 
-    for (AudioNodeOutput* output : m_dirtyAudioNodeOutputs)
+    HashSet<AudioNodeOutput*> dirtyOutputs;
+    m_dirtyAudioNodeOutputs.swap(dirtyOutputs);
+
+    // Note: the updating of rendering state may cause output nodes
+    // further down the chain to be marked as dirty. These will not
+    // be processed in this render quantum.
+    for (AudioNodeOutput* output : dirtyOutputs)
         output->updateRenderingState();
-    m_dirtyAudioNodeOutputs.clear();
 }
 
 void DeferredTaskHandler::addAutomaticPullNode(AudioHandler* node)
@@ -189,6 +193,20 @@ void DeferredTaskHandler::removeChangedChannelCountMode(AudioHandler* node)
     m_deferredCountModeChange.remove(node);
 }
 
+void DeferredTaskHandler::addChangedChannelInterpretation(AudioHandler* node)
+{
+    ASSERT(isGraphOwner());
+    ASSERT(isMainThread());
+    m_deferredChannelInterpretationChange.add(node);
+}
+
+void DeferredTaskHandler::removeChangedChannelInterpretation(AudioHandler* node)
+{
+    ASSERT(isGraphOwner());
+
+    m_deferredChannelInterpretationChange.remove(node);
+}
+
 void DeferredTaskHandler::updateChangedChannelCountMode()
 {
     ASSERT(isGraphOwner());
@@ -196,6 +214,15 @@ void DeferredTaskHandler::updateChangedChannelCountMode()
     for (AudioHandler* node : m_deferredCountModeChange)
         node->updateChannelCountMode();
     m_deferredCountModeChange.clear();
+}
+
+void DeferredTaskHandler::updateChangedChannelInterpretation()
+{
+    ASSERT(isGraphOwner());
+
+    for (AudioHandler* node : m_deferredChannelInterpretationChange)
+        node->updateChannelInterpretation();
+    m_deferredChannelInterpretationChange.clear();
 }
 
 DeferredTaskHandler::DeferredTaskHandler()
@@ -220,6 +247,7 @@ DeferredTaskHandler::~DeferredTaskHandler()
 void DeferredTaskHandler::handleDeferredTasks()
 {
     updateChangedChannelCountMode();
+    updateChangedChannelInterpretation();
     handleDirtyAudioSummingJunctions();
     handleDirtyAudioNodeOutputs();
     updateAutomaticPullNodes();
@@ -262,7 +290,7 @@ void DeferredTaskHandler::requestToDeleteHandlersOnMainThread()
         return;
     m_deletableOrphanHandlers.appendVector(m_renderingOrphanHandlers);
     m_renderingOrphanHandlers.clear();
-    Platform::current()->mainThread()->taskRunner()->postTask(BLINK_FROM_HERE, threadSafeBind(&DeferredTaskHandler::deleteHandlersOnMainThread, PassRefPtr<DeferredTaskHandler>(this)));
+    Platform::current()->mainThread()->getWebTaskRunner()->postTask(BLINK_FROM_HERE, crossThreadBind(&DeferredTaskHandler::deleteHandlersOnMainThread, PassRefPtr<DeferredTaskHandler>(this)));
 }
 
 void DeferredTaskHandler::deleteHandlersOnMainThread()
@@ -278,6 +306,13 @@ void DeferredTaskHandler::clearHandlersToBeDeleted()
     AutoLocker locker(*this);
     m_renderingOrphanHandlers.clear();
     m_deletableOrphanHandlers.clear();
+}
+
+void DeferredTaskHandler::setAudioThreadToCurrentThread()
+{
+    ASSERT(!isMainThread());
+    ThreadIdentifier thread = currentThread();
+    releaseStore(&m_audioThread, thread);
 }
 
 } // namespace blink

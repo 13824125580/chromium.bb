@@ -8,18 +8,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <ostream>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "mojo/edk/embedder/platform_handle.h"
 #include "mojo/edk/embedder/platform_shared_buffer.h"
 #include "mojo/edk/system/handle_signals_state.h"
 #include "mojo/edk/system/ports/name.h"
 #include "mojo/edk/system/system_impl_export.h"
+#include "mojo/edk/system/watcher.h"
 #include "mojo/public/c/system/buffer.h"
 #include "mojo/public/c/system/data_pipe.h"
 #include "mojo/public/c/system/message_pipe.h"
@@ -30,6 +31,7 @@ namespace edk {
 
 class Awakable;
 class Dispatcher;
+class MessageForTransit;
 
 using DispatcherVector = std::vector<scoped_refptr<Dispatcher>>;
 
@@ -41,6 +43,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
  public:
   struct DispatcherInTransit {
     DispatcherInTransit();
+    DispatcherInTransit(const DispatcherInTransit& other);
     ~DispatcherInTransit();
 
     scoped_refptr<Dispatcher> dispatcher;
@@ -64,19 +67,25 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
   virtual Type GetType() const = 0;
   virtual MojoResult Close() = 0;
 
+  ///////////// Watch API ////////////////////
+
+  virtual MojoResult Watch(MojoHandleSignals signals,
+                           const Watcher::WatchCallback& callback,
+                           uintptr_t context);
+
+  virtual MojoResult CancelWatch(uintptr_t context);
+
   ///////////// Message pipe API /////////////
 
-  virtual MojoResult WriteMessage(const void* bytes,
-                                  uint32_t num_bytes,
-                                  const DispatcherInTransit* dispatchers,
-                                  uint32_t num_dispatchers,
+  virtual MojoResult WriteMessage(std::unique_ptr<MessageForTransit> message,
                                   MojoWriteMessageFlags flags);
 
-  virtual MojoResult ReadMessage(void* bytes,
+  virtual MojoResult ReadMessage(std::unique_ptr<MessageForTransit>* message,
                                  uint32_t* num_bytes,
                                  MojoHandle* handles,
                                  uint32_t* num_handles,
-                                 MojoReadMessageFlags flags);
+                                 MojoReadMessageFlags flags,
+                                 bool read_any_size);
 
   ///////////// Shared buffer API /////////////
 
@@ -91,7 +100,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
       uint64_t offset,
       uint64_t num_bytes,
       MojoMapBufferFlags flags,
-      scoped_ptr<PlatformSharedBufferMapping>* mapping);
+      std::unique_ptr<PlatformSharedBufferMapping>* mapping);
 
   ///////////// Data pipe consumer API /////////////
 

@@ -9,18 +9,24 @@
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/bubble_combobox.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/translate/language_combobox_model.h"
-#include "chrome/browser/ui/translate/translate_bubble_model_impl.h"
+#include "chrome/browser/ui/translate/translate_bubble_model.h"
+#include "chrome/browser/ui/translate/translate_bubble_view_state_transition.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/translate/core/browser/translate_ui_delegate.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/common/referrer.h"
 #include "grit/components_strings.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -90,15 +96,17 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
                 action:(SEL)action
                 toView:(NSView*)view;
 - (NSButton*)addCheckbox:(NSString*)title
+                  action:(SEL)action
                   toView:(NSView*)view;
 - (NSPopUpButton*)addPopUpButton:(ui::ComboboxModel*)model
                           action:(SEL)action
                           toView:(NSView*)view;
-- (void)handleNopeButtonPressed;
+- (void)handleAlwaysTranslateCheckboxPressed;
 - (void)handleDoneButtonPressed;
 - (void)handleCancelButtonPressed;
 - (void)handleShowOriginalButtonPressed;
 - (void)handleAdvancedLinkButtonPressed;
+- (void)handleLanguageSettingsLinkButtonPressed;
 - (void)handleDenialPopUpButtonNopeSelected;
 - (void)handleDenialPopUpButtonNeverTranslateLanguageSelected;
 - (void)handleDenialPopUpButtonNeverTranslateSiteSelected;
@@ -109,8 +117,10 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
 
 @implementation TranslateBubbleController
 
+@synthesize webContents = webContents_;
+
 - (id)initWithParentWindow:(BrowserWindowController*)controller
-                     model:(scoped_ptr<TranslateBubbleModel>)model
+                     model:(std::unique_ptr<TranslateBubbleModel>)model
                webContents:(content::WebContents*)webContents {
   NSWindow* parentWindow = [controller window];
 
@@ -121,6 +131,10 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
                                           styleMask:NSBorderlessWindowMask
                                             backing:NSBackingStoreBuffered
                                               defer:NO]);
+
+  // Disable animations - otherwise, the window/controller will outlive the web
+  // contents it's associated with.
+  [window setAllowedAnimations:info_bubble::kAnimateNone];
 
   if ((self = [super initWithWindow:window
                        parentWindow:parentWindow
@@ -150,7 +164,10 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
   return self;
 }
 
-@synthesize webContents = webContents_;
+- (void)windowWillClose:(NSNotification*)notification {
+  model_->OnBubbleClosing();
+  [super windowWillClose:notification];
+}
 
 - (NSView*)currentView {
   NSNumber* key = @(model_->GetViewState());
@@ -166,7 +183,8 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
 - (void)showWindow:(id)sender {
   BrowserWindowController* controller = [[self parentWindow] windowController];
   NSPoint anchorPoint = [[controller toolbarController] translateBubblePoint];
-  anchorPoint = [[self parentWindow] convertBaseToScreen:anchorPoint];
+  anchorPoint =
+      ui::ConvertPointFromWindowToScreen([self parentWindow], anchorPoint);
   [self setAnchorPoint:anchorPoint];
   [super showWindow:sender];
 }
@@ -415,7 +433,9 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
   if (!isIncognitoWindow) {
     NSString* title =
         l10n_util::GetNSStringWithFixup(IDS_TRANSLATE_BUBBLE_ALWAYS);
+    action = @selector(handleAlwaysTranslateCheckboxPressed);
     alwaysTranslateCheckbox_ = [self addCheckbox:title
+                                          action:action
                                           toView:view];
   }
 
@@ -429,6 +449,14 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
                action:@selector(handleCancelButtonPressed)
                toView:view];
 
+  NSString* message = l10n_util::GetNSStringWithFixup(
+        IDS_TRANSLATE_BUBBLE_LANGUAGE_SETTINGS);
+  action = @selector(handleLanguageSettingsLinkButtonPressed);
+  NSButton* languageSettingsLinkButton =
+      [self addLinkButtonWithText:message
+                           action:action
+                           toView:view];
+
   // Layout
   CGFloat textLabelWidth = NSWidth([sourceLanguageLabel frame]);
   if (textLabelWidth < NSWidth([targetLanguageLabel frame]))
@@ -439,7 +467,16 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
   [advancedDoneButton_ setFrameOrigin:NSMakePoint(0, yPos)];
   [advancedCancelButton_ setFrameOrigin:NSMakePoint(0, yPos)];
 
-  yPos += NSHeight([advancedDoneButton_ frame]) +
+  [languageSettingsLinkButton setFrameOrigin:NSMakePoint(0, yPos)];
+
+  // Vertical center the languageSettingsLinkButton with the
+  // advancedDoneButton_. Move the link position by 1px to make the baseline of
+  // the text inside the link vertically align with the text inside the buttons.
+  yPos = 1 + floor((NSHeight([advancedDoneButton_ frame]) -
+         NSHeight([languageSettingsLinkButton frame])) / 2);
+  [languageSettingsLinkButton setFrameOrigin:NSMakePoint(0, yPos)];
+
+  yPos = NSHeight([advancedDoneButton_ frame]) +
       kUnrelatedControlVerticalSpacing;
 
   if (alwaysTranslateCheckbox_) {
@@ -556,6 +593,7 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
 }
 
 - (NSButton*)addCheckbox:(NSString*)title
+                  action:(SEL)action
                   toView:(NSView*)view {
   base::scoped_nsobject<NSButton> button(
       [[NSButton alloc] initWithFrame:NSZeroRect]);
@@ -564,6 +602,8 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
   [[button cell] setControlSize:NSSmallControlSize];
   [button setButtonType:NSSwitchButton];
   [button sizeToFit];
+  [button setTarget:self];
+  [button setAction:action];
 
   [view addSubview:button.get()];
 
@@ -585,15 +625,19 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
 }
 
 - (void)handleTranslateButtonPressed {
+  translate::ReportUiAction(translate::TRANSLATE_BUTTON_CLICKED);
   translateExecuted_ = YES;
   model_->Translate();
 }
 
-- (void)handleNopeButtonPressed {
-  [self close];
+- (void)handleAlwaysTranslateCheckboxPressed {
+  translate::ReportUiAction([alwaysTranslateCheckbox_ state] == NSOnState
+                            ? translate::ALWAYS_TRANSLATE_CHECKED
+                            : translate::ALWAYS_TRANSLATE_UNCHECKED);
 }
 
 - (void)handleDoneButtonPressed {
+  translate::ReportUiAction(translate::DONE_BUTTON_CLICKED);
   if (alwaysTranslateCheckbox_) {
     model_->SetAlwaysTranslate(
         [alwaysTranslateCheckbox_ state] == NSOnState);
@@ -609,40 +653,60 @@ const CGFloat kContentWidth = kWindowWidth - 2 * kFramePadding;
 }
 
 - (void)handleCancelButtonPressed {
+  translate::ReportUiAction(translate::CANCEL_BUTTON_CLICKED);
   model_->GoBackFromAdvanced();
   [self performLayout];
 }
 
 - (void)handleShowOriginalButtonPressed {
+  translate::ReportUiAction(translate::SHOW_ORIGINAL_BUTTON_CLICKED);
   model_->RevertTranslation();
   [self close];
 }
 
 - (void)handleAdvancedLinkButtonPressed {
+  translate::ReportUiAction(translate::ADVANCED_LINK_CLICKED);
   [self switchView:TranslateBubbleModel::VIEW_STATE_ADVANCED];
 }
 
+- (void)handleLanguageSettingsLinkButtonPressed {
+  GURL url = chrome::GetSettingsUrl(chrome::kLanguageOptionsSubPage);
+  webContents_->OpenURL(
+      content::OpenURLParams(url, content::Referrer(), NEW_FOREGROUND_TAB,
+                             ui::PAGE_TRANSITION_LINK, false));
+  translate::ReportUiAction(translate::SETTINGS_LINK_CLICKED);
+  [self close];
+}
+
 - (void)handleDenialPopUpButtonNopeSelected {
+  translate::ReportUiAction(translate::NOPE_MENU_CLICKED);
+  model_->DeclineTranslation();
   [self close];
 }
 
 - (void)handleDenialPopUpButtonNeverTranslateLanguageSelected {
+  translate::ReportUiAction(translate::NEVER_TRANSLATE_LANGUAGE_MENU_CLICKED);
+  model_->DeclineTranslation();
   model_->SetNeverTranslateLanguage(true);
   [self close];
 }
 
 - (void)handleDenialPopUpButtonNeverTranslateSiteSelected {
+  translate::ReportUiAction(translate::NEVER_TRANSLATE_SITE_MENU_CLICKED);
+  model_->DeclineTranslation();
   model_->SetNeverTranslateSite(true);
   [self close];
 }
 
 - (void)handleSourceLanguagePopUpButtonSelectedItemChanged:(id)sender {
+  translate::ReportUiAction(translate::SOURCE_LANGUAGE_MENU_CLICKED);
   NSPopUpButton* button = base::mac::ObjCCastStrict<NSPopUpButton>(sender);
   model_->UpdateOriginalLanguageIndex([button indexOfSelectedItem]);
   [self updateAdvancedView];
 }
 
 - (void)handleTargetLanguagePopUpButtonSelectedItemChanged:(id)sender {
+  translate::ReportUiAction(translate::TARGET_LANGUAGE_MENU_CLICKED);
   NSPopUpButton* button = base::mac::ObjCCastStrict<NSPopUpButton>(sender);
   model_->UpdateTargetLanguageIndex([button indexOfSelectedItem]);
   [self updateAdvancedView];

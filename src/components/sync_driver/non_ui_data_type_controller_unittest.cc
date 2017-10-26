@@ -4,6 +4,7 @@
 
 #include "components/sync_driver/non_ui_data_type_controller.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
@@ -12,12 +13,12 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/tracked_objects.h"
 #include "components/sync_driver/data_type_controller_mock.h"
 #include "components/sync_driver/fake_sync_client.h"
@@ -68,13 +69,14 @@ class SharedChangeProcessorMock : public SharedChangeProcessor {
  public:
   SharedChangeProcessorMock() {}
 
-  MOCK_METHOD6(Connect, base::WeakPtr<syncer::SyncableService>(
-      SyncClient*,
-      GenericChangeProcessorFactory*,
-      syncer::UserShare*,
-      DataTypeErrorHandler*,
-      syncer::ModelType,
-      const base::WeakPtr<syncer::SyncMergeResult>&));
+  MOCK_METHOD6(Connect,
+               base::WeakPtr<syncer::SyncableService>(
+                   SyncClient*,
+                   GenericChangeProcessorFactory*,
+                   syncer::UserShare*,
+                   syncer::DataTypeErrorHandler*,
+                   syncer::ModelType,
+                   const base::WeakPtr<syncer::SyncMergeResult>&));
   MOCK_METHOD0(Disconnect, bool());
   MOCK_METHOD2(ProcessSyncChanges,
                syncer::SyncError(const tracked_objects::Location&,
@@ -201,7 +203,8 @@ class SyncNonUIDataTypeControllerTest : public testing::Test,
   void TearDown() override { backend_thread_.Stop(); }
 
   void WaitForDTC() {
-    WaitableEvent done(true, false);
+    WaitableEvent done(base::WaitableEvent::ResetPolicy::MANUAL,
+                       base::WaitableEvent::InitialState::NOT_SIGNALED);
     backend_thread_.task_runner()->PostTask(
         FROM_HERE,
         base::Bind(&SyncNonUIDataTypeControllerTest::SignalDone, &done));
@@ -209,7 +212,7 @@ class SyncNonUIDataTypeControllerTest : public testing::Test,
     if (!done.IsSignaled()) {
       ADD_FAILURE() << "Timed out waiting for DB thread to finish.";
     }
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   SyncService* GetSyncService() override {
@@ -275,7 +278,7 @@ class SyncNonUIDataTypeControllerTest : public testing::Test,
   scoped_refptr<NonUIDataTypeControllerFake> non_ui_dtc_;
   scoped_refptr<NonUIDataTypeControllerMock> dtc_mock_;
   scoped_refptr<SharedChangeProcessorMock> change_processor_;
-  scoped_ptr<syncer::SyncChangeProcessor> saved_change_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> saved_change_processor_;
 };
 
 TEST_F(SyncNonUIDataTypeControllerTest, StartOk) {
@@ -385,8 +388,12 @@ TEST_F(SyncNonUIDataTypeControllerTest,
 // Trigger a Stop() call when we check if the model associator has user created
 // nodes.
 TEST_F(SyncNonUIDataTypeControllerTest, AbortDuringAssociation) {
-  WaitableEvent wait_for_db_thread_pause(false, false);
-  WaitableEvent pause_db_thread(false, false);
+  WaitableEvent wait_for_db_thread_pause(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  WaitableEvent pause_db_thread(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   SetStartExpectations();
   EXPECT_CALL(*change_processor_.get(), Connect(_, _, _, _, _, _))

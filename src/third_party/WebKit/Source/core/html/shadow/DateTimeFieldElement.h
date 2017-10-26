@@ -26,9 +26,6 @@
 #ifndef DateTimeFieldElement_h
 #define DateTimeFieldElement_h
 
-#include "wtf/build_config.h"
-
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 #include "core/html/HTMLDivElement.h"
 #include "core/html/HTMLSpanElement.h"
 
@@ -49,7 +46,7 @@ public:
 
     // FieldOwner implementer must call removeEventHandler when
     // it doesn't handle event, e.g. at destruction.
-    class FieldOwner : public WillBeGarbageCollectedMixin {
+    class FieldOwner : public GarbageCollectedMixin {
     public:
         virtual ~FieldOwner();
         virtual void didBlurFromField() = 0;
@@ -103,10 +100,9 @@ private:
     bool isFieldOwnerReadOnly() const;
     bool supportsFocus() const final;
 
-    RawPtrWillBeMember<FieldOwner> m_fieldOwner;
+    Member<FieldOwner> m_fieldOwner;
 };
 
 } // namespace blink
 
-#endif
 #endif

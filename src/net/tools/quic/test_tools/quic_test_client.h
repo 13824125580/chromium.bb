@@ -8,10 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cstdint>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/quic/proto/cached_network_parameters.pb.h"
@@ -22,6 +23,8 @@
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_client.h"
 #include "net/tools/quic/test_tools/simple_client.h"
+
+using base::StringPiece;
 
 namespace net {
 
@@ -185,10 +188,6 @@ class QuicTestClient : public test::SimpleClient,
 
   void set_priority(SpdyPriority priority) { priority_ = priority; }
 
-  // Sets client's FEC policy. This policy applies to the data stream(s), and
-  // also to the headers and crypto streams.
-  void SetFecPolicy(FecPolicy fec_policy);
-
   void WaitForWriteToFlush();
 
   EpollServer* epoll_server() { return &epoll_server_; }
@@ -198,6 +197,17 @@ class QuicTestClient : public test::SimpleClient,
   }
 
   bool allow_bidirectional_data() const { return allow_bidirectional_data_; }
+
+  size_t num_requests() const { return num_requests_; }
+
+  size_t num_responses() const { return num_responses_; }
+
+  // Explicitly set the SNI value for this client, overriding the default
+  // behavior which extracts the SNI value from the request URL.
+  void OverrideSni(const std::string& sni) {
+    override_sni_set_ = true;
+    override_sni_ = sni;
+  }
 
  protected:
   QuicTestClient();
@@ -233,14 +243,14 @@ class QuicTestClient : public test::SimpleClient,
   bool HaveActiveStream();
 
   EpollServer epoll_server_;
-  scoped_ptr<MockableQuicClient> client_;  // The actual client
+  std::unique_ptr<MockableQuicClient> client_;  // The actual client
   QuicSpdyClientStream* stream_;
 
   QuicRstStreamErrorCode stream_error_;
 
   bool response_complete_;
   bool response_headers_complete_;
-  mutable BalsaHeaders headers_;
+  mutable BalsaHeaders response_headers_;
 
   // Parsed response trailers (if present), copied from the stream in OnClose.
   SpdyHeaderBlock response_trailers_;
@@ -261,14 +271,20 @@ class QuicTestClient : public test::SimpleClient,
   bool auto_reconnect_;
   // Should we buffer the response body? Defaults to true.
   bool buffer_body_;
-  // FEC policy for data sent by this client.
-  FecPolicy fec_policy_;
   // When true allows the sending of a request to continue while the response is
   // arriving.
   bool allow_bidirectional_data_;
   // For async push promise rendezvous, validation may fail in which
   // case the request should be retried.
   std::unique_ptr<TestClientDataToResend> push_promise_data_to_resend_;
+  // Number of requests/responses this client has sent/received.
+  size_t num_requests_;
+  size_t num_responses_;
+
+  // If set, this value is used for the connection SNI, overriding the usual
+  // logic which extracts the SNI from the request URL.
+  bool override_sni_set_ = false;
+  std::string override_sni_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicTestClient);
 };

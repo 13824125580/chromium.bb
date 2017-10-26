@@ -21,8 +21,8 @@
 #include "content/public/browser/browser_child_process_host_iterator.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
-#include "content/public/common/service_registry.h"
 #include "grit/theme_resources.h"
+#include "services/shell/public/cpp/interface_provider.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia.h"
@@ -64,7 +64,8 @@ class ChildProcessResource : public Resource {
   base::string16 GetLocalizedTitle() const;
 
   static void ConnectResourceReporterOnIOThread(
-      int id, mojo::InterfaceRequest<ResourceUsageReporter> req);
+      int id,
+      mojo::InterfaceRequest<mojom::ResourceUsageReporter> req);
 
   int process_type_;
   base::string16 name_;
@@ -73,7 +74,7 @@ class ChildProcessResource : public Resource {
   int unique_process_id_;
   mutable base::string16 title_;
   bool network_usage_support_;
-  scoped_ptr<ProcessResourceUsage> resource_usage_;
+  std::unique_ptr<ProcessResourceUsage> resource_usage_;
 
   // The icon painted for the child processs.
   // TODO(jcampan): we should have plugin specific icons for well-known
@@ -87,18 +88,15 @@ gfx::ImageSkia* ChildProcessResource::default_icon_ = NULL;
 
 // static
 void ChildProcessResource::ConnectResourceReporterOnIOThread(
-    int id, mojo::InterfaceRequest<ResourceUsageReporter> req) {
+    int id,
+    mojo::InterfaceRequest<mojom::ResourceUsageReporter> req) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   content::BrowserChildProcessHost* host =
       content::BrowserChildProcessHost::FromID(id);
-  if (!host)
+  if (!host || !host->GetRemoteInterfaces())
     return;
 
-  content::ServiceRegistry* registry = host->GetServiceRegistry();
-  if (!registry)
-    return;
-
-  registry->ConnectToRemoteService(std::move(req));
+  host->GetRemoteInterfaces()->GetInterface(std::move(req));
 }
 
 ChildProcessResource::ChildProcessResource(int process_type,
@@ -118,8 +116,8 @@ ChildProcessResource::ChildProcessResource(int process_type,
     default_icon_ = rb.GetImageSkiaNamed(IDR_PLUGINS_FAVICON);
     // TODO(jabdelmalek): use different icon for web workers.
   }
-  ResourceUsageReporterPtr service;
-  mojo::InterfaceRequest<ResourceUsageReporter> request =
+  mojom::ResourceUsageReporterPtr service;
+  mojo::InterfaceRequest<mojom::ResourceUsageReporter> request =
       mojo::GetProxy(&service);
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
@@ -159,7 +157,6 @@ Resource::Type ChildProcessResource::GetType() const {
   // Translate types to Resource::Type, since ChildProcessData's type
   // is not available for all TaskManager resources.
   switch (process_type_) {
-    case content::PROCESS_TYPE_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_BROKER:
       return Resource::PLUGIN;
@@ -191,7 +188,6 @@ base::string16 ChildProcessResource::GetLocalizedTitle() const {
   base::string16 title = name_;
   if (title.empty()) {
     switch (process_type_) {
-      case content::PROCESS_TYPE_PLUGIN:
       case content::PROCESS_TYPE_PPAPI_PLUGIN:
       case content::PROCESS_TYPE_PPAPI_BROKER:
         title = l10n_util::GetStringUTF16(IDS_TASK_MANAGER_UNKNOWN_PLUGIN_NAME);
@@ -213,7 +209,6 @@ base::string16 ChildProcessResource::GetLocalizedTitle() const {
       return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_UTILITY_PREFIX, title);
     case content::PROCESS_TYPE_GPU:
       return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_GPU_PREFIX);
-    case content::PROCESS_TYPE_PLUGIN:
     case content::PROCESS_TYPE_PPAPI_PLUGIN:
       return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_PLUGIN_PREFIX, title);
     case content::PROCESS_TYPE_PPAPI_BROKER:

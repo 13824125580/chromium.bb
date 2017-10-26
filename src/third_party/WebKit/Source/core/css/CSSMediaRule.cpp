@@ -34,10 +34,6 @@ CSSMediaRule::CSSMediaRule(StyleRuleMedia* mediaRule, CSSStyleSheet* parent)
 
 CSSMediaRule::~CSSMediaRule()
 {
-#if !ENABLE(OILPAN)
-    if (m_mediaCSSOMWrapper)
-        m_mediaCSSOMWrapper->clearParentRule();
-#endif
 }
 
 MediaQuerySet* CSSMediaRule::mediaQueries() const
@@ -48,12 +44,12 @@ MediaQuerySet* CSSMediaRule::mediaQueries() const
 String CSSMediaRule::cssText() const
 {
     StringBuilder result;
-    result.appendLiteral("@media ");
+    result.append("@media ");
     if (mediaQueries()) {
         result.append(mediaQueries()->mediaText());
         result.append(' ');
     }
-    result.appendLiteral("{ \n");
+    result.append("{ \n");
     appendCSSTextForItems(result);
     result.append('}');
     return result.toString();

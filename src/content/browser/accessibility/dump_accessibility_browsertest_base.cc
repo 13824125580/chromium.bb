@@ -15,12 +15,14 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/accessibility/accessibility_tree_formatter.h"
 #include "content/browser/accessibility/accessibility_tree_formatter_blink.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
+#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
@@ -91,7 +93,7 @@ void DumpAccessibilityTestBase::SetUpOnMainThread() {
 
 base::string16
 DumpAccessibilityTestBase::DumpUnfilteredAccessibilityTreeAsString() {
-  scoped_ptr<AccessibilityTreeFormatter> formatter(
+  std::unique_ptr<AccessibilityTreeFormatter> formatter(
       CreateAccessibilityTreeFormatter());
   std::vector<Filter> filters;
   filters.push_back(Filter(base::ASCIIToUTF16("*"), Filter::ALLOW));
@@ -240,7 +242,7 @@ void DumpAccessibilityTestBase::RunTestForPlatform(
   GURL url(embedded_test_server()->GetURL(
       "/" + std::string(file_dir) + "/" + file_path.BaseName().MaybeAsASCII()));
   AccessibilityNotificationWaiter accessibility_waiter(
-      shell(),
+      shell()->web_contents(),
       AccessibilityModeComplete,
       ui::AX_EVENT_LOAD_COMPLETE);
   NavigateToURL(shell(), url);
@@ -261,6 +263,19 @@ void DumpAccessibilityTestBase::RunTestForPlatform(
     std::string url = node->current_url().spec();
     if (url != url::kAboutBlankURL)
       all_frame_urls.push_back(url);
+
+    // We won't get the correct coordinate transformations for
+    // out-of-process iframes until each frame's surface is ready.
+    RenderFrameHostImpl* current_frame_host = node->current_frame_host();
+    if (!current_frame_host || !current_frame_host->is_local_root())
+      continue;
+    RenderWidgetHostViewBase* rwhv =
+        static_cast<RenderWidgetHostViewBase*>(current_frame_host->GetView());
+    if (rwhv && rwhv->IsChildFrameForTesting()) {
+      SurfaceHitTestReadyNotifier notifier(
+          static_cast<RenderWidgetHostViewChildFrame*>(rwhv));
+      notifier.WaitForSurfaceReady();
+    }
   }
 
   // Wait for the accessibility tree to fully load for all frames,

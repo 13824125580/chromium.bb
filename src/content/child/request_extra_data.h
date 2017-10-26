@@ -20,7 +20,7 @@
 namespace content {
 
 // Can be used by callers to store extra data on every ResourceRequest
-// which will be incorporated into the ResourceHostMsg_Request message
+// which will be incorporated into the ResourceHostMsg_RequestResource message
 // sent by ResourceDispatcher.
 class CONTENT_EXPORT RequestExtraData
     : public NON_EXPORTED_BASE(blink::WebURLRequest::ExtraData) {
@@ -98,12 +98,6 @@ class CONTENT_EXPORT RequestExtraData
   void set_originated_from_service_worker(bool originated_from_service_worker) {
     originated_from_service_worker_ = originated_from_service_worker;
   }
-  LoFiState lofi_state() const {
-    return lofi_state_;
-  }
-  void set_lofi_state(LoFiState lofi_state) {
-    lofi_state_ = lofi_state;
-  }
   // |custom_user_agent| is used to communicate an overriding custom user agent
   // to |RenderViewImpl::willSendRequest()|; set to a null string to indicate no
   // override and an empty string to indicate that there should be no user
@@ -123,13 +117,20 @@ class CONTENT_EXPORT RequestExtraData
 
   // PlzNavigate: |stream_override| is used to override certain parameters of
   // navigation requests.
-  scoped_ptr<StreamOverrideParameters> TakeStreamOverrideOwnership() {
+  std::unique_ptr<StreamOverrideParameters> TakeStreamOverrideOwnership() {
     return std::move(stream_override_);
   }
 
   void set_stream_override(
-      scoped_ptr<StreamOverrideParameters> stream_override) {
+      std::unique_ptr<StreamOverrideParameters> stream_override) {
     stream_override_ = std::move(stream_override);
+  }
+
+  bool initiated_in_secure_context() const {
+    return initiated_in_secure_context_;
+  }
+  void set_initiated_in_secure_context(bool secure) {
+    initiated_in_secure_context_ = secure;
   }
 
  private:
@@ -148,8 +149,8 @@ class CONTENT_EXPORT RequestExtraData
   bool originated_from_service_worker_;
   blink::WebString custom_user_agent_;
   blink::WebString requested_with_;
-  scoped_ptr<StreamOverrideParameters> stream_override_;
-  LoFiState lofi_state_;
+  std::unique_ptr<StreamOverrideParameters> stream_override_;
+  bool initiated_in_secure_context_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestExtraData);
 };

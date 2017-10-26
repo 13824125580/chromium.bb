@@ -27,7 +27,6 @@
 #define CanvasRenderingContext2D_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/modules/v8/UnionTypesModules.h"
 #include "core/html/canvas/CanvasContextCreationAttributes.h"
 #include "core/html/canvas/CanvasRenderingContext.h"
 #include "core/html/canvas/CanvasRenderingContextFactory.h"
@@ -64,8 +63,8 @@ typedef HTMLImageElementOrHTMLVideoElementOrHTMLCanvasElementOrImageBitmap Canva
 
 class MODULES_EXPORT CanvasRenderingContext2D final : public CanvasRenderingContext, public BaseRenderingContext2D, public WebThread::TaskObserver, public SVGResourceClient {
     DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(CanvasRenderingContext2D);
-    WILL_BE_USING_PRE_FINALIZER(CanvasRenderingContext2D, dispose);
+    USING_GARBAGE_COLLECTED_MIXIN(CanvasRenderingContext2D);
+    USING_PRE_FINALIZER(CanvasRenderingContext2D, dispose);
 public:
     class Factory : public CanvasRenderingContextFactory {
         WTF_MAKE_NONCOPYABLE(Factory);
@@ -73,18 +72,20 @@ public:
         Factory() {}
         ~Factory() override {}
 
-        PassOwnPtrWillBeRawPtr<CanvasRenderingContext> create(HTMLCanvasElement* canvas, const CanvasContextCreationAttributes& attrs, Document& document) override
+        CanvasRenderingContext* create(HTMLCanvasElement* canvas, const CanvasContextCreationAttributes& attrs, Document& document) override
         {
-            return adoptPtrWillBeNoop(new CanvasRenderingContext2D(canvas, attrs, document));
+            return new CanvasRenderingContext2D(canvas, attrs, document);
         }
-        CanvasRenderingContext::ContextType contextType() const override { return CanvasRenderingContext::Context2d; }
-        void onError(HTMLCanvasElement*, const String& error) override { }
+        CanvasRenderingContext::ContextType getContextType() const override { return CanvasRenderingContext::Context2d; }
     };
 
     ~CanvasRenderingContext2D() override;
 
+    void setCanvasGetContextResult(RenderingContext&) final;
+
     bool isContextLost() const override;
 
+    bool shouldAntialias() const override;
     void setShouldAntialias(bool) override;
 
     void scrollPathIntoView();
@@ -133,6 +134,8 @@ public:
     void willProcessTask() override { }
 
     void styleDidChange(const ComputedStyle* oldStyle, const ComputedStyle& newStyle) override;
+    std::pair<Element*, String> getControlAndIdIfHitRegionExists(const LayoutPoint& location) override;
+    String getIdFromControl(const Element*) override;
 
     // SVGResourceClient implementation
     void filterNeedsInvalidation() override;
@@ -140,7 +143,7 @@ public:
     // BaseRenderingContext2D implementation
     bool originClean() const final;
     void setOriginTainted() final;
-    bool wouldTaintOrigin(CanvasImageSource* source) final { return CanvasRenderingContext::wouldTaintOrigin(source); }
+    bool wouldTaintOrigin(CanvasImageSource* source, ExecutionContext*) final { return CanvasRenderingContext::wouldTaintOrigin(source); }
 
     int width() const final;
     int height() const final;
@@ -159,6 +162,7 @@ public:
 
     bool stateHasFilter() final;
     SkImageFilter* stateGetFilter() final;
+    void snapshotStateForFilter() final;
 
     void validateStateStack() final;
 
@@ -190,7 +194,7 @@ private:
     void drawFocusRing(const Path&);
     void updateElementAccessibility(const Path&, Element*);
 
-    CanvasRenderingContext::ContextType contextType() const override { return CanvasRenderingContext::Context2d; }
+    CanvasRenderingContext::ContextType getContextType() const override { return CanvasRenderingContext::Context2d; }
     bool is2d() const override { return true; }
     bool isAccelerated() const override;
     bool hasAlpha() const override { return m_hasAlpha; }
@@ -202,7 +206,7 @@ private:
 
     WebLayer* platformLayer() const override;
 
-    PersistentWillBeMember<HitRegionManager> m_hitRegionManager;
+    Member<HitRegionManager> m_hitRegionManager;
     bool m_hasAlpha;
     LostContextMode m_contextLostMode;
     bool m_contextRestorable;

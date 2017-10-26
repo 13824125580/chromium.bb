@@ -18,7 +18,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "chrome/grit/theme_resources.h"
@@ -34,7 +33,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
@@ -103,9 +102,9 @@ bool NetworkConfigView::InitWithType(const std::string& type) {
     child_config_view_ = new WifiConfigView(this,
                                             "" /* service_path */,
                                             false /* show_8021x */);
-    advanced_button_ = new views::LabelButton(this, l10n_util::GetStringUTF16(
-        IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_ADVANCED_BUTTON));
-    advanced_button_->SetStyle(views::Button::STYLE_BUTTON);
+    advanced_button_ = views::MdTextButton::CreateSecondaryUiButton(
+        this, l10n_util::GetStringUTF16(
+                  IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_ADVANCED_BUTTON));
   } else if (type == shill::kTypeVPN) {
     child_config_view_ = new VPNConfigView(this,
                                            "" /* service_path */);

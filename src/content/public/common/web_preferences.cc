@@ -8,7 +8,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "third_party/WebKit/public/web/WebSettings.h"
-#include "third_party/icu/source/common/unicode/uchar.h"
 
 using blink::WebSettings;
 
@@ -34,6 +33,16 @@ STATIC_ASSERT_ENUM(V8_CACHE_OPTIONS_PARSE, WebSettings::V8CacheOptionsParse);
 STATIC_ASSERT_ENUM(V8_CACHE_OPTIONS_CODE, WebSettings::V8CacheOptionsCode);
 STATIC_ASSERT_ENUM(V8_CACHE_OPTIONS_LAST, WebSettings::V8CacheOptionsCode);
 
+STATIC_ASSERT_ENUM(ProgressBarCompletion::LOAD_EVENT,
+                   WebSettings::ProgressBarCompletion::LoadEvent);
+STATIC_ASSERT_ENUM(ProgressBarCompletion::RESOURCES_BEFORE_DCL,
+                   WebSettings::ProgressBarCompletion::ResourcesBeforeDCL);
+STATIC_ASSERT_ENUM(ProgressBarCompletion::DOM_CONTENT_LOADED,
+                   WebSettings::ProgressBarCompletion::DOMContentLoaded);
+STATIC_ASSERT_ENUM(
+    ProgressBarCompletion::RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES,
+    WebSettings::ProgressBarCompletion::ResourcesBeforeDCLAndSameOriginIFrames);
+
 STATIC_ASSERT_ENUM(IMAGE_ANIMATION_POLICY_ALLOWED,
                    WebSettings::ImageAnimationPolicyAllowed);
 STATIC_ASSERT_ENUM(IMAGE_ANIMATION_POLICY_ANIMATION_ONCE,
@@ -48,6 +57,11 @@ STATIC_ASSERT_ENUM(ui::POINTER_TYPE_FINE, blink::PointerTypeFine);
 STATIC_ASSERT_ENUM(ui::HOVER_TYPE_NONE, blink::HoverTypeNone);
 STATIC_ASSERT_ENUM(ui::HOVER_TYPE_ON_DEMAND, blink::HoverTypeOnDemand);
 STATIC_ASSERT_ENUM(ui::HOVER_TYPE_HOVER, blink::HoverTypeHover);
+
+STATIC_ASSERT_ENUM(ViewportStyle::DEFAULT, blink::WebViewportStyle::Default);
+STATIC_ASSERT_ENUM(ViewportStyle::MOBILE, blink::WebViewportStyle::Mobile);
+STATIC_ASSERT_ENUM(ViewportStyle::TELEVISION,
+                   blink::WebViewportStyle::Television);
 
 WebPreferences::WebPreferences()
     : default_font_size(16),
@@ -90,7 +104,6 @@ WebPreferences::WebPreferences()
       flash_3d_enabled(true),
       flash_stage3d_enabled(false),
       flash_stage3d_baseline_enabled(false),
-      gl_multisampling_enabled(true),
       privileged_webgl_extensions_enabled(false),
       webgl_errors_to_console_enabled(true),
       mock_scrollbars_enabled(false),
@@ -144,8 +157,14 @@ WebPreferences::WebPreferences()
       viewport_enabled(false),
 #if defined(OS_ANDROID)
       viewport_meta_enabled(true),
+      shrinks_viewport_contents_to_fit(true),
+      viewport_style(ViewportStyle::MOBILE),
+      always_show_context_menu_on_touch(false),
 #else
       viewport_meta_enabled(false),
+      shrinks_viewport_contents_to_fit(false),
+      viewport_style(ViewportStyle::DEFAULT),
+      always_show_context_menu_on_touch(true),
 #endif
       main_frame_resizes_are_orientation_changes(false),
       initialize_at_minimum_page_scale(true),
@@ -160,10 +179,12 @@ WebPreferences::WebPreferences()
       navigate_on_drag_drop(true),
       v8_cache_options(V8_CACHE_OPTIONS_DEFAULT),
       inert_visual_viewport(false),
+      record_whole_document(false),
       cookie_enabled(true),
       pepper_accelerated_video_decode_enabled(false),
       animation_policy(IMAGE_ANIMATION_POLICY_ALLOWED),
       user_gesture_required_for_presentation(true),
+      text_track_margin_percentage(0.0f),
 #if defined(OS_ANDROID)
       text_autosizing_enabled(true),
       font_scale_factor(1.0f),
@@ -184,7 +205,9 @@ WebPreferences::WebPreferences()
       clobber_user_agent_initial_scale_quirk(false),
       ignore_main_frame_overflow_hidden_quirk(false),
       report_screen_size_in_physical_pixels_quirk(false),
-      record_whole_document(false),
+      resue_global_for_unowned_main_frame(false),
+      autoplay_muted_videos_enabled(false),
+      progress_bar_completion(ProgressBarCompletion::LOAD_EVENT),
 #endif
 #if defined(OS_ANDROID)
       default_minimum_page_scale_factor(0.25f),

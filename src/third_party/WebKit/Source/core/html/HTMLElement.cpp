@@ -30,19 +30,21 @@
 #include "core/CSSValueKeywords.h"
 #include "core/HTMLNames.h"
 #include "core/XMLNames.h"
+#include "core/css/CSSColorValue.h"
 #include "core/css/CSSMarkup.h"
-#include "core/css/CSSValuePool.h"
 #include "core/css/StylePropertySet.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/NodeTraversal.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/dom/Text.h"
 #include "core/dom/shadow/ElementShadow.h"
 #include "core/dom/shadow/FlatTreeTraversal.h"
 #include "core/dom/shadow/ShadowRoot.h"
 #include "core/editing/serializers/Serialization.h"
 #include "core/editing/spellcheck/SpellChecker.h"
+#include "core/editing/Position.h"
 #include "core/events/EventListener.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/frame/LocalFrame.h"
@@ -55,6 +57,7 @@
 #include "core/html/HTMLTemplateElement.h"
 #include "core/html/HTMLTextFormControlElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/layout/LayoutBoxModelObject.h"
 #include "core/layout/LayoutObject.h"
 #include "core/page/SpatialNavigation.h"
 #include "platform/Language.h"
@@ -119,11 +122,13 @@ bool HTMLElement::ieForbidsInsertHTML() const
         || hasTagName(imageTag)
         || hasTagName(imgTag)
         || hasTagName(inputTag)
+        || hasTagName(keygenTag)
         || hasTagName(linkTag)
         || (RuntimeEnabledFeatures::contextMenuEnabled() && hasTagName(menuitemTag))
         || hasTagName(metaTag)
         || hasTagName(paramTag)
         || hasTagName(sourceTag)
+        || hasTagName(trackTag)
         || hasTagName(wbrTag))
         return true;
     return false;
@@ -167,7 +172,7 @@ void HTMLElement::mapLanguageAttributeToLocale(const AtomicString& value, Mutabl
             UseCounter::count(document(), UseCounter::LangAttributeOnHTML);
         else if (isHTMLBodyElement(*this))
             UseCounter::count(document(), UseCounter::LangAttributeOnBody);
-        String htmlLanguage = value.string();
+        String htmlLanguage = value.getString();
         size_t firstSeparator = htmlLanguage.find('-');
         if (firstSeparator != kNotFound)
             htmlLanguage = htmlLanguage.left(firstSeparator);
@@ -236,7 +241,7 @@ void HTMLElement::collectStyleForPresentationAttribute(const QualifiedName& name
         } else {
             if (isValidDirAttribute(value))
                 addPropertyToPresentationAttributeStyle(style, CSSPropertyDirection, value);
-            else
+            else if (isHTMLBodyElement(*this))
                 addPropertyToPresentationAttributeStyle(style, CSSPropertyDirection, "ltr");
             if (!hasTagName(bdiTag) && !hasTagName(bdoTag) && !hasTagName(outputTag))
                 addPropertyToPresentationAttributeStyle(style, CSSPropertyUnicodeBidi, CSSValueIsolate);
@@ -272,8 +277,6 @@ const AtomicString& HTMLElement::eventNameForAttributeName(const QualifiedName& 
             { onanimationendAttr, EventTypeNames::animationend },
             { onanimationiterationAttr, EventTypeNames::animationiteration },
             { onanimationstartAttr, EventTypeNames::animationstart },
-            { onautocompleteAttr, EventTypeNames::autocomplete },
-            { onautocompleteerrorAttr, EventTypeNames::autocompleteerror },
             { onbeforecopyAttr, EventTypeNames::beforecopy },
             { onbeforecutAttr, EventTypeNames::beforecut },
             { onbeforepasteAttr, EventTypeNames::beforepaste },
@@ -303,6 +306,7 @@ const AtomicString& HTMLElement::eventNameForAttributeName(const QualifiedName& 
             { onfocusAttr, EventTypeNames::focus },
             { onfocusinAttr, EventTypeNames::focusin },
             { onfocusoutAttr, EventTypeNames::focusout },
+            { ongotpointercaptureAttr, EventTypeNames::gotpointercapture },
             { oninputAttr, EventTypeNames::input },
             { oninvalidAttr, EventTypeNames::invalid },
             { onkeydownAttr, EventTypeNames::keydown },
@@ -312,6 +316,7 @@ const AtomicString& HTMLElement::eventNameForAttributeName(const QualifiedName& 
             { onloadeddataAttr, EventTypeNames::loadeddata },
             { onloadedmetadataAttr, EventTypeNames::loadedmetadata },
             { onloadstartAttr, EventTypeNames::loadstart },
+            { onlostpointercaptureAttr, EventTypeNames::lostpointercapture },
             { onmousedownAttr, EventTypeNames::mousedown },
             { onmouseenterAttr, EventTypeNames::mouseenter },
             { onmouseleaveAttr, EventTypeNames::mouseleave },
@@ -375,8 +380,8 @@ void HTMLElement::parseAttribute(const QualifiedName& name, const AtomicString& 
         if (name == contenteditableAttr) {
             if (value.isNull() || equalIgnoringCase(value, "false")) {
                 if (document().frame()) {
-                    VisiblePosition startPos = createVisiblePosition(firstPositionInNode(this));
-                    VisiblePosition endPos = createVisiblePosition(lastPositionInNode(this));
+                    VisiblePosition startPos = createVisiblePosition(PositionTemplate<EditingStrategy>::firstPositionInNode(this));
+                    VisiblePosition endPos = createVisiblePosition(PositionTemplate<EditingStrategy>::lastPositionInNode(this));
                     EphemeralRange range(startPos.deepEquivalent(), endPos.deepEquivalent());
                     document().frame()->spellChecker().clearMisspellingsAndBadGrammar(VisibleSelection(range));
                 }
@@ -389,9 +394,9 @@ void HTMLElement::parseAttribute(const QualifiedName& name, const AtomicString& 
     }
 }
 
-PassRefPtrWillBeRawPtr<DocumentFragment> HTMLElement::textToFragment(const String& text, ExceptionState& exceptionState)
+DocumentFragment* HTMLElement::textToFragment(const String& text, ExceptionState& exceptionState)
 {
-    RefPtrWillBeRawPtr<DocumentFragment> fragment = DocumentFragment::create(document());
+    DocumentFragment* fragment = DocumentFragment::create(document());
     unsigned i, length = text.length();
     UChar c = 0;
     for (unsigned start = 0; start < length; ) {
@@ -475,9 +480,9 @@ void HTMLElement::setInnerText(const String& text, ExceptionState& exceptionStat
     }
 
     // Add text nodes and <br> elements.
-    RefPtrWillBeRawPtr<DocumentFragment> fragment = textToFragment(text, exceptionState);
+    DocumentFragment* fragment = textToFragment(text, exceptionState);
     if (!exceptionState.hadException())
-        replaceChildrenWithFragment(this, fragment.release(), exceptionState);
+        replaceChildrenWithFragment(this, fragment, exceptionState);
 }
 
 void HTMLElement::setOuterText(const String& text, ExceptionState& exceptionState)
@@ -497,9 +502,9 @@ void HTMLElement::setOuterText(const String& text, ExceptionState& exceptionStat
         return;
     }
 
-    RefPtrWillBeRawPtr<Node> prev = previousSibling();
-    RefPtrWillBeRawPtr<Node> next = nextSibling();
-    RefPtrWillBeRawPtr<Node> newChild = nullptr;
+    Node* prev = previousSibling();
+    Node* next = nextSibling();
+    Node* newChild = nullptr;
 
     // Convert text to fragment with <br> tags instead of linebreaks if needed.
     if (text.contains('\r') || text.contains('\n'))
@@ -514,14 +519,14 @@ void HTMLElement::setOuterText(const String& text, ExceptionState& exceptionStat
     if (exceptionState.hadException())
         return;
 
-    parent->replaceChild(newChild.release(), this, exceptionState);
+    parent->replaceChild(newChild, this, exceptionState);
 
-    RefPtrWillBeRawPtr<Node> node = next ? next->previousSibling() : nullptr;
+    Node* node = next ? next->previousSibling() : nullptr;
     if (!exceptionState.hadException() && node && node->isTextNode())
-        mergeWithNextTextNode(toText(node.get()), exceptionState);
+        mergeWithNextTextNode(toText(node), exceptionState);
 
     if (!exceptionState.hadException() && prev && prev->isTextNode())
-        mergeWithNextTextNode(toText(prev.get()), exceptionState);
+        mergeWithNextTextNode(toText(prev), exceptionState);
 }
 
 void HTMLElement::applyAlignmentAttributeToStyle(const AtomicString& alignment, MutableStylePropertySet* style)
@@ -676,9 +681,9 @@ void HTMLElement::setTranslate(bool enable)
 // http://www.whatwg.org/specs/web-apps/current-work/multipage/common-dom-interfaces.html#limited-to-only-known-values
 static inline const AtomicString& toValidDirValue(const AtomicString& value)
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, ltrValue, ("ltr", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(const AtomicString, rtlValue, ("rtl", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(const AtomicString, autoValue, ("auto", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, ltrValue, ("ltr"));
+    DEFINE_STATIC_LOCAL(const AtomicString, rtlValue, ("rtl"));
+    DEFINE_STATIC_LOCAL(const AtomicString, autoValue, ("auto"));
 
     if (equalIgnoringCase(value, ltrValue))
         return ltrValue;
@@ -746,7 +751,8 @@ TextDirection HTMLElement::directionality(Node** strongDirectionalityTextNode) c
     while (node) {
         // Skip bdi, script, style and text form controls.
         if (equalIgnoringCase(node->nodeName(), "bdi") || isHTMLScriptElement(*node) || isHTMLStyleElement(*node)
-            || (node->isElementNode() && toElement(node)->isTextFormControl())) {
+            || (node->isElementNode() && toElement(node)->isTextFormControl())
+            || (node->isElementNode() && toElement(node)->shadowPseudoId() == "-webkit-input-placeholder")) {
             node = FlatTreeTraversal::nextSkippingChildren(*node, this);
             continue;
         }
@@ -802,7 +808,7 @@ void HTMLElement::adjustDirectionalityIfNeededAfterChildAttributeChanged(Element
         Element* elementToAdjust = this;
         for (; elementToAdjust; elementToAdjust = FlatTreeTraversal::parentElement(*elementToAdjust)) {
             if (elementAffectsDirectionality(elementToAdjust)) {
-                elementToAdjust->setNeedsStyleRecalc(SubtreeStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::WritingModeChange));
+                elementToAdjust->setNeedsStyleRecalc(LocalStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::WritingModeChange));
                 return;
             }
         }
@@ -813,7 +819,7 @@ void HTMLElement::calculateAndAdjustDirectionality()
 {
     TextDirection textDirection = directionality();
     if (layoutObject() && layoutObject()->style() && layoutObject()->style()->direction() != textDirection)
-        setNeedsStyleRecalc(SubtreeStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::WritingModeChange));
+        setNeedsStyleRecalc(LocalStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::WritingModeChange));
 }
 
 void HTMLElement::adjustDirectionalityIfNeededAfterChildrenChanged(const ChildrenChange& change)
@@ -925,24 +931,41 @@ static RGBA32 parseColorStringWithCrazyLegacyRules(const String& colorString)
 }
 
 // Color parsing that matches HTML's "rules for parsing a legacy color value"
-void HTMLElement::addHTMLColorToStyle(MutableStylePropertySet* style, CSSPropertyID propertyID, const String& attributeValue)
+bool HTMLElement::parseColorWithLegacyRules(const String& attributeValue, Color& parsedColor)
 {
     // An empty string doesn't apply a color. (One containing only whitespace does, which is why this check occurs before stripping.)
     if (attributeValue.isEmpty())
-        return;
+        return false;
 
     String colorString = attributeValue.stripWhiteSpace();
 
     // "transparent" doesn't apply a color either.
     if (equalIgnoringCase(colorString, "transparent"))
+        return false;
+
+    // If the string is a 3/6-digit hex color or a named CSS color, use that. Apply legacy rules otherwise. Note color.setFromString()
+    // accepts 4/8-digit hex color, so restrict its use with length checks here to support legacy HTML attributes.
+
+    bool success = false;
+    if ((colorString.length() == 4 || colorString.length() == 7) && colorString[0] == '#')
+        success = parsedColor.setFromString(colorString);
+    if (!success)
+        success = parsedColor.setNamedColor(colorString);
+    if (!success) {
+        parsedColor.setRGB(parseColorStringWithCrazyLegacyRules(colorString));
+        success = true;
+    }
+
+    return success;
+}
+
+void HTMLElement::addHTMLColorToStyle(MutableStylePropertySet* style, CSSPropertyID propertyID, const String& attributeValue)
+{
+    Color parsedColor;
+    if (!parseColorWithLegacyRules(attributeValue, parsedColor))
         return;
 
-    // If the string is a named CSS color or a 3/6-digit hex color, use that.
-    Color parsedColor;
-    if (!parsedColor.setFromString(colorString))
-        parsedColor.setRGB(parseColorStringWithCrazyLegacyRules(colorString));
-
-    style->setProperty(propertyID, cssValuePool().createColorValue(parsedColor.rgb()));
+    style->setProperty(propertyID, CSSColorValue::create(parsedColor.rgb()));
 }
 
 bool HTMLElement::isInteractiveContent() const
@@ -1040,8 +1063,51 @@ void HTMLElement::handleKeypressEvent(KeyboardEvent* event)
 
 const AtomicString& HTMLElement::eventParameterName()
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, eventString, ("event", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, eventString, ("event"));
     return eventString;
+}
+
+int HTMLElement::offsetLeftForBinding()
+{
+    Element* offsetParent = unclosedOffsetParent();
+    if (LayoutBoxModelObject* layoutObject = layoutBoxModelObject())
+        return adjustLayoutUnitForAbsoluteZoom(LayoutUnit(layoutObject->pixelSnappedOffsetLeft(offsetParent)), layoutObject->styleRef()).round();
+    return 0;
+}
+
+int HTMLElement::offsetTopForBinding()
+{
+    Element* offsetParent = unclosedOffsetParent();
+    if (LayoutBoxModelObject* layoutObject = layoutBoxModelObject())
+        return adjustLayoutUnitForAbsoluteZoom(LayoutUnit(layoutObject->pixelSnappedOffsetTop(offsetParent)), layoutObject->styleRef()).round();
+    return 0;
+}
+
+int HTMLElement::offsetWidthForBinding()
+{
+    Element* offsetParent = unclosedOffsetParent();
+    if (LayoutBoxModelObject* layoutObject = layoutBoxModelObject())
+        return adjustLayoutUnitForAbsoluteZoom(LayoutUnit(layoutObject->pixelSnappedOffsetWidth(offsetParent)), layoutObject->styleRef()).round();
+    return 0;
+}
+
+int HTMLElement::offsetHeightForBinding()
+{
+    Element* offsetParent = unclosedOffsetParent();
+    if (LayoutBoxModelObject* layoutObject = layoutBoxModelObject())
+        return adjustLayoutUnitForAbsoluteZoom(LayoutUnit(layoutObject->pixelSnappedOffsetHeight(offsetParent)), layoutObject->styleRef()).round();
+    return 0;
+}
+
+Element* HTMLElement::unclosedOffsetParent()
+{
+    document().updateStyleAndLayoutIgnorePendingStylesheetsForNode(this);
+
+    LayoutObject* layoutObject = this->layoutObject();
+    if (!layoutObject)
+        return nullptr;
+
+    return layoutObject->offsetParent(this);
 }
 
 } // namespace blink

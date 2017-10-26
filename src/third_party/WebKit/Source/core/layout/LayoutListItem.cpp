@@ -27,7 +27,6 @@
 #include "core/dom/shadow/FlatTreeTraversal.h"
 #include "core/html/HTMLOListElement.h"
 #include "core/layout/LayoutListMarker.h"
-#include "core/layout/LayoutView.h"
 #include "core/paint/ListItemPainter.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringBuilder.h"
@@ -322,21 +321,20 @@ bool LayoutListItem::updateMarkerLocation()
     bool fontsAreDifferent = false;
     LayoutObject* firstNonMarker = firstNonMarkerChild(lineBoxParent);
     LayoutObject* firstText = firstRenderText(firstNonMarker, lineBoxParent);
-    if (firstText && m_marker->style()->fontDescription() != firstText->style()->fontDescription()) {
+    if (firstText && m_marker->style()->getFontDescription() != firstText->style()->getFontDescription()) {
         fontsAreDifferent = true;
     }
 
     if (markerParent != lineBoxParent || fontsAreDifferent) {
         m_marker->remove();
         if (fontsAreDifferent) {
-            m_marker->mutableStyle()->setFontDescription(firstText->style()->fontDescription());
-            m_marker->style()->font().update(m_marker->style()->font().fontSelector());
+            m_marker->mutableStyle()->setFontDescription(firstText->style()->getFontDescription());
+            m_marker->style()->font().update(m_marker->style()->font().getFontSelector());
         }
         lineBoxParent->addChild(m_marker, firstNonMarker);
+        // TODO(rhogan): lineBoxParent and markerParent may be deleted by addChild, so they are not safe to reference here.
+        // Once we have a safe way of referencing them delete markerParent if it is an empty anonymous block.
         m_marker->updateMarginsAndContent();
-        // If markerParent is an anonymous block with no children, destroy it.
-        if (markerParent && markerParent->isAnonymousBlock() && !toLayoutBlock(markerParent)->firstChild() && !toLayoutBlock(markerParent)->continuation())
-            markerParent->destroy();
         return true;
     }
 
@@ -456,7 +454,7 @@ const String& LayoutListItem::markerText() const
 {
     if (m_marker)
         return m_marker->text();
-    return nullAtom.string();
+    return nullAtom.getString();
 }
 
 void LayoutListItem::explicitValueChanged()

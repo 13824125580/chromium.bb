@@ -12,6 +12,7 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/variations/processed_study.h"
 #include "components/variations/study_filtering.h"
@@ -75,6 +76,8 @@ void RegisterVariationIds(const Study_Experiment& experiment,
 void ApplyUIStringOverrides(
     const Study_Experiment& experiment,
     const VariationsSeedProcessor::UIStringOverrideCallback& callback) {
+  UMA_HISTOGRAM_COUNTS_100("Variations.StringsOverridden",
+                           experiment.override_ui_string_size());
   for (int i = 0; i < experiment.override_ui_string_size(); ++i) {
     const Study_Experiment_OverrideUIString& override =
         experiment.override_ui_string(i);
@@ -107,8 +110,8 @@ void RegisterFeatureOverrides(const ProcessedStudy& processed_study,
   // must be in the |study|.
   DCHECK_NE(-1, experiment_index);
 
-  const Study_Experiment& experiment =
-      processed_study.study()->experiment(experiment_index);
+  const Study& study = *processed_study.study();
+  const Study_Experiment& experiment = study.experiment(experiment_index);
 
   // Process all the features to enable.
   int feature_count = experiment.feature_association().enable_feature_size();
@@ -124,6 +127,23 @@ void RegisterFeatureOverrides(const ProcessedStudy& processed_study,
     feature_list->RegisterFieldTrialOverride(
         experiment.feature_association().disable_feature(i),
         base::FeatureList::OVERRIDE_DISABLE_FEATURE, trial);
+  }
+
+  // Check if this study enables/disables a single feature and uses explicit
+  // activation (i.e. the trial should be activated when queried). If so, ensure
+  // that groups that don't explicitly enable/disable that feature are still
+  // associated with it (i.e. so "Default" group gets reported).
+  //
+  // Note: This checks for ACTIVATION_EXPLICIT, since there is no reason to
+  // have this association with ACTIVATION_AUTO (where the trial starts active),
+  // as well as allowing flexibility to disable this behavior in the future from
+  // the server by introducing a new activation type.
+  if (!processed_study.single_feature_name().empty() &&
+      study.activation_type() == Study_ActivationType_ACTIVATION_EXPLICIT &&
+      !experiment.has_feature_association()) {
+    feature_list->RegisterFieldTrialOverride(
+        processed_study.single_feature_name(),
+        base::FeatureList::OVERRIDE_USE_DEFAULT, trial);
   }
 }
 
@@ -167,6 +187,7 @@ void VariationsSeedProcessor::CreateTrialsFromSeed(
     const std::string& session_consistency_country,
     const std::string& permanent_consistency_country,
     const UIStringOverrideCallback& override_callback,
+    const base::FieldTrial::EntropyProvider* low_entropy_provider,
     base::FeatureList* feature_list) {
   std::vector<ProcessedStudy> filtered_studies;
   FilterAndValidateStudies(seed, locale, reference_date, version, channel,
@@ -175,14 +196,40 @@ void VariationsSeedProcessor::CreateTrialsFromSeed(
                            permanent_consistency_country, &filtered_studies);
 
   for (size_t i = 0; i < filtered_studies.size(); ++i)
-    CreateTrialFromStudy(filtered_studies[i], override_callback, feature_list);
+    CreateTrialFromStudy(filtered_studies[i], override_callback,
+                         low_entropy_provider, feature_list);
+}
+
+// static
+bool VariationsSeedProcessor::ShouldStudyUseLowEntropy(const Study& study) {
+  for (int i = 0; i < study.experiment_size(); ++i) {
+    const Study_Experiment& experiment = study.experiment(i);
+    if (experiment.has_google_web_experiment_id() ||
+        experiment.has_google_web_trigger_experiment_id() ||
+        experiment.has_google_update_experiment_id() ||
+        experiment.has_chrome_sync_experiment_id()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void VariationsSeedProcessor::CreateTrialFromStudy(
     const ProcessedStudy& processed_study,
     const UIStringOverrideCallback& override_callback,
+    const base::FieldTrial::EntropyProvider* low_entropy_provider,
     base::FeatureList* feature_list) {
   const Study& study = *processed_study.study();
+
+  // If the trial already exists, check if the selected group exists in the
+  // |processed_study|. If not, there is nothing to do here.
+  base::FieldTrial* existing_trial = base::FieldTrialList::Find(study.name());
+  if (existing_trial) {
+    int experiment_index = processed_study.GetExperimentIndexByName(
+        existing_trial->GetGroupNameWithoutActivation());
+    if (experiment_index == -1)
+      return;
+  }
 
   // Check if any experiments need to be forced due to a command line
   // flag. Force the first experiment with an existing flag.
@@ -235,7 +282,8 @@ void VariationsSeedProcessor::CreateTrialFromStudy(
           study.name(), processed_study.total_probability(),
           study.default_experiment_name(),
           base::FieldTrialList::kNoExpirationYear, 1, 1, randomization_type,
-          randomization_seed, NULL));
+          randomization_seed, NULL,
+          ShouldStudyUseLowEntropy(study) ? low_entropy_provider : NULL));
 
   bool has_overrides = false;
   bool enables_or_disables_features = false;
@@ -264,13 +312,13 @@ void VariationsSeedProcessor::CreateTrialFromStudy(
   }
 
   trial->SetForced();
+  if (processed_study.is_expired())
+    trial->Disable();
 
   if (enables_or_disables_features)
     RegisterFeatureOverrides(processed_study, trial.get(), feature_list);
 
-  if (processed_study.is_expired()) {
-    trial->Disable();
-  } else if (study.activation_type() == Study_ActivationType_ACTIVATION_AUTO) {
+  if (study.activation_type() == Study_ActivationType_ACTIVATION_AUTO) {
     const std::string& group_name = trial->group_name();
 
     // Don't try to apply overrides if none of the experiments in this study had

@@ -7,13 +7,16 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/events/events_export.h"
 #include "ui/gfx/x/x11_types.h"
 
-typedef union _XEvent XEvent;
-typedef unsigned long XID;
+using Time = unsigned long;
+using XEvent = union _XEvent;
+using XID = unsigned long;
+using XWindow = unsigned long;
 
 namespace ui {
 
@@ -40,6 +43,8 @@ class EVENTS_EXPORT X11EventSource {
   X11EventSource(X11EventSourceDelegate* delegate, XDisplay* display);
   ~X11EventSource();
 
+  static bool HasInstance();
+
   static X11EventSource* GetInstance();
 
   // Called when there is a new XEvent available. Processes all (if any)
@@ -57,7 +62,14 @@ class EVENTS_EXPORT X11EventSource {
   // functions which require a mapped window.
   void BlockUntilWindowMapped(XID window);
 
+  void BlockUntilWindowUnmapped(XID window);
+
   XDisplay* display() { return display_; }
+  Time last_seen_server_time() const { return last_seen_server_time_; }
+
+  // Explicitly asks the X11 server for the current timestamp, and updates
+  // |last_seen_server_time| with this value.
+  Time UpdateLastSeenServerTime();
 
   void StopCurrentEventStream();
   void OnDispatcherListChanged();
@@ -71,6 +83,10 @@ class EVENTS_EXPORT X11EventSource {
   // Handles updates after event has been dispatched.
   void PostDispatchEvent(XEvent* xevent);
 
+  // Block until receiving a structure notify event of |type| on |window|.
+  // Dispatch all encountered events prior to the one we're blocking on.
+  void BlockOnWindowStructureEvent(XID window, int type);
+
  private:
   static X11EventSource* instance_;
 
@@ -79,11 +95,19 @@ class EVENTS_EXPORT X11EventSource {
   // The connection to the X11 server used to receive the events.
   XDisplay* display_;
 
+  // The last timestamp seen in an XEvent.
+  Time last_seen_server_time_;
+
+  // State necessary for UpdateLastSeenServerTime
+  bool dummy_initialized_;
+  XWindow dummy_window_;
+  XAtom dummy_atom_;
+
   // Keeps track of whether this source should continue to dispatch all the
   // available events.
   bool continue_stream_ = true;
 
-  scoped_ptr<X11HotplugEventHandler> hotplug_event_handler_;
+  std::unique_ptr<X11HotplugEventHandler> hotplug_event_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(X11EventSource);
 };

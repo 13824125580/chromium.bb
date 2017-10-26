@@ -11,14 +11,19 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/debug/debugging_flags.h"
+#include "base/debug/stack_trace.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/heap_profiler.h"
 #include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 #include "base/trace_event/heap_profiler_stack_frame_deduplicator.h"
 #include "base/trace_event/heap_profiler_type_name_deduplicator.h"
 #include "base/trace_event/malloc_dump_provider.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/memory_dump_session_state.h"
+#include "base/trace_event/memory_infra_background_whitelist.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
@@ -42,26 +47,7 @@ const char* kTraceEventArgNames[] = {"dumps"};
 const unsigned char kTraceEventArgTypes[] = {TRACE_VALUE_TYPE_CONVERTABLE};
 
 StaticAtomicSequenceNumber g_next_guid;
-uint32_t g_periodic_dumps_count = 0;
-uint32_t g_heavy_dumps_rate = 0;
 MemoryDumpManager* g_instance_for_testing = nullptr;
-
-void RequestPeriodicGlobalDump() {
-  MemoryDumpLevelOfDetail level_of_detail;
-  if (g_heavy_dumps_rate == 0) {
-    level_of_detail = MemoryDumpLevelOfDetail::LIGHT;
-  } else {
-    level_of_detail = g_periodic_dumps_count == 0
-                          ? MemoryDumpLevelOfDetail::DETAILED
-                          : MemoryDumpLevelOfDetail::LIGHT;
-
-    if (++g_periodic_dumps_count == g_heavy_dumps_rate)
-      g_periodic_dumps_count = 0;
-  }
-
-  MemoryDumpManager::GetInstance()->RequestGlobalDump(
-      MemoryDumpType::PERIODIC_INTERVAL, level_of_detail);
-}
 
 // Callback wrapper to hook upon the completion of RequestGlobalDump() and
 // inject trace markers.
@@ -78,11 +64,41 @@ void OnGlobalDumpDone(MemoryDumpCallback wrapped_callback,
   }
 }
 
+// Proxy class which wraps a ConvertableToTraceFormat owned by the
+// |session_state| into a proxy object that can be added to the trace event log.
+// This is to solve the problem that the MemoryDumpSessionState is refcounted
+// but the tracing subsystem wants a std::unique_ptr<ConvertableToTraceFormat>.
+template <typename T>
+struct SessionStateConvertableProxy : public ConvertableToTraceFormat {
+  using GetterFunctPtr = T* (MemoryDumpSessionState::*)() const;
+
+  SessionStateConvertableProxy(
+      scoped_refptr<MemoryDumpSessionState> session_state,
+      GetterFunctPtr getter_function)
+      : session_state(session_state), getter_function(getter_function) {}
+
+  void AppendAsTraceFormat(std::string* out) const override {
+    return (session_state.get()->*getter_function)()->AppendAsTraceFormat(out);
+  }
+
+  void EstimateTraceMemoryOverhead(
+      TraceEventMemoryOverhead* overhead) override {
+    return (session_state.get()->*getter_function)()
+        ->EstimateTraceMemoryOverhead(overhead);
+  }
+
+  scoped_refptr<MemoryDumpSessionState> session_state;
+  GetterFunctPtr const getter_function;
+};
+
 }  // namespace
 
 // static
 const char* const MemoryDumpManager::kTraceCategory =
     TRACE_DISABLED_BY_DEFAULT("memory-infra");
+
+// static
+const char* const MemoryDumpManager::kLogPrefix = "Memory-infra dump";
 
 // static
 const int MemoryDumpManager::kMaxConsecutiveFailuresCount = 3;
@@ -141,7 +157,29 @@ void MemoryDumpManager::EnableHeapProfilingIfNeeded() {
           switches::kEnableHeapProfiling))
     return;
 
-  AllocationContextTracker::SetCaptureEnabled(true);
+  std::string profiling_mode = CommandLine::ForCurrentProcess()
+      ->GetSwitchValueASCII(switches::kEnableHeapProfiling);
+  if (profiling_mode == "") {
+    AllocationContextTracker::SetCaptureMode(
+        AllocationContextTracker::CaptureMode::PSEUDO_STACK);
+  }
+  else if (profiling_mode == switches::kEnableHeapProfilingModeNative) {
+#if HAVE_TRACE_STACK_FRAME_POINTERS && \
+    (BUILDFLAG(ENABLE_PROFILING) || !defined(NDEBUG))
+    // We need frame pointers for native tracing to work, and they are
+    // enabled in profiling and debug builds.
+    AllocationContextTracker::SetCaptureMode(
+        AllocationContextTracker::CaptureMode::NATIVE_STACK);
+#else
+    CHECK(false) << "'" << profiling_mode << "' mode for "
+                 << switches::kEnableHeapProfiling << " flag is not supported "
+                 << "for this platform / build type.";
+#endif
+  } else {
+    CHECK(false) << "Invalid mode '" << profiling_mode << "' for "
+               << switches::kEnableHeapProfiling << " flag.";
+  }
+
   for (auto mdp : dump_providers_)
     mdp->dump_provider->OnHeapProfilingEnabled(true);
   heap_profiling_enabled_ = true;
@@ -184,43 +222,45 @@ void MemoryDumpManager::Initialize(MemoryDumpManagerDelegate* delegate,
 void MemoryDumpManager::RegisterDumpProvider(
     MemoryDumpProvider* mdp,
     const char* name,
-    const scoped_refptr<SingleThreadTaskRunner>& task_runner,
+    scoped_refptr<SingleThreadTaskRunner> task_runner,
     MemoryDumpProvider::Options options) {
   options.dumps_on_single_thread_task_runner = true;
-  RegisterDumpProviderInternal(mdp, name, task_runner, options);
+  RegisterDumpProviderInternal(mdp, name, std::move(task_runner), options);
 }
 
 void MemoryDumpManager::RegisterDumpProvider(
     MemoryDumpProvider* mdp,
     const char* name,
-    const scoped_refptr<SingleThreadTaskRunner>& task_runner) {
+    scoped_refptr<SingleThreadTaskRunner> task_runner) {
   // Set |dumps_on_single_thread_task_runner| to true because all providers
   // without task runner are run on dump thread.
   MemoryDumpProvider::Options options;
   options.dumps_on_single_thread_task_runner = true;
-  RegisterDumpProviderInternal(mdp, name, task_runner, options);
+  RegisterDumpProviderInternal(mdp, name, std::move(task_runner), options);
 }
 
 void MemoryDumpManager::RegisterDumpProviderWithSequencedTaskRunner(
     MemoryDumpProvider* mdp,
     const char* name,
-    const scoped_refptr<SequencedTaskRunner>& task_runner,
+    scoped_refptr<SequencedTaskRunner> task_runner,
     MemoryDumpProvider::Options options) {
   DCHECK(task_runner);
   options.dumps_on_single_thread_task_runner = false;
-  RegisterDumpProviderInternal(mdp, name, task_runner, options);
+  RegisterDumpProviderInternal(mdp, name, std::move(task_runner), options);
 }
 
 void MemoryDumpManager::RegisterDumpProviderInternal(
     MemoryDumpProvider* mdp,
     const char* name,
-    const scoped_refptr<SequencedTaskRunner>& task_runner,
+    scoped_refptr<SequencedTaskRunner> task_runner,
     const MemoryDumpProvider::Options& options) {
   if (dumper_registrations_ignored_for_testing_)
     return;
 
+  bool whitelisted_for_background_mode = IsMemoryDumpProviderWhitelisted(name);
   scoped_refptr<MemoryDumpProviderInfo> mdpinfo =
-      new MemoryDumpProviderInfo(mdp, name, task_runner, options);
+      new MemoryDumpProviderInfo(mdp, name, std::move(task_runner), options,
+                                 whitelisted_for_background_mode);
 
   {
     AutoLock lock(lock_);
@@ -240,14 +280,14 @@ void MemoryDumpManager::UnregisterDumpProvider(MemoryDumpProvider* mdp) {
 }
 
 void MemoryDumpManager::UnregisterAndDeleteDumpProviderSoon(
-    scoped_ptr<MemoryDumpProvider> mdp) {
+    std::unique_ptr<MemoryDumpProvider> mdp) {
   UnregisterDumpProviderInternal(mdp.release(), true /* delete_async */);
 }
 
 void MemoryDumpManager::UnregisterDumpProviderInternal(
     MemoryDumpProvider* mdp,
     bool take_mdp_ownership_and_delete_async) {
-  scoped_ptr<MemoryDumpProvider> owned_mdp;
+  std::unique_ptr<MemoryDumpProvider> owned_mdp;
   if (take_mdp_ownership_and_delete_async)
     owned_mdp.reset(mdp);
 
@@ -298,8 +338,13 @@ void MemoryDumpManager::RequestGlobalDump(
     MemoryDumpType dump_type,
     MemoryDumpLevelOfDetail level_of_detail,
     const MemoryDumpCallback& callback) {
-  // Bail out immediately if tracing is not enabled at all.
-  if (!UNLIKELY(subtle::NoBarrier_Load(&memory_tracing_enabled_))) {
+  // Bail out immediately if tracing is not enabled at all or if the dump mode
+  // is not allowed.
+  if (!UNLIKELY(subtle::NoBarrier_Load(&memory_tracing_enabled_)) ||
+      !IsDumpModeAllowed(level_of_detail)) {
+    VLOG(1) << kLogPrefix << " failed because " << kTraceCategory
+            << " tracing category is not enabled or the requested dump mode is "
+               "not allowed by trace config.";
     if (!callback.is_null())
       callback.Run(0u /* guid */, false /* success */);
     return;
@@ -343,15 +388,33 @@ void MemoryDumpManager::CreateProcessDump(const MemoryDumpRequestArgs& args,
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(kTraceCategory, "ProcessMemoryDump",
                                     TRACE_ID_MANGLE(args.dump_guid));
 
-  scoped_ptr<ProcessMemoryDumpAsyncState> pmd_async_state;
+  // If argument filter is enabled then only background mode dumps should be
+  // allowed. In case the trace config passed for background tracing session
+  // missed the allowed modes argument, it crashes here instead of creating
+  // unexpected dumps.
+  if (TraceLog::GetInstance()
+          ->GetCurrentTraceConfig()
+          .IsArgumentFilterEnabled()) {
+    CHECK_EQ(MemoryDumpLevelOfDetail::BACKGROUND, args.level_of_detail);
+  }
+
+  std::unique_ptr<ProcessMemoryDumpAsyncState> pmd_async_state;
   {
     AutoLock lock(lock_);
+
     // |dump_thread_| can be nullptr is tracing was disabled before reaching
     // here. SetupNextMemoryDump() is robust enough to tolerate it and will
     // NACK the dump.
     pmd_async_state.reset(new ProcessMemoryDumpAsyncState(
         args, dump_providers_, session_state_, callback,
         dump_thread_ ? dump_thread_->task_runner() : nullptr));
+
+    // Safety check to prevent reaching here without calling RequestGlobalDump,
+    // with disallowed modes. If |session_state_| is null then tracing is
+    // disabled.
+    CHECK(!session_state_ ||
+          session_state_->memory_dump_config().allowed_dump_modes.count(
+              args.level_of_detail));
   }
 
   TRACE_EVENT_WITH_FLOW0(kTraceCategory, "MemoryDumpManager::CreateProcessDump",
@@ -373,14 +436,29 @@ void MemoryDumpManager::CreateProcessDump(const MemoryDumpRequestArgs& args,
 // |lock_| is used in these functions purely to ensure consistency w.r.t.
 // (un)registrations of |dump_providers_|.
 void MemoryDumpManager::SetupNextMemoryDump(
-    scoped_ptr<ProcessMemoryDumpAsyncState> pmd_async_state) {
+    std::unique_ptr<ProcessMemoryDumpAsyncState> pmd_async_state) {
+  HEAP_PROFILER_SCOPED_IGNORE;
   // Initalizes the ThreadLocalEventBuffer to guarantee that the TRACE_EVENTs
   // in the PostTask below don't end up registering their own dump providers
   // (for discounting trace memory overhead) while holding the |lock_|.
   TraceLog::GetInstance()->InitializeThreadLocalEventBufferIfSupported();
 
-  // If this was the last hop, create a trace event, add it to the trace and
-  // finalize process dump (invoke callback).
+  // |dump_thread_| might be destroyed before getting this point.
+  // It means that tracing was disabled right before starting this dump.
+  // Anyway either tracing is stopped or this was the last hop, create a trace
+  // event, add it to the trace and finalize process dump invoking the callback.
+  if (!pmd_async_state->dump_thread_task_runner.get()) {
+    if (pmd_async_state->pending_dump_providers.empty()) {
+      VLOG(1) << kLogPrefix << " failed because dump thread was destroyed"
+              << " before finalizing the dump";
+    } else {
+      VLOG(1) << kLogPrefix << " failed because dump thread was destroyed"
+              << " before dumping "
+              << pmd_async_state->pending_dump_providers.back().get()->name;
+    }
+    pmd_async_state->dump_successful = false;
+    pmd_async_state->pending_dump_providers.clear();
+  }
   if (pmd_async_state->pending_dump_providers.empty())
     return FinalizeDumpAndAddToTrace(std::move(pmd_async_state));
 
@@ -389,21 +467,22 @@ void MemoryDumpManager::SetupNextMemoryDump(
   MemoryDumpProviderInfo* mdpinfo =
       pmd_async_state->pending_dump_providers.back().get();
 
+  // If we are in background tracing, we should invoke only the whitelisted
+  // providers. Ignore other providers and continue.
+  if (pmd_async_state->req_args.level_of_detail ==
+          MemoryDumpLevelOfDetail::BACKGROUND &&
+      !mdpinfo->whitelisted_for_background_mode) {
+    pmd_async_state->pending_dump_providers.pop_back();
+    return SetupNextMemoryDump(std::move(pmd_async_state));
+  }
+
   // If the dump provider did not specify a task runner affinity, dump on
-  // |dump_thread_|. Note that |dump_thread_| might have been destroyed
-  // meanwhile.
+  // |dump_thread_| which is already checked above for presence.
   SequencedTaskRunner* task_runner = mdpinfo->task_runner.get();
   if (!task_runner) {
     DCHECK(mdpinfo->options.dumps_on_single_thread_task_runner);
     task_runner = pmd_async_state->dump_thread_task_runner.get();
-    if (!task_runner) {
-      // If tracing was disabled before reaching CreateProcessDump() the
-      // dump_thread_ would have been already torn down. Nack current dump and
-      // continue.
-      pmd_async_state->dump_successful = false;
-      pmd_async_state->pending_dump_providers.pop_back();
-      return SetupNextMemoryDump(std::move(pmd_async_state));
-    }
+    DCHECK(task_runner);
   }
 
   if (mdpinfo->options.dumps_on_single_thread_task_runner &&
@@ -448,6 +527,7 @@ void MemoryDumpManager::SetupNextMemoryDump(
 // (unless disabled).
 void MemoryDumpManager::InvokeOnMemoryDump(
     ProcessMemoryDumpAsyncState* owned_pmd_async_state) {
+  HEAP_PROFILER_SCOPED_IGNORE;
   // In theory |owned_pmd_async_state| should be a scoped_ptr. The only reason
   // why it isn't is because of the corner case logic of |did_post_task|
   // above, which needs to take back the ownership of the |pmd_async_state| when
@@ -455,7 +535,7 @@ void MemoryDumpManager::InvokeOnMemoryDump(
   // Unfortunately, PostTask() destroys the scoped_ptr arguments upon failure
   // to prevent accidental leaks. Using a scoped_ptr would prevent us to to
   // skip the hop and move on. Hence the manual naked -> scoped ptr juggling.
-  auto pmd_async_state = make_scoped_ptr(owned_pmd_async_state);
+  auto pmd_async_state = WrapUnique(owned_pmd_async_state);
   owned_pmd_async_state = nullptr;
 
   // Read MemoryDumpProviderInfo thread safety considerations in
@@ -494,9 +574,10 @@ void MemoryDumpManager::InvokeOnMemoryDump(
     // process), non-zero when the coordinator process creates dumps on behalf
     // of child processes (see crbug.com/461788).
     ProcessId target_pid = mdpinfo->options.target_pid;
-    ProcessMemoryDump* pmd =
-        pmd_async_state->GetOrCreateMemoryDumpContainerForProcess(target_pid);
     MemoryDumpArgs args = {pmd_async_state->req_args.level_of_detail};
+    ProcessMemoryDump* pmd =
+        pmd_async_state->GetOrCreateMemoryDumpContainerForProcess(target_pid,
+                                                                  args);
     bool dump_successful = mdpinfo->dump_provider->OnMemoryDump(args, pmd);
     mdpinfo->consecutive_failures =
         dump_successful ? 0 : mdpinfo->consecutive_failures + 1;
@@ -508,7 +589,8 @@ void MemoryDumpManager::InvokeOnMemoryDump(
 
 // static
 void MemoryDumpManager::FinalizeDumpAndAddToTrace(
-    scoped_ptr<ProcessMemoryDumpAsyncState> pmd_async_state) {
+    std::unique_ptr<ProcessMemoryDumpAsyncState> pmd_async_state) {
+  HEAP_PROFILER_SCOPED_IGNORE;
   DCHECK(pmd_async_state->pending_dump_providers.empty());
   const uint64_t dump_guid = pmd_async_state->req_args.dump_guid;
   if (!pmd_async_state->callback_task_runner->BelongsToCurrentThread()) {
@@ -527,15 +609,16 @@ void MemoryDumpManager::FinalizeDumpAndAddToTrace(
   for (const auto& kv : pmd_async_state->process_dumps) {
     ProcessId pid = kv.first;  // kNullProcessId for the current process.
     ProcessMemoryDump* process_memory_dump = kv.second.get();
-    TracedValue* traced_value = new TracedValue();
-    scoped_refptr<ConvertableToTraceFormat> event_value(traced_value);
-    process_memory_dump->AsValueInto(traced_value);
+    std::unique_ptr<TracedValue> traced_value(new TracedValue);
+    process_memory_dump->AsValueInto(traced_value.get());
     traced_value->SetString("level_of_detail",
                             MemoryDumpLevelOfDetailToString(
                                 pmd_async_state->req_args.level_of_detail));
     const char* const event_name =
         MemoryDumpTypeToString(pmd_async_state->req_args.dump_type);
 
+    std::unique_ptr<ConvertableToTraceFormat> event_value(
+        std::move(traced_value));
     TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_PROCESS_ID(
         TRACE_EVENT_PHASE_MEMORY_DUMP,
         TraceLog::GetCategoryGroupEnabled(kTraceCategory), event_name,
@@ -547,8 +630,11 @@ void MemoryDumpManager::FinalizeDumpAndAddToTrace(
 
   bool tracing_still_enabled;
   TRACE_EVENT_CATEGORY_GROUP_ENABLED(kTraceCategory, &tracing_still_enabled);
-  if (!tracing_still_enabled)
+  if (!tracing_still_enabled) {
     pmd_async_state->dump_successful = false;
+    VLOG(1) << kLogPrefix << " failed because tracing was disabled before"
+            << " the dump was completed";
+  }
 
   if (!pmd_async_state->callback.is_null()) {
     pmd_async_state->callback.Run(dump_guid, pmd_async_state->dump_successful);
@@ -571,79 +657,63 @@ void MemoryDumpManager::OnTraceLogEnabled() {
   TraceLog::GetInstance()->InitializeThreadLocalEventBufferIfSupported();
 
   // Spin-up the thread used to invoke unbound dump providers.
-  scoped_ptr<Thread> dump_thread(new Thread("MemoryInfra"));
+  std::unique_ptr<Thread> dump_thread(new Thread("MemoryInfra"));
   if (!dump_thread->Start()) {
     LOG(ERROR) << "Failed to start the memory-infra thread for tracing";
     return;
   }
 
-  AutoLock lock(lock_);
-
-  DCHECK(delegate_);  // At this point we must have a delegate.
-
-  scoped_refptr<StackFrameDeduplicator> stack_frame_deduplicator = nullptr;
-  scoped_refptr<TypeNameDeduplicator> type_name_deduplicator = nullptr;
-
+  const TraceConfig trace_config =
+      TraceLog::GetInstance()->GetCurrentTraceConfig();
+  scoped_refptr<MemoryDumpSessionState> session_state =
+      new MemoryDumpSessionState;
+  session_state->SetMemoryDumpConfig(trace_config.memory_dump_config());
   if (heap_profiling_enabled_) {
     // If heap profiling is enabled, the stack frame deduplicator and type name
     // deduplicator will be in use. Add a metadata events to write the frames
     // and type IDs.
-    stack_frame_deduplicator = new StackFrameDeduplicator;
-    type_name_deduplicator = new TypeNameDeduplicator;
+    session_state->SetStackFrameDeduplicator(
+        WrapUnique(new StackFrameDeduplicator));
+
+    session_state->SetTypeNameDeduplicator(
+        WrapUnique(new TypeNameDeduplicator));
+
     TRACE_EVENT_API_ADD_METADATA_EVENT(
         TraceLog::GetCategoryGroupEnabled("__metadata"), "stackFrames",
         "stackFrames",
-        scoped_refptr<ConvertableToTraceFormat>(stack_frame_deduplicator));
+        WrapUnique(new SessionStateConvertableProxy<StackFrameDeduplicator>(
+            session_state, &MemoryDumpSessionState::stack_frame_deduplicator)));
+
     TRACE_EVENT_API_ADD_METADATA_EVENT(
         TraceLog::GetCategoryGroupEnabled("__metadata"), "typeNames",
         "typeNames",
-        scoped_refptr<ConvertableToTraceFormat>(type_name_deduplicator));
+        WrapUnique(new SessionStateConvertableProxy<TypeNameDeduplicator>(
+            session_state, &MemoryDumpSessionState::type_name_deduplicator)));
   }
 
-  DCHECK(!dump_thread_);
-  dump_thread_ = std::move(dump_thread);
-  session_state_ = new MemoryDumpSessionState(stack_frame_deduplicator,
-                                              type_name_deduplicator);
+  {
+    AutoLock lock(lock_);
 
-  subtle::NoBarrier_Store(&memory_tracing_enabled_, 1);
+    DCHECK(delegate_);  // At this point we must have a delegate.
+    session_state_ = session_state;
 
-  // TODO(primiano): This is a temporary hack to disable periodic memory dumps
-  // when running memory benchmarks until telemetry uses TraceConfig to
-  // enable/disable periodic dumps. See crbug.com/529184 .
-  if (!is_coordinator_ ||
-      CommandLine::ForCurrentProcess()->HasSwitch(
-          "enable-memory-benchmarking")) {
-    return;
+    DCHECK(!dump_thread_);
+    dump_thread_ = std::move(dump_thread);
+
+    subtle::NoBarrier_Store(&memory_tracing_enabled_, 1);
+
+    // TODO(primiano): This is a temporary hack to disable periodic memory dumps
+    // when running memory benchmarks until telemetry uses TraceConfig to
+    // enable/disable periodic dumps. See crbug.com/529184 .
+    if (!is_coordinator_ ||
+        CommandLine::ForCurrentProcess()->HasSwitch(
+            "enable-memory-benchmarking")) {
+      return;
+    }
   }
 
-  // Enable periodic dumps. At the moment the periodic support is limited to at
-  // most one low-detail periodic dump and at most one high-detail periodic
-  // dump. If both are specified the high-detail period must be an integer
-  // multiple of the low-level one.
-  g_periodic_dumps_count = 0;
-  const TraceConfig trace_config =
-      TraceLog::GetInstance()->GetCurrentTraceConfig();
-  const TraceConfig::MemoryDumpConfig& config_list =
-      trace_config.memory_dump_config();
-  if (config_list.empty())
-    return;
-
-  uint32_t min_timer_period_ms = std::numeric_limits<uint32_t>::max();
-  uint32_t heavy_dump_period_ms = 0;
-  DCHECK_LE(config_list.size(), 2u);
-  for (const TraceConfig::MemoryDumpTriggerConfig& config : config_list) {
-    DCHECK(config.periodic_interval_ms);
-    if (config.level_of_detail == MemoryDumpLevelOfDetail::DETAILED)
-      heavy_dump_period_ms = config.periodic_interval_ms;
-    min_timer_period_ms =
-        std::min(min_timer_period_ms, config.periodic_interval_ms);
-  }
-  DCHECK_EQ(0u, heavy_dump_period_ms % min_timer_period_ms);
-  g_heavy_dumps_rate = heavy_dump_period_ms / min_timer_period_ms;
-
-  periodic_dump_timer_.Start(FROM_HERE,
-                             TimeDelta::FromMilliseconds(min_timer_period_ms),
-                             base::Bind(&RequestPeriodicGlobalDump));
+  // Enable periodic dumps if necessary.
+  periodic_dump_timer_.Start(trace_config.memory_dump_config().triggers);
 }
 
 void MemoryDumpManager::OnTraceLogDisabled() {
@@ -651,7 +721,7 @@ void MemoryDumpManager::OnTraceLogDisabled() {
   // ensure that the MDM state which depends on the tracing enabled / disabled
   // state is always accessed by the dumping methods holding the |lock_|.
   subtle::NoBarrier_Store(&memory_tracing_enabled_, 0);
-  scoped_ptr<Thread> dump_thread;
+  std::unique_ptr<Thread> dump_thread;
   {
     AutoLock lock(lock_);
     dump_thread = std::move(dump_thread_);
@@ -665,6 +735,14 @@ void MemoryDumpManager::OnTraceLogDisabled() {
     dump_thread->Stop();
 }
 
+bool MemoryDumpManager::IsDumpModeAllowed(MemoryDumpLevelOfDetail dump_mode) {
+  AutoLock lock(lock_);
+  if (!session_state_)
+    return false;
+  return session_state_->memory_dump_config().allowed_dump_modes.count(
+             dump_mode) != 0;
+}
+
 uint64_t MemoryDumpManager::GetTracingProcessId() const {
   return delegate_->GetTracingProcessId();
 }
@@ -672,14 +750,16 @@ uint64_t MemoryDumpManager::GetTracingProcessId() const {
 MemoryDumpManager::MemoryDumpProviderInfo::MemoryDumpProviderInfo(
     MemoryDumpProvider* dump_provider,
     const char* name,
-    const scoped_refptr<SequencedTaskRunner>& task_runner,
-    const MemoryDumpProvider::Options& options)
+    scoped_refptr<SequencedTaskRunner> task_runner,
+    const MemoryDumpProvider::Options& options,
+    bool whitelisted_for_background_mode)
     : dump_provider(dump_provider),
       name(name),
-      task_runner(task_runner),
+      task_runner(std::move(task_runner)),
       options(options),
       consecutive_failures(0),
-      disabled(false) {}
+      disabled(false),
+      whitelisted_for_background_mode(whitelisted_for_background_mode) {}
 
 MemoryDumpManager::MemoryDumpProviderInfo::~MemoryDumpProviderInfo() {}
 
@@ -698,15 +778,15 @@ bool MemoryDumpManager::MemoryDumpProviderInfo::Comparator::operator()(
 MemoryDumpManager::ProcessMemoryDumpAsyncState::ProcessMemoryDumpAsyncState(
     MemoryDumpRequestArgs req_args,
     const MemoryDumpProviderInfo::OrderedSet& dump_providers,
-    const scoped_refptr<MemoryDumpSessionState>& session_state,
+    scoped_refptr<MemoryDumpSessionState> session_state,
     MemoryDumpCallback callback,
-    const scoped_refptr<SingleThreadTaskRunner>& dump_thread_task_runner)
+    scoped_refptr<SingleThreadTaskRunner> dump_thread_task_runner)
     : req_args(req_args),
-      session_state(session_state),
+      session_state(std::move(session_state)),
       callback(callback),
       dump_successful(true),
-      callback_task_runner(MessageLoop::current()->task_runner()),
-      dump_thread_task_runner(dump_thread_task_runner) {
+      callback_task_runner(ThreadTaskRunnerHandle::Get()),
+      dump_thread_task_runner(std::move(dump_thread_task_runner)) {
   pending_dump_providers.reserve(dump_providers.size());
   pending_dump_providers.assign(dump_providers.rbegin(), dump_providers.rend());
 }
@@ -715,13 +795,88 @@ MemoryDumpManager::ProcessMemoryDumpAsyncState::~ProcessMemoryDumpAsyncState() {
 }
 
 ProcessMemoryDump* MemoryDumpManager::ProcessMemoryDumpAsyncState::
-    GetOrCreateMemoryDumpContainerForProcess(ProcessId pid) {
+    GetOrCreateMemoryDumpContainerForProcess(ProcessId pid,
+                                             const MemoryDumpArgs& dump_args) {
   auto iter = process_dumps.find(pid);
   if (iter == process_dumps.end()) {
-    scoped_ptr<ProcessMemoryDump> new_pmd(new ProcessMemoryDump(session_state));
+    std::unique_ptr<ProcessMemoryDump> new_pmd(
+        new ProcessMemoryDump(session_state, dump_args));
     iter = process_dumps.insert(std::make_pair(pid, std::move(new_pmd))).first;
   }
   return iter->second.get();
+}
+
+MemoryDumpManager::PeriodicGlobalDumpTimer::PeriodicGlobalDumpTimer() {}
+
+MemoryDumpManager::PeriodicGlobalDumpTimer::~PeriodicGlobalDumpTimer() {
+  Stop();
+}
+
+void MemoryDumpManager::PeriodicGlobalDumpTimer::Start(
+    const std::vector<TraceConfig::MemoryDumpConfig::Trigger>& triggers_list) {
+  if (triggers_list.empty())
+    return;
+
+  // At the moment the periodic support is limited to at most one periodic
+  // trigger per dump mode. All intervals should be an integer multiple of the
+  // smallest interval specified.
+  periodic_dumps_count_ = 0;
+  uint32_t min_timer_period_ms = std::numeric_limits<uint32_t>::max();
+  uint32_t light_dump_period_ms = 0;
+  uint32_t heavy_dump_period_ms = 0;
+  DCHECK_LE(triggers_list.size(), 3u);
+  auto* mdm = MemoryDumpManager::GetInstance();
+  for (const TraceConfig::MemoryDumpConfig::Trigger& config : triggers_list) {
+    DCHECK_NE(0u, config.periodic_interval_ms);
+    switch (config.level_of_detail) {
+      case MemoryDumpLevelOfDetail::BACKGROUND:
+        DCHECK(mdm->IsDumpModeAllowed(MemoryDumpLevelOfDetail::BACKGROUND));
+        break;
+      case MemoryDumpLevelOfDetail::LIGHT:
+        DCHECK_EQ(0u, light_dump_period_ms);
+        DCHECK(mdm->IsDumpModeAllowed(MemoryDumpLevelOfDetail::LIGHT));
+        light_dump_period_ms = config.periodic_interval_ms;
+        break;
+      case MemoryDumpLevelOfDetail::DETAILED:
+        DCHECK_EQ(0u, heavy_dump_period_ms);
+        DCHECK(mdm->IsDumpModeAllowed(MemoryDumpLevelOfDetail::DETAILED));
+        heavy_dump_period_ms = config.periodic_interval_ms;
+        break;
+    }
+    min_timer_period_ms =
+        std::min(min_timer_period_ms, config.periodic_interval_ms);
+  }
+
+  DCHECK_EQ(0u, light_dump_period_ms % min_timer_period_ms);
+  light_dump_rate_ = light_dump_period_ms / min_timer_period_ms;
+  DCHECK_EQ(0u, heavy_dump_period_ms % min_timer_period_ms);
+  heavy_dump_rate_ = heavy_dump_period_ms / min_timer_period_ms;
+
+  timer_.Start(FROM_HERE, TimeDelta::FromMilliseconds(min_timer_period_ms),
+               base::Bind(&PeriodicGlobalDumpTimer::RequestPeriodicGlobalDump,
+                          base::Unretained(this)));
+}
+
+void MemoryDumpManager::PeriodicGlobalDumpTimer::Stop() {
+  if (IsRunning()) {
+    timer_.Stop();
+  }
+}
+
+bool MemoryDumpManager::PeriodicGlobalDumpTimer::IsRunning() {
+  return timer_.IsRunning();
+}
+
+void MemoryDumpManager::PeriodicGlobalDumpTimer::RequestPeriodicGlobalDump() {
+  MemoryDumpLevelOfDetail level_of_detail = MemoryDumpLevelOfDetail::BACKGROUND;
+  if (light_dump_rate_ > 0 && periodic_dumps_count_ % light_dump_rate_ == 0)
+    level_of_detail = MemoryDumpLevelOfDetail::LIGHT;
+  if (heavy_dump_rate_ > 0 && periodic_dumps_count_ % heavy_dump_rate_ == 0)
+    level_of_detail = MemoryDumpLevelOfDetail::DETAILED;
+  ++periodic_dumps_count_;
+
+  MemoryDumpManager::GetInstance()->RequestGlobalDump(
+      MemoryDumpType::PERIODIC_INTERVAL, level_of_detail);
 }
 
 }  // namespace trace_event

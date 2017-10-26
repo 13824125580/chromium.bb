@@ -28,6 +28,8 @@ class Extension;
 //                      bar which is shown while the Bubble is shown.
 //    GENERIC        -> The app menu. This case includes page actions that
 //                      don't specify a default icon.
+// NB: This bubble is using the temporarily-deprecated bubble manager interface
+// BubbleUi. Do not copy this pattern.
 class ExtensionInstalledBubble : public BubbleDelegate {
  public:
   // The behavior and content of this Bubble comes in these varieties:
@@ -79,7 +81,7 @@ class ExtensionInstalledBubble : public BubbleDelegate {
   AnchorPosition anchor_position() const { return anchor_position_; }
 
   // BubbleDelegate:
-  scoped_ptr<BubbleUi> BuildBubbleUi() override;
+  std::unique_ptr<BubbleUi> BuildBubbleUi() override;
   bool ShouldClose(BubbleCloseReason reason) const override;
   std::string GetName() const override;
   const content::RenderFrameHost* OwningFrame() const override;
@@ -109,7 +111,7 @@ class ExtensionInstalledBubble : public BubbleDelegate {
   AnchorPosition anchor_position_;
 
   // The command to execute the extension action, if one exists.
-  scoped_ptr<extensions::Command> action_command_;
+  std::unique_ptr<extensions::Command> action_command_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstalledBubble);
 };

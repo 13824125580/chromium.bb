@@ -35,111 +35,62 @@
 #include "public/platform/WebURLLoader.h"
 #include "public/platform/WebURLLoaderClient.h"
 #include "wtf/Forward.h"
-#include "wtf/RefCounted.h"
+#include <memory>
 
 namespace blink {
 
 class Resource;
-class KURL;
 class ResourceError;
 class ResourceFetcher;
-class ThreadedDataReceiver;
 
 class CORE_EXPORT ResourceLoader final : public GarbageCollectedFinalized<ResourceLoader>, protected WebURLLoaderClient {
 public:
-    static ResourceLoader* create(ResourceFetcher*, Resource*, const ResourceRequest&, const ResourceLoaderOptions&);
+    static ResourceLoader* create(ResourceFetcher*, Resource*);
     ~ResourceLoader() override;
     DECLARE_TRACE();
 
-    // Promptly release m_loader.
-    EAGERLY_FINALIZE();
-
-    void start();
-    void changeToSynchronous();
-
+    void start(const ResourceRequest&, WebTaskRunner* loadingTaskRunner, bool defersLoading);
     void cancel();
-    void cancel(const ResourceError&);
-    void cancelIfNotFinishing();
-
-    Resource* cachedResource() { return m_resource.get(); }
-    const ResourceRequest& originalRequest() const { return m_originalRequest; }
 
     void setDefersLoading(bool);
-    bool defersLoading() const { return m_defersLoading; }
-
-    void attachThreadedDataReceiver(PassRefPtrWillBeRawPtr<ThreadedDataReceiver>);
-
-    void releaseResources();
 
     void didChangePriority(ResourceLoadPriority, int intraPriorityValue);
 
     // WebURLLoaderClient
+    //
+    // A succesful load will consist of:
+    // 0+  willFollowRedirect()
+    // 0+  didSendData()
+    // 1   didReceiveResponse()
+    // 0-1 didReceiveCachedMetadata()
+    // 0+  didReceiveData() or didDownloadData(), but never both
+    // 1   didFinishLoading()
+    // A failed load is indicated by 1 didFail(), which can occur at any time
+    // before didFinishLoading(), including synchronous inside one of the other
+    // callbacks via ResourceLoader::cancel()
     void willFollowRedirect(WebURLLoader*, WebURLRequest&, const WebURLResponse& redirectResponse) override;
     void didSendData(WebURLLoader*, unsigned long long bytesSent, unsigned long long totalBytesToBeSent) override;
     void didReceiveResponse(WebURLLoader*, const WebURLResponse&) override;
     void didReceiveResponse(WebURLLoader*, const WebURLResponse&, WebDataConsumerHandle*) override;
-    void didReceiveData(WebURLLoader*, const char*, int, int encodedDataLength) override;
     void didReceiveCachedMetadata(WebURLLoader*, const char* data, int length) override;
+    void didReceiveData(WebURLLoader*, const char*, int, int encodedDataLength) override;
+    void didDownloadData(WebURLLoader*, int, int) override;
     void didFinishLoading(WebURLLoader*, double finishTime, int64_t encodedDataLength) override;
     void didFail(WebURLLoader*, const WebURLError&) override;
-    void didDownloadData(WebURLLoader*, int, int) override;
 
-    const KURL& url() const { return m_request.url(); }
-    bool isLoadedBy(ResourceFetcher*) const;
-
-    bool reachedTerminalState() const { return m_state == Terminated; }
-    const ResourceRequest& request() const { return m_request; }
-
-    bool loadingMultipartContent() const { return m_loadingMultipartContent; }
+    void didFinishLoadingFirstPartInMultipart();
 
 private:
     // Assumes ResourceFetcher and Resource are non-null.
-    ResourceLoader(ResourceFetcher*, Resource*, const ResourceLoaderOptions&);
+    ResourceLoader(ResourceFetcher*, Resource*);
 
-    void init(const ResourceRequest&);
-    void requestSynchronously();
-
-    void didFinishLoadingOnePart(double finishTime, int64_t encodedDataLength);
+    void requestSynchronously(const ResourceRequest&);
 
     bool responseNeedsAccessControlCheck() const;
 
-    ResourceRequest& applyOptions(ResourceRequest&) const;
-
-    OwnPtr<WebURLLoader> m_loader;
+    std::unique_ptr<WebURLLoader> m_loader;
     Member<ResourceFetcher> m_fetcher;
-
-    ResourceRequest m_request;
-    ResourceRequest m_originalRequest; // Before redirects.
-
-    bool m_notifiedLoadComplete;
-
-    bool m_defersLoading;
-    bool m_loadingMultipartContent;
-    ResourceRequest m_deferredRequest;
-    ResourceLoaderOptions m_options;
-
-    enum ResourceLoaderState {
-        Initialized,
-        Finishing,
-        Terminated
-    };
-
-    enum ConnectionState {
-        ConnectionStateNew,
-        ConnectionStateStarted,
-        ConnectionStateReceivedResponse,
-        ConnectionStateReceivingData,
-        ConnectionStateFinishedLoading,
-        ConnectionStateCanceled,
-        ConnectionStateFailed,
-    };
-
-    RefPtrWillBeMember<Resource> m_resource;
-    ResourceLoaderState m_state;
-
-    // Used for sanity checking to make sure we don't experience illegal state
-    // transitions.
-    ConnectionState m_connectionState;
+    Member<Resource> m_resource;
 };
 
 } // namespace blink

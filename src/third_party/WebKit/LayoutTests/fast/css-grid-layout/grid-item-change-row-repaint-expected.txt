@@ -1,17 +1,30 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [8, 88, 100, 100],
-        [8, 38, 100, 50]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow DIV class='sizedToGridArea'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV class='sizedToGridArea'",
+          "rect": [8, 88, 100, 100],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutBlockFlow DIV class='sizedToGridArea'",
+          "rect": [8, 38, 100, 50],
+          "reason": "style change"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow DIV class='sizedToGridArea'",
+      "reason": "style change"
     }
   ]
 }

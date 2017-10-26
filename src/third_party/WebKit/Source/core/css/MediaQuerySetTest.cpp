@@ -6,7 +6,6 @@
 
 #include "core/css/MediaList.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/StringBuilder.h"
 
 namespace blink {
@@ -27,7 +26,7 @@ static void testMediaQuery(TestCase test, MediaQuerySet& querySet, bool oldParse
         ++j;
         if (j >= querySet.queryVector().size())
             break;
-        output.appendLiteral(", ");
+        output.append(", ");
     }
     if (!oldParser || test.shouldWorkOnOldParser) {
         if (test.output)
@@ -171,8 +170,8 @@ TEST(MediaQuerySetTest, Basic)
     };
 
     for (unsigned i = 0; testCases[i].input; ++i) {
-        RefPtrWillBeRawPtr<MediaQuerySet> oldParserQuerySet = MediaQuerySet::create(testCases[i].input);
-        RefPtrWillBeRawPtr<MediaQuerySet> threadSafeQuerySet = MediaQuerySet::createOffMainThread(testCases[i].input);
+        MediaQuerySet* oldParserQuerySet = MediaQuerySet::create(testCases[i].input);
+        MediaQuerySet* threadSafeQuerySet = MediaQuerySet::createOffMainThread(testCases[i].input);
         testMediaQuery(testCases[i], *oldParserQuerySet, true);
         testMediaQuery(testCases[i], *threadSafeQuerySet, false);
     }

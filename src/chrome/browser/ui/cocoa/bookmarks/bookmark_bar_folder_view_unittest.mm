@@ -22,6 +22,7 @@
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
 
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
@@ -80,7 +81,8 @@ class BookmarkBarFolderViewTest : public CocoaProfileTest {
 
   id GetFakePasteboardForType(NSString* dataType) {
     id pasteboard = [OCMockObject mockForClass:[NSPasteboard class]];
-    if ([dataType isEqualToString:kBookmarkButtonDragType]) {
+    if ([dataType isEqualToString:ui::ClipboardUtil::UTIForPasteboardType(
+                                      kBookmarkButtonDragType)]) {
       BookmarkButton* button = mock_button_.get();
       [[[pasteboard stub]
         andReturn:[NSData dataWithBytes:&button length:sizeof(button)]]
@@ -89,10 +91,12 @@ class BookmarkBarFolderViewTest : public CocoaProfileTest {
       [[[pasteboard stub] andReturn:[NSData data]] dataForType:dataType];
     }
     [[[pasteboard stub] andReturn:nil] dataForType:OCMOCK_ANY];
-    [[[pasteboard stub] andReturnBool:YES] containsURLData];
+    [[[pasteboard stub] andReturnBool:YES]
+        containsURLDataConvertingTextToURL:YES];
     [[pasteboard stub] getURLs:[OCMArg setTo:nil]
                      andTitles:[OCMArg setTo:nil]
-           convertingFilenames:YES];
+           convertingFilenames:YES
+           convertingTextToURL:YES];
     return pasteboard;
   }
 
@@ -143,7 +147,8 @@ class BookmarkBarFolderViewTest : public CocoaProfileTest {
 };
 
 TEST_F(BookmarkBarFolderViewTest, BookmarkButtonDragAndDrop) {
-  id drag_info = GetFakeDragInfoForType(kBookmarkButtonDragType);
+  id drag_info = GetFakeDragInfoForType(
+      ui::ClipboardUtil::UTIForPasteboardType(kBookmarkButtonDragType));
   [[[mock_controller_ expect] andReturnUnsignedInteger:NSDragOperationNone]
    draggingEntered:drag_info];
   [[[mock_controller_ expect] andReturnBool:NO] dragBookmarkData:drag_info];
@@ -168,7 +173,8 @@ TEST_F(BookmarkBarFolderViewTest, BookmarkButtonDragAndDropAcrossProfiles) {
       YES, BookmarkModelFactory::GetForProfile(other_profile)));
   [view_ setController:mock_controller_];
 
-  id drag_info = GetFakeDragInfoForType(kBookmarkButtonDragType);
+  id drag_info = GetFakeDragInfoForType(
+      ui::ClipboardUtil::UTIForPasteboardType(kBookmarkButtonDragType));
   [[[mock_controller_ expect] andReturnUnsignedInteger:NSDragOperationNone]
    draggingEntered:drag_info];
   [[[mock_controller_ expect] andReturnBool:NO] dragBookmarkData:drag_info];
@@ -197,7 +203,8 @@ TEST_F(BookmarkBarFolderViewTest, URLDragAndDrop) {
 }
 
 TEST_F(BookmarkBarFolderViewTest, BookmarkButtonDropIndicator) {
-  id drag_info = GetFakeDragInfoForType(kBookmarkButtonDragType);
+  id drag_info = GetFakeDragInfoForType(
+      ui::ClipboardUtil::UTIForPasteboardType(kBookmarkButtonDragType));
   [[[mock_controller_ expect] andReturnUnsignedInteger:NSDragOperationNone]
    draggingEntered:drag_info];
   EXPECT_EQ([view_ draggingEntered:drag_info], NSDragOperationMove);

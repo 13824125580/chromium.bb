@@ -7,10 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
+#include "components/mus/gles2/command_buffer_driver.h"
 #include "components/mus/public/interfaces/command_buffer.mojom.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "mojo/public/cpp/bindings/binding.h"
@@ -24,15 +26,21 @@ class GpuState;
 // so that we can insert sync points without blocking on the GL driver. It
 // forwards most method calls to the CommandBufferDriver, which runs on the
 // same thread as the native viewport.
-class CommandBufferImpl : public mojom::CommandBuffer {
+class CommandBufferImpl : public mojom::CommandBuffer,
+                          public CommandBufferDriver::Client {
  public:
   CommandBufferImpl(mojo::InterfaceRequest<CommandBuffer> request,
                     scoped_refptr<GpuState> gpu_state);
-  void DidLoseContext(uint32_t reason);
 
  private:
   class CommandBufferDriverClientImpl;
   ~CommandBufferImpl() override;
+
+  // CommandBufferDriver::Client. All called on the GPU thread.
+  void DidLoseContext(uint32_t reason) override;
+  void UpdateVSyncParameters(const base::TimeTicks& timebase,
+                             const base::TimeDelta& interval) override;
+  void OnGpuCompletedSwapBuffers(gfx::SwapResult result) override;
 
   // mojom::CommandBuffer:
   void Initialize(
@@ -52,7 +60,7 @@ class CommandBufferImpl : public mojom::CommandBuffer {
   void CreateImage(int32_t id,
                    mojo::ScopedHandle memory_handle,
                    int32_t type,
-                   mojo::SizePtr size,
+                   const gfx::Size& size,
                    int32_t format,
                    int32_t internal_format) override;
   void DestroyImage(int32_t id) override;
@@ -60,7 +68,8 @@ class CommandBufferImpl : public mojom::CommandBuffer {
       uint32_t client_texture_id,
       const mojom::CommandBuffer::CreateStreamTextureCallback& callback
       ) override;
-  void ProduceFrontBuffer(const gpu::Mailbox& mailbox) override;
+  void TakeFrontBuffer(const gpu::Mailbox& mailbox) override;
+  void ReturnFrontBuffer(const gpu::Mailbox& mailbox, bool is_lost) override;
   void SignalQuery(uint32_t query, uint32_t signal_id) override;
   void SignalSyncToken(const gpu::SyncToken& sync_token,
                        uint32_t signal_id) override;
@@ -93,7 +102,7 @@ class CommandBufferImpl : public mojom::CommandBuffer {
   bool CreateImageOnGpuThread(int32_t id,
                               mojo::ScopedHandle memory_handle,
                               int32_t type,
-                              mojo::SizePtr size,
+                              const gfx::Size& size,
                               int32_t format,
                               int32_t internal_format);
   bool DestroyImageOnGpuThread(int32_t id);
@@ -102,10 +111,11 @@ class CommandBufferImpl : public mojom::CommandBuffer {
 
   void OnConnectionError();
   bool DeleteOnGpuThread();
+  void DeleteOnGpuThread2();
 
   scoped_refptr<GpuState> gpu_state_;
-  scoped_ptr<CommandBufferDriver> driver_;
-  scoped_ptr<mojo::Binding<CommandBuffer>> binding_;
+  std::unique_ptr<CommandBufferDriver> driver_;
+  std::unique_ptr<mojo::Binding<CommandBuffer>> binding_;
   mojom::CommandBufferClientPtr client_;
 
   DISALLOW_COPY_AND_ASSIGN(CommandBufferImpl);

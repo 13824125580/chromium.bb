@@ -31,46 +31,18 @@
 #include "bindings/core/v8/V8DOMWrapper.h"
 
 #include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8HTMLCollection.h"
-#include "bindings/core/v8/V8HTMLDocument.h"
 #include "bindings/core/v8/V8Location.h"
 #include "bindings/core/v8/V8ObjectConstructor.h"
 #include "bindings/core/v8/V8PerContextData.h"
 #include "bindings/core/v8/V8PerIsolateData.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
 #include "bindings/core/v8/V8Window.h"
+#include "core/dom/Document.h"
+#include "core/frame/LocalDOMWindow.h"
 
 namespace blink {
 
-static v8::Local<v8::Object> wrapInShadowTemplate(v8::Local<v8::Object> wrapper, ScriptWrappable* scriptWrappable, v8::Isolate* isolate)
-{
-    static int shadowTemplateKey; // This address is used for a key to look up the dom template.
-    V8PerIsolateData* data = V8PerIsolateData::from(isolate);
-    v8::Local<v8::FunctionTemplate> shadowTemplate = data->existingDOMTemplate(&shadowTemplateKey);
-    if (shadowTemplate.IsEmpty()) {
-        shadowTemplate = v8::FunctionTemplate::New(isolate);
-        if (shadowTemplate.IsEmpty())
-            return v8::Local<v8::Object>();
-        shadowTemplate->SetClassName(v8AtomicString(isolate, "HTMLDocument"));
-        shadowTemplate->Inherit(V8HTMLDocument::domTemplate(isolate));
-        shadowTemplate->InstanceTemplate()->SetInternalFieldCount(V8HTMLDocument::internalFieldCount);
-        data->setDOMTemplate(&shadowTemplateKey, shadowTemplate);
-    }
-
-    v8::Local<v8::Function> shadowConstructor;
-    if (!shadowTemplate->GetFunction(isolate->GetCurrentContext()).ToLocal(&shadowConstructor))
-        return v8::Local<v8::Object>();
-
-    v8::Local<v8::Object> shadow;
-    if (!V8ScriptRunner::instantiateObject(isolate, shadowConstructor).ToLocal(&shadow))
-        return v8::Local<v8::Object>();
-    if (!v8CallBoolean(shadow->SetPrototype(isolate->GetCurrentContext(), wrapper)))
-        return v8::Local<v8::Object>();
-    V8DOMWrapper::setNativeInfo(wrapper, &V8HTMLDocument::wrapperTypeInfo, scriptWrappable);
-    return shadow;
-}
-
-v8::Local<v8::Object> V8DOMWrapper::createWrapper(v8::Isolate* isolate, v8::Local<v8::Object> creationContext, const WrapperTypeInfo* type, ScriptWrappable* scriptWrappable)
+v8::Local<v8::Object> V8DOMWrapper::createWrapper(v8::Isolate* isolate, v8::Local<v8::Object> creationContext, const WrapperTypeInfo* type)
 {
     ASSERT(!type->equals(&V8Window::wrapperTypeInfo));
     // According to https://html.spec.whatwg.org/multipage/browsers.html#security-location,
@@ -84,15 +56,16 @@ v8::Local<v8::Object> V8DOMWrapper::createWrapper(v8::Isolate* isolate, v8::Loca
     if (perContextData) {
         wrapper = perContextData->createWrapperFromCache(type);
     } else {
-        v8::Local<v8::Function> function;
-        if (!type->domTemplate(isolate)->GetFunction(isolate->GetCurrentContext()).ToLocal(&function))
-            return v8::Local<v8::Object>();
-        if (!V8ObjectConstructor::newInstance(isolate, function).ToLocal(&wrapper))
-            return v8::Local<v8::Object>();
+        // The context is detached, but still accessible.
+        // TODO(yukishiino): This code does not create a wrapper with
+        // the correct settings.  Should follow the same way as
+        // V8PerContextData::createWrapperFromCache, though there is no need to
+        // cache resulting objects or their constructors.
+        const DOMWrapperWorld& world = DOMWrapperWorld::world(scope.context());
+        if (!type->domTemplate(isolate, world)->InstanceTemplate()->NewInstance(scope.context()).ToLocal(&wrapper)) {
+            // Nothing to do.
+        }
     }
-
-    if (type == &V8HTMLDocument::wrapperTypeInfo && !wrapper.IsEmpty())
-        wrapper = wrapInShadowTemplate(wrapper, scriptWrappable, isolate);
 
     return wrapper;
 }
@@ -136,12 +109,24 @@ void V8WrapperInstantiationScope::securityCheck(v8::Isolate* isolate, v8::Local<
     // If the context is different, we need to make sure that the current
     // context has access to the creation context.
     Frame* frame = toFrameIfNotDetached(contextForWrapper);
-    if (!frame)
+    if (!frame) {
+        // Sandbox detached frames - they can't create cross origin objects.
+        LocalDOMWindow* callingWindow = currentDOMWindow(isolate);
+        DOMWindow* targetWindow = toDOMWindow(contextForWrapper);
+        if (callingWindow && callingWindow->document()->getSecurityOrigin()->canAccessCheckSuborigins(targetWindow->document()->getSecurityOrigin()))
+            return;
+
+        // TODO(jochen): Currently, Location is the only object for which we can reach this code path. Should be generalized.
+        ExceptionState exceptionState(ExceptionState::ConstructionContext, "Location", contextForWrapper->Global(), isolate);
+        // We can't create a better message for a detached frame.
+        exceptionState.throwSecurityError(String(), String());
+        exceptionState.throwIfNeeded();
         return;
+    }
     const DOMWrapperWorld& currentWorld = DOMWrapperWorld::world(m_context);
     RELEASE_ASSERT(currentWorld.worldId() == DOMWrapperWorld::world(contextForWrapper).worldId());
     if (currentWorld.isMainWorld()) {
-        RELEASE_ASSERT(BindingSecurity::shouldAllowAccessToFrame(isolate, callingDOMWindow(isolate), frame, DoNotReportSecurityError));
+        RELEASE_ASSERT(BindingSecurity::shouldAllowAccessToFrame(isolate, currentDOMWindow(isolate), frame, DoNotReportSecurityError));
     }
 }
 
@@ -150,7 +135,7 @@ void V8WrapperInstantiationScope::convertException()
     v8::Isolate* isolate = m_context->GetIsolate();
     // TODO(jochen): Currently, Location is the only object for which we can reach this code path. Should be generalized.
     ExceptionState exceptionState(ExceptionState::ConstructionContext, "Location", isolate->GetCurrentContext()->Global(), isolate);
-    LocalDOMWindow* callingWindow = callingDOMWindow(isolate);
+    LocalDOMWindow* callingWindow = currentDOMWindow(isolate);
     DOMWindow* targetWindow = toDOMWindow(m_context);
     exceptionState.throwSecurityError(targetWindow->sanitizedCrossDomainAccessErrorMessage(callingWindow), targetWindow->crossDomainAccessErrorMessage(callingWindow));
     exceptionState.throwIfNeeded();

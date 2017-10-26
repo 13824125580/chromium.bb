@@ -50,13 +50,6 @@ class SCHEDULER_EXPORT TimeDomain {
   // Evaluate this TimeDomain's Now. Can be called from any thread.
   virtual base::TimeTicks Now() const = 0;
 
-  // Computes a runtime which is >= |time_domain_now| + |delay|. This is used to
-  // allow the TimeDomain to decide if the real or virtual time should be used
-  // when computing the task run time.  This can be called from any thread.
-  virtual base::TimeTicks ComputeDelayedRunTime(
-      base::TimeTicks time_domain_now,
-      base::TimeDelta delay) const = 0;
-
   // Some TimeDomains support virtual time, this method tells us to advance time
   // if possible and return true if time was advanced.
   virtual bool MaybeAdvanceTime() = 0;
@@ -150,10 +143,6 @@ class SCHEDULER_EXPORT TimeDomain {
   // Set of task queues with avaliable work on the incoming queue.  This should
   // only be accessed from the main thread.
   std::set<internal::TaskQueueImpl*> updatable_queue_set_;
-
-#if DCHECK_IS_ON()
-  std::set<internal::TaskQueueImpl*> registered_task_queues_;
-#endif
 
   Observer* observer_;  // NOT OWNED.
 

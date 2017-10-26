@@ -11,7 +11,7 @@
 
 namespace blink {
 
-using StyleImageList = WillBePersistentHeapVector<RefPtrWillBeMember<StyleImage>, 1>;
+using StyleImageList = PersistentHeapVector<Member<StyleImage>, 1>;
 
 class ImageListPropertyFunctions {
 public:
@@ -28,7 +28,7 @@ public:
             fillLayer = &style.maskLayers();
             break;
         default:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             return;
         }
 
@@ -50,7 +50,7 @@ public:
             fillLayer = &style.accessMaskLayers();
             break;
         default:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             return;
         }
 

@@ -4,7 +4,7 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/error_screen_handler.h"
 
-#include "ash/system/chromeos/devicetype_utils.h"
+#include "ash/common/system/chromeos/devicetype_utils.h"
 #include "base/message_loop/message_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/screens/network_error_model.h"
@@ -42,7 +42,7 @@ void ErrorScreenHandler::Show() {
     show_on_init_ = true;
     return;
   }
-  BaseScreenHandler::ShowScreen(OobeUI::kScreenErrorMessage, NULL);
+  BaseScreenHandler::ShowScreen(OobeScreen::SCREEN_ERROR_MESSAGE);
   if (model_)
     model_->OnShow();
   showing_ = true;
@@ -64,19 +64,8 @@ void ErrorScreenHandler::Unbind() {
   BaseScreenHandler::SetBaseScreen(nullptr);
 }
 
-void ErrorScreenHandler::ShowScreen(OobeUI::Screen screen) {
-  std::string screen_name;
-  if (GetScreenName(screen, &screen_name))
-    BaseScreenHandler::ShowScreen(screen_name.c_str(), NULL);
-}
-
-bool ErrorScreenHandler::GetScreenName(OobeUI::Screen screen,
-                                       std::string* name) const {
-  OobeUI* oobe_ui = static_cast<OobeUI*>(web_ui()->GetController());
-  if (!oobe_ui)
-    return false;
-  *name = oobe_ui->GetScreenName(screen);
-  return true;
+void ErrorScreenHandler::ShowOobeScreen(OobeScreen screen) {
+  ShowScreen(screen);
 }
 
 void ErrorScreenHandler::HandleHideCaptivePortal() {

@@ -41,12 +41,18 @@ class ExtensionMessagePort : public MessageService::MessagePort {
                        content::RenderProcessHost* extension_process);
   ~ExtensionMessagePort() override;
 
+  // Checks whether the frames to which this port is tied at its construction
+  // are still aware of this port's existence. Frames that don't know about
+  // the port are removed from the set of frames. This should be used for opener
+  // ports because the frame may be navigated before the port was initialized.
+  void RevalidatePort();
+
   // MessageService::MessagePort:
   void RemoveCommonFrames(const MessagePort& port) override;
   bool HasFrame(content::RenderFrameHost* rfh) const override;
   bool IsValidPort() override;
   void DispatchOnConnect(const std::string& channel_name,
-                         scoped_ptr<base::DictionaryValue> source_tab,
+                         std::unique_ptr<base::DictionaryValue> source_tab,
                          int source_frame_id,
                          int guest_process_id,
                          int guest_render_frame_routing_id,
@@ -75,7 +81,7 @@ class ExtensionMessagePort : public MessageService::MessagePort {
   void CloseChannel();
 
   // Send a IPC message to the renderer for all registered frames.
-  void SendToPort(scoped_ptr<IPC::Message> msg);
+  void SendToPort(std::unique_ptr<IPC::Message> msg);
 
   base::WeakPtr<MessageService> weak_message_service_;
 
@@ -92,13 +98,18 @@ class ExtensionMessagePort : public MessageService::MessagePort {
   // when the frame is removed or unloaded.
   std::set<content::RenderFrameHost*> frames_;
 
+  // The ID of the tab where the channel was created. This is saved so that any
+  // onMessage events can be run in the scope of the tab.
+  // Only set on receiver ports (if the opener was a tab). -1 if invalid.
+  int opener_tab_id_;
+
   // Whether the renderer acknowledged creation of the port. This is used to
   // distinguish abnormal port closure (e.g. no receivers) from explicit port
   // closure (e.g. by the port.disconnect() JavaScript method in the renderer).
   bool did_create_port_;
 
   ExtensionHost* background_host_ptr_;  // used in IncrementLazyKeepaliveCount
-  scoped_ptr<FrameTracker> frame_tracker_;
+  std::unique_ptr<FrameTracker> frame_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionMessagePort);
 };

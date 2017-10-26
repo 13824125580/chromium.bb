@@ -2,8 +2,14 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-.icon-container {
+.favicon-image {
   -webkit-margin-end: 8px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  display: inline-block;
+  height: 20px;
+  vertical-align: middle;
+  width: 20px;
 }
 
 .name {
@@ -22,7 +28,7 @@
 }
 
 paper-item:hover {
-  background-color: #f0f0f0;
+  background-color: var(--settings-hover-color);
 }
 
 paper-icon-button {

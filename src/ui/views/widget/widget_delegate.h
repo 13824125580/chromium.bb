@@ -19,7 +19,7 @@ class Rect;
 }
 
 namespace views {
-class BubbleDelegateView;
+class BubbleDialogDelegateView;
 class ClientView;
 class DialogDelegate;
 class NonClientFrameView;
@@ -50,7 +50,7 @@ class VIEWS_EXPORT WidgetDelegate {
   // NULL no view is focused.
   virtual View* GetInitiallyFocusedView();
 
-  virtual BubbleDelegateView* AsBubbleDelegate();
+  virtual BubbleDialogDelegateView* AsBubbleDialogDelegate();
   virtual DialogDelegate* AsDialogDelegate();
 
   // Returns true if the window can be resized.

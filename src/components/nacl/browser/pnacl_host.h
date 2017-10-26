@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 
 #include "base/callback_forward.h"
 #include "base/files/file.h"
@@ -65,8 +66,8 @@ class PnaclHost {
   // TranslationFinished after it finishes translation to allow the nexe to be
   // stored in the cache.
   // The returned temp fd may be closed at any time by PnaclHost, so it should
-  // be duplicated (e.g. with IPC::GetFileHandleForProcess) before the callback
-  // returns.
+  // be duplicated (e.g. with IPC::GetPlatformFileForTransit) before the
+  // callback returns.
   // If |is_incognito| is true, the nexe will not be stored
   // in the cache, but the renderer is still expected to call
   // TranslationFinished.
@@ -154,7 +155,7 @@ class PnaclHost {
   // GetNexeFd miss path
   void ReturnMiss(const PendingTranslationMap::iterator& entry);
   static scoped_refptr<net::DrainableIOBuffer> CopyFileToBuffer(
-      scoped_ptr<base::File> file);
+      std::unique_ptr<base::File> file);
   void StoreTranslatedNexe(TranslationID id,
                            scoped_refptr<net::DrainableIOBuffer>);
   void OnTranslatedNexeStored(const TranslationID& id, int net_error);
@@ -162,7 +163,7 @@ class PnaclHost {
 
   // GetNexeFd hit path
   void OnBufferCopiedToTempFile(const TranslationID& id,
-                                scoped_ptr<base::File> file,
+                                std::unique_ptr<base::File> file,
                                 int file_error);
 
   void OnEntriesDoomed(const base::Closure& callback, int net_error);
@@ -174,7 +175,7 @@ class PnaclHost {
   int pending_backend_operations_;
   CacheState cache_state_;
   base::FilePath temp_dir_;
-  scoped_ptr<pnacl::PnaclTranslationCache> disk_cache_;
+  std::unique_ptr<pnacl::PnaclTranslationCache> disk_cache_;
   PendingTranslationMap pending_translations_;
   base::ThreadChecker thread_checker_;
   base::WeakPtrFactory<PnaclHost> weak_factory_;

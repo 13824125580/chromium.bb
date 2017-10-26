@@ -32,6 +32,28 @@ class ChromeProxyLoFi(ChromeProxyBenchmark):
 
 
 @benchmark.Disabled(*WEBVIEW_PLATFORMS)
+class ChromeProxyCacheLoFiDisabled(ChromeProxyBenchmark):
+  tag = 'cache_lo_fi_disabled'
+  test = measurements.ChromeProxyCacheLoFiDisabled
+  page_set = pagesets.LoFiCacheStorySet
+
+  @classmethod
+  def Name(cls):
+    return 'chrome_proxy_benchmark.lo_fi.cache_lo_fi_disabled'
+
+
+@benchmark.Disabled(*WEBVIEW_PLATFORMS)
+class ChromeProxyCacheProxyDisabled(ChromeProxyBenchmark):
+  tag = 'cache_proxy_disabled'
+  test = measurements.ChromeProxyCacheProxyDisabled
+  page_set = pagesets.LoFiCacheStorySet
+
+  @classmethod
+  def Name(cls):
+    return 'chrome_proxy_benchmark.lo_fi.cache_proxy_disabled'
+
+
+@benchmark.Disabled(*WEBVIEW_PLATFORMS)
 class ChromeProxyPreviewLoFi(ChromeProxyBenchmark):
   tag = 'lo_fi_preview'
   test = measurements.ChromeProxyLoFiPreview
@@ -286,3 +308,12 @@ class ChromeProxyVideoAudio(benchmark.Benchmark):
   def Name(cls):
     return 'chrome_proxy_benchmark.video.audio'
 
+class ChromeProxyPingback(ChromeProxyBenchmark):
+  """Check that the pingback is sent and the server responds. """
+  tag = 'pingback'
+  test = measurements.ChromeProxyPingback
+  page_set = pagesets.PingbackStorySet
+
+  @classmethod
+  def Name(cls):
+    return 'chrome_proxy_benchmark.pingback'

@@ -17,27 +17,30 @@ extern const char kHistogramCommit[];
 extern const char kHistogramFirstLayout[];
 extern const char kHistogramFirstTextPaint[];
 extern const char kHistogramDomContentLoaded[];
+extern const char kHistogramDomLoadingToDomContentLoaded[];
 extern const char kHistogramLoad[];
-extern const char kHistogramFirstPaint[];
-extern const char kHistogramFirstImagePaint[];
 extern const char kHistogramFirstContentfulPaint[];
+extern const char kHistogramFirstContentfulPaintImmediate[];
+extern const char kHistogramDomLoadingToFirstContentfulPaint[];
+extern const char kHistogramParseDuration[];
+extern const char kHistogramParseBlockedOnScriptLoad[];
+
 extern const char kBackgroundHistogramCommit[];
 extern const char kBackgroundHistogramFirstLayout[];
 extern const char kBackgroundHistogramFirstTextPaint[];
 extern const char kBackgroundHistogramDomContentLoaded[];
 extern const char kBackgroundHistogramLoad[];
 extern const char kBackgroundHistogramFirstPaint[];
-extern const char kBackgroundHistogramFirstImagePaint[];
-extern const char kBackgroundHistogramFirstContentfulPaint[];
 
-extern const char kHistogramFirstContentfulPaintHigh[];
-extern const char kHistogramFirstContentfulPaintLow[];
+extern const char kHistogramLoadTypeFirstContentfulPaintReload[];
+extern const char kHistogramLoadTypeFirstContentfulPaintForwardBack[];
+extern const char kHistogramLoadTypeFirstContentfulPaintNewNavigation[];
 
-extern const char kHistogramFirstBackground[];
-extern const char kHistogramFirstForeground[];
+extern const char kHistogramLoadTypeParseStartReload[];
+extern const char kHistogramLoadTypeParseStartForwardBack[];
+extern const char kHistogramLoadTypeParseStartNewNavigation[];
 
 extern const char kHistogramBackgroundBeforePaint[];
-extern const char kHistogramBackgroundBeforeCommit[];
 extern const char kHistogramFailedProvisionalLoad[];
 
 extern const char kRapporMetricsNameCoarseTiming[];
@@ -46,7 +49,7 @@ extern const char kRapporMetricsNameCoarseTiming[];
 
 // Observer responsible for recording 'core' page load metrics. Core metrics are
 // maintained by loading-dev team, typically the metrics under
-// PageLoad.Timing2.*.
+// PageLoad.(Document|Paint|Parse)Timing.*.
 class CorePageLoadMetricsObserver
     : public page_load_metrics::PageLoadMetricsObserver {
  public:
@@ -54,6 +57,34 @@ class CorePageLoadMetricsObserver
   ~CorePageLoadMetricsObserver() override;
 
   // page_load_metrics::PageLoadMetricsObserver:
+  void OnCommit(content::NavigationHandle* navigation_handle) override;
+  void OnDomContentLoadedEventStart(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnLoadEventStart(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstLayout(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstPaint(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstTextPaint(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstImagePaint(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstContentfulPaint(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnParseStart(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnParseStop(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnComplete(const page_load_metrics::PageLoadTiming& timing,
                   const page_load_metrics::PageLoadExtraInfo& info) override;
   void OnFailedProvisionalLoad(
@@ -63,10 +94,11 @@ class CorePageLoadMetricsObserver
   // Information related to failed provisional loads.
   // Populated in OnFailedProvisionalLoad and accessed in OnComplete.
   struct FailedProvisionalLoadInfo {
-    base::TimeDelta interval;
+    base::Optional<base::TimeDelta> interval;
     net::Error error;
 
-    FailedProvisionalLoadInfo() : error(net::OK) {}
+    FailedProvisionalLoadInfo();
+    ~FailedProvisionalLoadInfo();
   };
 
   void RecordTimingHistograms(const page_load_metrics::PageLoadTiming& timing,
@@ -75,6 +107,8 @@ class CorePageLoadMetricsObserver
                     const page_load_metrics::PageLoadExtraInfo& info);
 
   FailedProvisionalLoadInfo failed_provisional_load_info_;
+  ui::PageTransition transition_;
+  bool initiated_by_user_gesture_;
 
   DISALLOW_COPY_AND_ASSIGN(CorePageLoadMetricsObserver);
 };

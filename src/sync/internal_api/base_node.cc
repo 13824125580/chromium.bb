@@ -56,8 +56,9 @@ bool BaseNode::DecryptIfNecessary() {
       GetEntry()->GetSpecifics();
   if (specifics.has_password()) {
     // Passwords have their own legacy encryption structure.
-    scoped_ptr<sync_pb::PasswordSpecificsData> data(DecryptPasswordSpecifics(
-        specifics, GetTransaction()->GetCryptographer()));
+    std::unique_ptr<sync_pb::PasswordSpecificsData> data(
+        DecryptPasswordSpecifics(specifics,
+                                 GetTransaction()->GetCryptographer()));
     if (!data) {
       GetTransaction()->GetWrappedTrans()->OnUnrecoverableError(
           FROM_HERE, std::string("Failed to decrypt encrypted node of type ") +
@@ -162,8 +163,9 @@ bool BaseNode::GetIsFolder() const {
 bool BaseNode::GetIsPermanentFolder() const {
   bool is_permanent_folder = !GetEntry()->GetUniqueServerTag().empty();
   if (is_permanent_folder) {
-    // If the node is a permanent folder it must also have IS_DIR bit set.
-    DCHECK(GetIsFolder());
+    // If the node is a permanent folder it must also have IS_DIR bit set,
+    // except some nigori nodes on old accounts.
+    DCHECK(GetIsFolder() || GetModelType() == NIGORI);
   }
   return is_permanent_folder;
 }

@@ -44,6 +44,7 @@ WebInspector.TextPrompt = function(completions, stopCharacters)
     this._loadCompletions = completions;
     this._completionStopCharacters = stopCharacters || " =:[({;,!+-*/&|^<>.";
     this._autocompletionTimeout = WebInspector.TextPrompt.DefaultAutocompletionTimeout;
+    this._title = "";
 }
 
 WebInspector.TextPrompt.DefaultAutocompletionTimeout = 250;
@@ -137,6 +138,9 @@ WebInspector.TextPrompt.prototype = {
         if (this._suggestBoxEnabled)
             this._suggestBox = new WebInspector.SuggestBox(this);
 
+        if (this._title)
+            this._proxyElement.title = this._title;
+
         return this._proxyElement;
     },
 
@@ -187,6 +191,24 @@ WebInspector.TextPrompt.prototype = {
 
         this.moveCaretToEndOfPrompt();
         this._element.scrollIntoView();
+    },
+
+    /**
+     * @return {string}
+     */
+    title: function()
+    {
+        return this._title;
+    },
+
+    /**
+     * @param {string} title
+     */
+    setTitle: function(title)
+    {
+        this._title = title;
+        if (this._proxyElement)
+            this._proxyElement.title = title;
     },
 
     _removeFromElement: function()
@@ -287,28 +309,28 @@ WebInspector.TextPrompt.prototype = {
         var handled = false;
         delete this._needUpdateAutocomplete;
 
-        switch (event.keyIdentifier) {
-        case "U+0009": // Tab
+        switch (event.key) {
+        case "Tab":
             handled = this.tabKeyPressed(event);
             break;
-        case "Left":
+        case "ArrowLeft":
         case "Home":
             this._removeSuggestionAids();
             break;
-        case "Right":
+        case "ArrowRight":
         case "End":
             if (this.isCaretAtEndOfPrompt())
                 handled = this.acceptAutoComplete();
             else
                 this._removeSuggestionAids();
             break;
-        case "U+001B": // Esc
+        case "Escape":
             if (this.isSuggestBoxVisible()) {
                 this._removeSuggestionAids();
                 handled = true;
             }
             break;
-        case "U+0020": // Space
+        case " ": // Space
             if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
                 this._updateAutoComplete(true);
                 handled = true;
@@ -392,10 +414,10 @@ WebInspector.TextPrompt.prototype = {
     {
         this.clearAutoComplete(true);
         var selection = this._element.getComponentSelection();
-        if (!selection.rangeCount)
+        var selectionRange = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+        if (!selectionRange)
             return;
 
-        var selectionRange = selection.getRangeAt(0);
         var shouldExit;
 
         if (!force && !this.isCaretAtEndOfPrompt() && !this.isSuggestBoxVisible())
@@ -586,6 +608,11 @@ WebInspector.TextPrompt.prototype = {
      */
     _applySuggestion: function(completionText, isIntermediateSuggestion)
     {
+        if (!this._userEnteredRange) {
+            // We could have already cleared autocompletion range by the time this is called. (crbug.com/587683)
+            return;
+        }
+
         var wordPrefixLength = this._userEnteredText ? this._userEnteredText.length : 0;
 
         this._userEnteredRange.deleteContents();
@@ -679,10 +706,10 @@ WebInspector.TextPrompt.prototype = {
     isCaretAtEndOfPrompt: function()
     {
         var selection = this._element.getComponentSelection();
-        if (!selection.rangeCount || !selection.isCollapsed)
+        var selectionRange = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+        if (!selectionRange || !selection.isCollapsed)
             return false;
 
-        var selectionRange = selection.getRangeAt(0);
         var node = selectionRange.startContainer;
         if (!node.isSelfOrDescendant(this._element))
             return false;
@@ -938,25 +965,27 @@ WebInspector.TextPromptWithHistory.prototype = {
         var newText;
         var isPrevious;
 
-        switch (event.keyIdentifier) {
-        case "Up":
+        switch (event.key) {
+        case "ArrowUp":
             if (!this.isCaretOnFirstLine() || this.isSuggestBoxVisible())
                 break;
             newText = this._previous();
             isPrevious = true;
             break;
-        case "Down":
+        case "ArrowDown":
             if (!this.isCaretOnLastLine() || this.isSuggestBoxVisible())
                 break;
             newText = this._next();
             break;
-        case "U+0050": // Ctrl+P = Previous
+        case "P": // Ctrl+P = Previous
+        case "p":
             if (WebInspector.isMac() && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
                 newText = this._previous();
                 isPrevious = true;
             }
             break;
-        case "U+004E": // Ctrl+N = Next
+        case "N": // Ctrl+N = Next
+        case "n":
             if (WebInspector.isMac() && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey)
                 newText = this._next();
             break;

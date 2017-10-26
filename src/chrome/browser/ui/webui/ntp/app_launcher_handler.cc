@@ -16,6 +16,7 @@
 #include "base/i18n/rtl.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -48,6 +49,7 @@
 #include "chrome/common/web_application_info.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/favicon_base/favicon_types.h"
+#include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/notification_service.h"
@@ -79,17 +81,22 @@ using extensions::ExtensionSystem;
 
 namespace {
 
+// The purpose of this enum is to track which page on the NTP is showing.
+// The lower 10 bits of kNtpShownPage are used for the index within the page
+// group, and the rest of the bits are used for the page group ID (defined
+// here).
+static const int kPageIdOffset = 10;
+enum {
+  INDEX_MASK = (1 << kPageIdOffset) - 1,
+  APPS_PAGE_ID = 2 << kPageIdOffset,
+};
+
 void RecordAppLauncherPromoHistogram(
       apps::AppLauncherPromoHistogramValues value) {
   DCHECK_LT(value, apps::APP_LAUNCHER_PROMO_MAX);
   UMA_HISTOGRAM_ENUMERATION(
       "Apps.AppLauncherPromo", value, apps::APP_LAUNCHER_PROMO_MAX);
 }
-
-// This is used to avoid a DCHECK due to an unhandled WebUI callback. The
-// JavaScript used to switch between pages sends "pageSelected" which is used
-// in the context of the NTP for recording metrics we don't need here.
-void NoOpCallback(const base::ListValue* args) {}
 
 }  // namespace
 
@@ -206,6 +213,20 @@ void AppLauncherHandler::CreateAppInfo(
   value->SetString("app_launch_ordinal", app_launch_ordinal.ToInternalValue());
 }
 
+// static
+void AppLauncherHandler::GetLocalizedValues(Profile* profile,
+                                            base::DictionaryValue* values) {
+  PrefService* prefs = profile->GetPrefs();
+  int shown_page = prefs->GetInteger(prefs::kNtpShownPage);
+  values->SetInteger("shown_page_index", shown_page & INDEX_MASK);
+}
+
+// static
+void AppLauncherHandler::RegisterProfilePrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterIntegerPref(prefs::kNtpShownPage, APPS_PAGE_ID);
+}
+
 void AppLauncherHandler::RegisterMessages() {
   registrar_.Add(this, chrome::NOTIFICATION_APP_INSTALLED_TO_NTP,
       content::Source<WebContents>(web_ui()->GetWebContents()));
@@ -251,12 +272,14 @@ void AppLauncherHandler::RegisterMessages() {
       base::Bind(&AppLauncherHandler::HandleGenerateAppForLink,
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("stopShowingAppLauncherPromo",
-      base::Bind(&AppLauncherHandler::StopShowingAppLauncherPromo,
+      base::Bind(&AppLauncherHandler::HandleStopShowingAppLauncherPromo,
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("onLearnMore",
-      base::Bind(&AppLauncherHandler::OnLearnMore,
+      base::Bind(&AppLauncherHandler::HandleOnLearnMore,
                  base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("pageSelected", base::Bind(&NoOpCallback));
+  web_ui()->RegisterMessageCallback("pageSelected",
+      base::Bind(&AppLauncherHandler::HandlePageSelected,
+                 base::Unretained(this)));
 }
 
 void AppLauncherHandler::Observe(int type,
@@ -288,7 +311,7 @@ void AppLauncherHandler::Observe(int type,
         CreateAppInfo(extension,
                       extension_service_,
                       &app_info);
-        web_ui()->CallJavascriptFunction("ntp.appMoved", app_info);
+        web_ui()->CallJavascriptFunctionUnsafe("ntp.appMoved", app_info);
       } else {
         HandleGetApps(NULL);
       }
@@ -317,7 +340,7 @@ void AppLauncherHandler::OnExtensionLoaded(
   if (!ShouldShow(extension))
     return;
 
-  scoped_ptr<base::DictionaryValue> app_info(GetAppInfo(extension));
+  std::unique_ptr<base::DictionaryValue> app_info(GetAppInfo(extension));
   if (!app_info.get())
     return;
 
@@ -326,7 +349,7 @@ void AppLauncherHandler::OnExtensionLoaded(
   base::FundamentalValue highlight(prefs->IsFromBookmark(extension->id()) &&
                                    attempted_bookmark_app_install_);
   attempted_bookmark_app_install_ = false;
-  web_ui()->CallJavascriptFunction("ntp.appAdded", *app_info, highlight);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.appAdded", *app_info, highlight);
 }
 
 void AppLauncherHandler::OnExtensionUnloaded(
@@ -356,8 +379,7 @@ void AppLauncherHandler::FillAppDictionary(base::DictionaryValue* dictionary) {
     const Extension* extension = extension_service_->GetInstalledExtension(*it);
     if (extension && extensions::ui_util::ShouldDisplayInNewTabPage(
             extension, profile)) {
-      base::DictionaryValue* app_info = GetAppInfo(extension);
-      list->Append(app_info);
+      list->Append(GetAppInfo(extension));
     }
   }
 
@@ -378,14 +400,12 @@ void AppLauncherHandler::FillAppDictionary(base::DictionaryValue* dictionary) {
   }
 }
 
-base::DictionaryValue* AppLauncherHandler::GetAppInfo(
+std::unique_ptr<base::DictionaryValue> AppLauncherHandler::GetAppInfo(
     const Extension* extension) {
-  base::DictionaryValue* app_info = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> app_info(new base::DictionaryValue());
   // CreateAppInfo can change the extension prefs.
   base::AutoReset<bool> auto_reset(&ignore_changes_, true);
-  CreateAppInfo(extension,
-                extension_service_,
-                app_info);
+  CreateAppInfo(extension, extension_service_, app_info.get());
   return app_info;
 }
 
@@ -427,7 +447,7 @@ void AppLauncherHandler::HandleGetApps(const base::ListValue* args) {
 
   SetAppToBeHighlighted();
   FillAppDictionary(&dictionary);
-  web_ui()->CallJavascriptFunction("ntp.getAppsCallback", dictionary);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.getAppsCallback", dictionary);
 
   // First time we get here we set up the observer so that we can tell update
   // the apps as they change.
@@ -510,9 +530,9 @@ void AppLauncherHandler::HandleLaunchApp(const base::ListValue* args) {
     if (browser)
       old_contents = browser->tab_strip_model()->GetActiveWebContents();
 
-    AppLaunchParams params(profile, extension,
-                           old_contents ? CURRENT_TAB : NEW_FOREGROUND_TAB,
-                           extensions::SOURCE_NEW_TAB_PAGE);
+    AppLaunchParams params = CreateAppLaunchParamsUserContainer(
+        profile, extension, old_contents ? CURRENT_TAB : NEW_FOREGROUND_TAB,
+        extensions::SOURCE_NEW_TAB_PAGE);
     params.override_url = GURL(url);
     WebContents* new_contents = OpenApplication(params);
 
@@ -697,8 +717,9 @@ void AppLauncherHandler::HandleGenerateAppForLink(const base::ListValue* args) {
     return;
   }
 
-  scoped_ptr<AppInstallInfo> install_info(new AppInstallInfo());
-  install_info->title = title;
+  std::unique_ptr<AppInstallInfo> install_info(new AppInstallInfo());
+  install_info->title = base::CollapseWhitespace(
+      title, /* trim_sequences_with_line_breaks */ false);
   install_info->app_url = launch_url;
   install_info->page_ordinal = page_ordinal;
 
@@ -710,7 +731,7 @@ void AppLauncherHandler::HandleGenerateAppForLink(const base::ListValue* args) {
       &cancelable_task_tracker_);
 }
 
-void AppLauncherHandler::StopShowingAppLauncherPromo(
+void AppLauncherHandler::HandleStopShowingAppLauncherPromo(
     const base::ListValue* args) {
 #if defined(ENABLE_APP_LIST)
   g_browser_process->local_state()->SetBoolean(
@@ -719,14 +740,23 @@ void AppLauncherHandler::StopShowingAppLauncherPromo(
 #endif
 }
 
-void AppLauncherHandler::OnLearnMore(const base::ListValue* args) {
+void AppLauncherHandler::HandleOnLearnMore(const base::ListValue* args) {
   RecordAppLauncherPromoHistogram(apps::APP_LAUNCHER_PROMO_LEARN_MORE);
 }
 
+void AppLauncherHandler::HandlePageSelected(const base::ListValue* args) {
+  double index_double;
+  CHECK(args->GetDouble(0, &index_double));
+  int index = static_cast<int>(index_double);
+
+  PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
+  prefs->SetInteger(prefs::kNtpShownPage, APPS_PAGE_ID | index);
+}
+
 void AppLauncherHandler::OnFaviconForApp(
-    scoped_ptr<AppInstallInfo> install_info,
+    std::unique_ptr<AppInstallInfo> install_info,
     const favicon_base::FaviconImageResult& image_result) {
-  scoped_ptr<WebApplicationInfo> web_app(new WebApplicationInfo());
+  std::unique_ptr<WebApplicationInfo> web_app(new WebApplicationInfo());
   web_app->title = install_info->title;
   web_app->app_url = install_info->app_url;
 
@@ -751,19 +781,20 @@ void AppLauncherHandler::SetAppToBeHighlighted() {
     return;
 
   base::StringValue app_id(highlight_app_id_);
-  web_ui()->CallJavascriptFunction("ntp.setAppToBeHighlighted", app_id);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.setAppToBeHighlighted", app_id);
   highlight_app_id_.clear();
 }
 
 void AppLauncherHandler::OnExtensionPreferenceChanged() {
   base::DictionaryValue dictionary;
   FillAppDictionary(&dictionary);
-  web_ui()->CallJavascriptFunction("ntp.appsPrefChangeCallback", dictionary);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.appsPrefChangeCallback",
+                                         dictionary);
 }
 
 void AppLauncherHandler::OnLocalStatePreferenceChanged() {
 #if defined(ENABLE_APP_LIST)
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ntp.appLauncherPromoPrefChangeCallback",
       base::FundamentalValue(g_browser_process->local_state()->GetBoolean(
           prefs::kShowAppLauncherPromo)));
@@ -798,7 +829,7 @@ void AppLauncherHandler::ExtensionEnableFlowFinished() {
   // icon disappears but isn't replaced by the enabled icon, making a poor
   // visual experience.
   base::StringValue app_id(extension_id_prompting_);
-  web_ui()->CallJavascriptFunction("ntp.launchAppAfterEnable", app_id);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.launchAppAfterEnable", app_id);
 
   extension_enable_flow_.reset();
   extension_id_prompting_ = "";
@@ -839,11 +870,11 @@ void AppLauncherHandler::AppRemoved(const Extension* extension,
   if (!ShouldShow(extension))
     return;
 
-  scoped_ptr<base::DictionaryValue> app_info(GetAppInfo(extension));
+  std::unique_ptr<base::DictionaryValue> app_info(GetAppInfo(extension));
   if (!app_info.get())
     return;
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ntp.appRemoved", *app_info, base::FundamentalValue(is_uninstall),
       base::FundamentalValue(!extension_id_prompting_.empty()));
 }

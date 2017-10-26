@@ -125,7 +125,6 @@ std::vector<ScoredHistoryMatch::ScoreMaxRelevance>*
 ScoredHistoryMatch::ScoredHistoryMatch()
     : ScoredHistoryMatch(history::URLRow(),
                          VisitInfoVector(),
-                         std::string(),
                          base::string16(),
                          String16Vector(),
                          WordStarts(),
@@ -138,7 +137,6 @@ ScoredHistoryMatch::ScoredHistoryMatch()
 ScoredHistoryMatch::ScoredHistoryMatch(
     const history::URLRow& row,
     const VisitInfoVector& visits,
-    const std::string& languages,
     const base::string16& lower_string,
     const String16Vector& terms_vector,
     const WordStarts& terms_to_word_starts_offsets,
@@ -171,7 +169,7 @@ ScoredHistoryMatch::ScoredHistoryMatch(
   // so that we can score as well as provide autocomplete highlighting.
   base::OffsetAdjuster::Adjustments adjustments;
   base::string16 url =
-      bookmarks::CleanUpUrlForMatching(gurl, languages, &adjustments);
+      bookmarks::CleanUpUrlForMatching(gurl, &adjustments);
   base::string16 title = bookmarks::CleanUpTitleForMatching(row.title());
   int term_num = 0;
   for (const auto& term : terms_vector) {
@@ -608,10 +606,12 @@ float ScoredHistoryMatch::GetFrequency(const base::Time& now,
   const size_t max_visit_to_score =
       std::min(visits.size(), ScoredHistoryMatch::kMaxVisitsToScore);
   for (size_t i = 0; i < max_visit_to_score; ++i) {
-    const ui::PageTransition page_transition = fix_typed_visit_bug_ ?
-      ui::PageTransitionStripQualifier(visits[i].second) : visits[i].second;
-    int value_of_transition =
-        (page_transition == ui::PAGE_TRANSITION_TYPED) ? 20 : 1;
+    const bool is_page_transition_typed =
+        fix_typed_visit_bug_ ? ui::PageTransitionCoreTypeIs(
+                                   visits[i].second, ui::PAGE_TRANSITION_TYPED)
+                             : ui::PageTransitionTypeIncludingQualifiersIs(
+                                   visits[i].second, ui::PAGE_TRANSITION_TYPED);
+    int value_of_transition = is_page_transition_typed ? 20 : 1;
     if (bookmarked)
       value_of_transition = std::max(value_of_transition, bookmark_value_);
     const float bucket_weight =

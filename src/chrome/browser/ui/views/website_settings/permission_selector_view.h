@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_WEBSITE_SETTINGS_PERMISSION_SELECTOR_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_WEBSITE_SETTINGS_PERMISSION_SELECTOR_VIEW_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/views/website_settings/permission_selector_view_observer.h"
@@ -19,10 +20,13 @@
 #include "ui/views/view.h"
 
 namespace internal {
+class ComboboxModelAdapter;
+class PermissionCombobox;
 class PermissionMenuButton;
 }
 
 namespace views {
+class GridLayout;
 class ImageView;
 class MenuRunner;
 }
@@ -45,11 +49,20 @@ class PermissionSelectorView : public views::View {
  private:
   ~PermissionSelectorView() override;
 
+  void InitializeMenuButtonView(
+      views::GridLayout* layout,
+      const WebsiteSettingsUI::PermissionInfo& permission);
+  void InitializeComboboxView(
+      views::GridLayout* layout,
+      const WebsiteSettingsUI::PermissionInfo& permission);
+
   // Model for the permission's menu.
-  scoped_ptr<PermissionMenuModel> menu_model_;
+  std::unique_ptr<PermissionMenuModel> menu_model_;
+  std::unique_ptr<internal::ComboboxModelAdapter> combobox_model_adapter_;
 
   views::ImageView* icon_;  // Owned by the views hierachy.
   internal::PermissionMenuButton* menu_button_;  // Owned by the views hierachy.
+  internal::PermissionCombobox* combobox_;  // Owned by the views hierarchy.
 
   base::ObserverList<PermissionSelectorViewObserver, false> observer_list_;
 

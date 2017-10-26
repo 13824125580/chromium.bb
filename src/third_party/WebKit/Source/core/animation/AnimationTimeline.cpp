@@ -39,9 +39,9 @@
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/TraceEvent.h"
 #include "platform/animation/CompositorAnimationTimeline.h"
-#include "platform/graphics/CompositorFactory.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCompositorSupport.h"
+#include "wtf/PtrUtil.h"
 #include <algorithm>
 
 namespace blink {
@@ -79,8 +79,8 @@ AnimationTimeline::AnimationTimeline(Document* document, PlatformTiming* timing)
     else
         m_timing = timing;
 
-    if (RuntimeEnabledFeatures::compositorAnimationTimelinesEnabled() && Platform::current()->isThreadedAnimationEnabled())
-        m_compositorTimeline = adoptPtr(CompositorFactory::current().createAnimationTimeline());
+    if (Platform::current()->isThreadedAnimationEnabled())
+        m_compositorTimeline = CompositorAnimationTimeline::create();
 
     ASSERT(document);
 }
@@ -347,13 +347,11 @@ double AnimationTimeline::playbackRate() const
     return m_playbackRate;
 }
 
-#if !ENABLE(OILPAN)
-void AnimationTimeline::detachFromDocument()
+void AnimationTimeline::invalidateKeyframeEffects()
 {
-    // FIXME: AnimationTimeline should keep Document alive.
-    m_document = nullptr;
+    for (const auto& animation : m_animations)
+        animation->invalidateKeyframeEffect();
 }
-#endif
 
 DEFINE_TRACE(AnimationTimeline)
 {

@@ -11,7 +11,6 @@
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/host_desktop.h"
 #endif
 
 using content::GlobalRequestID;
@@ -19,18 +18,6 @@ using content::NavigationController;
 using content::WebContents;
 
 namespace chrome {
-
-#if !defined(OS_ANDROID)
-namespace {
-
-HostDesktopType GetHostDesktop(Browser* browser) {
-  if (browser)
-    return browser->host_desktop_type();
-  return GetActiveDesktop();
-}
-
-}  // namespace
-#endif
 
 #if defined(OS_ANDROID)
 NavigateParams::NavigateParams(WebContents* a_target_contents)
@@ -49,7 +36,6 @@ NavigateParams::NavigateParams(WebContents* a_target_contents)
       path_behavior(RESPECT),
       ref_behavior(IGNORE_REF),
       initiating_profile(nullptr),
-      host_desktop_type(GetActiveDesktop()),
       should_replace_current_entry(false),
       created_with_opener(false) {
 }
@@ -74,7 +60,6 @@ NavigateParams::NavigateParams(Browser* a_browser,
       ref_behavior(IGNORE_REF),
       browser(a_browser),
       initiating_profile(NULL),
-      host_desktop_type(GetHostDesktop(a_browser)),
       should_replace_current_entry(false),
       created_with_opener(false) {
 }
@@ -97,7 +82,6 @@ NavigateParams::NavigateParams(Browser* a_browser,
       ref_behavior(IGNORE_REF),
       browser(a_browser),
       initiating_profile(NULL),
-      host_desktop_type(GetHostDesktop(a_browser)),
       should_replace_current_entry(false),
       created_with_opener(false) {
 }
@@ -125,7 +109,6 @@ NavigateParams::NavigateParams(Profile* a_profile,
       browser(NULL),
 #endif
       initiating_profile(a_profile),
-      host_desktop_type(GetActiveDesktop()),
       should_replace_current_entry(false),
       created_with_opener(false) {
 }
@@ -147,7 +130,7 @@ void FillNavigateParamsFromOpenURLParams(NavigateParams* nav_params,
   nav_params->should_replace_current_entry =
       params.should_replace_current_entry;
   nav_params->uses_post = params.uses_post;
-  nav_params->browser_initiated_post_data = params.browser_initiated_post_data;
+  nav_params->post_data = params.post_data;
 }
 
 }  // namespace chrome

@@ -38,12 +38,11 @@ public:
 
     bool usesContainerSize() const override { return true; }
     bool hasRelativeSize() const override { return true; }
-    void computeIntrinsicDimensions(FloatSize& intrinsicSize, FloatSize& intrinsicRatio) override;
 
     IntSize size() const override { return m_size; }
 
     // Assume that generated content has no decoded data we need to worry about
-    void destroyDecodedData(bool) override { }
+    void destroyDecodedData() override { }
 
     PassRefPtr<SkImage> imageForCurrentFrame() override;
 

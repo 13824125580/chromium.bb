@@ -43,19 +43,15 @@
 #include <third_party/WebKit/public/platform/WebURLError.h>
 #include <third_party/WebKit/public/platform/WebURLRequest.h>
 #include <third_party/WebKit/public/web/WebPluginParams.h>
+#include <third_party/skia/include/ports/SkTypeface_win.h>
 #include <ui/gfx/win/direct_write.h>
 
 namespace blpwtk2 {
 
 ContentRendererClientImpl::ContentRendererClientImpl()
 {
-    if (gfx::win::ShouldUseDirectWrite()) {
-        SkFontMgr* fontMgr = content::GetPreSandboxWarmupFontMgr();
-        SetDefaultSkiaFactory(fontMgr);
-        SkTypeface* typeface =
-            fontMgr->legacyCreateTypeface("Times New Roman", 0);
-        content::DoPreSandboxWarmupForTypeface(typeface);
-    }
+    SkFontMgr* fontMgr = SkFontMgr_New_DirectWrite();
+    SetDefaultSkiaFactory(fontMgr);
 }
 
 ContentRendererClientImpl::~ContentRendererClientImpl()
@@ -82,7 +78,7 @@ void ContentRendererClientImpl::RenderViewCreated(
 
     new SpellCheckProvider(render_view, d_spellcheck.get());
     new printing::PrintWebViewHelper(render_view,
-                                     scoped_ptr<printing::PrintWebViewHelper::Delegate>(printing::PrintWebViewHelper::CreateEmptyDelegate()),
+                                     std::unique_ptr<printing::PrintWebViewHelper::Delegate>(printing::PrintWebViewHelper::CreateEmptyDelegate()),
                                      Statics::isSingleThreadMode());
 }
 
@@ -145,7 +141,7 @@ void ContentRendererClientImpl::GetNavigationErrorStrings(
 content::ResourceLoaderBridge*
 ContentRendererClientImpl::OverrideResourceLoaderBridge(
     const content::RequestInfo& request_info,
-    content::ResourceRequestBody* request_body)
+    content::ResourceRequestBodyImpl* request_body)
 {
     StringRef url = request_info.url.spec();
 

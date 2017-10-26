@@ -13,6 +13,7 @@
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/loader/resource_scheduler.h"
 #include "content/common/resource_messages.h"
+#include "content/common/resource_request.h"
 #include "content/public/browser/resource_throttle.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_transaction_factory.h"
@@ -96,7 +97,7 @@ void AsyncRevalidationManager::BeginAsyncRevalidation(
       for_request.url());
   std::pair<AsyncRevalidationMap::iterator, bool> insert_result =
       in_progress_.insert(AsyncRevalidationMap::value_type(
-          async_revalidation_key, scoped_ptr<AsyncRevalidationDriver>()));
+          async_revalidation_key, std::unique_ptr<AsyncRevalidationDriver>()));
   if (!insert_result.second) {
     // A matching async revalidation is already in progress for this cache; we
     // don't need another one.
@@ -107,7 +108,7 @@ void AsyncRevalidationManager::BeginAsyncRevalidation(
   headers.AddHeadersFromString(info->original_headers());
 
   // Construct the request.
-  scoped_ptr<net::URLRequest> new_request = request_context->CreateRequest(
+  std::unique_ptr<net::URLRequest> new_request = request_context->CreateRequest(
       for_request.url(), net::MINIMUM_PRIORITY, nullptr);
 
   new_request->set_method(for_request.method());
@@ -139,7 +140,7 @@ void AsyncRevalidationManager::BeginAsyncRevalidation(
   int child_id = info->GetChildID();
   int route_id = info->GetRouteID();
 
-  scoped_ptr<ResourceThrottle> throttle =
+  std::unique_ptr<ResourceThrottle> throttle =
       scheduler->ScheduleRequest(child_id, route_id, false, new_request.get());
 
   // AsyncRevalidationDriver does not outlive its entry in |in_progress_|,
@@ -164,7 +165,7 @@ void AsyncRevalidationManager::CancelAsyncRevalidationsForResourceContext(
 }
 
 bool AsyncRevalidationManager::QualifiesForAsyncRevalidation(
-    const ResourceHostMsg_Request& request) {
+    const ResourceRequest& request) {
   if (request.load_flags &
       (net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE |
        net::LOAD_VALIDATE_CACHE | net::LOAD_PREFERRING_CACHE |

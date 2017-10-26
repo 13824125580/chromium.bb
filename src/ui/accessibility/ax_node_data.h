@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,10 @@
 #include "ui/accessibility/ax_export.h"
 #include "ui/gfx/geometry/rect.h"
 
+namespace gfx {
+class Transform;
+};
+
 namespace ui {
 
 // A compact representation of the accessibility information for a
@@ -24,8 +29,10 @@ namespace ui {
 // one process to another.
 struct AX_EXPORT AXNodeData {
   AXNodeData();
-  AXNodeData(const AXNodeData& other);
   virtual ~AXNodeData();
+
+  AXNodeData(const AXNodeData& other);
+  AXNodeData& operator=(AXNodeData other);
 
   // Accessing accessibility attributes:
   //
@@ -92,23 +99,29 @@ struct AX_EXPORT AXNodeData {
   // Return a string representation of this data, for debugging.
   virtual std::string ToString() const;
 
-  bool IsRoot() const;
-  void SetRoot();
-
-  // This is a simple serializable struct. All member variables should be
-  // public and copyable.
+  // As much as possible this should behave as a simple, serializable,
+  // copyable struct.
   int32_t id;
   AXRole role;
   uint32_t state;
-  gfx::Rect location;
-  std::vector<std::pair<AXStringAttribute, std::string> > string_attributes;
+  std::vector<std::pair<AXStringAttribute, std::string>> string_attributes;
   std::vector<std::pair<AXIntAttribute, int32_t>> int_attributes;
-  std::vector<std::pair<AXFloatAttribute, float> > float_attributes;
-  std::vector<std::pair<AXBoolAttribute, bool> > bool_attributes;
+  std::vector<std::pair<AXFloatAttribute, float>> float_attributes;
+  std::vector<std::pair<AXBoolAttribute, bool>> bool_attributes;
   std::vector<std::pair<AXIntListAttribute, std::vector<int32_t>>>
       intlist_attributes;
   base::StringPairs html_attributes;
   std::vector<int32_t> child_ids;
+
+  // The object's location relative to its window or frame.
+  gfx::Rect location;
+
+  // An additional transform to apply to position this object and its subtree.
+  // NOTE: this member is a std::unique_ptr because it's rare and gfx::Transform
+  // takes up a fair amount of space. The assignment operator and copy
+  // constructor both make a duplicate of the owned pointer, so it acts more
+  // like a member than a pointer.
+  std::unique_ptr<gfx::Transform> transform;
 };
 
 }  // namespace ui

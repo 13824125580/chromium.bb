@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "net/proxy/proxy_service.h"
 
@@ -34,7 +35,10 @@ enum DataReductionProxyBypassType {
 };
 
 // Values for the bypass actions that can be specified by the Data Reduction
-// Proxy in response to a client request.
+// Proxy in response to a client request. These are explicit bypass actions
+// specified by the Data Reduction Proxy in the Chrome-Proxy header, block-once,
+// bypass=1, block=300, etc. These are not used for Chrome initiated bypasses
+// due to a server error, missing Via header, etc.
 enum DataReductionProxyBypassAction {
 #define BYPASS_ACTION_TYPE(label, value) BYPASS_ACTION_TYPE_##label = value,
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_bypass_action_list.h"
@@ -75,9 +79,9 @@ const char* chrome_proxy_lo_fi_directive();
 // requests and responses.
 const char* chrome_proxy_lo_fi_preview_directive();
 
-// Gets the Chrome-Proxy directive used by data reduction proxy Lo-Fi control
-// experiment requests.
-const char* chrome_proxy_lo_fi_experiment_directive();
+// Gets the Chrome-Proxy directive used by data reduction proxy Lo-Fi preview
+// experiment to ignore the blacklist.
+const char* chrome_proxy_lo_fi_ignore_preview_blacklist_directive();
 
 // Returns true if the Chrome-Proxy header is present and contains a bypass
 // delay. Sets |proxy_info->bypass_duration| to the specified delay if greater
@@ -106,15 +110,14 @@ DataReductionProxyBypassType GetDataReductionProxyBypassType(
 // Searches for the specified Chrome-Proxy action, and if present saves its
 // value as a string in |action_value|. Only returns the first one and ignores
 // the rest if multiple actions match |action_prefix|.
-bool GetDataReductionProxyActionValue(
-    const net::HttpResponseHeaders* headers,
-    const std::string& action_prefix,
-    std::string* action_value);
+bool GetDataReductionProxyActionValue(const net::HttpResponseHeaders* headers,
+                                      base::StringPiece action_prefix,
+                                      std::string* action_value);
 
 // Searches for the specified Chrome-Proxy action, and if present interprets
 // its value as a duration in seconds.
 bool ParseHeadersAndSetBypassDuration(const net::HttpResponseHeaders* headers,
-                                      const std::string& action_prefix,
+                                      base::StringPiece action_prefix,
                                       base::TimeDelta* bypass_duration);
 
 // Gets the fingerprint of the Chrome-Proxy header.

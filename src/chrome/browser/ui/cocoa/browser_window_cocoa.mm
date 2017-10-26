@@ -23,11 +23,10 @@
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
-#include "chrome/browser/ui/browser_commands_mac.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window_state.h"
 #import "chrome/browser/ui/cocoa/autofill/save_card_bubble_view_bridge.h"
-#import "chrome/browser/ui/cocoa/browser/edit_search_engine_cocoa_controller.h"
 #import "chrome/browser/ui/cocoa/browser/exclusive_access_controller_views.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_utils.h"
@@ -73,7 +72,6 @@
 #include "ui/gfx/geometry/rect.h"
 
 #if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
-#import "chrome/browser/ui/cocoa/one_click_signin_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/one_click_signin_dialog_controller.h"
 #endif
 
@@ -188,7 +186,7 @@ void BrowserWindowCocoa::Show() {
     [window() orderOut:controller_];
     [window() miniaturize:controller_];
   } else if (initial_show_state_ == ui::SHOW_STATE_FULLSCREEN) {
-    chrome::ToggleFullscreenWithToolbarOrFallback(browser_);
+    chrome::ToggleFullscreenMode(browser_);
   }
   initial_show_state_ = ui::SHOW_STATE_DEFAULT;
 
@@ -310,16 +308,20 @@ void BrowserWindowCocoa::UpdateTitleBar() {
 }
 
 NSString* BrowserWindowCocoa::WindowTitle() {
-  if (media_state_ == TAB_MEDIA_STATE_AUDIO_PLAYING) {
+  const bool include_app_name = true;
+  if (alert_state_ == TabAlertState::AUDIO_PLAYING) {
     return l10n_util::GetNSStringF(IDS_WINDOW_AUDIO_PLAYING_MAC,
-                                   browser_->GetWindowTitleForCurrentTab(),
+                                   browser_->GetWindowTitleForCurrentTab(
+                                       include_app_name),
                                    base::SysNSStringToUTF16(@"🔊"));
-  } else if (media_state_ == TAB_MEDIA_STATE_AUDIO_MUTING) {
+  } else if (alert_state_ == TabAlertState::AUDIO_MUTING) {
     return l10n_util::GetNSStringF(IDS_WINDOW_AUDIO_MUTING_MAC,
-                                   browser_->GetWindowTitleForCurrentTab(),
+                                   browser_->GetWindowTitleForCurrentTab(
+                                       include_app_name),
                                    base::SysNSStringToUTF16(@"🔇"));
   }
-  return base::SysUTF16ToNSString(browser_->GetWindowTitleForCurrentTab());
+  return base::SysUTF16ToNSString(
+      browser_->GetWindowTitleForCurrentTab(include_app_name));
 }
 
 void BrowserWindowCocoa::BookmarkBarStateChanged(
@@ -370,6 +372,10 @@ gfx::Rect BrowserWindowCocoa::GetRestoredBounds() const {
   gfx::Rect bounds(frame.origin.x, 0, NSWidth(frame), NSHeight(frame));
   bounds.set_y(NSHeight([screen frame]) - NSMaxY(frame));
   return bounds;
+}
+
+std::string BrowserWindowCocoa::GetWorkspace() const {
+  return std::string();
 }
 
 ui::WindowShowState BrowserWindowCocoa::GetRestoredState() const {
@@ -431,19 +437,13 @@ bool BrowserWindowCocoa::IsFullscreenBubbleVisible() const {
   return false;  // Currently only called from toolkit-views website_settings.
 }
 
-void BrowserWindowCocoa::ConfirmAddSearchProvider(
-    TemplateURL* template_url,
-    Profile* profile) {
-  // The controller will release itself when the window closes.
-  EditSearchEngineCocoaController* editor =
-      [[EditSearchEngineCocoaController alloc] initWithProfile:profile
-                                                      delegate:NULL
-                                                   templateURL:template_url];
-  [NSApp beginSheet:[editor window]
-     modalForWindow:window()
-      modalDelegate:controller_
-     didEndSelector:@selector(sheetDidEnd:returnCode:context:)
-        contextInfo:NULL];
+void BrowserWindowCocoa::MaybeShowNewBackShortcutBubble(bool forward) {
+  [controller_ exclusiveAccessController]->MaybeShowNewBackShortcutBubble(
+      forward);
+}
+
+void BrowserWindowCocoa::HideNewBackShortcutBubble() {
+  [controller_ exclusiveAccessController]->HideNewBackShortcutBubble();
 }
 
 LocationBar* BrowserWindowCocoa::GetLocationBar() const {
@@ -527,8 +527,8 @@ void BrowserWindowCocoa::AddFindBar(
   [controller_ addFindBar:find_bar_cocoa_controller];
 }
 
-void BrowserWindowCocoa::UpdateMediaState(TabMediaState media_state) {
-  media_state_ = media_state;
+void BrowserWindowCocoa::UpdateAlertState(TabAlertState alert_state) {
+  alert_state_ = alert_state;
   UpdateTitleBar();
 }
 
@@ -643,26 +643,13 @@ void BrowserWindowCocoa::ShowTranslateBubble(
 }
 
 #if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
-void BrowserWindowCocoa::ShowOneClickSigninBubble(
-    OneClickSigninBubbleType type,
+void BrowserWindowCocoa::ShowOneClickSigninConfirmation(
     const base::string16& email,
-    const base::string16& error_message,
     const StartSyncCallback& start_sync_callback) {
-  WebContents* web_contents =
-        browser_->tab_strip_model()->GetActiveWebContents();
-  if (type == ONE_CLICK_SIGNIN_BUBBLE_TYPE_BUBBLE) {
-    base::scoped_nsobject<OneClickSigninBubbleController> bubble_controller([
-            [OneClickSigninBubbleController alloc]
-        initWithBrowserWindowController:cocoa_controller()
-                            webContents:web_contents
-                           errorMessage:base::SysUTF16ToNSString(error_message)
-                               callback:start_sync_callback]);
-    [bubble_controller showWindow:nil];
-  } else {
-    // Deletes itself when the dialog closes.
-    new OneClickSigninDialogController(
-        web_contents, start_sync_callback, email);
-  }
+  // Deletes itself when the dialog closes.
+  new OneClickSigninDialogController(
+      browser_->tab_strip_model()->GetActiveWebContents(), start_sync_callback,
+      email);
 }
 #endif
 
@@ -688,14 +675,18 @@ void BrowserWindowCocoa::ConfirmBrowserCloseWithPendingDownloads(
 
 void BrowserWindowCocoa::UserChangedTheme() {
   [controller_ userChangedTheme];
+  LocationBarViewMac* locationBar = [controller_ locationBarBridge];
+  if (locationBar) {
+    locationBar->OnThemeChanged();
+  }
 }
 
 void BrowserWindowCocoa::ShowWebsiteSettings(
     Profile* profile,
     content::WebContents* web_contents,
-    const GURL& url,
+    const GURL& virtual_url,
     const security_state::SecurityStateModel::SecurityInfo& security_info) {
-  WebsiteSettingsUIBridge::Show(window(), profile, web_contents, url,
+  WebsiteSettingsUIBridge::Show(window(), profile, web_contents, virtual_url,
                                 security_info);
 }
 
@@ -849,4 +840,11 @@ void BrowserWindowCocoa::ExecuteExtensionCommand(
 
 ExclusiveAccessContext* BrowserWindowCocoa::GetExclusiveAccessContext() {
   return [controller_ exclusiveAccessController];
+}
+
+void BrowserWindowCocoa::ShowImeWarningBubble(
+    const extensions::Extension* extension,
+    const base::Callback<void(ImeWarningBubblePermissionStatus status)>&
+        callback) {
+  NOTREACHED() << "The IME warning bubble is unsupported on this platform.";
 }

@@ -10,7 +10,6 @@
 #include "modules/serviceworkers/ServiceWorkerGlobalScopeClient.h"
 #include "platform/Timer.h"
 #include "wtf/Forward.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
@@ -22,10 +21,11 @@ class ScriptValue;
 
 // Created for each ExtendableEvent instance.
 class MODULES_EXPORT WaitUntilObserver final : public GarbageCollectedFinalized<WaitUntilObserver>, public ContextLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(WaitUntilObserver);
+    USING_GARBAGE_COLLECTED_MIXIN(WaitUntilObserver);
 public:
     enum EventType {
         Activate,
+        Fetch,
         Install,
         Message,
         NotificationClick,
@@ -44,6 +44,12 @@ public:
     // the given promise is resolved or rejected.
     void waitUntil(ScriptState*, ScriptPromise, ExceptionState&);
 
+    // These methods can be called when the lifecycle of ExtendableEvent
+    // observed by this WaitUntilObserver should be extended by other reason
+    // than ExtendableEvent.waitUntil.
+    void incrementPendingActivity();
+    void decrementPendingActivity();
+
     DECLARE_VIRTUAL_TRACE();
 
 private:
@@ -53,9 +59,6 @@ private:
     WaitUntilObserver(ExecutionContext*, EventType, int eventID);
 
     void reportError(const ScriptValue&);
-
-    void incrementPendingActivity();
-    void decrementPendingActivity();
 
     void consumeWindowInteraction(Timer<WaitUntilObserver>*);
 

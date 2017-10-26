@@ -29,12 +29,13 @@ namespace {
 class WaitableEvent;
 }
 
-namespace gfx {
+namespace gl {
 class GLContext;
 class GLSurface;
 }
 
 namespace gpu {
+class GpuControlClient;
 class SyncPointClient;
 }
 
@@ -56,12 +57,12 @@ class CommandBufferLocal : public gpu::CommandBuffer,
                      gfx::AcceleratedWidget widget,
                      const scoped_refptr<GpuState>& gpu_state);
 
+  bool Initialize();
   // Destroy the CommandBufferLocal. The client should not use this class
   // after calling it.
   void Destroy();
 
   // gpu::CommandBuffer implementation:
-  bool Initialize() override;
   gpu::CommandBuffer::State GetLastState() override;
   int32_t GetLastToken() override;
   void Flush(int32_t put_offset) override;
@@ -74,6 +75,7 @@ class CommandBufferLocal : public gpu::CommandBuffer,
   void DestroyTransferBuffer(int32_t id) override;
 
   // gpu::GpuControl implementation:
+  void SetGpuControlClient(gpu::GpuControlClient*) override;
   gpu::Capabilities GetCapabilities() override;
   int32_t CreateImage(ClientBuffer buffer,
                       size_t width,
@@ -84,9 +86,9 @@ class CommandBufferLocal : public gpu::CommandBuffer,
                                      size_t height,
                                      unsigned internal_format,
                                      unsigned usage) override;
+  int32_t GetImageGpuMemoryBufferId(unsigned image_id) override;
   void SignalQuery(uint32_t query_id, const base::Closure& callback) override;
   void SetLock(base::Lock*) override;
-  bool IsGpuChannelLost() override;
   void EnsureWorkVisible() override;
   gpu::CommandBufferNamespace GetNamespaceID() const override;
   gpu::CommandBufferId GetCommandBufferID() const override;
@@ -99,14 +101,19 @@ class CommandBufferLocal : public gpu::CommandBuffer,
                        const base::Closure& callback) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken* sync_token) override;
 
-  // CommandBufferDriver::Client implementation:
-  void DidLoseContext(uint32_t reason) override;
-  void UpdateVSyncParameters(int64_t timebase, int64_t interval) override;
-
  private:
+  // CommandBufferDriver::Client implementation. All called on GPU thread.
+  void DidLoseContext(uint32_t reason) override;
+  void UpdateVSyncParameters(const base::TimeTicks& timebase,
+                             const base::TimeDelta& interval) override;
+  void OnGpuCompletedSwapBuffers(gfx::SwapResult result) override;
+
   ~CommandBufferLocal() override;
 
-  gpu::CommandBufferSharedState* shared_state() const { return shared_state_; }
+  gpu::CommandBufferSharedState* shared_state() const {
+    return reinterpret_cast<gpu::CommandBufferSharedState*>(
+        shared_state_.get());
+  }
   void TryUpdateState();
   void MakeProgressAndUpdateState();
 
@@ -122,38 +129,47 @@ class CommandBufferLocal : public gpu::CommandBuffer,
   bool CreateImageOnGpuThread(int32_t id,
                               mojo::ScopedHandle memory_handle,
                               int32_t type,
-                              mojo::SizePtr size,
+                              const gfx::Size& size,
                               int32_t format,
                               int32_t internal_format);
+  bool CreateImageNativeOzoneOnGpuThread(int32_t id,
+                                         int32_t type,
+                                         gfx::Size size,
+                                         gfx::BufferFormat format,
+                                         uint32_t internal_format,
+                                         ui::NativePixmap* pixmap);
   bool DestroyImageOnGpuThread(int32_t id);
   bool MakeProgressOnGpuThread(base::WaitableEvent* event,
                                gpu::CommandBuffer::State* state);
-  bool DeleteOnGpuThread();
+  bool DeleteOnGpuThread(base::WaitableEvent* event);
   bool SignalQueryOnGpuThread(uint32_t query_id, const base::Closure& callback);
 
   // Helper functions are called in the client thread.
   void DidLoseContextOnClientThread(uint32_t reason);
-  void UpdateVSyncParametersOnClientThread(int64_t timebase, int64_t interval);
+  void UpdateVSyncParametersOnClientThread(const base::TimeTicks& timebase,
+                                           const base::TimeDelta& interval);
+  void OnGpuCompletedSwapBuffersOnClientThread(gfx::SwapResult result);
 
   gfx::AcceleratedWidget widget_;
   scoped_refptr<GpuState> gpu_state_;
-  scoped_ptr<CommandBufferDriver> driver_;
+  std::unique_ptr<CommandBufferDriver> driver_;
   CommandBufferLocalClient* client_;
   scoped_refptr<base::SingleThreadTaskRunner> client_thread_task_runner_;
 
   // Members accessed on the client thread:
+  gpu::GpuControlClient* gpu_control_client_;
   gpu::CommandBuffer::State last_state_;
-  mojo::ScopedSharedBufferHandle shared_state_handle_;
-  gpu::CommandBufferSharedState* shared_state_;
+  mojo::ScopedSharedBufferMapping shared_state_;
   int32_t last_put_offset_;
   gpu::Capabilities capabilities_;
   int32_t next_transfer_buffer_id_;
   int32_t next_image_id_;
   uint64_t next_fence_sync_release_;
   uint64_t flushed_fence_sync_release_;
+  bool lost_context_;
 
   // This sync point client is only for out of order Wait on client thread.
-  scoped_ptr<gpu::SyncPointClient> sync_point_client_waiter_;
+  std::unique_ptr<gpu::SyncPointClient> sync_point_client_waiter_;
 
   base::WeakPtr<CommandBufferLocal> weak_ptr_;
 

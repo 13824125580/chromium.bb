@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <utility>
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/child/appcache/appcache_dispatcher.h"
 #include "content/child/appcache/web_application_cache_host_impl.h"
 #include "content/child/request_extra_data.h"
@@ -18,12 +18,13 @@
 #include "content/child/shared_worker_devtools_agent.h"
 #include "content/child/webmessageportchannel_impl.h"
 #include "content/common/worker_messages.h"
+#include "content/public/common/origin_util.h"
+#include "content/renderer/devtools/devtools_agent.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/shared_worker/embedded_shared_worker_content_settings_client_proxy.h"
 #include "ipc/ipc_message_macros.h"
 #include "third_party/WebKit/public/platform/URLConversion.h"
 #include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebSharedWorker.h"
 #include "third_party/WebKit/public/web/WebSharedWorkerClient.h"
@@ -72,6 +73,7 @@ class DataSourceExtraData
  public:
   DataSourceExtraData() {}
   ~DataSourceExtraData() override {}
+  bool is_secure_context = false;
 };
 
 // Called on the main thread only and blink owns it.
@@ -84,15 +86,21 @@ class WebServiceWorkerNetworkProviderImpl
                        blink::WebURLRequest& request) override {
     ServiceWorkerNetworkProvider* provider =
         GetNetworkProviderFromDataSource(data_source);
-    scoped_ptr<RequestExtraData> extra_data(new RequestExtraData);
+    std::unique_ptr<RequestExtraData> extra_data(new RequestExtraData);
     extra_data->set_service_worker_provider_id(provider->provider_id());
+    extra_data->set_initiated_in_secure_context(
+        static_cast<DataSourceExtraData*>(data_source->getExtraData())
+            ->is_secure_context);
     request.setExtraData(extra_data.release());
     // Explicitly set the SkipServiceWorker flag for subresources here if the
     // renderer process hasn't received SetControllerServiceWorker message.
-    if (request.requestContext() !=
+    if (request.getRequestContext() !=
             blink::WebURLRequest::RequestContextSharedWorker &&
-        !provider->IsControlledByServiceWorker()) {
-      request.setSkipServiceWorker(true);
+        !provider->IsControlledByServiceWorker() &&
+        request.skipServiceWorker() !=
+            blink::WebURLRequest::SkipServiceWorker::All) {
+      request.setSkipServiceWorker(
+          blink::WebURLRequest::SkipServiceWorker::Controlling);
     }
   }
 
@@ -114,7 +122,7 @@ class WebServiceWorkerNetworkProviderImpl
   ServiceWorkerNetworkProvider* GetNetworkProviderFromDataSource(
       const blink::WebDataSource* data_source) {
     return ServiceWorkerNetworkProvider::FromDocumentState(
-        static_cast<DataSourceExtraData*>(data_source->extraData()));
+        static_cast<DataSourceExtraData*>(data_source->getExtraData()));
   }
 };
 
@@ -125,11 +133,10 @@ EmbeddedSharedWorkerStub::EmbeddedSharedWorkerStub(
     const base::string16& name,
     const base::string16& content_security_policy,
     blink::WebContentSecurityPolicyType security_policy_type,
+    blink::WebAddressSpace creation_address_space,
     bool pause_on_start,
     int route_id)
-    : route_id_(route_id),
-      name_(name),
-      url_(url) {
+    : route_id_(route_id), name_(name), url_(url) {
   RenderThreadImpl::current()->AddEmbeddedWorkerRoute(route_id_, this);
   impl_ = blink::WebSharedWorker::create(this);
   if (pause_on_start) {
@@ -139,8 +146,8 @@ EmbeddedSharedWorkerStub::EmbeddedSharedWorkerStub(
   }
   worker_devtools_agent_.reset(
       new SharedWorkerDevToolsAgent(route_id, impl_));
-  impl_->startWorkerContext(url, name_,
-                            content_security_policy, security_policy_type);
+  impl_->startWorkerContext(url, name_, content_security_policy,
+                            security_policy_type, creation_address_space);
 }
 
 EmbeddedSharedWorkerStub::~EmbeddedSharedWorkerStub() {
@@ -241,13 +248,15 @@ EmbeddedSharedWorkerStub::createServiceWorkerNetworkProvider(
     blink::WebDataSource* data_source) {
   // Create a content::ServiceWorkerNetworkProvider for this data source so
   // we can observe its requests.
-  scoped_ptr<ServiceWorkerNetworkProvider> provider(
+  std::unique_ptr<ServiceWorkerNetworkProvider> provider(
       new ServiceWorkerNetworkProvider(
-          route_id_, SERVICE_WORKER_PROVIDER_FOR_SHARED_WORKER));
+          route_id_, SERVICE_WORKER_PROVIDER_FOR_SHARED_WORKER,
+          true /* is_parent_frame_secure */));
 
   // The provider is kept around for the lifetime of the DataSource
   // and ownership is transferred to the DataSource.
   DataSourceExtraData* extra_data = new DataSourceExtraData();
+  extra_data->is_secure_context = IsOriginSecure(url_);
   data_source->setExtraData(extra_data);
   ServiceWorkerNetworkProvider::AttachToDocumentState(extra_data,
                                                       std::move(provider));
@@ -263,6 +272,11 @@ void EmbeddedSharedWorkerStub::sendDevToolsMessage(
     const blink::WebString& state) {
   worker_devtools_agent_->SendDevToolsMessage(
       session_id, call_id, message, state);
+}
+
+blink::WebDevToolsAgentClient::WebKitClientMessageLoop*
+EmbeddedSharedWorkerStub::createDevToolsMessageLoop() {
+  return DevToolsAgent::createMessageLoopWrapper();
 }
 
 void EmbeddedSharedWorkerStub::Shutdown() {
@@ -283,10 +297,8 @@ void EmbeddedSharedWorkerStub::ConnectToChannel(
       new WorkerHostMsg_WorkerConnected(channel->message_port_id(), route_id_));
 }
 
-void EmbeddedSharedWorkerStub::OnConnect(int sent_message_port_id,
+void EmbeddedSharedWorkerStub::OnConnect(int port,
                                          int routing_id) {
-  TransferredMessagePort port;
-  port.id = sent_message_port_id;
   WebMessagePortChannelImpl* channel = new WebMessagePortChannelImpl(
       routing_id, port, base::ThreadTaskRunnerHandle::Get().get());
   if (running_) {

@@ -20,13 +20,14 @@ class MockInputApi(object):
     self.json = json
     self.re = re
     self.os_path = os.path
+    self.platform = sys.platform
     self.python_executable = sys.executable
     self.subprocess = subprocess
     self.files = []
     self.is_committing = False
     self.change = MockChange([])
 
-  def AffectedFiles(self, file_filter=None):
+  def AffectedFiles(self, file_filter=None, include_deletes=False):
     return self.files
 
   def AffectedSourceFiles(self, file_filter=None):
@@ -92,13 +93,14 @@ class MockFile(object):
   MockInputApi for presubmit unittests.
   """
 
-  def __init__(self, local_path, new_contents):
+  def __init__(self, local_path, new_contents, action='A'):
     self._local_path = local_path
     self._new_contents = new_contents
     self._changed_contents = [(i + 1, l) for i, l in enumerate(new_contents)]
+    self._action = action
 
   def Action(self):
-    return 'A'  # TODO(dbeam): feel free to change if your test actually uses.
+    return self._action
 
   def ChangedContents(self):
     return self._changed_contents
@@ -137,4 +139,8 @@ class MockChange(object):
     self._changed_files = changed_files
 
   def LocalPaths(self):
+    return self._changed_files
+
+  def AffectedFiles(self, include_dirs=False, include_deletes=True,
+                    file_filter=None):
     return self._changed_files

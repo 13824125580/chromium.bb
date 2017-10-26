@@ -52,9 +52,10 @@ int StartIt2MeNativeMessagingHost() {
   // Initialize Breakpad as early as possible. On Mac the command-line needs to
   // be initialized first, so that the preference for crash-reporting can be
   // looked up in the config file.
-  if (IsUsageStatsAllowed()) {
-    InitializeCrashReporting();
-  }
+  // TODO(nicholss): Commenting out Breakpad. See crbug.com/637884
+  // if (IsUsageStatsAllowed()) {
+  //   InitializeCrashReporting();
+  // }
 #endif  // defined(REMOTING_ENABLE_BREAKPAD)
 
 #if defined(OS_WIN)
@@ -66,7 +67,8 @@ int StartIt2MeNativeMessagingHost() {
 #endif  // defined(OS_WIN)
 
   // Required to find the ICU data file, used by some file_util routines.
-  base::i18n::InitializeICU();
+  const void *icu_data;
+  base::i18n::InitializeICU(&icu_data);
 
   remoting::LoadResources("");
 
@@ -117,19 +119,19 @@ int StartIt2MeNativeMessagingHost() {
   base::MessageLoopForUI message_loop;
   base::RunLoop run_loop;
 
-  scoped_ptr<It2MeHostFactory> factory(new It2MeHostFactory());
+  std::unique_ptr<It2MeHostFactory> factory(new It2MeHostFactory());
 
-  scoped_ptr<NativeMessagingPipe> native_messaging_pipe(
+  std::unique_ptr<NativeMessagingPipe> native_messaging_pipe(
       new NativeMessagingPipe());
 
   // Set up the native messaging channel.
-  scoped_ptr<extensions::NativeMessagingChannel> channel(
+  std::unique_ptr<extensions::NativeMessagingChannel> channel(
       new PipeMessagingChannel(std::move(read_file), std::move(write_file)));
 
-  scoped_ptr<ChromotingHostContext> context =
+  std::unique_ptr<ChromotingHostContext> context =
       ChromotingHostContext::Create(new remoting::AutoThreadTaskRunner(
           message_loop.task_runner(), run_loop.QuitClosure()));
-  scoped_ptr<extensions::NativeMessageHost> host(
+  std::unique_ptr<extensions::NativeMessageHost> host(
       new It2MeNativeMessagingHost(std::move(context), std::move(factory)));
 
   host->Start(native_messaging_pipe.get());

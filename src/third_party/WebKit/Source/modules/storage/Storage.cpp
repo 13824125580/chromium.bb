@@ -26,7 +26,6 @@
 #include "modules/storage/Storage.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/text/WTFString.h"
 
@@ -43,10 +42,6 @@ Storage::Storage(LocalFrame* frame, StorageArea* storageArea)
 {
     ASSERT(m_frame);
     ASSERT(m_storageArea);
-}
-
-Storage::~Storage()
-{
 }
 
 String Storage::anonymousIndexedGetter(unsigned index, ExceptionState& exceptionState)

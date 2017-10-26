@@ -290,7 +290,8 @@ td, th {
 }
 
 th {
-    font-weight: bold
+    font-weight: bold;
+    text-align: -internal-center
 }
 
 caption {
@@ -465,24 +466,6 @@ input[type="search" i]::-webkit-search-cancel-button {
 input[type="search" i]:enabled:read-write:-webkit-any(:focus,:hover)::-webkit-search-cancel-button {
     opacity: 1;
     pointer-events: auto;
-}
-
-input[type="search" i]::-webkit-search-decoration {
-    -webkit-appearance: searchfield-decoration;
-    display: block;
-    flex: none;
-    -webkit-user-modify: read-only !important;
-    -webkit-align-self: flex-start;
-    margin: auto 0;
-}
-
-input[type="search" i]::-webkit-search-results-decoration {
-    -webkit-appearance: searchfield-results-decoration;
-    display: block;
-    flex: none;
-    -webkit-user-modify: read-only !important;
-    -webkit-align-self: flex-start;
-    margin: auto 0;
 }
 
 input::-webkit-inner-spin-button {
@@ -842,14 +825,24 @@ meter {
     height: 1em;
     width: 5em;
     vertical-align: -0.2em;
+    -webkit-user-modify: read-only !important;
 }
 
 meter::-webkit-meter-inner-element {
     -webkit-appearance: inherit;
     box-sizing: inherit;
+    display: none;
     -webkit-user-modify: read-only !important;
     height: 100%;
     width: 100%;
+}
+
+meter::-webkit-meter-inner-element:-internal-shadow-host-has-appearance {
+    display: block;
+}
+
+meter::-internal-fallback:-internal-shadow-host-has-appearance {
+    display: none;
 }
 
 meter::-webkit-meter-bar {
@@ -893,7 +886,6 @@ progress {
 }
 
 progress::-webkit-progress-inner-element {
-    -webkit-appearance: inherit;
     box-sizing: inherit;
     -webkit-user-modify: read-only;
     height: 100%;
@@ -1117,6 +1109,11 @@ dialog::backdrop {
     margin: auto;
     padding: 0px;
     border-width: 0px;
+}
+
+/* Allows thead sections to print at the top of each page. */
+@media print {
+    thead { break-inside:avoid; }
 }
 
 /* noscript is handled internally, as it depends on settings. */

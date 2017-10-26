@@ -5,7 +5,8 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_VIDEO_CAPTURE_CONTROLLER_EVENT_HANDLER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_VIDEO_CAPTURE_CONTROLLER_EVENT_HANDLER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/memory/shared_memory.h"
 #include "content/common/content_export.h"
 #include "ui/gfx/geometry/size.h"
@@ -47,8 +48,7 @@ class CONTENT_EXPORT VideoCaptureControllerEventHandler {
   // A buffer has been filled with a captured VideoFrame.
   virtual void OnBufferReady(VideoCaptureControllerID id,
                              int buffer_id,
-                             const scoped_refptr<media::VideoFrame>& frame,
-                             const base::TimeTicks& timestamp) = 0;
+                             const scoped_refptr<media::VideoFrame>& frame) = 0;
 
   // The capture session has ended and no more frames will be sent.
   virtual void OnEnded(VideoCaptureControllerID id) = 0;

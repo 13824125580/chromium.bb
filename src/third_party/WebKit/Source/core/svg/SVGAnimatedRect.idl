@@ -27,9 +27,8 @@
 
 [
     SetWrapperReferenceTo(SVGElement contextElement),
-    WillBeGarbageCollected,
 ] interface SVGAnimatedRect {
-    // TODO(philipj): SVGRect should be DOMRectReadOnly.
+    // TODO(foolip): SVGRect should be DOMRectReadOnly.
     readonly attribute SVGRect baseVal;
     readonly attribute SVGRect animVal;
 };

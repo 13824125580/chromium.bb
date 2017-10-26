@@ -80,13 +80,13 @@ public:
         return m_callbackCount;
     }
 
-    void setNotificationCallback(PassOwnPtr<Closure> closure)
+    void setNotificationCallback(std::unique_ptr<WTF::Closure> closure)
     {
-        m_closure = closure;
+        m_closure = std::move(closure);
     }
 
 private:
-    OwnPtr<Closure> m_closure;
+    std::unique_ptr<WTF::Closure> m_closure;
     WebConnectionType m_observedType;
     double m_observedMaxBandwidthMbps;
     int m_callbackCount;
@@ -98,9 +98,11 @@ public:
         : m_document(Document::create())
         , m_document2(Document::create())
     {
+        // Initialize connection, so that future calls to setWebConnection issue notifications.
+        m_notifier.setWebConnection(WebConnectionTypeUnknown, 0.0);
     }
 
-    ExecutionContext* executionContext()
+    ExecutionContext* getExecutionContext()
     {
         return m_document.get();
     }
@@ -119,12 +121,12 @@ protected:
 
     void addObserverOnNotification(StateObserver* observer, StateObserver* observerToAdd)
     {
-        observer->setNotificationCallback(bind(&NetworkStateNotifier::addObserver, &m_notifier, observerToAdd, executionContext()));
+        observer->setNotificationCallback(bind(&NetworkStateNotifier::addObserver, WTF::unretained(&m_notifier), WTF::unretained(observerToAdd), wrapPersistent(getExecutionContext())));
     }
 
     void removeObserverOnNotification(StateObserver* observer, StateObserver* observerToRemove)
     {
-        observer->setNotificationCallback(bind(&NetworkStateNotifier::removeObserver, &m_notifier, observerToRemove, executionContext()));
+        observer->setNotificationCallback(bind(&NetworkStateNotifier::removeObserver, WTF::unretained(&m_notifier), WTF::unretained(observerToRemove), wrapPersistent(getExecutionContext())));
     }
 
     bool verifyObservations(const StateObserver& observer, WebConnectionType type, double maxBandwidthMbps)
@@ -134,15 +136,15 @@ protected:
         return observer.observedType() == type && observer.observedMaxBandwidth() == maxBandwidthMbps;
     }
 
-    RefPtrWillBePersistent<Document> m_document;
-    RefPtrWillBePersistent<Document> m_document2;
+    Persistent<Document> m_document;
+    Persistent<Document> m_document2;
     NetworkStateNotifier m_notifier;
 };
 
 TEST_F(NetworkStateNotifierTest, AddObserver)
 {
     StateObserver observer;
-    m_notifier.addObserver(&observer, executionContext());
+    m_notifier.addObserver(&observer, getExecutionContext());
     EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeNone, kNoneMaxBandwidthMbps));
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -153,9 +155,9 @@ TEST_F(NetworkStateNotifierTest, AddObserver)
 TEST_F(NetworkStateNotifierTest, RemoveObserver)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
-    m_notifier.removeObserver(&observer1, executionContext());
-    m_notifier.addObserver(&observer2, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
+    m_notifier.removeObserver(&observer1, getExecutionContext());
+    m_notifier.addObserver(&observer2, getExecutionContext());
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
     EXPECT_TRUE(verifyObservations(observer1, WebConnectionTypeNone, kNoneMaxBandwidthMbps));
@@ -165,8 +167,8 @@ TEST_F(NetworkStateNotifierTest, RemoveObserver)
 TEST_F(NetworkStateNotifierTest, RemoveSoleObserver)
 {
     StateObserver observer1;
-    m_notifier.addObserver(&observer1, executionContext());
-    m_notifier.removeObserver(&observer1, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
+    m_notifier.removeObserver(&observer1, getExecutionContext());
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
     EXPECT_TRUE(verifyObservations(observer1, WebConnectionTypeNone, kNoneMaxBandwidthMbps));
@@ -175,7 +177,7 @@ TEST_F(NetworkStateNotifierTest, RemoveSoleObserver)
 TEST_F(NetworkStateNotifierTest, AddObserverWhileNotifying)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
     addObserverOnNotification(&observer1, &observer2);
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -186,7 +188,7 @@ TEST_F(NetworkStateNotifierTest, AddObserverWhileNotifying)
 TEST_F(NetworkStateNotifierTest, RemoveSoleObserverWhileNotifying)
 {
     StateObserver observer1;
-    m_notifier.addObserver(&observer1, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
     removeObserverOnNotification(&observer1, &observer1);
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -199,8 +201,8 @@ TEST_F(NetworkStateNotifierTest, RemoveSoleObserverWhileNotifying)
 TEST_F(NetworkStateNotifierTest, RemoveCurrentObserverWhileNotifying)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
-    m_notifier.addObserver(&observer2, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
+    m_notifier.addObserver(&observer2, getExecutionContext());
     removeObserverOnNotification(&observer1, &observer1);
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -215,8 +217,8 @@ TEST_F(NetworkStateNotifierTest, RemoveCurrentObserverWhileNotifying)
 TEST_F(NetworkStateNotifierTest, RemovePastObserverWhileNotifying)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
-    m_notifier.addObserver(&observer2, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
+    m_notifier.addObserver(&observer2, getExecutionContext());
     removeObserverOnNotification(&observer2, &observer1);
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -231,9 +233,9 @@ TEST_F(NetworkStateNotifierTest, RemovePastObserverWhileNotifying)
 TEST_F(NetworkStateNotifierTest, RemoveFutureObserverWhileNotifying)
 {
     StateObserver observer1, observer2, observer3;
-    m_notifier.addObserver(&observer1, executionContext());
-    m_notifier.addObserver(&observer2, executionContext());
-    m_notifier.addObserver(&observer3, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
+    m_notifier.addObserver(&observer2, getExecutionContext());
+    m_notifier.addObserver(&observer3, getExecutionContext());
     removeObserverOnNotification(&observer1, &observer2);
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -245,7 +247,7 @@ TEST_F(NetworkStateNotifierTest, RemoveFutureObserverWhileNotifying)
 TEST_F(NetworkStateNotifierTest, MultipleContextsAddObserver)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
     m_notifier.addObserver(&observer2, executionContext2());
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
@@ -256,7 +258,7 @@ TEST_F(NetworkStateNotifierTest, MultipleContextsAddObserver)
 TEST_F(NetworkStateNotifierTest, RemoveContext)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
     m_notifier.addObserver(&observer2, executionContext2());
     m_notifier.removeObserver(&observer2, executionContext2());
 
@@ -268,14 +270,103 @@ TEST_F(NetworkStateNotifierTest, RemoveContext)
 TEST_F(NetworkStateNotifierTest, RemoveAllContexts)
 {
     StateObserver observer1, observer2;
-    m_notifier.addObserver(&observer1, executionContext());
+    m_notifier.addObserver(&observer1, getExecutionContext());
     m_notifier.addObserver(&observer2, executionContext2());
-    m_notifier.removeObserver(&observer1, executionContext());
+    m_notifier.removeObserver(&observer1, getExecutionContext());
     m_notifier.removeObserver(&observer2, executionContext2());
 
     setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
     EXPECT_TRUE(verifyObservations(observer1, WebConnectionTypeNone, kNoneMaxBandwidthMbps));
     EXPECT_TRUE(verifyObservations(observer2, WebConnectionTypeNone, kNoneMaxBandwidthMbps));
+}
+
+TEST_F(NetworkStateNotifierTest, SetOverride)
+{
+    StateObserver observer;
+    m_notifier.addObserver(&observer, getExecutionContext());
+
+    m_notifier.setOnLine(true);
+    setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps));
+    EXPECT_TRUE(m_notifier.onLine());
+    EXPECT_EQ(WebConnectionTypeBluetooth, m_notifier.connectionType());
+    EXPECT_EQ(kBluetoothMaxBandwidthMbps, m_notifier.maxBandwidth());
+
+    m_notifier.setOverride(true, WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps);
+    testing::runPendingTasks();
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps));
+    EXPECT_TRUE(m_notifier.onLine());
+    EXPECT_EQ(WebConnectionTypeEthernet, m_notifier.connectionType());
+    EXPECT_EQ(kEthernetMaxBandwidthMbps, m_notifier.maxBandwidth());
+
+    // When override is active, calls to setOnLine and setConnection are temporary ignored.
+    m_notifier.setOnLine(false);
+    setConnection(WebConnectionTypeNone, kNoneMaxBandwidthMbps);
+    testing::runPendingTasks();
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps));
+    EXPECT_TRUE(m_notifier.onLine());
+    EXPECT_EQ(WebConnectionTypeEthernet, m_notifier.connectionType());
+    EXPECT_EQ(kEthernetMaxBandwidthMbps, m_notifier.maxBandwidth());
+
+    m_notifier.clearOverride();
+    testing::runPendingTasks();
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeNone, kNoneMaxBandwidthMbps));
+    EXPECT_FALSE(m_notifier.onLine());
+    EXPECT_EQ(WebConnectionTypeNone, m_notifier.connectionType());
+    EXPECT_EQ(kNoneMaxBandwidthMbps, m_notifier.maxBandwidth());
+
+    m_notifier.removeObserver(&observer, getExecutionContext());
+}
+
+TEST_F(NetworkStateNotifierTest, NoExtraNotifications)
+{
+    StateObserver observer;
+    m_notifier.addObserver(&observer, getExecutionContext());
+
+    setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps));
+    EXPECT_EQ(observer.callbackCount(), 1);
+
+    setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
+    EXPECT_EQ(observer.callbackCount(), 1);
+
+    setConnection(WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps);
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps));
+    EXPECT_EQ(observer.callbackCount(), 2);
+
+    setConnection(WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps);
+    EXPECT_EQ(observer.callbackCount(), 2);
+
+    setConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
+    EXPECT_TRUE(verifyObservations(observer, WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps));
+    EXPECT_EQ(observer.callbackCount(), 3);
+
+    m_notifier.removeObserver(&observer, getExecutionContext());
+}
+
+TEST_F(NetworkStateNotifierTest, NoNotificationOnInitialization)
+{
+    NetworkStateNotifier notifier;
+    Persistent<Document> document(Document::create());
+    StateObserver observer;
+
+    notifier.addObserver(&observer, document.get());
+    testing::runPendingTasks();
+    EXPECT_EQ(observer.callbackCount(), 0);
+
+    notifier.setWebConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
+    testing::runPendingTasks();
+    EXPECT_EQ(observer.callbackCount(), 0);
+
+    notifier.setWebConnection(WebConnectionTypeBluetooth, kBluetoothMaxBandwidthMbps);
+    testing::runPendingTasks();
+    EXPECT_EQ(observer.callbackCount(), 0);
+
+    notifier.setWebConnection(WebConnectionTypeEthernet, kEthernetMaxBandwidthMbps);
+    testing::runPendingTasks();
+    EXPECT_EQ(observer.callbackCount(), 1);
+    EXPECT_EQ(observer.observedType(), WebConnectionTypeEthernet);
+    EXPECT_EQ(observer.observedMaxBandwidth(), kEthernetMaxBandwidthMbps);
 }
 
 } // namespace blink

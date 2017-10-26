@@ -5,13 +5,17 @@
 #include "core/css/parser/CSSParserFastPaths.h"
 
 #include "core/StylePropertyShorthand.h"
+#include "core/css/CSSColorValue.h"
 #include "core/css/CSSFunctionValue.h"
-#include "core/css/CSSValuePool.h"
+#include "core/css/CSSInheritedValue.h"
+#include "core/css/CSSInitialValue.h"
+#include "core/css/CSSPrimitiveValue.h"
+#include "core/css/StyleColor.h"
 #include "core/css/parser/CSSParserIdioms.h"
-#include "core/css/parser/CSSParserString.h"
 #include "core/css/parser/CSSPropertyParser.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "wtf/text/StringToNumber.h"
 
 namespace blink {
 
@@ -83,10 +87,10 @@ static inline bool parseSimpleLength(const CharacterType* characters, unsigned l
     // not represent a double.
     bool ok;
     number = charactersToDouble(characters, length, &ok);
-    return ok && CSSPropertyParser::isValidNumericValue(number);
+    return ok && CSSParserToken::isValidNumericValue(number);
 }
 
-static PassRefPtrWillBeRawPtr<CSSValue> parseSimpleLengthValue(CSSPropertyID propertyId, const String& string, CSSParserMode cssParserMode)
+static CSSValue* parseSimpleLengthValue(CSSPropertyID propertyId, const String& string, CSSParserMode cssParserMode)
 {
     ASSERT(!string.isEmpty());
     bool acceptsNegativeNumbers = false;
@@ -119,7 +123,7 @@ static PassRefPtrWillBeRawPtr<CSSValue> parseSimpleLengthValue(CSSPropertyID pro
     if (number < 0 && !acceptsNegativeNumbers)
         return nullptr;
 
-    return cssValuePool().createValue(number, unit);
+    return CSSPrimitiveValue::create(number, unit);
 }
 
 static inline bool isColorPropertyID(CSSPropertyID propertyId)
@@ -388,7 +392,7 @@ static bool fastParseColorInternal(RGBA32& rgb, const CharacterType* characters,
     if (length >= 4 && characters[0] == '#')
         return Color::parseHexColor(characters + 1, length - 1, rgb);
 
-    if (quirksMode && length >= 3) {
+    if (quirksMode && (length == 3 || length == 6)) {
         if (Color::parseHexColor(characters, length, rgb))
             return true;
     }
@@ -438,16 +442,14 @@ static bool fastParseColorInternal(RGBA32& rgb, const CharacterType* characters,
     return false;
 }
 
-PassRefPtrWillBeRawPtr<CSSValue> CSSParserFastPaths::parseColor(const String& string, CSSParserMode parserMode)
+CSSValue* CSSParserFastPaths::parseColor(const String& string, CSSParserMode parserMode)
 {
     ASSERT(!string.isEmpty());
-    CSSParserString cssString;
-    cssString.init(string);
-    CSSValueID valueID = cssValueKeywordID(cssString);
-    if (CSSPropertyParser::isColorKeyword(valueID)) {
+    CSSValueID valueID = cssValueKeywordID(string);
+    if (StyleColor::isColorKeyword(valueID)) {
         if (!isValueAllowedInMode(valueID, parserMode))
             return nullptr;
-        return cssValuePool().createIdentifierValue(valueID);
+        return CSSPrimitiveValue::createIdentifier(valueID);
     }
 
     RGBA32 color;
@@ -461,12 +463,12 @@ PassRefPtrWillBeRawPtr<CSSValue> CSSParserFastPaths::parseColor(const String& st
         parseResult = fastParseColorInternal(color, string.characters16(), string.length(), quirksMode);
     if (!parseResult)
         return nullptr;
-    return cssValuePool().createColorValue(color);
+    return CSSColorValue::create(color);
 }
 
-bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId, CSSValueID valueID)
+bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId, CSSValueID valueID, CSSParserMode parserMode)
 {
-    if (valueID == CSSValueInvalid)
+    if (valueID == CSSValueInvalid || !isValueAllowedInMode(valueID, parserMode))
         return false;
 
     switch (propertyId) {
@@ -529,8 +531,6 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
         return valueID == CSSValueShow || valueID == CSSValueHide;
     case CSSPropertyFloat: // left | right | none
         return valueID == CSSValueLeft || valueID == CSSValueRight || valueID == CSSValueNone;
-    case CSSPropertyFontDisplay: // auto | block | swap | fallback | optional
-        return valueID == CSSValueAuto || valueID == CSSValueBlock || valueID == CSSValueSwap || valueID == CSSValueFallback || valueID == CSSValueOptional;
     case CSSPropertyFontStyle: // normal | italic | oblique
         return valueID == CSSValueNormal || valueID == CSSValueItalic || valueID == CSSValueOblique;
     case CSSPropertyFontStretch: // normal | ultra-condensed | extra-condensed | condensed | semi-condensed | semi-expanded | expanded | extra-expanded | ultra-expanded
@@ -538,7 +538,6 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
     case CSSPropertyImageRendering: // auto | optimizeContrast | pixelated
         return valueID == CSSValueAuto || valueID == CSSValueWebkitOptimizeContrast || (RuntimeEnabledFeatures::imageRenderingPixelatedEnabled() && valueID == CSSValuePixelated);
     case CSSPropertyIsolation: // auto | isolate
-        ASSERT(RuntimeEnabledFeatures::cssCompositingEnabled());
         return valueID == CSSValueAuto || valueID == CSSValueIsolate;
     case CSSPropertyListStylePosition: // inside | outside
         return valueID == CSSValueInside || valueID == CSSValueOutside;
@@ -586,7 +585,7 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
     case CSSPropertyTableLayout: // auto | fixed
         return valueID == CSSValueAuto || valueID == CSSValueFixed;
     case CSSPropertyTextAlign:
-        return (valueID >= CSSValueWebkitAuto && valueID <= CSSValueWebkitMatchParent) || valueID == CSSValueStart || valueID == CSSValueEnd;
+        return (valueID >= CSSValueWebkitAuto && valueID <= CSSValueInternalCenter) || valueID == CSSValueStart || valueID == CSSValueEnd;
     case CSSPropertyTextAlignLast:
         // auto | start | end | left | right | center | justify
         return (valueID >= CSSValueLeft && valueID <= CSSValueJustify) || valueID == CSSValueStart || valueID == CSSValueEnd || valueID == CSSValueAuto;
@@ -628,7 +627,6 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
     case CSSPropertyBackfaceVisibility:
         return valueID == CSSValueVisible || valueID == CSSValueHidden;
     case CSSPropertyMixBlendMode:
-        ASSERT(RuntimeEnabledFeatures::cssCompositingEnabled());
         return valueID == CSSValueNormal || valueID == CSSValueMultiply || valueID == CSSValueScreen || valueID == CSSValueOverlay
             || valueID == CSSValueDarken || valueID == CSSValueLighten || valueID == CSSValueColorDodge || valueID == CSSValueColorBurn
             || valueID == CSSValueHardLight || valueID == CSSValueSoftLight || valueID == CSSValueDifference || valueID == CSSValueExclusion
@@ -646,7 +644,6 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
     case CSSPropertyWebkitBoxPack:
         return valueID == CSSValueStart || valueID == CSSValueEnd || valueID == CSSValueCenter || valueID == CSSValueJustify;
     case CSSPropertyColumnFill:
-        ASSERT(RuntimeEnabledFeatures::columnFillEnabled());
         return valueID == CSSValueAuto || valueID == CSSValueBalance;
     case CSSPropertyAlignContent:
         // FIXME: Per CSS alignment, this property should accept an optional <overflow-position>. We should share this parsing code with 'justify-self'.
@@ -661,6 +658,8 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
         return valueID == CSSValueRow || valueID == CSSValueRowReverse || valueID == CSSValueColumn || valueID == CSSValueColumnReverse;
     case CSSPropertyFlexWrap:
         return valueID == CSSValueNowrap || valueID == CSSValueWrap || valueID == CSSValueWrapReverse;
+    case CSSPropertyHyphens:
+        return valueID == CSSValueAuto || valueID == CSSValueNone || valueID == CSSValueManual;
     case CSSPropertyJustifyContent:
         // FIXME: Per CSS alignment, this property should accept an optional <overflow-position>. We should share this parsing code with 'justify-self'.
         return valueID == CSSValueFlexStart || valueID == CSSValueFlexEnd || valueID == CSSValueCenter || valueID == CSSValueSpaceBetween || valueID == CSSValueSpaceAround;
@@ -747,6 +746,7 @@ bool CSSParserFastPaths::isKeywordPropertyID(CSSPropertyID propertyId)
     case CSSPropertyFloat:
     case CSSPropertyFontStyle:
     case CSSPropertyFontStretch:
+    case CSSPropertyHyphens:
     case CSSPropertyImageRendering:
     case CSSPropertyListStylePosition:
     case CSSPropertyListStyleType:
@@ -834,34 +834,35 @@ bool CSSParserFastPaths::isKeywordPropertyID(CSSPropertyID propertyId)
     }
 }
 
-static PassRefPtrWillBeRawPtr<CSSValue> parseKeywordValue(CSSPropertyID propertyId, const String& string)
+static CSSValue* parseKeywordValue(CSSPropertyID propertyId, const String& string, CSSParserMode parserMode)
 {
     ASSERT(!string.isEmpty());
 
     if (!CSSParserFastPaths::isKeywordPropertyID(propertyId)) {
         // All properties accept the values of "initial" and "inherit".
-        String lowerCaseString = string.lower();
-        if (lowerCaseString != "initial" && lowerCaseString != "inherit")
+        if (!equalIgnoringASCIICase(string, "initial") && !equalIgnoringASCIICase(string, "inherit"))
             return nullptr;
 
         // Parse initial/inherit shorthands using the CSSPropertyParser.
         if (shorthandForProperty(propertyId).length())
             return nullptr;
+
+        // Descriptors do not support css wide keywords.
+        if (CSSPropertyMetadata::isDescriptorOnly(propertyId))
+            return nullptr;
     }
 
-    CSSParserString cssString;
-    cssString.init(string);
-    CSSValueID valueID = cssValueKeywordID(cssString);
+    CSSValueID valueID = cssValueKeywordID(string);
 
     if (!valueID)
         return nullptr;
 
     if (valueID == CSSValueInherit)
-        return cssValuePool().createInheritedValue();
+        return CSSInheritedValue::create();
     if (valueID == CSSValueInitial)
-        return cssValuePool().createExplicitInitialValue();
-    if (CSSParserFastPaths::isValidKeywordPropertyAndValue(propertyId, valueID))
-        return cssValuePool().createIdentifierValue(valueID);
+        return CSSInitialValue::create();
+    if (CSSParserFastPaths::isValidKeywordPropertyAndValue(propertyId, valueID, parserMode))
+        return CSSPrimitiveValue::createIdentifier(valueID);
     return nullptr;
 }
 
@@ -879,7 +880,7 @@ static bool parseTransformTranslateArguments(CharType*& pos, CharType* end, unsi
             return false;
         if (unit != CSSPrimitiveValue::UnitType::Pixels && (number || unit != CSSPrimitiveValue::UnitType::Number))
             return false;
-        transformValue->append(cssValuePool().createValue(number, CSSPrimitiveValue::UnitType::Pixels));
+        transformValue->append(*CSSPrimitiveValue::create(number, CSSPrimitiveValue::UnitType::Pixels));
         pos += argumentLength + 1;
         --expectedCount;
     }
@@ -898,19 +899,19 @@ static bool parseTransformNumberArguments(CharType*& pos, CharType* end, unsigne
         double number = charactersToDouble(pos, argumentLength, &ok);
         if (!ok)
             return false;
-        transformValue->append(cssValuePool().createValue(number, CSSPrimitiveValue::UnitType::Number));
+        transformValue->append(*CSSPrimitiveValue::create(number, CSSPrimitiveValue::UnitType::Number));
         pos += argumentLength + 1;
         --expectedCount;
     }
     return true;
 }
 
-template <typename CharType>
-static PassRefPtrWillBeRawPtr<CSSFunctionValue> parseSimpleTransformValue(CharType*& pos, CharType* end)
-{
-    static const int shortestValidTransformStringLength = 12;
+static const int kShortestValidTransformStringLength = 12;
 
-    if (end - pos < shortestValidTransformStringLength)
+template <typename CharType>
+static CSSFunctionValue* parseSimpleTransformValue(CharType*& pos, CharType* end)
+{
+    if (end - pos < kShortestValidTransformStringLength)
         return nullptr;
 
     const bool isTranslate = toASCIILower(pos[0]) == 't'
@@ -946,10 +947,10 @@ static PassRefPtrWillBeRawPtr<CSSFunctionValue> parseSimpleTransformValue(CharTy
             return nullptr;
         }
         pos += argumentStart;
-        RefPtrWillBeRawPtr<CSSFunctionValue> transformValue = CSSFunctionValue::create(transformType);
-        if (!parseTransformTranslateArguments(pos, end, expectedArgumentCount, transformValue.get()))
+        CSSFunctionValue* transformValue = CSSFunctionValue::create(transformType);
+        if (!parseTransformTranslateArguments(pos, end, expectedArgumentCount, transformValue))
             return nullptr;
-        return transformValue.release();
+        return transformValue;
     }
 
     const bool isMatrix3d = toASCIILower(pos[0]) == 'm'
@@ -964,10 +965,10 @@ static PassRefPtrWillBeRawPtr<CSSFunctionValue> parseSimpleTransformValue(CharTy
 
     if (isMatrix3d) {
         pos += 9;
-        RefPtrWillBeRawPtr<CSSFunctionValue> transformValue = CSSFunctionValue::create(CSSValueMatrix3d);
-        if (!parseTransformNumberArguments(pos, end, 16, transformValue.get()))
+        CSSFunctionValue* transformValue = CSSFunctionValue::create(CSSValueMatrix3d);
+        if (!parseTransformNumberArguments(pos, end, 16, transformValue))
             return nullptr;
-        return transformValue.release();
+        return transformValue;
     }
 
     const bool isScale3d = toASCIILower(pos[0]) == 's'
@@ -981,62 +982,106 @@ static PassRefPtrWillBeRawPtr<CSSFunctionValue> parseSimpleTransformValue(CharTy
 
     if (isScale3d) {
         pos += 8;
-        RefPtrWillBeRawPtr<CSSFunctionValue> transformValue = CSSFunctionValue::create(CSSValueScale3d);
-        if (!parseTransformNumberArguments(pos, end, 3, transformValue.get()))
+        CSSFunctionValue* transformValue = CSSFunctionValue::create(CSSValueScale3d);
+        if (!parseTransformNumberArguments(pos, end, 3, transformValue))
             return nullptr;
-        return transformValue.release();
+        return transformValue;
     }
 
     return nullptr;
 }
 
 template <typename CharType>
-static PassRefPtrWillBeRawPtr<CSSValueList> parseSimpleTransformList(CharType*& pos, CharType* end)
+static bool transformCanLikelyUseFastPath(const CharType* chars, unsigned length)
 {
-    RefPtrWillBeRawPtr<CSSValueList> transformList = nullptr;
+    // Very fast scan that attempts to reject most transforms that couldn't
+    // take the fast path. This avoids doing the malloc and string->double
+    // conversions in parseSimpleTransformValue only to discard them when we
+    // run into a transform component we don't understand.
+    unsigned i = 0;
+    while (i < length) {
+        if (isCSSSpace(chars[i])) {
+            ++i;
+            continue;
+        }
+        if (length - i < kShortestValidTransformStringLength)
+            return false;
+        switch (toASCIILower(chars[i])) {
+        case 't':
+            // translate, translateX, translateY, translateZ, translate3d.
+            if (toASCIILower(chars[i + 8]) != 'e')
+                return false;
+            i += 9;
+            break;
+        case 'm':
+            // matrix3d.
+            if (toASCIILower(chars[i + 7]) != 'd')
+                return false;
+            i += 8;
+            break;
+        case 's':
+            // scale3d.
+            if (toASCIILower(chars[i + 6]) != 'd')
+                return false;
+            i += 7;
+            break;
+        default:
+            // All other things, ex. rotate.
+            return false;
+        }
+        size_t argumentsEnd = WTF::find(chars, length, ')', i);
+        if (argumentsEnd == kNotFound)
+            return false;
+        // Advance to the end of the arguments.
+        i = argumentsEnd + 1;
+    }
+    return i == length;
+}
+
+template <typename CharType>
+static CSSValueList* parseSimpleTransformList(const CharType* chars, unsigned length)
+{
+    if (!transformCanLikelyUseFastPath(chars, length))
+        return nullptr;
+    const CharType*& pos = chars;
+    const CharType* end = chars + length;
+    CSSValueList* transformList = nullptr;
     while (pos < end) {
         while (pos < end && isCSSSpace(*pos))
             ++pos;
-        RefPtrWillBeRawPtr<CSSFunctionValue> transformValue = parseSimpleTransformValue(pos, end);
+        if (pos >= end)
+            break;
+        CSSFunctionValue* transformValue = parseSimpleTransformValue(pos, end);
         if (!transformValue)
             return nullptr;
         if (!transformList)
             transformList = CSSValueList::createSpaceSeparated();
-        transformList->append(transformValue.release());
-        if (pos < end) {
-            if (isCSSSpace(*pos))
-                return nullptr;
+        transformList->append(*transformValue);
         }
-    }
-    return transformList.release();
+    return transformList;
 }
 
-static PassRefPtrWillBeRawPtr<CSSValue> parseSimpleTransform(CSSPropertyID propertyID, const String& string)
+static CSSValue* parseSimpleTransform(CSSPropertyID propertyID, const String& string)
 {
     ASSERT(!string.isEmpty());
 
     if (propertyID != CSSPropertyTransform)
         return nullptr;
-    if (string.is8Bit()) {
-        const LChar* pos = string.characters8();
-        const LChar* end = pos + string.length();
-        return parseSimpleTransformList(pos, end);
-    }
-    const UChar* pos = string.characters16();
-    const UChar* end = pos + string.length();
-    return parseSimpleTransformList(pos, end);
+    if (string.is8Bit())
+        return parseSimpleTransformList(string.characters8(), string.length());
+    return parseSimpleTransformList(string.characters16(), string.length());
 }
 
-PassRefPtrWillBeRawPtr<CSSValue> CSSParserFastPaths::maybeParseValue(CSSPropertyID propertyID, const String& string, CSSParserMode parserMode)
+CSSValue* CSSParserFastPaths::maybeParseValue(CSSPropertyID propertyID, const String& string, CSSParserMode parserMode)
 {
-    if (RefPtrWillBeRawPtr<CSSValue> length = parseSimpleLengthValue(propertyID, string, parserMode))
-        return length.release();
+    if (CSSValue* length = parseSimpleLengthValue(propertyID, string, parserMode))
+        return length;
     if (isColorPropertyID(propertyID))
         return parseColor(string, parserMode);
-    if (RefPtrWillBeRawPtr<CSSValue> keyword = parseKeywordValue(propertyID, string))
-        return keyword.release();
-    if (RefPtrWillBeRawPtr<CSSValue> transform = parseSimpleTransform(propertyID, string))
-        return transform.release();
+    if (CSSValue* keyword = parseKeywordValue(propertyID, string, parserMode))
+        return keyword;
+    if (CSSValue* transform = parseSimpleTransform(propertyID, string))
+        return transform;
     return nullptr;
 }
 

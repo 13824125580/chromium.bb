@@ -13,6 +13,7 @@ import android.text.TextUtils;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.input.ChromiumBaseInputConnection;
 import org.chromium.content.browser.input.ImeTestUtils;
@@ -34,7 +35,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
             + "<input id=\"empty_input_text\" type=\"text\" />"
             + "<br/><input id=\"input_text\" type=\"text\" value=\"SampleInputText\" />"
             + "<br/><textarea id=\"textarea\" rows=\"2\" cols=\"20\">SampleTextArea</textarea>"
-            + "<br/><input id=\"input_password\" type=\"password\" value=\"SamplePassword\" />"
+            + "<br/><input id=\"password\" type=\"password\" value=\"SamplePassword\" size=\"10\"/>"
             + "<br/><p><span id=\"plain_text_1\">SamplePlainTextOne</span></p>"
             + "<br/><p><span id=\"plain_text_2\">SamplePlainTextTwo</span></p>"
             + "<br/><input id=\"disabled_text\" type=\"text\" disabled value=\"Sample Text\" />"
@@ -127,8 +128,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         assertTrue(mContentViewCore.hasSelection());
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupNotShownOnLongPressingNonEmptyInput() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -138,8 +142,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         waitForPastePopupStatus(false);
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupClearedOnTappingEmptyInput() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -148,8 +155,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         waitForPastePopupStatus(false);
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupClearedOnTappingNonEmptyInput() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -158,8 +168,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         waitForPastePopupStatus(false);
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupClearedOnTappingOutsideInput() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -168,8 +181,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         waitForPastePopupStatus(false);
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupClearedOnLongPressingOutsideInput() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -178,8 +194,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         waitForPastePopupStatus(false);
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupNotShownOnLongPressingDisabledInput() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -190,8 +209,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         assertFalse(mContentViewCore.hasInsertion());
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testPastePopupDismissedOnDestroy() throws Throwable {
         copyStringToClipboard("SampleTextToCopy");
         DOMUtils.longPressNode(this, mContentViewCore, "empty_input_text");
@@ -219,7 +241,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
     @SmallTest
     @Feature({"TextInput"})
     public void testActionBarConfiguredCorrectlyForPassword() throws Throwable {
-        DOMUtils.longPressNode(this, mContentViewCore, "input_password");
+        DOMUtils.longPressNode(this, mContentViewCore, "password");
         waitForSelectActionBarVisible(true);
         assertTrue(mContentViewCore.hasSelection());
         assertNotNull(mContentViewCore.getSelectActionHandler());
@@ -280,7 +302,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         assertNotNull(mContentViewCore.getSelectActionHandler());
         selectActionBarCopy();
         waitForClipboardContents(mContentViewCore.getContext(), "SamplePlainTextOne");
-        DOMUtils.longPressNode(this, mContentViewCore, "input_password");
+        DOMUtils.longPressNode(this, mContentViewCore, "password");
         waitForSelectActionBarVisible(true);
         assertTrue(mContentViewCore.hasSelection());
         assertNotNull(mContentViewCore.getSelectActionHandler());
@@ -337,7 +359,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
     @Feature({"TextInput"})
     public void testSelectActionBarPasswordCut() throws Exception {
         copyStringToClipboard("SampleTextToCopy");
-        DOMUtils.longPressNode(this, mContentViewCore, "input_password");
+        DOMUtils.longPressNode(this, mContentViewCore, "password");
         waitForSelectActionBarVisible(true);
         assertTrue(mContentViewCore.hasSelection());
         assertNotNull(mContentViewCore.getSelectActionHandler());
@@ -392,7 +414,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
     @SmallTest
     @Feature({"TextInput"})
     public void testSelectActionBarPasswordSelectAll() throws Exception {
-        DOMUtils.longPressNode(this, mContentViewCore, "input_password");
+        DOMUtils.longPressNode(this, mContentViewCore, "password");
         waitForSelectActionBarVisible(true);
         assertTrue(mContentViewCore.hasSelection());
         assertNotNull(mContentViewCore.getSelectActionHandler());
@@ -426,8 +448,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
                 });
     }
 
-    @SmallTest
-    @Feature({"TextSelection", "TextInput"})
+    /**
+     * @SmallTest
+     * @Feature({"TextSelection", "TextInput"})
+     */
+    @FlakyTest(message = "http://crbug.com/606942")
     public void testCursorPositionAfterHidingActionMode() throws Exception {
         DOMUtils.longPressNode(this, mContentViewCore, "textarea");
         waitForSelectActionBarVisible(true);
@@ -439,12 +464,13 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         assertEquals(mContentViewCore.getSelectedText(), "SampleTextArea");
         hideSelectActionMode();
         waitForSelectActionBarVisible(false);
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return "SampleTextArea".equals(getTextBeforeCursor(50, 0));
-            }
-        });
+        CriteriaHelper.pollInstrumentationThread(
+                Criteria.equals("SampleTextArea", new Callable<CharSequence>() {
+                    @Override
+                    public CharSequence call() {
+                        return getTextBeforeCursor(50, 0);
+                    }
+                }));
     }
 
     @SmallTest
@@ -487,13 +513,16 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         assertEquals("SampleTextToCopy", mContentViewCore.getSelectedText());
     }
 
+    /*
     @SmallTest
     @Feature({"TextInput"})
+    */
+    @FlakyTest(message = "https://crbug.com/592428")
     public void testSelectActionBarPasswordPaste() throws Exception {
         copyStringToClipboard("SamplePassword2");
 
         // Select the password field.
-        DOMUtils.longPressNode(this, mContentViewCore, "input_password");
+        DOMUtils.longPressNode(this, mContentViewCore, "password");
         waitForSelectActionBarVisible(true);
         assertTrue(mContentViewCore.hasSelection());
         assertEquals(mContentViewCore.getSelectedText().length(), "SamplePassword".length());
@@ -508,7 +537,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
         // Ensure the new text matches the pasted text. Note that we can't
         // actually compare strings as password field selections only provide
         // a placeholder with the correct length.
-        DOMUtils.longPressNode(this, mContentViewCore, "input_password");
+        DOMUtils.longPressNode(this, mContentViewCore, "password");
         waitForSelectActionBarVisible(true);
         assertTrue(mContentViewCore.hasSelection());
         assertEquals(mContentViewCore.getSelectedText().length(), "SamplePassword2".length());
@@ -612,7 +641,7 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
 
     private void waitForClipboardContents(final Context context, final String expectedContents)
             throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 ClipboardManager clipboardManager =
@@ -626,12 +655,12 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
 
     private void waitForSelectActionBarVisible(
             final boolean visible) throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(Criteria.equals(visible, new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                return visible == mContentViewCore.isSelectActionBarShowing();
+            public Boolean call() {
+                return mContentViewCore.isSelectActionBarShowing();
             }
-        });
+        }));
     }
 
     private void setVisibileOnUiThread(final boolean show) {
@@ -681,11 +710,11 @@ public class ContentViewCoreSelectionTest extends ContentShellTestBase {
     }
 
     private void waitForPastePopupStatus(final boolean show) throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(Criteria.equals(show, new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                return show == mContentViewCore.isPastePopupShowing();
+            public Boolean call() {
+                return mContentViewCore.isPastePopupShowing();
             }
-        });
+        }));
     }
 }

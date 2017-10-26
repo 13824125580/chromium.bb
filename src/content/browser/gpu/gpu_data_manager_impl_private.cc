@@ -4,6 +4,9 @@
 
 #include "content/browser/gpu/gpu_data_manager_impl_private.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -13,19 +16,19 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
-#include "base/sys_info.h"
 #include "base/trace_event/trace_event.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "content/browser/gpu/gpu_process_host.h"
-#include "content/common/gpu/gpu_host_messages.h"
+#include "content/common/gpu_host_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/gpu_data_manager_observer.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/web_preferences.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/config/gpu_control_list_jsons.h"
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
@@ -33,6 +36,7 @@
 #include "gpu/config/gpu_info_collector.h"
 #include "gpu/config/gpu_switches.h"
 #include "gpu/config/gpu_util.h"
+#include "gpu/ipc/common/memory_stats.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
@@ -45,8 +49,12 @@
 #include "base/win/windows_version.h"
 #endif  // OS_WIN
 #if defined(OS_ANDROID)
+#include "media/base/media_switches.h"
 #include "ui/gfx/android/device_display_info.h"
 #endif  // OS_ANDROID
+#if defined(MOJO_SHELL_CLIENT) && defined(USE_AURA)
+#include "services/shell/runner/common/client_util.h"
+#endif
 
 namespace content {
 
@@ -67,6 +75,9 @@ enum WinSubVersion {
   kWinVista,
   kWin7,
   kWin8,
+  kWin8_1,
+  kWin10,
+  kWin10_TH2,
   kNumWinSubVersions
 };
 
@@ -74,21 +85,28 @@ int GetGpuBlacklistHistogramValueWin(GpuFeatureStatus status) {
   static WinSubVersion sub_version = kNumWinSubVersions;
   if (sub_version == kNumWinSubVersions) {
     sub_version = kWinOthers;
-    std::string version_str = base::SysInfo::OperatingSystemVersion();
-    size_t pos = version_str.find_first_not_of("0123456789.");
-    if (pos != std::string::npos)
-      version_str = version_str.substr(0, pos);
-    Version os_version(version_str);
-    if (os_version.IsValid() && os_version.components().size() >= 2) {
-      const std::vector<uint32_t>& version_numbers = os_version.components();
-      if (version_numbers[0] == 5)
-        sub_version = kWinXP;
-      else if (version_numbers[0] == 6 && version_numbers[1] == 0)
-        sub_version = kWinVista;
-      else if (version_numbers[0] == 6 && version_numbers[1] == 1)
+    switch (base::win::GetVersion()) {
+      case base::win::VERSION_PRE_XP:
+      case base::win::VERSION_XP:
+      case base::win::VERSION_SERVER_2003:
+      case base::win::VERSION_VISTA:
+      case base::win::VERSION_WIN_LAST:
+        break;
+      case base::win::VERSION_WIN7:
         sub_version = kWin7;
-      else if (version_numbers[0] == 6 && version_numbers[1] == 2)
+        break;
+      case base::win::VERSION_WIN8:
         sub_version = kWin8;
+        break;
+      case base::win::VERSION_WIN8_1:
+        sub_version = kWin8_1;
+        break;
+      case base::win::VERSION_WIN10:
+        sub_version = kWin10;
+        break;
+      case base::win::VERSION_WIN10_TH2:
+        sub_version = kWin10_TH2;
+        break;
     }
   }
   int entry_index = static_cast<int>(sub_version) * kGpuFeatureNumStatus;
@@ -224,16 +242,6 @@ void DisplayReconfigCallback(CGDirectDisplayID display,
       reinterpret_cast<GpuDataManagerImpl*>(gpu_data_manager);
   DCHECK(manager);
 
-  // Display change.
-  bool display_changed = false;
-  uint32_t displayCount;
-  CGGetActiveDisplayList(0, NULL, &displayCount);
-  if (displayCount != manager->GetDisplayCount()) {
-    manager->SetDisplayCount(displayCount);
-    display_changed = true;
-  }
-
-  // Gpu change.
   bool gpu_changed = false;
   if (flags & kCGDisplayAddFlag) {
     uint32_t vendor_id, device_id;
@@ -242,7 +250,7 @@ void DisplayReconfigCallback(CGDirectDisplayID display,
     }
   }
 
-  if (display_changed || gpu_changed)
+  if (gpu_changed)
     manager->HandleGpuSwitch();
 }
 #endif  // OS_MACOSX
@@ -259,6 +267,16 @@ enum BlockStatusHistogram {
   BLOCK_STATUS_ALL_DOMAINS_BLOCKED,
   BLOCK_STATUS_MAX
 };
+
+bool ShouldDisableHardwareAcceleration() {
+#if defined(MOJO_SHELL_CLIENT) && defined(USE_AURA)
+  // TODO(rjkroege): Remove this when https://crbug.com/602519 is fixed.
+  if (shell::ShellIsRemote())
+    return true;
+#endif
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableGpu);
+}
 
 }  // namespace anonymous
 
@@ -301,14 +319,6 @@ size_t GpuDataManagerImplPrivate::GetBlacklistedFeatureCount() const {
   if (use_swiftshader_)
     return 1;
   return blacklisted_features_.size();
-}
-
-void GpuDataManagerImplPrivate::SetDisplayCount(unsigned int display_count) {
-  display_count_ = display_count;
-}
-
-unsigned int GpuDataManagerImplPrivate::GetDisplayCount() const {
-  return display_count_;
 }
 
 gpu::GPUInfo GpuDataManagerImplPrivate::GetGPUInfo() const {
@@ -512,12 +522,17 @@ void GpuDataManagerImplPrivate::Initialize() {
   }
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kSkipGpuDataLoading))
+  if (command_line->HasSwitch(switches::kSkipGpuDataLoading)) {
+    RunPostInitTasks();
     return;
+  }
 
   gpu::GPUInfo gpu_info;
-  if (command_line->GetSwitchValueASCII(
-          switches::kUseGL) == gfx::kGLImplementationOSMesaName) {
+  const bool force_osmesa =
+      (command_line->GetSwitchValueASCII(switches::kUseGL) ==
+       gl::kGLImplementationOSMesaName) ||
+      command_line->HasSwitch(switches::kOverrideUseGLWithOSMesaForTests);
+  if (force_osmesa) {
     // If using the OSMesa GL implementation, use fake vendor and device ids to
     // make sure it never gets blacklisted. This is better than simply
     // cancelling GPUInfo gathering as it allows us to proceed with loading the
@@ -528,7 +543,11 @@ void GpuDataManagerImplPrivate::Initialize() {
 
     // Also declare the driver_vendor to be osmesa to be able to specify
     // exceptions based on driver_vendor==osmesa for some blacklist rules.
-    gpu_info.driver_vendor = gfx::kGLImplementationOSMesaName;
+    gpu_info.driver_vendor = gl::kGLImplementationOSMesaName;
+
+    // We are not going to call CollectBasicGraphicsInfo.
+    // So mark it as collected.
+    gpu_info.basic_info_state = gpu::kCollectInfoSuccess;
   } else {
     TRACE_EVENT0("startup",
       "GpuDataManagerImpl::Initialize:CollectBasicGraphicsInfo");
@@ -544,6 +563,13 @@ void GpuDataManagerImplPrivate::Initialize() {
           &gpu_info.gpu.device_id);
       gpu_info.gpu.active = true;
       gpu_info.secondary_gpus.clear();
+    }
+
+    gpu::ParseSecondaryGpuDevicesFromCommandLine(*command_line, &gpu_info);
+
+    if (command_line->HasSwitch(switches::kGpuTestingDriverDate)) {
+      gpu_info.driver_date =
+          command_line->GetSwitchValueASCII(switches::kGpuTestingDriverDate);
     }
   }
 #if defined(ARCH_CPU_X86_FAMILY)
@@ -571,7 +597,7 @@ void GpuDataManagerImplPrivate::Initialize() {
   if (command_line->HasSwitch(switches::kSingleProcess) ||
       command_line->HasSwitch(switches::kInProcessGPU)) {
     command_line->AppendSwitch(switches::kDisableGpuWatchdog);
-    AppendGpuCommandLine(command_line);
+    AppendGpuCommandLine(command_line, nullptr);
   }
 }
 
@@ -643,7 +669,7 @@ void GpuDataManagerImplPrivate::UpdateGpuInfo(const gpu::GPUInfo& gpu_info) {
 }
 
 void GpuDataManagerImplPrivate::UpdateVideoMemoryUsageStats(
-    const GPUVideoMemoryUsageStats& video_memory_usage_stats) {
+    const gpu::VideoMemoryUsageStats& video_memory_usage_stats) {
   GpuDataManagerImpl::UnlockedSession session(owner_);
   observer_list_->Notify(FROM_HERE,
                          &GpuDataManagerObserver::OnVideoMemoryUsageStatsUpdate,
@@ -669,7 +695,8 @@ void GpuDataManagerImplPrivate::AppendRendererCommandLine(
 }
 
 void GpuDataManagerImplPrivate::AppendGpuCommandLine(
-    base::CommandLine* command_line) const {
+    base::CommandLine* command_line,
+    gpu::GpuPreferences* gpu_preferences) const {
   DCHECK(command_line);
 
   std::string use_gl =
@@ -687,8 +714,8 @@ void GpuDataManagerImplPrivate::AppendGpuCommandLine(
               IsFeatureBlacklisted(
                   gpu::GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS)) &&
              (use_gl == "any")) {
-    command_line->AppendSwitchASCII(
-        switches::kUseGL, gfx::kGLImplementationOSMesaName);
+    command_line->AppendSwitchASCII(switches::kUseGL,
+                                    gl::kGLImplementationOSMesaName);
   } else if (!use_gl.empty()) {
     command_line->AppendSwitchASCII(switches::kUseGL, use_gl);
   }
@@ -713,12 +740,28 @@ void GpuDataManagerImplPrivate::AppendGpuCommandLine(
   }
 
   if (ShouldDisableAcceleratedVideoDecode(command_line)) {
-    command_line->AppendSwitch(switches::kDisableAcceleratedVideoDecode);
+    if (gpu_preferences) {
+      gpu_preferences->disable_accelerated_video_decode = true;
+    } else {
+      command_line->AppendSwitch(switches::kDisableAcceleratedVideoDecode);
+    }
   }
+
+#if defined(OS_ANDROID)
+  if (command_line->HasSwitch(switches::kEnableThreadedTextureMailboxes) &&
+      IsDriverBugWorkaroundActive(gpu::AVDA_NO_EGLIMAGE_FOR_LUMINANCE_TEX)) {
+    command_line->AppendSwitch(switches::kDisableUnifiedMediaPipeline);
+  }
+#endif
+
 #if defined(ENABLE_WEBRTC)
   if (IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_ACCELERATED_VIDEO_ENCODE) &&
       !command_line->HasSwitch(switches::kDisableWebRtcHWEncoding)) {
-    command_line->AppendSwitch(switches::kDisableWebRtcHWEncoding);
+    if (gpu_preferences) {
+      gpu_preferences->disable_web_rtc_hw_encoding = true;
+    } else {
+      command_line->AppendSwitch(switches::kDisableWebRtcHWEncoding);
+    }
   }
 #endif
 
@@ -734,23 +777,42 @@ void GpuDataManagerImplPrivate::AppendGpuCommandLine(
       gpu_info_.driver_vendor);
   command_line->AppendSwitchASCII(switches::kGpuDriverVersion,
       gpu_info_.driver_version);
-}
+  command_line->AppendSwitchASCII(switches::kGpuDriverDate,
+      gpu_info_.driver_date);
 
-void GpuDataManagerImplPrivate::AppendPluginCommandLine(
-    base::CommandLine* command_line) const {
-  DCHECK(command_line);
+  gpu::GPUInfo::GPUDevice maybe_active_gpu_device;
+  if (gpu_info_.gpu.active)
+    maybe_active_gpu_device = gpu_info_.gpu;
 
-#if defined(OS_MACOSX)
-  // TODO(jbauman): Add proper blacklist support for core animation plugins so
-  // special-casing this video card won't be necessary. See
-  // http://crbug.com/134015
-  if (IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_GPU_COMPOSITING)) {
-    if (!command_line->HasSwitch(
-           switches::kDisableCoreAnimationPlugins))
-      command_line->AppendSwitch(
-          switches::kDisableCoreAnimationPlugins);
+  std::string vendor_ids_str;
+  std::string device_ids_str;
+  for (const auto& device : gpu_info_.secondary_gpus) {
+    if (!vendor_ids_str.empty())
+      vendor_ids_str += ";";
+    if (!device_ids_str.empty())
+      device_ids_str += ";";
+    vendor_ids_str += base::StringPrintf("0x%04x", device.vendor_id);
+    device_ids_str += base::StringPrintf("0x%04x", device.device_id);
+
+    if (device.active)
+      maybe_active_gpu_device = device;
   }
-#endif
+
+  if (!vendor_ids_str.empty() && !device_ids_str.empty()) {
+    command_line->AppendSwitchASCII(switches::kGpuSecondaryVendorIDs,
+                                    vendor_ids_str);
+    command_line->AppendSwitchASCII(switches::kGpuSecondaryDeviceIDs,
+                                    device_ids_str);
+  }
+
+  if (maybe_active_gpu_device.active) {
+    command_line->AppendSwitchASCII(
+        switches::kGpuActiveVendorID,
+        base::StringPrintf("0x%04x", maybe_active_gpu_device.vendor_id));
+    command_line->AppendSwitchASCII(
+        switches::kGpuActiveDeviceID,
+        base::StringPrintf("0x%04x", maybe_active_gpu_device.device_id));
+  }
 }
 
 void GpuDataManagerImplPrivate::UpdateRendererWebPrefs(
@@ -771,16 +833,6 @@ void GpuDataManagerImplPrivate::UpdateRendererWebPrefs(
     prefs->flash_stage3d_baseline_enabled = false;
   if (IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS))
     prefs->accelerated_2d_canvas_enabled = false;
-  // TODO(senorblanco): The renderer shouldn't have an extra setting
-  // for this, but should rely on extension availability.
-  // Note that |gl_multisampling_enabled| only affects the decoder's
-  // default framebuffer allocation, which does not support
-  // multisampled_render_to_texture, only msaa with explicit resolve.
-  if (IsDriverBugWorkaroundActive(
-          gpu::DISABLE_CHROMIUM_FRAMEBUFFER_MULTISAMPLE) ||
-      (IsDriverBugWorkaroundActive(gpu::DISABLE_MULTIMONITOR_MULTISAMPLING) &&
-       display_count_ > 1))
-    prefs->gl_multisampling_enabled = false;
 
 #if defined(USE_AURA)
   if (!CanUseGpuBrowserCompositor()) {
@@ -878,11 +930,11 @@ void GpuDataManagerImplPrivate::ProcessCrashed(
 base::ListValue* GpuDataManagerImplPrivate::GetLogMessages() const {
   base::ListValue* value = new base::ListValue;
   for (size_t ii = 0; ii < log_messages_.size(); ++ii) {
-    base::DictionaryValue* dict = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetInteger("level", log_messages_[ii].level);
     dict->SetString("header", log_messages_[ii].header);
     dict->SetString("message", log_messages_[ii].message);
-    value->Append(dict);
+    value->Append(std::move(dict));
   }
   return value;
 }
@@ -899,6 +951,16 @@ void GpuDataManagerImplPrivate::HandleGpuSwitch() {
 
 bool GpuDataManagerImplPrivate::UpdateActiveGpu(uint32_t vendor_id,
                                                 uint32_t device_id) {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+
+  // For tests, only the gpu process is allowed to detect the active gpu device
+  // using information on the actual loaded GL driver.
+  if (command_line->HasSwitch(switches::kGpuTestingVendorId) &&
+      command_line->HasSwitch(switches::kGpuTestingDeviceId)) {
+    return false;
+  }
+
   if (gpu_info_.gpu.vendor_id == vendor_id &&
       gpu_info_.gpu.device_id == device_id) {
     // The primary GPU is active.
@@ -955,7 +1017,7 @@ bool GpuDataManagerImplPrivate::ShouldDisableAcceleratedVideoDecode(
     return true;
 
   // Accelerated decode is never available with --disable-gpu.
-  return command_line->HasSwitch(switches::kDisableGpu);
+  return ShouldDisableHardwareAcceleration();
 }
 
 void GpuDataManagerImplPrivate::GetDisabledExtensions(
@@ -1004,10 +1066,8 @@ GpuDataManagerImplPrivate::GpuDataManagerImplPrivate(GpuDataManagerImpl* owner)
       use_swiftshader_(false),
       card_blacklisted_(false),
       update_histograms_(true),
-      window_count_(0),
       domain_blocking_enabled_(true),
       owner_(owner),
-      display_count_(0),
       gpu_process_accessible_(true),
       is_initialized_(false),
       finalized_(false) {
@@ -1017,11 +1077,10 @@ GpuDataManagerImplPrivate::GpuDataManagerImplPrivate(GpuDataManagerImpl* owner)
   swiftshader_path_ =
       base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
           switches::kSwiftShaderPath);
-  if (command_line->HasSwitch(switches::kDisableGpu))
+  if (ShouldDisableHardwareAcceleration())
     DisableHardwareAcceleration();
 
 #if defined(OS_MACOSX)
-  CGGetActiveDisplayList (0, NULL, &display_count_);
   CGDisplayRegisterReconfigurationCallback(DisplayReconfigCallback, owner_);
 #endif  // OS_MACOSX
 
@@ -1067,6 +1126,10 @@ void GpuDataManagerImplPrivate::InitializeImpl(
   UpdateGpuSwitchingManager(gpu_info);
   UpdatePreliminaryBlacklistedFeatures();
 
+  RunPostInitTasks();
+}
+
+void GpuDataManagerImplPrivate::RunPostInitTasks() {
   // Set initialized before running callbacks.
   is_initialized_ = true;
 

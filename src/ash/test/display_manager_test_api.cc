@@ -7,9 +7,8 @@
 #include <cstdarg>
 #include <vector>
 
-#include "ash/ash_switches.h"
-#include "ash/display/display_info.h"
-#include "ash/display/display_layout_builder.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/display/display_info.h"
 #include "ash/display/display_layout_store.h"
 #include "ash/display/display_manager.h"
 #include "ash/display/display_util.h"
@@ -22,15 +21,12 @@
 #include "base/strings/string_split.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/display/display.h"
+#include "ui/display/manager/display_layout_builder.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/display.h"
 
 namespace ash {
 namespace test {
-typedef std::vector<gfx::Display> DisplayList;
-typedef DisplayInfo DisplayInfo;
-typedef std::vector<DisplayInfo> DisplayInfoList;
-
 namespace {
 
 std::vector<DisplayInfo> CreateDisplayInfoListFromString(
@@ -41,16 +37,16 @@ std::vector<DisplayInfo> CreateDisplayInfoListFromString(
       specs, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   size_t index = 0;
 
-  DisplayList list = display_manager->IsInUnifiedMode()
-                         ? display_manager->software_mirroring_display_list()
-                         : display_manager->active_display_list();
+  display::DisplayList list =
+      display_manager->IsInUnifiedMode()
+          ? display_manager->software_mirroring_display_list()
+          : display_manager->active_display_list();
 
   for (std::vector<std::string>::const_iterator iter = parts.begin();
        iter != parts.end(); ++iter, ++index) {
     int64_t id = (index < list.size()) ? list[index].id()
-                                       : gfx::Display::kInvalidDisplayID;
-    display_info_list.push_back(
-        DisplayInfo::CreateFromSpecWithID(*iter, id));
+                                       : display::Display::kInvalidDisplayID;
+    display_info_list.push_back(DisplayInfo::CreateFromSpecWithID(*iter, id));
   }
   return display_info_list;
 }
@@ -67,13 +63,14 @@ bool DisplayManagerTestApi::TestIfMouseWarpsAt(
           ->mouse_cursor_filter()
           ->mouse_warp_controller_for_test())
       ->allow_non_native_event_for_test();
-  gfx::Screen* screen = gfx::Screen::GetScreen();
-  gfx::Display original_display =
+  display::Screen* screen = display::Screen::GetScreen();
+  display::Display original_display =
       screen->GetDisplayNearestPoint(point_in_screen);
   event_generator.MoveMouseTo(point_in_screen);
   return original_display.id() !=
-         screen->GetDisplayNearestPoint(
-                   aura::Env::GetInstance()->last_mouse_location())
+         screen
+             ->GetDisplayNearestPoint(
+                 aura::Env::GetInstance()->last_mouse_location())
              .id();
 }
 
@@ -112,22 +109,19 @@ void DisplayManagerTestApi::UpdateDisplay(const std::string& display_specs) {
     }
   }
 
-// TODO(msw): This seems to cause test hangs on Windows. http://crbug.com/584038
-#if !defined(OS_WIN)
   display_manager_->OnNativeDisplaysChanged(display_info_list);
   display_manager_->UpdateInternalDisplayModeListForTest();
   display_manager_->RunPendingTasksForTest();
-#endif
 }
 
 int64_t DisplayManagerTestApi::SetFirstDisplayAsInternalDisplay() {
-  const gfx::Display& internal = display_manager_->active_display_list_[0];
+  const display::Display& internal = display_manager_->active_display_list_[0];
   SetInternalDisplayId(internal.id());
-  return gfx::Display::InternalDisplayId();
+  return display::Display::InternalDisplayId();
 }
 
 void DisplayManagerTestApi::SetInternalDisplayId(int64_t id) {
-  gfx::Display::SetInternalDisplayId(id);
+  display::Display::SetInternalDisplayId(id);
   display_manager_->UpdateInternalDisplayModeListForTest();
 }
 
@@ -155,7 +149,7 @@ ScopedSetInternalDisplayId::ScopedSetInternalDisplayId(int64_t id) {
 }
 
 ScopedSetInternalDisplayId::~ScopedSetInternalDisplayId() {
-  gfx::Display::SetInternalDisplayId(gfx::Display::kInvalidDisplayID);
+  display::Display::SetInternalDisplayId(display::Display::kInvalidDisplayID);
 }
 
 bool SetDisplayResolution(int64_t display_id, const gfx::Size& resolution) {
@@ -168,35 +162,35 @@ bool SetDisplayResolution(int64_t display_id, const gfx::Size& resolution) {
 }
 
 void SwapPrimaryDisplay() {
-  if (gfx::Screen::GetScreen()->GetNumDisplays() <= 1)
+  if (display::Screen::GetScreen()->GetNumDisplays() <= 1)
     return;
   Shell::GetInstance()->window_tree_host_manager()->SetPrimaryDisplayId(
       ScreenUtil::GetSecondaryDisplay().id());
 }
 
-scoped_ptr<DisplayLayout> CreateDisplayLayout(
-    DisplayPlacement::Position position,
+std::unique_ptr<display::DisplayLayout> CreateDisplayLayout(
+    display::DisplayPlacement::Position position,
     int offset) {
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  DisplayIdList list = display_manager->GetCurrentDisplayIdList();
+  display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
 
-  DisplayLayoutBuilder builder(
-      gfx::Screen::GetScreen()->GetPrimaryDisplay().id());
+  display::DisplayLayoutBuilder builder(
+      display::Screen::GetScreen()->GetPrimaryDisplay().id());
   builder.SetSecondaryPlacement(ScreenUtil::GetSecondaryDisplay().id(),
                                 position, offset);
   return builder.Build();
 }
 
-DisplayIdList CreateDisplayIdList2(int64_t id1, int64_t id2) {
-  DisplayIdList list;
+display::DisplayIdList CreateDisplayIdList2(int64_t id1, int64_t id2) {
+  display::DisplayIdList list;
   list.push_back(id1);
   list.push_back(id2);
   SortDisplayIdList(&list);
   return list;
 }
 
-DisplayIdList CreateDisplayIdListN(size_t count, ...) {
-  DisplayIdList list;
+display::DisplayIdList CreateDisplayIdListN(size_t count, ...) {
+  display::DisplayIdList list;
   va_list args;
   va_start(args, count);
   for (size_t i = 0; i < count; i++) {

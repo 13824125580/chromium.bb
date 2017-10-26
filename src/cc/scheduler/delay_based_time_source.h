@@ -5,10 +5,12 @@
 #ifndef CC_SCHEDULER_DELAY_BASED_TIME_SOURCE_H_
 #define CC_SCHEDULER_DELAY_BASED_TIME_SOURCE_H_
 
+#include <memory>
 #include <string>
 
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "cc/base/cc_export.h"
@@ -34,12 +36,7 @@ class CC_EXPORT DelayBasedTimeSourceClient {
 // delays. DelayBasedTimeSource uses base::TimeTicks::Now as its timebase.
 class CC_EXPORT DelayBasedTimeSource {
  public:
-  static scoped_ptr<DelayBasedTimeSource> Create(
-      base::TimeDelta interval,
-      base::SingleThreadTaskRunner* task_runner) {
-    return make_scoped_ptr(new DelayBasedTimeSource(interval, task_runner));
-  }
-
+  explicit DelayBasedTimeSource(base::SingleThreadTaskRunner* task_runner);
   virtual ~DelayBasedTimeSource();
 
   void SetClient(DelayBasedTimeSourceClient* client);
@@ -60,9 +57,6 @@ class CC_EXPORT DelayBasedTimeSource {
   virtual void AsValueInto(base::trace_event::TracedValue* dict) const;
 
  protected:
-  DelayBasedTimeSource(base::TimeDelta interval,
-                       base::SingleThreadTaskRunner* task_runner);
-
   // Virtual for testing.
   virtual base::TimeTicks Now() const;
   virtual std::string TypeString() const;

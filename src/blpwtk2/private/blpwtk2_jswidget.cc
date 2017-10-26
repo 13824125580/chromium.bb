@@ -24,8 +24,8 @@
 
 #include <base/bind.h>
 #include <base/message_loop/message_loop.h>
+#include <third_party/WebKit/public/web/WebDocument.h>
 #include <third_party/WebKit/public/web/WebDOMEvent.h>
-#include <third_party/WebKit/public/web/WebElement.h>
 #include <third_party/WebKit/public/web/WebLocalFrame.h>
 #include <third_party/WebKit/public/web/WebPluginContainer.h>
 #include <third_party/WebKit/public/web/WebSerializedScriptValue.h>
@@ -34,7 +34,7 @@
 namespace blpwtk2 {
 
 static v8::Handle<v8::Object> toV8(v8::Isolate* isolate, const blink::WebRect& rc)
-{
+    {
     // TODO: make a template for this
     v8::Handle<v8::Object> result = v8::Object::New(isolate);
     result->Set(v8::String::NewFromUtf8(isolate, "x"), v8::Integer::New(isolate, rc.x));
@@ -44,18 +44,11 @@ static v8::Handle<v8::Object> toV8(v8::Isolate* isolate, const blink::WebRect& r
     return result;
 }
 
-static void scheduleDispatchEvent(const tracked_objects::Location& location,
-                                  JsWidget* widget,
-                                  const blink::WebDOMEvent& event)
-{
-    base::MessageLoop::current()->PostTask(
-        location,
-        base::Bind(&JsWidget::dispatchEvent, base::Unretained(widget), event));
-}
-
 JsWidget::JsWidget(blink::WebLocalFrame* frame)
 : d_container(nullptr)
 , d_frame(frame)
+, d_hasParent(false)
+, d_pendingVisible(false)
 {
 }
 
@@ -65,7 +58,7 @@ JsWidget::~JsWidget()
 
 void JsWidget::dispatchEvent(const blink::WebDOMEvent& event)
 {
-    d_webElement.dispatchEvent(event);
+    d_container->enqueueEvent(event);
 }
 
 // blink::WebPlugin overrides
@@ -73,17 +66,23 @@ void JsWidget::dispatchEvent(const blink::WebDOMEvent& event)
 bool JsWidget::initialize(blink::WebPluginContainer* container)
 {
     d_container = container;
-    d_webElement = container->element();
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnInitialize", false, false, blink::WebSerializedScriptValue());
-    scheduleDispatchEvent(FROM_HERE, this, event);
+    dispatchEvent(event);
     return true;
 }
 
 void JsWidget::destroy()
 {
-    blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnDestroy", false, false, blink::WebSerializedScriptValue());
-    scheduleDispatchEvent(FROM_HERE, this, event);
-    base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+    if (d_container) {
+        base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+
+        d_container = nullptr;
+    }
+}
+
+blink::WebPluginContainer* JsWidget::container() const
+{
+    return d_container;
 }
 
 void JsWidget::updateGeometry(
@@ -91,6 +90,10 @@ void JsWidget::updateGeometry(
     const blink::WebRect& unobscuredRect, const blink::WebVector<blink::WebRect>& cutOutsRects,
     bool isVisible)
 {
+    if (!d_hasParent) {
+        return;
+    }
+
     v8::Isolate* isolate = d_frame->scriptIsolate();
 
     v8::HandleScope handleScope(isolate);
@@ -115,11 +118,16 @@ void JsWidget::updateGeometry(
 
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnUpdateGeometry", false, false,
                                                                      blink::WebSerializedScriptValue::serialize(detailObj));
-    scheduleDispatchEvent(FROM_HERE, this, event);
+    dispatchEvent(event);
 }
 
 void JsWidget::updateVisibility(bool isVisible)
 {
+    if (!d_hasParent) {
+        d_pendingVisible = isVisible;
+        return;
+    }
+
     v8::Isolate* isolate = d_frame->scriptIsolate();
 
     v8::HandleScope handleScope(isolate);
@@ -132,7 +140,21 @@ void JsWidget::updateVisibility(bool isVisible)
 
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnUpdateVisibility", false, false,
                                                                      blink::WebSerializedScriptValue::serialize(detailObj));
-    scheduleDispatchEvent(FROM_HERE, this, event);
+    dispatchEvent(event);
+}
+
+void JsWidget::addedToParent()
+{
+    d_hasParent = true;
+    if (d_pendingVisible) {
+        updateVisibility(d_pendingVisible);
+        d_pendingVisible = false;
+    }
+}
+
+void JsWidget::removedFromParent()
+{
+    d_hasParent = false;
 }
 
 }  // close namespace blpwtk2

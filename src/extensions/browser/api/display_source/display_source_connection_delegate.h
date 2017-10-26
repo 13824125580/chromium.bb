@@ -12,8 +12,8 @@
 
 namespace extensions {
 
-using DisplaySourceSinkInfoPtr = linked_ptr<api::display_source::SinkInfo>;
-using DisplaySourceSinkInfoList = std::vector<DisplaySourceSinkInfoPtr>;
+using DisplaySourceSinkInfo = api::display_source::SinkInfo;
+using DisplaySourceSinkInfoList = std::vector<DisplaySourceSinkInfo>;
 using DisplaySourceAuthInfo = api::display_source::AuthenticationInfo;
 using DisplaySourceErrorType = api::display_source::ErrorType;
 // The DisplaySourceConnectionDelegate interface should be implemented
@@ -30,9 +30,8 @@ class DisplaySourceConnectionDelegate : public KeyedService {
 
   class Connection {
    public:
-    // Returns a pointer to the connected sink object. The result is
-    // guaranteed not to be NULL.
-    virtual DisplaySourceSinkInfoPtr GetConnectedSink() const = 0;
+    // Returns the connected sink object.
+    virtual const DisplaySourceSinkInfo& GetConnectedSink() const = 0;
 
     // Returns the local address of the source.
     virtual std::string GetLocalAddress() const = 0;
@@ -42,14 +41,14 @@ class DisplaySourceConnectionDelegate : public KeyedService {
 
     // Sends a control message to the connected sink.
     // If an error occurs 'Observer::OnConnectionError' is invoked.
-    virtual void SendMessage(const std::string& message) const = 0;
+    virtual void SendMessage(const std::string& message) = 0;
 
     // Sets a callback to receive control messages from the connected sink.
     // This method should only be called once in the lifetime of each
     // Connection object.
     // If an error occurs 'Observer::OnConnectionError' is invoked.
     virtual void SetMessageReceivedCallback(
-        const StringCallback& callback) const = 0;
+        const StringCallback& callback) = 0;
 
    protected:
     Connection();
@@ -87,11 +86,11 @@ class DisplaySourceConnectionDelegate : public KeyedService {
   // is not watching the sinks (via 'StartWatchingSinks'
   // method). The list is refreshed after 'GetAvailableSinks'
   // call.
-  virtual DisplaySourceSinkInfoList last_found_sinks() const = 0;
+  virtual const DisplaySourceSinkInfoList& last_found_sinks() const = 0;
 
   // Returns the Connection object representing the current
   // connection to the sink or NULL if there is no current connection.
-  virtual const Connection* connection() const = 0;
+  virtual Connection* connection() = 0;
 
   // Queries the list of currently available sinks.
   virtual void GetAvailableSinks(const SinkInfoListCallback& sinks_callback,

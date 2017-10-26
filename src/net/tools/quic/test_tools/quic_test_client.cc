@@ -4,6 +4,9 @@
 
 #include "net/tools/quic/test_tools/quic_test_client.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/time/time.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_errors.h"
@@ -43,13 +46,16 @@ class RecordingProofVerifier : public ProofVerifier {
  public:
   // ProofVerifier interface.
   QuicAsyncStatus VerifyProof(const string& hostname,
+                              const uint16_t port,
                               const string& server_config,
+                              QuicVersion quic_version,
+                              StringPiece chlo_hash,
                               const vector<string>& certs,
                               const string& cert_sct,
                               const string& signature,
                               const ProofVerifyContext* context,
                               string* error_details,
-                              scoped_ptr<ProofVerifyDetails>* details,
+                              std::unique_ptr<ProofVerifyDetails>* details,
                               ProofVerifierCallback* callback) override {
     common_name_.clear();
     if (certs.empty()) {
@@ -199,7 +205,8 @@ void QuicTestClient::Initialize() {
   connect_attempted_ = false;
   auto_reconnect_ = false;
   buffer_body_ = true;
-  fec_policy_ = FEC_PROTECT_OPTIONAL;
+  num_requests_ = 0;
+  num_responses_ = 0;
   ClearPerRequestState();
   // As chrome will generally do this, we want it to be the default when it's
   // not overridden.
@@ -241,7 +248,7 @@ ssize_t QuicTestClient::GetOrCreateStreamAndSendRequest(
       return 1;
     if (rv == QUIC_PENDING) {
       // May need to retry request if asynchronous rendezvous fails.
-      auto new_headers = new BalsaHeaders;
+      auto* new_headers = new BalsaHeaders;
       new_headers->CopyFrom(*headers);
       push_promise_data_to_resend_.reset(
           new TestClientDataToResend(new_headers, body, fin, this, delegate));
@@ -272,9 +279,10 @@ ssize_t QuicTestClient::GetOrCreateStreamAndSendRequest(
       // HTTP/2 requests should include the :authority pseudo hader.
       spdy_headers[":authority"] = client_->server_id().host();
     }
-    ret = stream->SendRequest(spdy_headers, body, fin);
+    ret = stream->SendRequest(std::move(spdy_headers), body, fin);
+    ++num_requests_;
   } else {
-    stream->SendBody(body.as_string(), fin, delegate);
+    stream->WriteOrBufferBody(body.as_string(), fin, delegate);
     ret = body.length();
   }
   if (FLAGS_enable_quic_stateless_reject_support) {
@@ -283,7 +291,7 @@ ssize_t QuicTestClient::GetOrCreateStreamAndSendRequest(
       new_headers = new BalsaHeaders;
       new_headers->CopyFrom(*headers);
     }
-    auto data_to_resend =
+    auto* data_to_resend =
         new TestClientDataToResend(new_headers, body, fin, this, delegate);
     client()->MaybeAddQuicDataToResend(data_to_resend);
   }
@@ -296,9 +304,14 @@ ssize_t QuicTestClient::SendMessage(const HTTPMessage& message) {
   // If we're not connected, try to find an sni hostname.
   if (!connected()) {
     GURL url(message.headers()->request_uri().as_string());
-    if (!url.host().empty()) {
-      client_->set_server_id(QuicServerId(url.host(), url.EffectiveIntPort(),
+    if (override_sni_set_) {
+      client_->set_server_id(QuicServerId(override_sni_, url.EffectiveIntPort(),
                                           PRIVACY_MODE_DISABLED));
+    } else {
+      if (!url.host().empty()) {
+        client_->set_server_id(QuicServerId(url.host(), url.EffectiveIntPort(),
+                                            PRIVACY_MODE_DISABLED));
+      }
     }
   }
 
@@ -306,7 +319,7 @@ ssize_t QuicTestClient::SendMessage(const HTTPMessage& message) {
   // CHECK(message.body_chunks().empty())
   //      << "HTTPMessage::body_chunks not supported";
 
-  scoped_ptr<BalsaHeaders> munged_headers(MungeHeaders(message.headers()));
+  std::unique_ptr<BalsaHeaders> munged_headers(MungeHeaders(message.headers()));
   ssize_t ret = GetOrCreateStreamAndSendRequest(
       (munged_headers.get() ? munged_headers.get() : message.headers()),
       message.body(), message.has_complete_message(), nullptr);
@@ -391,8 +404,6 @@ QuicSpdyClientStream* QuicTestClient::GetOrCreateStream() {
     QuicSpdyClientStream* cs = reinterpret_cast<QuicSpdyClientStream*>(stream_);
     cs->SetPriority(priority_);
     cs->set_allow_bidirectional_data(allow_bidirectional_data_);
-    // Set FEC policy on stream.
-    ReliableQuicStreamPeer::SetFecPolicy(stream_, fec_policy_);
   }
 
   return stream_;
@@ -461,7 +472,7 @@ void QuicTestClient::ClearPerRequestState() {
   response_ = "";
   response_complete_ = false;
   response_headers_complete_ = false;
-  headers_.Clear();
+  response_headers_.Clear();
   bytes_read_ = 0;
   bytes_written_ = 0;
   response_header_size_ = 0;
@@ -529,10 +540,11 @@ bool QuicTestClient::response_headers_complete() const {
 
 const BalsaHeaders* QuicTestClient::response_headers() const {
   if (stream_ != nullptr) {
-    SpdyBalsaUtils::SpdyHeadersToResponseHeaders(stream_->headers(), &headers_);
-    return &headers_;
+    SpdyBalsaUtils::SpdyHeadersToResponseHeaders(stream_->response_headers(),
+                                                 &response_headers_);
+    return &response_headers_;
   } else {
-    return &headers_;
+    return &response_headers_;
   }
 }
 
@@ -557,6 +569,7 @@ void QuicTestClient::OnClose(QuicSpdyStream* stream) {
     // Always close the stream, regardless of whether it was the last stream
     // written.
     client()->OnClose(stream);
+    ++num_responses_;
   }
   if (stream_ != stream) {
     return;
@@ -567,13 +580,14 @@ void QuicTestClient::OnClose(QuicSpdyStream* stream) {
   }
   response_complete_ = true;
   response_headers_complete_ = stream_->headers_decompressed();
-  SpdyBalsaUtils::SpdyHeadersToResponseHeaders(stream_->headers(), &headers_);
-  response_trailers_ = stream_->trailers();
+  SpdyBalsaUtils::SpdyHeadersToResponseHeaders(stream_->response_headers(),
+                                               &response_headers_);
+  response_trailers_ = stream_->received_trailers().Clone();
   stream_error_ = stream_->stream_error();
   bytes_read_ = stream_->stream_bytes_read() + stream_->header_bytes_read();
   bytes_written_ =
       stream_->stream_bytes_written() + stream_->header_bytes_written();
-  response_header_size_ = headers_.GetSizeForWriteBuffer();
+  response_header_size_ = response_headers_.GetSizeForWriteBuffer();
   response_body_size_ = stream_->data().size();
   stream_ = nullptr;
 }
@@ -645,15 +659,6 @@ void QuicTestClient::WaitForWriteToFlush() {
   while (connected() && client()->session()->HasDataToWrite()) {
     client_->WaitForEvents();
   }
-}
-
-void QuicTestClient::SetFecPolicy(FecPolicy fec_policy) {
-  fec_policy_ = fec_policy;
-  // Set policy for headers and crypto streams.
-  ReliableQuicStreamPeer::SetFecPolicy(
-      QuicSpdySessionPeer::GetHeadersStream(client()->session()), fec_policy);
-  ReliableQuicStreamPeer::SetFecPolicy(client()->session()->GetCryptoStream(),
-                                       fec_policy);
 }
 
 void QuicTestClient::TestClientDataToResend::Resend() {

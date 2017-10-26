@@ -166,7 +166,7 @@ class ActivityDatabaseTest : public ChromeRenderViewHostTestHarness {
 #if defined OS_CHROMEOS
   chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
   chromeos::ScopedTestCrosSettings test_cros_settings_;
-  scoped_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
+  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 #endif
 
   ActivityDatabaseTestPolicy* db_delegate_;
@@ -243,7 +243,7 @@ TEST_F(ActivityDatabaseTest, BatchModeOn) {
 
   // Artificially trigger and then stop the timer.
   activity_db->SetTimerForTesting(0);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1, CountActions(&activity_db->db_, "brewster"));
 
   activity_db->Close();

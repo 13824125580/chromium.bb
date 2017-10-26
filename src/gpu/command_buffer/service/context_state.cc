@@ -14,6 +14,7 @@
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/program_manager.h"
 #include "gpu/command_buffer/service/renderbuffer_manager.h"
+#include "gpu/command_buffer/service/transform_feedback_manager.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_version_info.h"
@@ -68,7 +69,8 @@ bool TargetIsSupported(const FeatureInfo* feature_info, GLuint target) {
     case GL_TEXTURE_RECTANGLE_ARB:
       return feature_info->feature_flags().arb_texture_rectangle;
     case GL_TEXTURE_EXTERNAL_OES:
-      return feature_info->feature_flags().oes_egl_image_external;
+      return feature_info->feature_flags().oes_egl_image_external ||
+             feature_info->feature_flags().nv_egl_stream_consumer_external;
     default:
       NOTREACHED();
       return false;
@@ -86,6 +88,8 @@ GLuint GetBufferId(const Buffer* buffer) {
 TextureUnit::TextureUnit()
     : bind_target(GL_TEXTURE_2D) {
 }
+
+TextureUnit::TextureUnit(const TextureUnit& other) = default;
 
 TextureUnit::~TextureUnit() {
 }
@@ -205,6 +209,7 @@ ContextState::ContextState(FeatureInfo* feature_info,
       pack_reverse_row_order(false),
       ignore_cached_state(false),
       fbo_binding_for_scissor_workaround_dirty(false),
+      framebuffer_srgb_(false),
       feature_info_(feature_info),
       error_state_(ErrorState::Create(error_state_client, logger)) {
   Initialize();
@@ -224,7 +229,9 @@ void ContextState::RestoreTextureUnitBindings(
 
   bool bind_texture_2d = true;
   bool bind_texture_cube = true;
-  bool bind_texture_oes = feature_info_->feature_flags().oes_egl_image_external;
+  bool bind_texture_oes =
+      feature_info_->feature_flags().oes_egl_image_external ||
+      feature_info_->feature_flags().nv_egl_stream_consumer_external;
   bool bind_texture_arb = feature_info_->feature_flags().arb_texture_rectangle;
 
   if (prev_state) {
@@ -287,8 +294,34 @@ void ContextState::RestoreRenderbufferBindings() {
   bound_renderbuffer_valid = false;
 }
 
-void ContextState::RestoreProgramBindings() const {
+void ContextState::RestoreProgramSettings(
+    const ContextState* prev_state,
+    bool restore_transform_feedback_bindings) const {
+  bool flag = (restore_transform_feedback_bindings &&
+               feature_info_->IsES3Capable());
+  if (flag && prev_state) {
+    if (prev_state->bound_transform_feedback.get() &&
+        prev_state->bound_transform_feedback->active() &&
+        !prev_state->bound_transform_feedback->paused()) {
+      glPauseTransformFeedback();
+    }
+  }
   glUseProgram(current_program.get() ? current_program->service_id() : 0);
+  if (flag) {
+    if (bound_transform_feedback.get()) {
+      bound_transform_feedback->DoBindTransformFeedback(GL_TRANSFORM_FEEDBACK);
+    } else {
+      glBindTransformFeedback(GL_TRANSFORM_FEEDBACK, 0);
+    }
+  }
+}
+
+void ContextState::RestoreIndexedUniformBufferBindings(
+    const ContextState* prev_state) {
+  if (!feature_info_->IsES3Capable())
+    return;
+  indexed_uniform_buffer_bindings->RestoreBindings(
+      prev_state ? prev_state->indexed_uniform_buffer_bindings.get() : nullptr);
 }
 
 void ContextState::RestoreActiveTexture() const {
@@ -423,8 +456,14 @@ void ContextState::RestoreState(const ContextState* prev_state) {
   RestoreVertexAttribs();
   RestoreBufferBindings();
   RestoreRenderbufferBindings();
-  RestoreProgramBindings();
+  RestoreProgramSettings(prev_state, true);
+  RestoreIndexedUniformBufferBindings(prev_state);
   RestoreGlobalState(prev_state);
+
+  if (prev_state && framebuffer_srgb_ != prev_state->framebuffer_srgb_) {
+    // FRAMEBUFFER_SRGB will be restored lazily at render time.
+    framebuffer_srgb_ = prev_state->framebuffer_srgb_;
+  }
 }
 
 ErrorState* ContextState::GetErrorState() {
@@ -432,9 +471,10 @@ ErrorState* ContextState::GetErrorState() {
 }
 
 void ContextState::EnableDisable(GLenum pname, bool enable) const {
-  if (pname == GL_PRIMITIVE_RESTART_FIXED_INDEX) {
-    if (feature_info_->feature_flags().emulate_primitive_restart_fixed_index)
-      pname = GL_PRIMITIVE_RESTART;
+  if (pname == GL_PRIMITIVE_RESTART_FIXED_INDEX &&
+      feature_info_->feature_flags().emulate_primitive_restart_fixed_index) {
+    // GLES2DecoderImpl::DoDrawElements can handle this situation
+    return;
   }
   if (enable) {
     glEnable(pname);
@@ -459,15 +499,9 @@ void ContextState::UpdateUnpackParameters() const {
   if (bound_pixel_unpack_buffer.get()) {
     glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
     glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, unpack_image_height);
-    glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpack_skip_pixels);
-    glPixelStorei(GL_UNPACK_SKIP_ROWS, unpack_skip_rows);
-    glPixelStorei(GL_UNPACK_SKIP_IMAGES, unpack_skip_images);
   } else {
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
-    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-    glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
   }
 }
 
@@ -597,25 +631,32 @@ void ContextState::UnbindSampler(Sampler* sampler) {
 }
 
 PixelStoreParams ContextState::GetPackParams() {
+  DCHECK_EQ(0, pack_skip_pixels);
+  DCHECK_EQ(0, pack_skip_rows);
   PixelStoreParams params;
   params.alignment = pack_alignment;
   params.row_length = pack_row_length;
-  params.skip_pixels = pack_skip_pixels;
-  params.skip_rows = pack_skip_rows;
   return params;
 }
 
 PixelStoreParams ContextState::GetUnpackParams(Dimension dimension) {
+  DCHECK_EQ(0, unpack_skip_pixels);
+  DCHECK_EQ(0, unpack_skip_rows);
+  DCHECK_EQ(0, unpack_skip_images);
   PixelStoreParams params;
   params.alignment = unpack_alignment;
   params.row_length = unpack_row_length;
-  params.skip_pixels = unpack_skip_pixels;
-  params.skip_rows = unpack_skip_rows;
   if (dimension == k3D) {
     params.image_height = unpack_image_height;
-    params.skip_images = unpack_skip_images;
   }
   return params;
+}
+
+void ContextState::EnableDisableFramebufferSRGB(bool enable) {
+  if (framebuffer_srgb_ == enable)
+    return;
+  EnableDisable(GL_FRAMEBUFFER_SRGB, enable);
+  framebuffer_srgb_ = enable;
 }
 
 void ContextState::InitStateManual(const ContextState*) const {

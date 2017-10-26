@@ -42,6 +42,7 @@ const HostedDocumentKind kHostedDocumentKinds[] = {
     {kGoogleTableMimeType,        ".gtable"},
     {kGoogleFormMimeType,         ".gform"},
     {kGoogleMapMimeType,          ".gmaps"},
+    {kGoogleSiteMimeType,         ".gsite"},
 };
 
 const char kUnknownHostedDocumentExtension[] = ".glink";
@@ -148,7 +149,7 @@ std::string GetMd5Digest(const base::FilePath& file_path,
   base::MD5Init(&context);
 
   int64_t offset = 0;
-  scoped_ptr<char[]> buffer(new char[kMd5DigestBufferSize]);
+  std::unique_ptr<char[]> buffer(new char[kMd5DigestBufferSize]);
   while (true) {
     if (cancellation_flag && cancellation_flag->IsSet()) {  // Cancelled.
       return std::string();

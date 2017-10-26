@@ -12,6 +12,7 @@ from telemetry.testing import fakes
 from telemetry.testing import simple_mock
 from telemetry.testing import tab_test_case
 from telemetry.timeline import model as model_module
+from telemetry.timeline import trace_data
 from telemetry.timeline import tracing_config
 
 
@@ -22,6 +23,7 @@ class TracingBackendTest(tab_test_case.TabTestCase):
 
   @classmethod
   def CustomizeBrowserOptions(cls, options):
+    options.logging_verbosity = options.VERBOSE_LOGGING
     options.AppendExtraBrowserArgs([
         # Memory maps currently cannot be retrieved on sandboxed processes.
         # See crbug.com/461788.
@@ -39,14 +41,15 @@ class TracingBackendTest(tab_test_case.TabTestCase):
     if not self._browser.supports_memory_dumping:
       self.skipTest('Browser does not support memory dumping, skipping test.')
 
-  @decorators.Disabled('win')  # crbug.com/570955
+  # See https://github.com/catapult-project/catapult/issues/2409.
+  @decorators.Disabled('win-reference')
   def testDumpMemorySuccess(self):
     # Check that dumping memory before tracing starts raises an exception.
     self.assertRaises(Exception, self._browser.DumpMemory)
 
     # Start tracing with memory dumps enabled.
     config = tracing_config.TracingConfig()
-    config.tracing_category_filter.AddDisabledByDefault(
+    config.chrome_trace_config.category_filter.AddDisabledByDefault(
         'disabled-by-default-memory-infra')
     config.enable_chrome_trace = True
     self._tracing_controller.StartTracing(config)
@@ -60,13 +63,21 @@ class TracingBackendTest(tab_test_case.TabTestCase):
       self.assertNotIn(dump_id, expected_dump_ids)
       expected_dump_ids.append(dump_id)
 
-    trace_data = self._tracing_controller.StopTracing()
+    tracing_data = self._tracing_controller.StopTracing()
+
+    # Check that clock sync data is in tracing data.
+    clock_sync_found = False
+    for event in tracing_data.GetTraceFor(trace_data.CHROME_TRACE_PART):
+      if event['name'] == 'clock_sync' or 'ClockSyncEvent' in event['name']:
+        clock_sync_found = True
+        break
+    self.assertTrue(clock_sync_found)
 
     # Check that dumping memory after tracing stopped raises an exception.
     self.assertRaises(Exception, self._browser.DumpMemory)
 
     # Test that trace data is parsable.
-    model = model_module.TimelineModel(trace_data)
+    model = model_module.TimelineModel(tracing_data)
     self.assertGreater(len(model.processes), 0)
 
     # Test that the resulting model contains the requested memory dumps in the
@@ -74,7 +85,6 @@ class TracingBackendTest(tab_test_case.TabTestCase):
     actual_dump_ids = [d.dump_id for d in model.IterGlobalMemoryDumps()]
     self.assertEqual(actual_dump_ids, expected_dump_ids)
 
-  @decorators.Disabled('win')  # crbug.com/570955
   def testDumpMemoryFailure(self):
     # Check that dumping memory before tracing starts raises an exception.
     self.assertRaises(Exception, self._browser.DumpMemory)
@@ -87,13 +97,13 @@ class TracingBackendTest(tab_test_case.TabTestCase):
     # Check that the method returns None if the dump was not successful.
     self.assertIsNone(self._browser.DumpMemory())
 
-    trace_data = self._tracing_controller.StopTracing()
+    tracing_data = self._tracing_controller.StopTracing()
 
     # Check that dumping memory after tracing stopped raises an exception.
     self.assertRaises(Exception, self._browser.DumpMemory)
 
     # Test that trace data is parsable.
-    model = model_module.TimelineModel(trace_data)
+    model = model_module.TimelineModel(tracing_data)
     self.assertGreater(len(model.processes), 0)
 
     # Test that the resulting model contains no memory dumps.
@@ -164,6 +174,20 @@ class TracingBackendUnitTest(unittest.TestCase):
     backend = tracing_backend.TracingBackend(self._inspector_socket)
 
     self.assertIsNone(backend.DumpMemory())
+
+  def testStartTracingFailure(self):
+    self._inspector_socket.AddResponseHandler(
+        'Tracing.start',
+        lambda req: {'error': {'message': 'Tracing is already started'}})
+    self._inspector_socket.AddResponseHandler(
+        'Tracing.hasCompleted', lambda req: {})
+    backend = tracing_backend.TracingBackend(self._inspector_socket)
+    config = tracing_config.TracingConfig()
+    self.assertRaisesRegexp(
+        tracing_backend.TracingUnexpectedResponseException,
+        'Tracing is already started',
+        backend.StartTracing, config.chrome_trace_config)
+
 
 class DevToolsStreamPerformanceTest(unittest.TestCase):
   def setUp(self):

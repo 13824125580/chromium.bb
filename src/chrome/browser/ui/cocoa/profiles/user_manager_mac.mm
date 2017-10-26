@@ -4,8 +4,8 @@
 
 #include "chrome/browser/ui/cocoa/profiles/user_manager_mac.h"
 
+#include "base/callback.h"
 #include "base/mac/foundation_util.h"
-#include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/browser_process.h"
@@ -22,6 +22,7 @@
 #include "chrome/browser/ui/cocoa/constrained_window/constrained_window_mac.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/grit/chromium_strings.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
@@ -50,7 +51,8 @@ void ChangeAppControllerForProfile(Profile* profile,
 
 // An open User Manager window. There can only be one open at a time. This
 // is reset to NULL when the window is closed.
-UserManagerMac* instance_ = NULL;  // Weak.
+UserManagerMac* instance_ = nullptr;  // Weak.
+std::vector<base::Closure>* user_manager_shown_callbacks_for_testing_ = nullptr;
 BOOL instance_under_construction_ = NO;
 
 void CloseInstanceReauthDialog() {
@@ -65,8 +67,11 @@ class UserManagerModalHost : public web_modal::WebContentsModalDialogHost {
       : host_view_(host_view) {}
 
   gfx::Size GetMaximumDialogSize() override {
-    return gfx::Size(
-        UserManager::kReauthDialogWidth, UserManager::kReauthDialogHeight);
+    return switches::UsePasswordSeparatedSigninFlow() ?
+        gfx::Size(UserManager::kReauthDialogWidth,
+                  UserManager::kReauthDialogHeight) :
+        gfx::Size(UserManager::kPasswordCombinedReauthDialogWidth,
+                  UserManager::kPasswordCombinedReauthDialogHeight);
   }
 
   ~UserManagerModalHost() override {}
@@ -106,7 +111,7 @@ class UserManagerModalManagerDelegate :
 
    ~UserManagerModalManagerDelegate() override {}
  protected:
-  scoped_ptr<UserManagerModalHost> modal_host_;
+  std::unique_ptr<UserManagerModalHost> modal_host_;
 };
 
 // Custom WebContentsDelegate that allows handling of hotkeys.
@@ -126,10 +131,7 @@ class UserManagerWebContentsDelegate : public content::WebContentsDelegate {
     int chromeCommandId = [BrowserWindowUtils getCommandId:event];
 
     // Check for Cmd+A and Cmd+V events that could come from a password field.
-    bool isTextEditingCommand =
-        (event.modifiers & blink::WebInputEvent::MetaKey) &&
-        (event.windowsKeyCode == ui::VKEY_A ||
-         event.windowsKeyCode == ui::VKEY_V);
+    BOOL isTextEditingCommand = [BrowserWindowUtils isTextEditingEvent:event];
 
     // Only handle close window Chrome accelerators and text editing ones.
     if (chromeCommandId == IDC_CLOSE_WINDOW || chromeCommandId == IDC_EXIT ||
@@ -166,12 +168,14 @@ class ReauthDialogDelegate : public UserManager::ReauthDialogObserver,
  @private
   std::string emailAddress_;
   content::WebContents* webContents_;
-  scoped_ptr<ReauthDialogDelegate> webContentsDelegate_;
-  scoped_ptr<ConstrainedWindowMac> constrained_window_;
-  scoped_ptr<content::WebContents> reauthWebContents_;
+  signin_metrics::Reason reason_;
+  std::unique_ptr<ReauthDialogDelegate> webContentsDelegate_;
+  std::unique_ptr<ConstrainedWindowMac> constrained_window_;
+  std::unique_ptr<content::WebContents> reauthWebContents_;
 }
 - (id)initWithProfile:(Profile*)profile
                 email:(std::string)email
+               reason:(signin_metrics::Reason)reason
           webContents:(content::WebContents*)webContents;
 - (void)close;
 @end
@@ -180,9 +184,11 @@ class ReauthDialogDelegate : public UserManager::ReauthDialogObserver,
 
 - (id)initWithProfile:(Profile*)profile
                 email:(std::string)email
+               reason:(signin_metrics::Reason)reason
           webContents:(content::WebContents*)webContents {
   webContents_ = webContents;
   emailAddress_ = email;
+  reason_ = reason;
 
   NSRect frame = NSMakeRect(
       0, 0, UserManager::kReauthDialogWidth, UserManager::kReauthDialogHeight);
@@ -221,8 +227,8 @@ class ReauthDialogDelegate : public UserManager::ReauthDialogObserver,
 
 - (void)show {
   GURL url = signin::GetReauthURLWithEmail(
-      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER,
-      signin_metrics::Reason::REASON_UNLOCK, emailAddress_);
+      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER, reason_,
+      emailAddress_);
   reauthWebContents_->GetController().LoadURL(url, content::Referrer(),
                                         ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
                                         std::string());
@@ -247,10 +253,10 @@ class ReauthDialogDelegate : public UserManager::ReauthDialogObserver,
 // Window controller for the User Manager view.
 @interface UserManagerWindowController : NSWindowController <NSWindowDelegate> {
  @private
-  scoped_ptr<content::WebContents> webContents_;
-  scoped_ptr<UserManagerWebContentsDelegate> webContentsDelegate_;
+  std::unique_ptr<content::WebContents> webContents_;
+  std::unique_ptr<UserManagerWebContentsDelegate> webContentsDelegate_;
   UserManagerMac* userManagerObserver_;  // Weak.
-  scoped_ptr<UserManagerModalManagerDelegate> modal_manager_delegate_;
+  std::unique_ptr<UserManagerModalManagerDelegate> modal_manager_delegate_;
   base::scoped_nsobject<ReauthDialogWindowController> reauth_window_controller_;
 }
 - (void)windowWillClose:(NSNotification*)notification;
@@ -261,7 +267,9 @@ class ReauthDialogDelegate : public UserManager::ReauthDialogObserver,
 - (void)show;
 - (void)close;
 - (BOOL)isVisible;
-- (void)showReauthDialogWithProfile:(Profile*)profile email:(std::string)email;
+- (void)showReauthDialogWithProfile:(Profile*)profile
+                              email:(std::string)email
+                             reason:(signin_metrics::Reason)reason;
 - (void)closeReauthDialog;
 @end
 
@@ -367,12 +375,14 @@ class ReauthDialogDelegate : public UserManager::ReauthDialogObserver,
   userManagerObserver_->WindowWasClosed();
 }
 
-- (void)showReauthDialogWithProfile:(Profile*)profile email:(std::string)email {
-  reauth_window_controller_.reset(
-      [[ReauthDialogWindowController alloc]
-          initWithProfile:profile
-                    email:email
-              webContents:webContents_.get()]);
+- (void)showReauthDialogWithProfile:(Profile*)profile
+                              email:(std::string)email
+                             reason:(signin_metrics::Reason)reason {
+  reauth_window_controller_.reset([[ReauthDialogWindowController alloc]
+      initWithProfile:profile
+                email:email
+               reason:reason
+          webContents:webContents_.get()]);
 }
 
 - (void)closeReauthDialog {
@@ -427,22 +437,55 @@ bool UserManager::IsShowing() {
 
 // static
 void UserManager::OnUserManagerShown() {
-  if (instance_)
+  if (instance_) {
     instance_->LogTimeToOpen();
+    if (user_manager_shown_callbacks_for_testing_) {
+      for (const auto& callback : *user_manager_shown_callbacks_for_testing_) {
+        if (!callback.is_null())
+          callback.Run();
+      }
+      // Delete the callback list after calling.
+      delete user_manager_shown_callbacks_for_testing_;
+      user_manager_shown_callbacks_for_testing_ = nullptr;
+    }
+  }
 }
 
 // static
 void UserManager::ShowReauthDialog(content::BrowserContext* browser_context,
-                                   const std::string& email) {
-  DCHECK(instance_);
-  instance_->ShowReauthDialog(browser_context, email);
+                                   const std::string& email,
+                                   signin_metrics::Reason reason) {
+  // This method should only be called if the user manager is already showing.
+  if (!IsShowing())
+    return;
+
+  instance_->ShowReauthDialog(browser_context, email, reason);
+}
+
+// static
+void UserManager::HideReauthDialog() {
+  // This method should only be called if the user manager is already showing.
+  if (!IsShowing())
+    return;
+
+  instance_->CloseReauthDialog();
+}
+
+// static
+void UserManager::AddOnUserManagerShownCallbackForTesting(
+    const base::Closure& callback) {
+  if (!user_manager_shown_callbacks_for_testing_)
+    user_manager_shown_callbacks_for_testing_ = new std::vector<base::Closure>;
+  user_manager_shown_callbacks_for_testing_->push_back(callback);
 }
 
 void UserManagerMac::ShowReauthDialog(content::BrowserContext* browser_context,
-                                      const std::string& email) {
+                                      const std::string& email,
+                                      signin_metrics::Reason reason) {
   [window_controller_
       showReauthDialogWithProfile:Profile::FromBrowserContext(browser_context)
-                            email:email];
+                            email:email
+                           reason:reason];
 }
 
 void UserManagerMac::CloseReauthDialog() {

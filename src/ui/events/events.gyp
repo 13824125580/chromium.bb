@@ -31,8 +31,6 @@
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
-        '<(DEPTH)/skia/skia.gyp:skia',
-        '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         'dom_keycode_converter',
       ],
@@ -63,31 +61,17 @@
         'keycodes/keyboard_code_conversion_mac.mm',
         'keycodes/keyboard_code_conversion_win.cc',
         'keycodes/keyboard_code_conversion_win.h',
-        'keycodes/keyboard_code_conversion_x.cc',
-        'keycodes/keyboard_code_conversion_x.h',
         'keycodes/keyboard_codes.h',
-        'keycodes/platform_key_map_win.cc',
-        'keycodes/platform_key_map_win.h',
         'latency_info.cc',
         'latency_info.h',
-        'x/keysym_to_unicode.cc',
-        'x/keysym_to_unicode.h',
       ],
       'export_dependent_settings': [
-        '../../ui/gfx/gfx.gyp:gfx',
+        '../../ui/gfx/gfx.gyp:gfx_geometry',
       ],
       'conditions': [
         ['use_x11==1', {
           'dependencies': [
-            '../../build/linux/system.gyp:x11',
-            '../gfx/x/gfx_x11.gyp:gfx_x11',
-          ],
-        }],
-        ['use_x11==1 or use_xkbcommon==1', {
-          'sources': [
-            'keycodes/keyboard_code_conversion_xkb.cc',
-            'keycodes/keyboard_code_conversion_xkb.h',
-            'keycodes/xkb_keysym.h',
+            'keycodes/events_keycodes.gyp:keycodes_x11',
           ],
         }],
       ],
@@ -100,6 +84,7 @@
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
         '<(DEPTH)/skia/skia.gyp:skia',
+        '../display/display.gyp:display',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         'dom_keycode_converter',
@@ -142,10 +127,8 @@
         'gestures/gesture_types.h',
         'gestures/motion_event_aura.cc',
         'gestures/motion_event_aura.h',
-        'linux/text_edit_command_auralinux.cc',
-        'linux/text_edit_command_auralinux.h',
-        'linux/text_edit_key_bindings_delegate_auralinux.cc',
-        'linux/text_edit_key_bindings_delegate_auralinux.h',
+        'keycodes/platform_key_map_win.cc',
+        'keycodes/platform_key_map_win.h',
         'null_event_targeter.cc',
         'null_event_targeter.h',
         'scoped_target_handler.cc',
@@ -162,6 +145,8 @@
             '../../build/linux/system.gyp:x11',
             '../gfx/x/gfx_x11.gyp:gfx_x11',
             'devices/events_devices.gyp:events_devices',
+            'devices/x11/events_devices_x11.gyp:events_devices_x11',
+            'keycodes/events_keycodes.gyp:keycodes_x11',
             'x/events_x.gyp:events_x',
           ],
         }],
@@ -189,14 +174,6 @@
             'events_stub.cc',
           ],
         }],
-        ['chromeos==1', {
-          'sources!': [
-            'linux/text_edit_command_auralinux.cc',
-            'linux/text_edit_command_auralinux.h',
-            'linux/text_edit_key_bindings_delegate_auralinux.cc',
-            'linux/text_edit_key_bindings_delegate_auralinux.h',
-          ],
-        }],
         ['use_ozone==1', {
           'dependencies': [
             'ozone/events_ozone.gyp:events_ozone_layout',
@@ -208,9 +185,12 @@
             'android/events_jni_registrar.h',
             'android/motion_event_android.cc',
             'android/motion_event_android.h',
+            'android/key_event_utils.cc',
+            'android/key_event_utils.h',
           ],
           'dependencies': [
             'motionevent_jni_headers',
+            'keyevent_jni_headers',
           ],
         }],
       ],
@@ -239,6 +219,7 @@
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
+        '../display/display.gyp:display',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         'events_base',
@@ -304,6 +285,8 @@
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/ipc/ipc.gyp:ipc',
+        '../gfx/gfx.gyp:gfx_geometry',
+        '../gfx/ipc/geometry/gfx_ipc_geometry.gyp:gfx_ipc_geometry',
         'events_base',
       ],
       'defines': [
@@ -312,6 +295,7 @@
       'sources': [
         'ipc/latency_info_param_traits.cc',
         'ipc/latency_info_param_traits.h',
+        'ipc/latency_info_param_traits_macros.h',
       ],
     },
     {
@@ -321,6 +305,7 @@
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/skia/skia.gyp:skia',
+        '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         'events',
         'events_base',
@@ -358,13 +343,24 @@
           # The cocoa files don't apply to iOS.
           'sources/': [['exclude', 'cocoa']],
         }],
+        ['use_x11==1', {
+          'dependencies': [
+            'devices/x11/events_devices_x11.gyp:events_devices_x11',
+            'keycodes/events_keycodes.gyp:keycodes_x11',
+          ],
+        }],
+        ['use_x11==1 or ozone_platform_ozonex==1', {
+          'dependencies': [
+            'x/events_x.gyp:events_x',
+          ],
+        }],
         ['use_x11==1 or use_ozone==1', {
           'sources' : [
               'test/device_data_manager_test_api_impl.cc',
             ],
           'dependencies': [
             'devices/events_devices.gyp:events_devices',
-            ],
+          ],
         }, { # else use_x11=1 or use_ozone=1
           'sources' : [
               'test/device_data_manager_test_api_stub.cc',
@@ -382,6 +378,15 @@
           'variables': {
             'jni_gen_package': 'ui',
             'input_java_class': 'android/view/MotionEvent.class',
+          },
+          'includes': [ '../../build/jar_file_jni_generator.gypi' ],
+        },
+        {
+          'target_name': 'keyevent_jni_headers',
+          'type': 'none',
+          'variables': {
+            'jni_gen_package': 'ui',
+            'input_java_class': 'android/view/KeyEvent.class',
           },
           'includes': [ '../../build/jar_file_jni_generator.gypi' ],
         },

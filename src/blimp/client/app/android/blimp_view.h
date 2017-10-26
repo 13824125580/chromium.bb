@@ -5,9 +5,11 @@
 #ifndef BLIMP_CLIENT_APP_ANDROID_BLIMP_VIEW_H_
 #define BLIMP_CLIENT_APP_ANDROID_BLIMP_VIEW_H_
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "blimp/client/app/android/blimp_compositor_manager_android.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
@@ -15,15 +17,16 @@ class Size;
 }
 
 namespace blimp {
+class BlimpConnectionStatistics;
+
 namespace client {
 
-class BlimpCompositorManagerAndroid;
 class RenderWidgetFeature;
 
 // The native component of org.chromium.blimp.BlimpView.  This builds and
 // maintains a BlimpCompositorAndroid and handles notifying the compositor of
 // SurfaceView surface changes (size, creation, destruction, etc.).
-class BlimpView {
+class BlimpView : public BlimpCompositorManagerClient {
  public:
   static bool RegisterJni(JNIEnv* env);
 
@@ -37,7 +40,8 @@ class BlimpView {
             const gfx::Size& real_size,
             const gfx::Size& size,
             float dp_to_px,
-            RenderWidgetFeature* render_widget_feature);
+            RenderWidgetFeature* render_widget_feature,
+            BlimpConnectionStatistics* blimp_connection_statistics);
 
   // Methods called from Java via JNI.
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& jobj);
@@ -91,18 +95,24 @@ class BlimpView {
 
   void ReleaseAcceleratedWidget();
 
+  // BlimpCompositorManagerClient implementation.
+  void OnSwapBuffersCompleted() override;
+  void DidCommitAndDrawFrame() override;
+
   // Reference to the Java object which owns this class.
   base::android::ScopedJavaGlobalRef<jobject> java_obj_;
 
   const float device_scale_factor_;
 
-  scoped_ptr<BlimpCompositorManagerAndroid> compositor_manager_;
+  std::unique_ptr<BlimpCompositorManagerAndroid> compositor_manager_;
 
   // The format of the current surface owned by |compositor_|.  See
   // android.graphics.PixelFormat.java.
   int current_surface_format_;
 
   gfx::AcceleratedWidget window_;
+
+  BlimpConnectionStatistics* blimp_connection_statistics_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpView);
 };

@@ -8,7 +8,6 @@
 #include "chrome/browser/banners/app_banner_metrics.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
-#include "chrome/browser/engagement/site_engagement_service_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
@@ -776,45 +775,4 @@ TEST_F(AppBannerSettingsHelperTest, ShouldShowWithHigherTotal) {
       ui::PAGE_TRANSITION_TYPED);
   EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
       web_contents(), url, kTestPackageName, fifth_day));
-}
-
-// Test that the banner triggers correctly using site engagement.
-TEST_F(AppBannerSettingsHelperTest, SiteEngagementTrigger) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitch(switches::kEnableSiteEngagementAppBanner);
-
-  SiteEngagementService* service =
-      SiteEngagementServiceFactory::GetForProfile(profile());
-  DCHECK(service);
-
-  // Not used, but needed for method call.
-  base::Time reference_time = GetReferenceTime();
-  GURL url(kTestURL);
-
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
-
-  service->AddPoints(url, 1);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
-
-  service->AddPoints(url, 1);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
-
-  AppBannerSettingsHelper::SetTotalEngagementToTrigger(5);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
-
-  service->AddPoints(url, 1.5);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
-
-  service->AddPoints(url, 0.5);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
-
-  service->AddPoints(url, 1.5);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
 }

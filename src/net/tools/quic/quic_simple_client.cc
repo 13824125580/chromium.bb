@@ -4,13 +4,16 @@
 
 #include "net/tools/quic/quic_simple_client.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_info.h"
 #include "net/quic/crypto/quic_random.h"
+#include "net/quic/quic_chromium_alarm_factory.h"
 #include "net/quic/quic_chromium_connection_helper.h"
 #include "net/quic/quic_chromium_packet_reader.h"
 #include "net/quic/quic_chromium_packet_writer.h"
@@ -42,6 +45,7 @@ QuicSimpleClient::QuicSimpleClient(IPEndPoint server_address,
                      supported_versions,
                      QuicConfig(),
                      CreateQuicConnectionHelper(),
+                     CreateQuicAlarmFactory(),
                      proof_verifier),
       server_address_(server_address),
       local_port_(0),
@@ -58,6 +62,7 @@ QuicSimpleClient::QuicSimpleClient(IPEndPoint server_address,
                      supported_versions,
                      config,
                      CreateQuicConnectionHelper(),
+                     CreateQuicAlarmFactory(),
                      proof_verifier),
       server_address_(server_address),
       local_port_(0),
@@ -67,8 +72,9 @@ QuicSimpleClient::QuicSimpleClient(IPEndPoint server_address,
 
 QuicSimpleClient::~QuicSimpleClient() {
   if (connected()) {
-    session()->connection()->SendConnectionClosePacket(QUIC_PEER_GOING_AWAY,
-                                                       "");
+    session()->connection()->CloseConnection(
+        QUIC_PEER_GOING_AWAY, "Shutting down",
+        ConnectionCloseBehavior::SEND_CONNECTION_CLOSE_PACKET);
   }
   STLDeleteElements(&data_to_resend_on_connect_);
   STLDeleteElements(&data_sent_before_handshake_);
@@ -88,7 +94,7 @@ bool QuicSimpleClient::Initialize() {
 }
 
 QuicSimpleClient::QuicDataToResend::QuicDataToResend(HttpRequestInfo* headers,
-                                                     StringPiece body,
+                                                     base::StringPiece body,
                                                      bool fin)
     : headers_(headers), body_(body), fin_(fin) {}
 
@@ -99,7 +105,7 @@ QuicSimpleClient::QuicDataToResend::~QuicDataToResend() {
 }
 
 bool QuicSimpleClient::CreateUDPSocket() {
-  scoped_ptr<UDPClientSocket> socket(
+  std::unique_ptr<UDPClientSocket> socket(
       new UDPClientSocket(DatagramSocket::DEFAULT_BIND, RandIntCallback(),
                           &net_log_, NetLog::Source()));
 
@@ -107,11 +113,9 @@ bool QuicSimpleClient::CreateUDPSocket() {
   if (bind_to_address_.size() != 0) {
     client_address_ = IPEndPoint(bind_to_address_, local_port_);
   } else if (address_family == AF_INET) {
-    client_address_ = IPEndPoint(IPAddress(0, 0, 0, 0), local_port_);
+    client_address_ = IPEndPoint(IPAddress::IPv4AllZeros(), local_port_);
   } else {
-    IPAddress any6;
-    CHECK(any6.AssignFromIPLiteral("::"));
-    client_address_ = IPEndPoint(any6, local_port_);
+    client_address_ = IPEndPoint(IPAddress::IPv6AllZeros(), local_port_);
   }
 
   int rc = socket->Connect(server_address_);
@@ -215,7 +219,8 @@ void QuicSimpleClient::StartConnect() {
   }
 
   CreateQuicClientSession(new QuicConnection(
-      GetNextConnectionId(), server_address_, helper(), writer(),
+      GetNextConnectionId(), server_address_, helper(), alarm_factory(),
+      writer(),
       /* owns_writer= */ false, Perspective::IS_CLIENT, supported_versions()));
 
   session()->Initialize();
@@ -227,20 +232,22 @@ void QuicSimpleClient::Disconnect() {
   DCHECK(initialized_);
 
   if (connected()) {
-    session()->connection()->SendConnectionCloseWithDetails(
-        QUIC_PEER_GOING_AWAY, "Client disconnecting");
+    session()->connection()->CloseConnection(
+        QUIC_PEER_GOING_AWAY, "Client disconnecting",
+        ConnectionCloseBehavior::SEND_CONNECTION_CLOSE_PACKET);
   }
   STLDeleteElements(&data_to_resend_on_connect_);
   STLDeleteElements(&data_sent_before_handshake_);
 
   reset_writer();
   packet_reader_.reset();
+  packet_reader_started_ = false;
 
   initialized_ = false;
 }
 
 void QuicSimpleClient::SendRequest(const HttpRequestInfo& headers,
-                                   StringPiece body,
+                                   base::StringPiece body,
                                    bool fin) {
   QuicSpdyClientStream* stream = CreateReliableClientStream();
   if (stream == nullptr) {
@@ -251,12 +258,12 @@ void QuicSimpleClient::SendRequest(const HttpRequestInfo& headers,
   CreateSpdyHeadersFromHttpRequest(headers, headers.extra_headers, net::HTTP2,
                                    true, &header_block);
   stream->set_visitor(this);
-  stream->SendRequest(header_block, body, fin);
+  stream->SendRequest(std::move(header_block), body, fin);
   if (FLAGS_enable_quic_stateless_reject_support) {
     // Record this in case we need to resend.
-    auto new_headers = new HttpRequestInfo;
+    auto* new_headers = new HttpRequestInfo;
     *new_headers = headers;
-    auto data_to_resend =
+    auto* data_to_resend =
         new ClientQuicDataToResend(new_headers, body, fin, this);
     MaybeAddQuicDataToResend(data_to_resend);
   }
@@ -280,7 +287,7 @@ void QuicSimpleClient::MaybeAddQuicDataToResend(
 
 void QuicSimpleClient::SendRequestAndWaitForResponse(
     const HttpRequestInfo& request,
-    StringPiece body,
+    base::StringPiece body,
     bool fin) {
   SendRequest(request, body, fin);
   while (WaitForEvents()) {
@@ -341,7 +348,8 @@ void QuicSimpleClient::OnClose(QuicSpdyStream* stream) {
   QuicSpdyClientStream* client_stream =
       static_cast<QuicSpdyClientStream*>(stream);
   HttpResponseInfo response;
-  SpdyHeadersToHttpResponse(client_stream->headers(), net::HTTP2, &response);
+  SpdyHeadersToHttpResponse(client_stream->response_headers(), net::HTTP2,
+                            &response);
   if (response_listener_.get() != nullptr) {
     response_listener_->OnCompleteResponse(stream->id(), *response.headers,
                                            client_stream->data());
@@ -375,9 +383,12 @@ QuicConnectionId QuicSimpleClient::GenerateNewConnectionId() {
 }
 
 QuicChromiumConnectionHelper* QuicSimpleClient::CreateQuicConnectionHelper() {
-  return new QuicChromiumConnectionHelper(
-      base::ThreadTaskRunnerHandle::Get().get(), &clock_,
-      QuicRandom::GetInstance());
+  return new QuicChromiumConnectionHelper(&clock_, QuicRandom::GetInstance());
+}
+
+QuicChromiumAlarmFactory* QuicSimpleClient::CreateQuicAlarmFactory() {
+  return new QuicChromiumAlarmFactory(base::ThreadTaskRunnerHandle::Get().get(),
+                                      &clock_);
 }
 
 QuicPacketWriter* QuicSimpleClient::CreateQuicPacketWriter() {
@@ -390,7 +401,7 @@ void QuicSimpleClient::OnReadError(int result,
   Disconnect();
 }
 
-bool QuicSimpleClient::OnPacket(const QuicEncryptedPacket& packet,
+bool QuicSimpleClient::OnPacket(const QuicReceivedPacket& packet,
                                 IPEndPoint local_address,
                                 IPEndPoint peer_address) {
   session()->connection()->ProcessUdpPacket(local_address, peer_address,

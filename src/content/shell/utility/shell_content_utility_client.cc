@@ -4,12 +4,19 @@
 
 #include "content/shell/utility/shell_content_utility_client.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
-#include "content/common/mojo/static_application_loader.h"
+
+#include "base/files/scoped_temp_dir.h"
+#include "base/process/process.h"
 
 // blpwtk2: Remove test-only code
-// #include "content/public/test/test_mojo_app.h"
+//#include "content/public/test/test_mojo_service.mojom.h"
+
+#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/shell/public/cpp/interface_registry.h"
 
 #include <chrome/common/chrome_paths.h>
 #include <chrome/common/chrome_utility_messages.h>
@@ -22,14 +29,53 @@ namespace content {
 
 namespace {
 
+// blpwtk2: Remove test-only code
+#if 0
+class TestMojoServiceImpl : public mojom::TestMojoService {
+ public:
+  static void Create(mojo::InterfaceRequest<mojom::TestMojoService> request) {
+    new TestMojoServiceImpl(std::move(request));
+  }
+
+  // mojom::TestMojoService implementation:
+  void DoSomething(const DoSomethingCallback& callback) override {
+    callback.Run();
+  }
+
+  void DoTerminateProcess(const DoTerminateProcessCallback& callback) override {
+    base::Process::Current().Terminate(0, false);
+  }
+
+  void CreateFolder(const CreateFolderCallback& callback) override {
+    // Note: This is used to check if the sandbox is disabled or not since
+    //       creating a folder is forbidden when it is enabled.
+    callback.Run(base::ScopedTempDir().CreateUniqueTempDir());
+  }
+
+  void GetRequestorName(const GetRequestorNameCallback& callback) override {
+    NOTREACHED();
+  }
+
+ private:
+  explicit TestMojoServiceImpl(
+      mojo::InterfaceRequest<mojom::TestMojoService> request)
+      : binding_(this, std::move(request)) {}
+
+  mojo::StrongBinding<mojom::TestMojoService> binding_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestMojoServiceImpl);
+};
+#endif
+
 bool Send(IPC::Message* message) {
   return content::UtilityThread::Get()->Send(message);
 }
 
 // blpwtk2: Remove test-only code
 #if 0
-scoped_ptr<mojo::ShellClient> CreateTestApp() {
-  return scoped_ptr<mojo::ShellClient>(new TestMojoApp);
+std::unique_ptr<shell::ShellClient> CreateTestApp(
+    const base::Closure& quit_closure) {
+  return std::unique_ptr<shell::ShellClient>(new TestMojoApp);
 }
 #endif
 
@@ -45,25 +91,22 @@ ShellContentUtilityClient::~ShellContentUtilityClient() {
 void ShellContentUtilityClient::RegisterMojoApplications(
     StaticMojoApplicationMap* apps) {
   // SHEZ: Remove test-only code
-  // apps->insert(
-  //     std::make_pair(GURL(kTestMojoAppUrl), base::Bind(&CreateTestApp)));
+  //MojoApplicationInfo app_info;
+  //app_info.application_factory = base::Bind(&CreateTestApp);
+  //apps->insert(std::make_pair(kTestMojoAppUrl, app_info));
+}
+
+void ShellContentUtilityClient::ExposeInterfacesToBrowser(
+    shell::InterfaceRegistry* registry) {
+// blpwtk2: Remove test-only code
+#if 0
+  registry->AddInterface(base::Bind(&TestMojoServiceImpl::Create));
+#endif
 }
 
 bool ShellContentUtilityClient::OnMessageReceived(const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(ShellContentUtilityClient, message)
-    IPC_MESSAGE_HANDLER(ChromeUtilityMsg_StartupPing, onStartupPing)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-
-  for (Handlers::iterator it = d_handlers.begin(); !handled && it != d_handlers.end(); ++it)
-    handled = (*it)->OnMessageReceived(message);
-
-  return handled;
+  return false;
 }
 
-void ShellContentUtilityClient::onStartupPing() {
-  Send(new ChromeUtilityHostMsg_ProcessStarted);
-}
 
 }  // namespace content

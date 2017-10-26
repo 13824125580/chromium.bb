@@ -6,7 +6,7 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/filename_util.h"
@@ -28,7 +28,7 @@ void GetIsDirectoryFromFileInfo(const base::FilePath& path,
 }
 
 void OnGetIsDirectoryFromFileInfoCompleted(
-    scoped_ptr<bool> is_directory,
+    std::unique_ptr<bool> is_directory,
     const base::Callback<void(bool)>& callback) {
   callback.Run(*is_directory);
 }
@@ -46,7 +46,7 @@ void EntryIsDirectory(Profile* profile,
   }
 #endif
 
-  scoped_ptr<bool> is_directory(new bool);
+  std::unique_ptr<bool> is_directory(new bool);
   bool* const is_directory_ptr = is_directory.get();
 
   content::BrowserThread::PostBlockingPoolTaskAndReply(

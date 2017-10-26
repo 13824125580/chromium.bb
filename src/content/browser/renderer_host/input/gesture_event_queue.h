@@ -8,9 +8,9 @@
 #include <stddef.h>
 
 #include <deque>
+#include <memory>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/timer/timer.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/browser/renderer_host/input/tap_suppression_controller.h"
@@ -116,6 +116,8 @@ class CONTENT_EXPORT GestureEventQueue {
  private:
   friend class GestureEventQueueTest;
   friend class MockRenderWidgetHost;
+
+  bool OnScrollBegin(const GestureEventWithLatencyInfo& gesture_event);
 
   // TODO(mohsen): There are a bunch of ShouldForward.../ShouldDiscard...
   // methods that are getting confusing. This should be somehow fixed. Maybe

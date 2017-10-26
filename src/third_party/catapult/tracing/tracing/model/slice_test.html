@@ -14,9 +14,7 @@ found in the LICENSE file.
 tr.b.unittest.testSuite(function() {
   var Slice = tr.model.Slice;
   var SliceGroup = tr.model.SliceGroup;
-  var newSlice = tr.c.TestUtils.newSlice;
   var newSliceEx = tr.c.TestUtils.newSliceEx;
-  var newSliceNamed = tr.c.TestUtils.newSliceNamed;
   var newFakeThread = tr.c.TestUtils.newFakeThread;
 
   test('findDescendentSlice', function() {
@@ -34,6 +32,45 @@ tr.b.unittest.testSuite(function() {
     assert.deepEqual(sB, sA.findDescendentSlice('sB'));
     assert.deepEqual(sC, sA.findDescendentSlice('sC'));
     assert.isUndefined(sA.findDescendentSlice('sD'));
+  });
+
+  test('findTopmostSlicesRelativeToThisSliceBaseCase', function() {
+    var PREDICATE = slice => slice.title.startsWith('sC');
+
+    var group = new SliceGroup(newFakeThread());
+
+    var sC1 = group.pushSlice(newSliceEx(
+        { title: 'sC1', start: 0.0, duration: 10.0 }));
+    var sC2 = group.pushSlice(newSliceEx(
+        { title: 'sC2', start: 0.0, duration: 4.0 }));
+
+    group.createSubSlices();
+
+    var foundSlices = [];
+    for (var slice of sC1.findTopmostSlicesRelativeToThisSlice(PREDICATE))
+      foundSlices.push(slice);
+
+    assert.deepEqual([sC1], foundSlices);
+  });
+
+  test('findTopmostSlicesRelativeToThisSliceRecursive', function() {
+    var PREDICATE = slice => slice.title.startsWith('sC');
+
+    var group = new SliceGroup(newFakeThread());
+
+    var sD = group.pushSlice(newSliceEx(
+        { title: 'sD', start: 0.0, duration: 10.0 }));
+    var sC1 = group.pushSlice(newSliceEx(
+        { title: 'sC1', start: 0.0, duration: 4.0 }));
+    var sC2 = group.pushSlice(newSliceEx(
+        { title: 'sC2', start: 6.0, duration: 3.0 }));
+
+    group.createSubSlices();
+
+    var foundSlices = [];
+    for (var slice of sD.findTopmostSlicesRelativeToThisSlice(PREDICATE))
+      foundSlices.push(slice);
+    assert.deepEqual([sC1, sC2], foundSlices);
   });
 
   test('iterateAllDescendents', function() {

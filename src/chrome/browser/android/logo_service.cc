@@ -4,9 +4,11 @@
 
 #include "chrome/browser/android/logo_service.h"
 
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/image_decoder.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -116,9 +118,8 @@ void LogoService::GetLogo(search_provider_logos::LogoObserver* observer) {
     logo_tracker_.reset(new LogoTracker(
         profile_->GetPath().Append(kCachedLogoDirectory),
         BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE),
-        BrowserThread::GetBlockingPool(),
-        profile_->GetRequestContext(),
-        scoped_ptr<search_provider_logos::LogoDelegate>(
+        BrowserThread::GetBlockingPool(), profile_->GetRequestContext(),
+        std::unique_ptr<search_provider_logos::LogoDelegate>(
             new ChromeLogoDelegate())));
   }
 
@@ -126,7 +127,8 @@ void LogoService::GetLogo(search_provider_logos::LogoObserver* observer) {
       GetGoogleDoodleURL(profile_),
       base::Bind(&search_provider_logos::GoogleParseLogoResponse),
       base::Bind(&search_provider_logos::GoogleAppendQueryparamsToLogoURL),
-      true);
+      true, /* wants_cta */
+      base::FeatureList::IsEnabled(chrome::android::kNTPMaterialDesign));
   logo_tracker_->GetLogo(observer);
 }
 

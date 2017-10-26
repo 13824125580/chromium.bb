@@ -11,14 +11,19 @@ namespace shell {
 
 ShelfDelegateImpl::ShelfDelegateImpl() {}
 
-ShelfDelegateImpl::~ShelfDelegateImpl() {
-}
+ShelfDelegateImpl::~ShelfDelegateImpl() {}
 
-void ShelfDelegateImpl::OnShelfCreated(Shelf* shelf) {
-}
+void ShelfDelegateImpl::OnShelfCreated(Shelf* shelf) {}
 
-void ShelfDelegateImpl::OnShelfDestroyed(Shelf* shelf) {
-}
+void ShelfDelegateImpl::OnShelfDestroyed(Shelf* shelf) {}
+
+void ShelfDelegateImpl::OnShelfAlignmentChanged(Shelf* shelf) {}
+
+void ShelfDelegateImpl::OnShelfAutoHideBehaviorChanged(Shelf* shelf) {}
+
+void ShelfDelegateImpl::OnShelfAutoHideStateChanged(Shelf* shelf) {}
+
+void ShelfDelegateImpl::OnShelfVisibilityStateChanged(Shelf* shelf) {}
 
 ShelfID ShelfDelegateImpl::GetShelfIDForAppID(const std::string& app_id) {
   return 0;
@@ -32,15 +37,13 @@ const std::string& ShelfDelegateImpl::GetAppIDForShelfID(ShelfID id) {
   return base::EmptyString();
 }
 
-void ShelfDelegateImpl::PinAppWithID(const std::string& app_id) {
-}
+void ShelfDelegateImpl::PinAppWithID(const std::string& app_id) {}
 
 bool ShelfDelegateImpl::IsAppPinned(const std::string& app_id) {
   return false;
 }
 
-void ShelfDelegateImpl::UnpinAppWithID(const std::string& app_id) {
-}
+void ShelfDelegateImpl::UnpinAppWithID(const std::string& app_id) {}
 
 }  // namespace shell
 }  // namespace ash

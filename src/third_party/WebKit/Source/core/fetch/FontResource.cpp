@@ -27,7 +27,7 @@
 #include "core/fetch/FontResource.h"
 
 #include "core/fetch/FetchRequest.h"
-#include "core/fetch/ResourceClientWalker.h"
+#include "core/fetch/ResourceClientOrObserverWalker.h"
 #include "core/fetch/ResourceFetcher.h"
 #include "platform/Histogram.h"
 #include "platform/SharedBuffer.h"
@@ -70,16 +70,16 @@ static void recordPackageFormatHistogram(FontPackageFormat format)
     packageFormatHistogram.count(format);
 }
 
-PassRefPtrWillBeRawPtr<FontResource> FontResource::fetch(FetchRequest& request, ResourceFetcher* fetcher)
+FontResource* FontResource::fetch(FetchRequest& request, ResourceFetcher* fetcher)
 {
     ASSERT(request.resourceRequest().frameType() == WebURLRequest::FrameTypeNone);
     request.mutableResourceRequest().setRequestContext(WebURLRequest::RequestContextFont);
     return toFontResource(fetcher->requestResource(request, FontResourceFactory()));
 }
 
-FontResource::FontResource(const ResourceRequest& resourceRequest)
-    : Resource(resourceRequest, Font)
-    , m_state(Unloaded)
+FontResource::FontResource(const ResourceRequest& resourceRequest, const ResourceLoaderOptions& options)
+    : Resource(resourceRequest, Font, options)
+    , m_loadLimitState(UnderLimit)
     , m_corsFailed(false)
     , m_fontLoadShortLimitTimer(this, &FontResource::fontLoadShortLimitCallback)
     , m_fontLoadLongLimitTimer(this, &FontResource::fontLoadLongLimitCallback)
@@ -90,51 +90,32 @@ FontResource::~FontResource()
 {
 }
 
-void FontResource::didScheduleLoad()
-{
-    if (m_state == Unloaded)
-        m_state = LoadScheduled;
-}
-
-void FontResource::didUnscheduleLoad()
-{
-    if (m_state == LoadScheduled)
-        m_state = Unloaded;
-}
-
-void FontResource::load(ResourceFetcher*, const ResourceLoaderOptions& options)
-{
-    // Don't load the file yet. Wait for an access before triggering the load.
-    setLoading(true);
-    m_options = options;
-    if (!m_revalidatingRequest.isNull())
-        m_state = Unloaded;
-}
-
 void FontResource::didAddClient(ResourceClient* c)
 {
     ASSERT(FontResourceClient::isExpectedType(c));
     Resource::didAddClient(c);
-    if (!isLoading())
-        static_cast<FontResourceClient*>(c)->fontLoaded(this);
-    if (m_state == ShortLimitExceeded || m_state == LongLimitExceeded)
+    if (m_loadLimitState == ShortLimitExceeded || m_loadLimitState == LongLimitExceeded)
         static_cast<FontResourceClient*>(c)->fontLoadShortLimitExceeded(this);
-    if (m_state == LongLimitExceeded)
+    if (m_loadLimitState == LongLimitExceeded)
         static_cast<FontResourceClient*>(c)->fontLoadLongLimitExceeded(this);
 }
 
-void FontResource::beginLoadIfNeeded(ResourceFetcher* dl)
+void FontResource::setRevalidatingRequest(const ResourceRequest& request)
 {
-    if (stillNeedsLoad()) {
-        m_state = LoadInitiated;
-        Resource::load(dl, m_options);
-        m_fontLoadShortLimitTimer.startOneShot(fontLoadWaitShortLimitSec, BLINK_FROM_HERE);
-        m_fontLoadLongLimitTimer.startOneShot(fontLoadWaitLongLimitSec, BLINK_FROM_HERE);
+    // Reload will use the same object, and needs to reset |m_loadLimitState|
+    // before any didAddClient() is called again.
+    m_loadLimitState = UnderLimit;
+    Resource::setRevalidatingRequest(request);
+}
 
-        ResourceClientWalker<FontResourceClient> walker(m_clients);
-        while (FontResourceClient* client = walker.next())
-            client->didStartFontLoad(this);
-    }
+void FontResource::startLoadLimitTimersIfNeeded()
+{
+    ASSERT(!stillNeedsLoad());
+    if (isLoaded() || m_fontLoadLongLimitTimer.isActive())
+        return;
+    ASSERT(m_loadLimitState == UnderLimit);
+    m_fontLoadShortLimitTimer.startOneShot(fontLoadWaitShortLimitSec, BLINK_FROM_HERE);
+    m_fontLoadLongLimitTimer.startOneShot(fontLoadWaitLongLimitSec, BLINK_FROM_HERE);
 }
 
 bool FontResource::ensureCustomFontData()
@@ -150,7 +131,7 @@ bool FontResource::ensureCustomFontData()
             recordPackageFormatHistogram(PackageFormatUnknown);
         }
     }
-    return m_fontData;
+    return m_fontData.get();
 }
 
 FontPlatformData FontResource::platformDataFromCustomData(float size, bool bold, bool italic, FontOrientation orientation)
@@ -168,8 +149,8 @@ void FontResource::fontLoadShortLimitCallback(Timer<FontResource>*)
 {
     if (!isLoading())
         return;
-    ASSERT(m_state == LoadInitiated);
-    m_state = ShortLimitExceeded;
+    ASSERT(m_loadLimitState == UnderLimit);
+    m_loadLimitState = ShortLimitExceeded;
     ResourceClientWalker<FontResourceClient> walker(m_clients);
     while (FontResourceClient* client = walker.next())
         client->fontLoadShortLimitExceeded(this);
@@ -179,26 +160,25 @@ void FontResource::fontLoadLongLimitCallback(Timer<FontResource>*)
 {
     if (!isLoading())
         return;
-    ASSERT(m_state == ShortLimitExceeded);
-    m_state = LongLimitExceeded;
+    ASSERT(m_loadLimitState == ShortLimitExceeded);
+    m_loadLimitState = LongLimitExceeded;
     ResourceClientWalker<FontResourceClient> walker(m_clients);
     while (FontResourceClient* client = walker.next())
         client->fontLoadLongLimitExceeded(this);
 }
 
-void FontResource::allClientsRemoved()
+void FontResource::allClientsAndObserversRemoved()
 {
-    m_fontData.clear();
-    Resource::allClientsRemoved();
+    m_fontData.reset();
+    Resource::allClientsAndObserversRemoved();
 }
 
 void FontResource::checkNotify()
 {
     m_fontLoadShortLimitTimer.stop();
     m_fontLoadLongLimitTimer.stop();
-    ResourceClientWalker<FontResourceClient> w(m_clients);
-    while (FontResourceClient* c = w.next())
-        c->fontLoaded(this);
+
+    Resource::checkNotify();
 }
 
 } // namespace blink

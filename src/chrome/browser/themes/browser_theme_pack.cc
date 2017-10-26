@@ -8,11 +8,11 @@
 #include <stddef.h>
 
 #include <limits>
+#include <memory>
 
 #include "base/files/file.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -37,7 +37,6 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/resources/grit/ui_resources.h"
 
@@ -48,8 +47,9 @@ namespace {
 
 // Version number of the current theme pack. We just throw out and rebuild
 // theme packs that aren't int-equal to this. Increment this number if you
-// change default theme assets.
-const int kThemePackVersion = 39;
+// change default theme assets or if you need themes to recreate their generated
+// images (which are cached).
+const int kThemePackVersion = 42;
 
 // IDs that are in the DataPack won't clash with the positive integer
 // uint16_t. kHeaderID should always have the maximum value because we want the
@@ -165,16 +165,13 @@ PersistingImagesTable kPersistingImages[] = {
     {30, IDR_STOP_D, NULL},
     {31, IDR_STOP_H, NULL},
     {32, IDR_STOP_P, NULL},
-    {33, IDR_BROWSER_ACTIONS_OVERFLOW, NULL},
-    {34, IDR_BROWSER_ACTIONS_OVERFLOW_H, NULL},
-    {35, IDR_BROWSER_ACTIONS_OVERFLOW_P, NULL},
-    {36, IDR_TOOLS, NULL},
-    {37, IDR_TOOLS_H, NULL},
-    {38, IDR_TOOLS_P, NULL},
-    {39, IDR_MENU_DROPARROW, NULL},
-    {40, IDR_TOOLBAR_BEZEL_HOVER, NULL},
-    {41, IDR_TOOLBAR_BEZEL_PRESSED, NULL},
-    {42, IDR_TOOLS_BAR, NULL},
+    {33, IDR_TOOLS, NULL},
+    {34, IDR_TOOLS_H, NULL},
+    {35, IDR_TOOLS_P, NULL},
+    {36, IDR_MENU_DROPARROW, NULL},
+    {37, IDR_TOOLBAR_BEZEL_HOVER, NULL},
+    {38, IDR_TOOLBAR_BEZEL_PRESSED, NULL},
+    {39, IDR_TOOLS_BAR, NULL},
 };
 const size_t kPersistingImagesLength = arraysize(kPersistingImages);
 
@@ -228,7 +225,7 @@ bool InputScalesValid(const base::StringPiece& input,
   size_t scales_size = static_cast<size_t>(input.size() / sizeof(float));
   if (scales_size != expected.size())
     return false;
-  scoped_ptr<float[]> scales(new float[scales_size]);
+  std::unique_ptr<float[]> scales(new float[scales_size]);
   // Do a memcpy to avoid misaligned memory access.
   memcpy(scales.get(), input.data(), input.size());
   for (size_t index = 0; index < scales_size; ++index) {
@@ -241,7 +238,7 @@ bool InputScalesValid(const base::StringPiece& input,
 // Returns |scale_factors| as a string to be written to disk.
 std::string GetScaleFactorsAsString(
     const std::vector<ui::ScaleFactor>& scale_factors) {
-  scoped_ptr<float[]> scales(new float[scale_factors.size()]);
+  std::unique_ptr<float[]> scales(new float[scale_factors.size()]);
   for (size_t i = 0; i < scale_factors.size(); ++i)
     scales[i] = ui::GetScaleForScaleFactor(scale_factors[i]);
   std::string out_string = std::string(
@@ -389,7 +386,7 @@ bool HasFrameBorder() {
 }
 
 // Returns a piece of memory with the contents of the file |path|.
-base::RefCountedMemory* ReadFileData(const base::FilePath& path) {
+scoped_refptr<base::RefCountedMemory> ReadFileData(const base::FilePath& path) {
   if (!path.empty()) {
     base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
     if (file.IsValid()) {
@@ -405,7 +402,7 @@ base::RefCountedMemory* ReadFileData(const base::FilePath& path) {
     }
   }
 
-  return NULL;
+  return nullptr;
 }
 
 // Shifts an image's HSL values. The caller is responsible for deleting
@@ -793,6 +790,10 @@ bool BrowserThemePack::GetColor(int id, SkColor* color) const {
     for (size_t i = 0; i < kColorTableLength; ++i) {
       if (colors_[i].id == id) {
         *color = colors_[i].color;
+        // The theme provider is intentionally made to ignore alpha for toolbar
+        // color, as we don't want to allow transparent toolbars.
+        if (id == ThemeProperties::COLOR_TOOLBAR)
+          *color = SkColorSetA(*color, SK_AlphaOPAQUE);
         return true;
       }
     }
@@ -888,10 +889,8 @@ BrowserThemePack::BrowserThemePack()
       source_images_(NULL) {
   scale_factors_ = ui::GetSupportedScaleFactors();
   // On Windows HiDPI SCALE_FACTOR_100P may not be supported by default.
-  if (std::find(scale_factors_.begin(), scale_factors_.end(),
-                ui::SCALE_FACTOR_100P) == scale_factors_.end()) {
+  if (!ContainsValue(scale_factors_, ui::SCALE_FACTOR_100P))
     scale_factors_.push_back(ui::SCALE_FACTOR_100P);
-  }
 }
 
 void BrowserThemePack::BuildHeader(const Extension* extension) {

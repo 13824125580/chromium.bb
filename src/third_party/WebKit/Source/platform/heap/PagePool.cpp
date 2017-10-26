@@ -12,7 +12,7 @@ namespace blink {
 
 FreePagePool::~FreePagePool()
 {
-    for (int index = 0; index < BlinkGC::NumberOfHeaps; ++index) {
+    for (int index = 0; index < BlinkGC::NumberOfArenas; ++index) {
         while (PoolEntry* entry = m_pool[index]) {
             m_pool[index] = entry->next;
             PageMemory* memory = entry->data;
@@ -53,7 +53,7 @@ PageMemory* FreePagePool::takeFreePage(int index)
 
 OrphanedPagePool::~OrphanedPagePool()
 {
-    for (int index = 0; index < BlinkGC::NumberOfHeaps; ++index) {
+    for (int index = 0; index < BlinkGC::NumberOfArenas; ++index) {
         while (PoolEntry* entry = m_pool[index]) {
             m_pool[index] = entry->next;
             BasePage* page = entry->data;
@@ -77,14 +77,9 @@ NO_SANITIZE_ADDRESS
 void OrphanedPagePool::decommitOrphanedPages()
 {
     ASSERT(ThreadState::current()->isInGC());
+    ASSERT(ThreadState::current()->heap().isAtSafePoint());
 
-#if ENABLE(ASSERT)
-    // No locking needed as all threads are at safepoints at this point in time.
-    for (ThreadState* state : ThreadState::attachedThreads())
-        ASSERT(state->isAtSafePoint());
-#endif
-
-    for (int index = 0; index < BlinkGC::NumberOfHeaps; ++index) {
+    for (int index = 0; index < BlinkGC::NumberOfArenas; ++index) {
         PoolEntry* entry = m_pool[index];
         PoolEntry** prevNext = &m_pool[index];
         while (entry) {
@@ -101,7 +96,7 @@ void OrphanedPagePool::decommitOrphanedPages()
             } else {
                 page->~BasePage();
                 clearMemory(memory);
-                Heap::freePagePool()->addFreePage(index, memory);
+                ThreadHeap::mainThreadHeap()->getFreePagePool()->addFreePage(index, memory);
             }
 
             PoolEntry* deadEntry = entry;
@@ -139,7 +134,7 @@ void OrphanedPagePool::clearMemory(PageMemory* memory)
 #if ENABLE(ASSERT)
 bool OrphanedPagePool::contains(void* object)
 {
-    for (int index = 0; index < BlinkGC::NumberOfHeaps; ++index) {
+    for (int index = 0; index < BlinkGC::NumberOfArenas; ++index) {
         for (PoolEntry* entry = m_pool[index]; entry; entry = entry->next) {
             BasePage* page = entry->data;
             if (page->contains(reinterpret_cast<Address>(object)))

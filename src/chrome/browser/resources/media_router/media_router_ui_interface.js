@@ -27,6 +27,15 @@ cr.define('media_router.ui', function() {
   }
 
   /**
+   * Handles the search response by forwarding |sinkId| to the container.
+   *
+   * @param {string} sinkId The ID of the sink found by search.
+   */
+  function receiveSearchResult(sinkId) {
+    container.onReceiveSearchResult(sinkId);
+  }
+
+  /**
    * Sets the cast mode list.
    *
    * @param {!Array<!media_router.CastMode>} castModeList
@@ -85,8 +94,7 @@ cr.define('media_router.ui', function() {
    *            sinks: !Array<!media_router.Sink>,
    *            showEmail: boolean,
    *            userEmail: string,
-   *            showDomain: boolean,
-   *            userDomain: string
+   *            showDomain: boolean
    *          },
    *          routes: !Array<!media_router.Route>,
    *          castModes: !Array<!media_router.CastMode>}} data
@@ -131,21 +139,18 @@ cr.define('media_router.ui', function() {
    * @param {{sinks: !Array<!media_router.Sink>,
    *          showEmail: boolean,
    *          userEmail: string,
-   *          showDomain: boolean,
-   *          userDomain: string,}} data
+   *          showDomain: boolean}} data
    * Parameters in data:
    *   sinks - list of sinks to be displayed.
    *   showEmail - true if the user email should be shown.
    *   userEmail - email of the user if the user is signed in.
    *   showDomain - true if the user domain should be shown.
-   *   userDomain - domain of the user if the user is signed in.
    */
   function setSinkListAndIdentity(data) {
-    container.allSinks = data['sinks'];
     container.showDomain = data['showDomain'];
-    container.userDomain = data['userDomain'];
-    header.showEmail = data['showEmail'];
+    container.allSinks = data['sinks'];
     header.userEmail = data['userEmail'];
+    header.showEmail = data['showEmail'];
   }
 
   /**
@@ -159,6 +164,7 @@ cr.define('media_router.ui', function() {
 
   return {
     onCreateRouteResponseReceived: onCreateRouteResponseReceived,
+    receiveSearchResult: receiveSearchResult,
     setCastModeList: setCastModeList,
     setElements: setElements,
     setFirstRunFlowData: setFirstRunFlowData,
@@ -194,6 +200,19 @@ cr.define('media_router.browserApi', function() {
   function actOnIssue(issueId, actionType, helpPageId) {
     chrome.send('actOnIssue', [{issueId: issueId, actionType: actionType,
                                 helpPageId: helpPageId}]);
+  }
+
+  /**
+   * Modifies |route| by changing its source to the one identified by
+   * |selectedCastMode|.
+   *
+   * @param {!media_router.Route} route The route being modified.
+   * @param {number} selectedCastMode The value of the cast mode the user
+   *   selected.
+   */
+  function changeRouteSource(route, selectedCastMode) {
+    chrome.send('requestRoute',
+                [{sinkId: route.sinkId, selectedCastMode: selectedCastMode}]);
   }
 
   /**
@@ -248,6 +267,13 @@ cr.define('media_router.browserApi', function() {
   }
 
   /**
+   * Reports that the user used the filter input.
+   */
+  function reportFilter() {
+    chrome.send('reportFilter');
+  }
+
+  /**
    * Reports the initial dialog view.
    *
    * @param {string} view
@@ -281,6 +307,15 @@ cr.define('media_router.browserApi', function() {
    */
   function reportRouteCreation(success) {
     chrome.send('reportRouteCreation', [success]);
+  }
+
+  /**
+   * Reports the outcome of a create route response.
+   *
+   * @param {number} outcome
+   */
+  function reportRouteCreationOutcome(outcome) {
+    chrome.send('reportRouteCreationOutcome', [outcome]);
   }
 
   /**
@@ -341,24 +376,49 @@ cr.define('media_router.browserApi', function() {
                 [{sinkId: sinkId, selectedCastMode: selectedCastMode}]);
   }
 
+  /**
+   * Requests that the media router search all providers for a sink matching
+   * |searchCriteria| that can be used with the media source associated with the
+   * cast mode |selectedCastMode|. If such a sink is found, a route is also
+   * created between the sink and the media source.
+   *
+   * @param {string} sinkId Sink ID of the pseudo sink generating the request.
+   * @param {string} searchCriteria Search criteria for the route providers.
+   * @param {string} domain User's current hosted domain.
+   * @param {number} selectedCastMode The value of the cast mode to be used with
+   *   the sink.
+   */
+  function searchSinksAndCreateRoute(
+      sinkId, searchCriteria, domain, selectedCastMode) {
+    chrome.send('searchSinksAndCreateRoute',
+                [{sinkId: sinkId,
+                  searchCriteria: searchCriteria,
+                  domain: domain,
+                  selectedCastMode: selectedCastMode}]);
+  }
+
   return {
     acknowledgeFirstRunFlow: acknowledgeFirstRunFlow,
     actOnIssue: actOnIssue,
+    changeRouteSource: changeRouteSource,
     closeDialog: closeDialog,
     closeRoute: closeRoute,
     joinRoute: joinRoute,
     onInitialDataReceived: onInitialDataReceived,
     reportBlur: reportBlur,
     reportClickedSinkIndex: reportClickedSinkIndex,
+    reportFilter: reportFilter,
     reportInitialAction: reportInitialAction,
     reportInitialState: reportInitialState,
     reportNavigateToView: reportNavigateToView,
-    reportSelectedCastMode: reportSelectedCastMode,
     reportRouteCreation: reportRouteCreation,
+    reportRouteCreationOutcome: reportRouteCreationOutcome,
+    reportSelectedCastMode: reportSelectedCastMode,
     reportSinkCount: reportSinkCount,
     reportTimeToClickSink: reportTimeToClickSink,
     reportTimeToInitialActionClose: reportTimeToInitialActionClose,
     requestInitialData: requestInitialData,
     requestRoute: requestRoute,
+    searchSinksAndCreateRoute: searchSinksAndCreateRoute,
   };
 });

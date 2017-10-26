@@ -168,9 +168,7 @@ class Toolkit {
     // in the code snippet above.  If 'preHandleMessage' returns true, this
     // means that blpwtk2 has consumed the message, and it should not be
     // dispatched through the normal Windows mechanism.  However, the
-    // application must still call 'postHandleMessage'.  The behavior is also
-    // undefined if these functions are called when 'PumpMode::AUTOMATIC' is
-    // being used.
+    // application must still call 'postHandleMessage'.
     virtual bool preHandleMessage(const NativeMsg* msg) = 0;
     virtual void postHandleMessage(const NativeMsg* msg) = 0;
 
@@ -207,6 +205,10 @@ class Toolkit {
     // Sets the default printer name. Chromium will attempt to use this (if
     // specified) instead of the Windows default printer
     virtual void setDefaultPrinterName(const StringRef& printerName) = 0;
+
+    // If non-zero, defines the time threshold for enabling trace
+    // (in milliseconds)
+    virtual void setTraceThreshold(unsigned int timeoutMS) = 0;
 
   protected:
     // Destroy this Toolkit object.  Note that clients of blpwtk2 should use

@@ -7,6 +7,7 @@
 #include "core/frame/FrameHost.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/Settings.h"
+#include "core/frame/VisualViewport.h"
 #include "core/page/Page.h"
 #include "core/style/ComputedStyle.h"
 #include "platform/RuntimeEnabledFeatures.h"
@@ -15,6 +16,7 @@
 #include "web/WebLocalFrameImpl.h"
 #include "web/WebSettingsImpl.h"
 #include "web/WebViewImpl.h"
+#include "wtf/PtrUtil.h"
 
 namespace {
 
@@ -59,7 +61,7 @@ DevToolsEmulator::DevToolsEmulator(WebViewImpl* webViewImpl)
     , m_embedderTextAutosizingEnabled(webViewImpl->page()->settings().textAutosizingEnabled())
     , m_embedderDeviceScaleAdjustment(webViewImpl->page()->settings().deviceScaleAdjustment())
     , m_embedderPreferCompositingToLCDTextEnabled(webViewImpl->page()->settings().preferCompositingToLCDTextEnabled())
-    , m_embedderUseMobileViewport(webViewImpl->page()->settings().useMobileViewportStyle())
+    , m_embedderViewportStyle(webViewImpl->page()->settings().viewportStyle())
     , m_embedderPluginsEnabled(webViewImpl->page()->settings().pluginsEnabled())
     , m_embedderAvailablePointerTypes(webViewImpl->page()->settings().availablePointerTypes())
     , m_embedderPrimaryPointerType(webViewImpl->page()->settings().primaryPointerType())
@@ -81,9 +83,9 @@ DevToolsEmulator::~DevToolsEmulator()
 {
 }
 
-PassOwnPtrWillBeRawPtr<DevToolsEmulator> DevToolsEmulator::create(WebViewImpl* webViewImpl)
+DevToolsEmulator* DevToolsEmulator::create(WebViewImpl* webViewImpl)
 {
-    return adoptPtrWillBeNoop(new DevToolsEmulator(webViewImpl));
+    return new DevToolsEmulator(webViewImpl);
 }
 
 DEFINE_TRACE(DevToolsEmulator)
@@ -114,12 +116,12 @@ void DevToolsEmulator::setPreferCompositingToLCDTextEnabled(bool enabled)
         m_webViewImpl->page()->settings().setPreferCompositingToLCDTextEnabled(enabled);
 }
 
-void DevToolsEmulator::setUseMobileViewportStyle(bool enabled)
+void DevToolsEmulator::setViewportStyle(WebViewportStyle style)
 {
-    m_embedderUseMobileViewport = enabled;
+    m_embedderViewportStyle = style;
     bool emulateMobileEnabled = m_deviceMetricsEnabled && m_emulateMobileEnabled;
     if (!emulateMobileEnabled)
-        m_webViewImpl->page()->settings().setUseMobileViewportStyle(enabled);
+        m_webViewImpl->page()->settings().setViewportStyle(style);
 }
 
 void DevToolsEmulator::setPluginsEnabled(bool enabled)
@@ -207,7 +209,6 @@ void DevToolsEmulator::enableDeviceEmulation(const WebDeviceEmulationParams& par
         m_deviceMetricsEnabled = true;
         if (params.viewSize.width || params.viewSize.height)
             m_webViewImpl->setBackgroundColorOverride(Color::darkGray);
-        m_webViewImpl->updateShowFPSCounter();
     }
 
     m_webViewImpl->page()->settings().setDeviceScaleAdjustment(calculateDeviceScaleAdjustment(params.viewSize.width, params.viewSize.height, params.deviceScaleFactor));
@@ -234,7 +235,6 @@ void DevToolsEmulator::disableDeviceEmulation()
 
     m_deviceMetricsEnabled = false;
     m_webViewImpl->setBackgroundColorOverride(Color::transparent);
-    m_webViewImpl->updateShowFPSCounter();
     m_webViewImpl->page()->settings().setDeviceScaleAdjustment(m_embedderDeviceScaleAdjustment);
     disableMobileEmulation();
     m_webViewImpl->setCompositorDeviceScaleFactorOverride(0.f);
@@ -264,9 +264,9 @@ void DevToolsEmulator::enableMobileEmulation()
     m_isMobileLayoutThemeEnabled = RuntimeEnabledFeatures::mobileLayoutThemeEnabled();
     RuntimeEnabledFeatures::setMobileLayoutThemeEnabled(true);
     ComputedStyle::invalidateInitialStyle();
-    m_webViewImpl->page()->settings().setUseMobileViewportStyle(true);
-    m_webViewImpl->enableViewport();
-    m_webViewImpl->settings()->setViewportMetaEnabled(true);
+    m_webViewImpl->page()->settings().setViewportStyle(WebViewportStyle::Mobile);
+    m_webViewImpl->page()->settings().setViewportEnabled(true);
+    m_webViewImpl->page()->settings().setViewportMetaEnabled(true);
     m_webViewImpl->page()->frameHost().visualViewport().initializeScrollbars();
     m_webViewImpl->settings()->setShrinksViewportContentToFit(true);
     m_webViewImpl->page()->settings().setTextAutosizingEnabled(true);
@@ -296,13 +296,13 @@ void DevToolsEmulator::disableMobileEmulation()
     RuntimeEnabledFeatures::setOrientationEventEnabled(m_isOrientationEventEnabled);
     RuntimeEnabledFeatures::setMobileLayoutThemeEnabled(m_isMobileLayoutThemeEnabled);
     ComputedStyle::invalidateInitialStyle();
-    m_webViewImpl->disableViewport();
-    m_webViewImpl->settings()->setViewportMetaEnabled(false);
+    m_webViewImpl->page()->settings().setViewportEnabled(false);
+    m_webViewImpl->page()->settings().setViewportMetaEnabled(false);
     m_webViewImpl->page()->frameHost().visualViewport().initializeScrollbars();
     m_webViewImpl->settings()->setShrinksViewportContentToFit(false);
     m_webViewImpl->page()->settings().setTextAutosizingEnabled(m_embedderTextAutosizingEnabled);
     m_webViewImpl->page()->settings().setPreferCompositingToLCDTextEnabled(m_embedderPreferCompositingToLCDTextEnabled);
-    m_webViewImpl->page()->settings().setUseMobileViewportStyle(m_embedderUseMobileViewport);
+    m_webViewImpl->page()->settings().setViewportStyle(m_embedderViewportStyle);
     m_webViewImpl->page()->settings().setPluginsEnabled(m_embedderPluginsEnabled);
     m_webViewImpl->page()->settings().setAvailablePointerTypes(m_embedderAvailablePointerTypes);
     m_webViewImpl->page()->settings().setPrimaryPointerType(m_embedderPrimaryPointerType);
@@ -367,8 +367,8 @@ bool DevToolsEmulator::handleInputEvent(const WebInputEvent& inputEvent)
         PlatformGestureEventBuilder gestureEvent(frameView, static_cast<const WebGestureEvent&>(inputEvent));
         float pageScaleFactor = page->pageScaleFactor();
         if (gestureEvent.type() == PlatformEvent::GesturePinchBegin) {
-            m_lastPinchAnchorCss = adoptPtr(new IntPoint(frameView->scrollPosition() + gestureEvent.position()));
-            m_lastPinchAnchorDip = adoptPtr(new IntPoint(gestureEvent.position()));
+            m_lastPinchAnchorCss = wrapUnique(new IntPoint(frameView->scrollPosition() + gestureEvent.position()));
+            m_lastPinchAnchorDip = wrapUnique(new IntPoint(gestureEvent.position()));
             m_lastPinchAnchorDip->scale(pageScaleFactor, pageScaleFactor);
         }
         if (gestureEvent.type() == PlatformEvent::GesturePinchUpdate && m_lastPinchAnchorCss) {
@@ -379,8 +379,8 @@ bool DevToolsEmulator::handleInputEvent(const WebInputEvent& inputEvent)
             m_webViewImpl->mainFrame()->setScrollOffset(toIntSize(*m_lastPinchAnchorCss.get() - toIntSize(anchorCss)));
         }
         if (gestureEvent.type() == PlatformEvent::GesturePinchEnd) {
-            m_lastPinchAnchorCss.clear();
-            m_lastPinchAnchorDip.clear();
+            m_lastPinchAnchorCss.reset();
+            m_lastPinchAnchorDip.reset();
         }
         return true;
     }

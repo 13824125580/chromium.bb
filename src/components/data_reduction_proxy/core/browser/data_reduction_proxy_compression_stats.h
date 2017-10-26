@@ -9,12 +9,12 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -23,7 +23,6 @@
 #include "components/data_reduction_proxy/core/browser/db_data_owner.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/data_reduction_proxy/proto/data_store.pb.h"
-#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_member.h"
 #include "net/base/network_change_notifier.h"
 
@@ -36,6 +35,7 @@ class Value;
 
 namespace data_reduction_proxy {
 class DataReductionProxyService;
+class DataUseGroup;
 
 // Data reduction proxy delayed pref service reduces the number calls to pref
 // service by storing prefs in memory and writing to the given PrefService after
@@ -45,7 +45,7 @@ class DataReductionProxyService;
 class DataReductionProxyCompressionStats
     : public net::NetworkChangeNotifier::ConnectionTypeObserver {
  public:
-  typedef base::ScopedPtrHashMap<std::string, scoped_ptr<PerSiteDataUsage>>
+  typedef base::ScopedPtrHashMap<std::string, std::unique_ptr<PerSiteDataUsage>>
       SiteUsageMap;
 
   // Collects and store data usage and compression statistics. Basic data usage
@@ -69,7 +69,7 @@ class DataReductionProxyCompressionStats
                             int64_t original_size,
                             bool data_reduction_proxy_enabled,
                             DataReductionProxyRequestType request_type,
-                            const std::string& data_usage_host,
+                            const scoped_refptr<DataUseGroup>& data_use_group,
                             const std::string& mime_type);
 
   // Creates a |Value| summary of the persistent state of the network session.
@@ -119,7 +119,7 @@ class DataReductionProxyCompressionStats
   // Callback from loading detailed data usage. Initializes in memory data
   // structures used to collect data usage. |data_usage| contains the data usage
   // for the last stored interval.
-  void OnCurrentDataUsageLoaded(scoped_ptr<DataUsageBucket> data_usage);
+  void OnCurrentDataUsageLoaded(std::unique_ptr<DataUsageBucket> data_usage);
 
  private:
   // Enum to track the state of loading data usage from storage.
@@ -128,7 +128,7 @@ class DataReductionProxyCompressionStats
   friend class DataReductionProxyCompressionStatsTest;
 
   typedef std::map<const char*, int64_t> DataReductionProxyPrefMap;
-  typedef base::ScopedPtrHashMap<const char*, scoped_ptr<base::ListValue>>
+  typedef base::ScopedPtrHashMap<const char*, std::unique_ptr<base::ListValue>>
       DataReductionProxyListPrefMap;
 
   class DailyContentLengthUpdate;
@@ -237,7 +237,6 @@ class DataReductionProxyCompressionStats
   const base::TimeDelta delay_;
   DataReductionProxyPrefMap pref_map_;
   DataReductionProxyListPrefMap list_pref_map_;
-  PrefChangeRegistrar pref_change_registrar_;
   BooleanPrefMember data_usage_reporting_enabled_;
   ConnectionType connection_type_;
 

@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/content_settings/content_setting_image_model.h"
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
@@ -27,11 +28,7 @@ using content::WebContents;
 namespace {
 
 bool UseVectorGraphics() {
-#if defined(OS_MACOSX)
-  return false;
-#else
   return ui::MaterialDesignController::IsModeMaterial();
-#endif
 }
 
 }  // namespace
@@ -228,19 +225,19 @@ void ContentSettingSimpleImageModel::SetAnimationHasRun(
 }
 
 // static
-scoped_ptr<ContentSettingImageModel>
-    ContentSettingSimpleImageModel::CreateForContentTypeForTesting(
-        ContentSettingsType content_settings_type) {
+std::unique_ptr<ContentSettingImageModel>
+ContentSettingSimpleImageModel::CreateForContentTypeForTesting(
+    ContentSettingsType content_settings_type) {
   if (content_settings_type == CONTENT_SETTINGS_TYPE_GEOLOCATION)
-    return make_scoped_ptr(new ContentSettingGeolocationImageModel());
+    return base::WrapUnique(new ContentSettingGeolocationImageModel());
 
   if (content_settings_type == CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS)
-    return make_scoped_ptr(new ContentSettingRPHImageModel());
+    return base::WrapUnique(new ContentSettingRPHImageModel());
 
   if (content_settings_type == CONTENT_SETTINGS_TYPE_MIDI_SYSEX)
-    return make_scoped_ptr(new ContentSettingMIDISysExImageModel());
+    return base::WrapUnique(new ContentSettingMIDISysExImageModel());
 
-  return make_scoped_ptr(
+  return base::WrapUnique(
       new ContentSettingBlockedImageModel(content_settings_type));
 }
 
@@ -524,11 +521,14 @@ void ContentSettingMIDISysExImageModel::UpdateFromWebContents(
 // Base class ------------------------------------------------------------------
 
 gfx::Image ContentSettingImageModel::GetIcon(SkColor nearby_text_color) const {
+  SkColor icon_color = nearby_text_color;
+#if !defined(OS_MACOSX)
+  icon_color = color_utils::DeriveDefaultIconColor(nearby_text_color);
+#endif
+
   return UseVectorGraphics()
              ? gfx::Image(gfx::CreateVectorIconWithBadge(
-                   vector_icon_id_, 16,
-                   color_utils::DeriveDefaultIconColor(nearby_text_color),
-                   vector_icon_badge_id_))
+                   vector_icon_id_, 16, icon_color, vector_icon_badge_id_))
              : raster_icon_;
 }
 
@@ -576,3 +576,20 @@ void ContentSettingImageModel::SetIconByResourceId(int id) {
   raster_icon_ =
       ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(id);
 }
+
+#if defined(OS_MACOSX)
+bool ContentSettingImageModel::UpdateFromWebContentsAndCheckIfIconChanged(
+    content::WebContents* web_contents) {
+  if (UseVectorGraphics()) {
+    gfx::VectorIconId old_vector_icon = vector_icon_id_;
+    gfx::VectorIconId old_badge_icon = vector_icon_badge_id_;
+    UpdateFromWebContents(web_contents);
+    return old_vector_icon != vector_icon_id_ &&
+           old_badge_icon != vector_icon_badge_id_;
+  } else {
+    int old_icon = raster_icon_id_;
+    UpdateFromWebContents(web_contents);
+    return old_icon != raster_icon_id_;
+  }
+}
+#endif

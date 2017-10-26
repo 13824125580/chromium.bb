@@ -31,7 +31,8 @@
 #ifndef HarfBuzzShaper_h
 #define HarfBuzzShaper_h
 
-#include "hb.h"
+#include "platform/fonts/FontDescription.h"
+#include "platform/fonts/SmallCapsIterator.h"
 #include "platform/fonts/shaping/ShapeResult.h"
 #include "platform/fonts/shaping/Shaper.h"
 #include "platform/geometry/FloatPoint.h"
@@ -40,11 +41,10 @@
 #include "wtf/Allocator.h"
 #include "wtf/Deque.h"
 #include "wtf/HashSet.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
 #include "wtf/text/CharacterNames.h"
-
+#include <hb.h>
+#include <memory>
 #include <unicode/uscript.h>
 
 namespace blink {
@@ -53,16 +53,23 @@ class Font;
 class GlyphBuffer;
 class SimpleFontData;
 class HarfBuzzShaper;
+class UnicodeRangeSet;
 
 // Shaping text runs is split into several stages: Run segmentation, shaping the
 // initial segment, identify shaped and non-shaped sequences of the shaping
 // result, and processing sub-runs by trying to shape them with a fallback font
 // until the last resort font is reached.
 //
-// Going through one example to illustrate the process: The following is a run of
-// vertical text to be shaped. After run segmentation in RunSegmenter it is split
-// into 4 segments. The segments indicated by the segementation results showing
-// the script, orientation information and small caps handling of the individual
+// If caps formatting is requested, an additional lowercase/uppercase
+// segmentation stage is required. In this stage, OpenType features in the font
+// are matched against the requested formatting and formatting is synthesized as
+// required by the CSS Level 3 Fonts Module.
+//
+// Going through one example - for simplicity without caps formatting - to
+// illustrate the process: The following is a run of vertical text to be
+// shaped. After run segmentation in RunSegmenter it is split into 4
+// segments. The segments indicated by the segementation results showing the
+// script, orientation information and small caps handling of the individual
 // segment. The Japanese text at the beginning has script "Hiragana", does not
 // need rotation when laid out vertically and does not need uppercasing when
 // small caps is requested.
@@ -152,20 +159,38 @@ public:
             , m_numCharacters(num) {};
     };
 
+protected:
+    using FeaturesVector = Vector<hb_feature_t, 6>;
+
+    class CapsFeatureSettingsScopedOverlay final {
+        STACK_ALLOCATED()
+
+    public:
+        CapsFeatureSettingsScopedOverlay(FeaturesVector&, FontDescription::FontVariantCaps);
+        CapsFeatureSettingsScopedOverlay() = delete;
+        ~CapsFeatureSettingsScopedOverlay();
+    private:
+        void overlayCapsFeatures(FontDescription::FontVariantCaps);
+        void prependCounting(const hb_feature_t&);
+        FeaturesVector& m_features;
+        size_t m_countFeatures;
+    };
+
 private:
-    float nextExpansionPerOpportunity();
-    void setExpansion(float);
     void setFontFeatures();
 
     void appendToHolesQueue(HolesQueueItemAction,
         unsigned startIndex,
         unsigned numCharacters);
+    void prependHolesQueue(HolesQueueItemAction,
+        unsigned startIndex,
+        unsigned numCharacters);
+    void splitUntilNextCaseChange(HolesQueueItem& currentQueueItem, SmallCapsIterator::SmallCapsBehavior&);
     inline bool shapeRange(hb_buffer_t* harfBuzzBuffer,
         unsigned startIndex,
         unsigned numCharacters,
         const SimpleFontData* currentFont,
-        unsigned currentFontRangeFrom,
-        unsigned currentFontRangeTo,
+        PassRefPtr<UnicodeRangeSet> currentFontRangeSet,
         UScriptCode currentRunScript,
         hb_language_t);
     bool extractShapeResults(hb_buffer_t* harfBuzzBuffer,
@@ -177,17 +202,12 @@ private:
         bool isLastResort);
     bool collectFallbackHintChars(Vector<UChar32>& hint, bool needsList);
 
-    void insertRunIntoShapeResult(ShapeResult*, PassOwnPtr<ShapeResult::RunInfo> runToInsert, unsigned startGlyph, unsigned numGlyphs, hb_buffer_t*);
-    float adjustSpacing(ShapeResult::RunInfo*, size_t glyphIndex, unsigned currentCharacterIndex, float& offsetX, float& totalAdvance);
+    void insertRunIntoShapeResult(ShapeResult*, std::unique_ptr<ShapeResult::RunInfo> runToInsert, unsigned startGlyph, unsigned numGlyphs, hb_buffer_t*);
 
-    OwnPtr<UChar[]> m_normalizedBuffer;
+    std::unique_ptr<UChar[]> m_normalizedBuffer;
     unsigned m_normalizedBufferLength;
 
-    float m_wordSpacingAdjustment; // Delta adjustment (pixels) for each word break.
-    float m_letterSpacing; // Pixels to be added after each glyph.
-    unsigned m_expansionOpportunityCount;
-
-    Vector<hb_feature_t, 4> m_features;
+    FeaturesVector m_features;
     Deque<HolesQueueItem> m_holesQueue;
 };
 

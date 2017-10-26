@@ -14,13 +14,16 @@ gypi_values =
                 [ "../../chrome_browser_extensions.gypi" ])
 
 # GYP version: chrome/chrome_browser_extensions.gypi:browser_extensions
-source_set("extensions") {
+static_library("extensions") {
   sources = []
   sources += rebase_path(gypi_values.chrome_browser_extensions_enabled_sources,
                          ".",
                          "//chrome")
 
-  configs += [ "//build/config:precompiled_headers" ]
+  configs += [
+    "//build/config:precompiled_headers",
+    "//build/config/compiler:wexit_time_destructors",
+  ]
   defines = []
 
   # Since browser and browser_extensions actually depend on each other,
@@ -47,6 +50,7 @@ source_set("extensions") {
     "//components/data_reduction_proxy/proto:data_reduction_proxy_proto",
     "//components/dom_distiller/core",
     "//components/onc",
+    "//components/policy",
     "//components/proximity_auth",
     "//components/resources",
     "//components/strings",
@@ -85,13 +89,22 @@ source_set("extensions") {
     "//url",
   ]
 
+  if (enable_task_manager) {
+    sources += rebase_path(
+            gypi_values.chrome_browser_extensions_task_manager_enabled_sources,
+            ".",
+            "//chrome")
+  }
+
   if (is_chromeos) {
     sources +=
         rebase_path(gypi_values.chrome_browser_extensions_chromeos_sources,
                     ".",
                     "//chrome")
     sources -= [ "api/music_manager_private/device_id_linux.cc" ]
-    configs += [ "//build/config/linux:dbus" ]
+    if (use_dbus) {
+      configs += [ "//build/config/linux/dbus" ]
+    }
     deps += [
       "//components/chrome_apps",
       "//remoting/host/it2me:common",
@@ -135,10 +148,12 @@ source_set("extensions") {
   }
 
   if (is_linux) {
-    deps += [
-      "//build/linux:fontconfig",
-      "//dbus",
-    ]
+    deps += [ "//build/linux:fontconfig" ]
+
+    if (use_dbus) {
+      deps += [ "//dbus" ]
+    }
+
     if (use_x11) {
       configs += [ "//build/config/linux:x11" ]
       deps += [
@@ -155,17 +170,6 @@ source_set("extensions") {
     }
   }
 
-  if (enable_configuration_policy) {
-    deps += [ "//components/policy" ]
-    sources += [
-      "policy_handlers.cc",
-      "policy_handlers.h",
-    ]
-    sources += rebase_path(gypi_values.chrome_browser_extensions_policy_sources,
-                           ".",
-                           "//chrome")
-  }
-
   if (enable_webrtc) {
     sources += [ "api/webrtc_logging_private/webrtc_logging_private_api.cc" ]
   } else {
@@ -174,7 +178,7 @@ source_set("extensions") {
   }
 
   if (use_brlapi) {
-    deps += [ "//build/linux:libbrlapi" ]
+    deps += [ "//build/linux/libbrlapi" ]
     sources += rebase_path(gypi_values.chrome_browser_extensions_brlapi_sources,
                            ".",
                            "//chrome")

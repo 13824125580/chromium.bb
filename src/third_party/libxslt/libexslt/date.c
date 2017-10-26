@@ -667,6 +667,11 @@ exsltDateCreateDate (exsltDateType type)
     }
     memset (ret, 0, sizeof(exsltDateVal));
 
+    if (type != XS_DURATION) {
+        ret->value.date.mon = 1;
+        ret->value.date.day = 1;
+    }
+
     if (type != EXSLT_UNKNOWN)
         ret->type = type;
 
@@ -1278,7 +1283,7 @@ exsltDateFormat (const exsltDateValPtr dt)
     }
 
     if (dt->type & XS_GYEAR) {
-        xmlChar buf[20], *cur = buf;
+        xmlChar buf[100], *cur = buf;
 
         FORMAT_GYEAR(dt->value.date.year, cur);
         if (dt->type == XS_GYEARMONTH) {
@@ -1395,10 +1400,10 @@ _exsltDateTruncateDate (exsltDateValPtr dt, exsltDateType type)
     }
 
     if ((type & XS_GDAY) != XS_GDAY)
-        dt->value.date.day = 0;
+        dt->value.date.day = 1;
 
     if ((type & XS_GMONTH) != XS_GMONTH)
-        dt->value.date.mon = 0;
+        dt->value.date.mon = 1;
 
     if ((type & XS_GYEAR) != XS_GYEAR)
         dt->value.date.year = 0;
@@ -1472,18 +1477,6 @@ _exsltDateAdd (exsltDateValPtr dt, exsltDateValPtr dur)
     r = &(ret->value.date);
     d = &(dt->value.date);
     u = &(dur->value.dur);
-
-    /* normalization */
-    if (d->mon == 0)
-        d->mon = 1;
-
-    /* normalize for time zone offset */
-    u->sec -= (d->tzo * 60);	/* changed from + to - (bug 153000) */
-    d->tzo = 0;
-
-    /* normalization */
-    if (d->day == 0)
-        d->day = 1;
 
     /* month */
     carry  = d->mon + u->mon;
@@ -1588,40 +1581,6 @@ _exsltDateAdd (exsltDateValPtr dt, exsltDateValPtr dur)
 }
 
 /**
- * exsltDateNormalize:
- * @dt: an #exsltDateValPtr
- *
- * Normalize @dt to GMT time.
- *
- */
-static void
-exsltDateNormalize (exsltDateValPtr dt)
-{
-    exsltDateValPtr dur, tmp;
-
-    if (dt == NULL)
-        return;
-
-    if (((dt->type & XS_TIME) != XS_TIME) && (dt->value.date.tzo == 0))
-        return;
-
-    dur = exsltDateCreateDate(XS_DURATION);
-    if (dur == NULL)
-        return;
-
-    tmp = _exsltDateAdd(dt, dur);
-    if (tmp == NULL)
-        return;
-
-    memcpy(dt, tmp, sizeof(exsltDateVal));
-
-    exsltDateFreeDate(tmp);
-    exsltDateFreeDate(dur);
-
-    dt->value.date.tzo = 0;
-}
-
-/**
  * _exsltDateDifference:
  * @x: an #exsltDateValPtr
  * @y: an #exsltDateValPtr
@@ -1644,9 +1603,6 @@ _exsltDateDifference (exsltDateValPtr x, exsltDateValPtr y, int flag)
     if (((x->type < XS_GYEAR) || (x->type > XS_DATETIME)) ||
         ((y->type < XS_GYEAR) || (y->type > XS_DATETIME)))
         return NULL;
-
-    exsltDateNormalize(x);
-    exsltDateNormalize(y);
 
     /*
      * the operand with the most specific format must be converted to
@@ -1675,6 +1631,8 @@ _exsltDateDifference (exsltDateValPtr x, exsltDateValPtr y, int flag)
                               _exsltDateCastYMToDays(x);
         ret->value.dur.day += y->value.date.day - x->value.date.day;
         ret->value.dur.sec  = TIME_TO_NUMBER(y) - TIME_TO_NUMBER(x);
+        ret->value.dur.sec += (x->value.date.tzo - y->value.date.tzo) *
+                              SECS_PER_MIN;
 	if (ret->value.dur.day > 0.0 && ret->value.dur.sec < 0.0) {
 	    ret->value.dur.day -= 1;
 	    ret->value.dur.sec = ret->value.dur.sec + SECS_PER_DAY;

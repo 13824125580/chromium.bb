@@ -16,14 +16,17 @@
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/path_service.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "base/win/registry.h"
 #include "base/win/windows_version.h"
-#include "chrome/app/chrome_crash_reporter_client.h"
+#include "chrome/app/chrome_crash_reporter_client_win.h"
 #include "chrome/app/main_dll_loader_win.h"
-#include "chrome/browser/chrome_process_finder_win.h"
 #include "chrome/browser/policy/policy_path_parser.h"
+#include "chrome/browser/win/chrome_process_finder.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/installer/util/browser_distribution.h"
@@ -36,15 +39,14 @@
 #include "components/startup_metric_utils/common/pre_read_field_trial_utils_win.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
-#include "ui/gfx/win/dpi.h"
 
 namespace {
 
 base::LazyInstance<ChromeCrashReporterClient>::Leaky g_chrome_crash_client =
     LAZY_INSTANCE_INITIALIZER;
 
-base::LazyInstance<std::vector<crash_reporter::UploadedReport>>::Leaky
-    g_uploaded_reports = LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<std::vector<crash_reporter::Report>>::Leaky g_crash_reports =
+    LAZY_INSTANCE_INITIALIZER;
 
 // List of switches that it's safe to rendezvous early with. Fast start should
 // not be done if a command line contains a switch not in this set.
@@ -130,17 +132,6 @@ void EnableHighDPISupport() {
   }
 }
 
-void SwitchToLFHeap() {
-  // Only needed on XP but harmless on other Windows flavors.
-  auto crt_heap = _get_heap_handle();
-  ULONG enable_LFH = 2;
-  if (HeapSetInformation(reinterpret_cast<HANDLE>(crt_heap),
-                         HeapCompatibilityInformation,
-                         &enable_LFH, sizeof(enable_LFH))) {
-    VLOG(1) << "Low fragmentation heap enabled.";
-  }
-}
-
 // Returns true if |command_line| contains a /prefetch:# argument where # is in
 // [1, 8].
 bool HasValidWindowsPrefetchArgument(const base::CommandLine& command_line) {
@@ -157,18 +148,64 @@ bool HasValidWindowsPrefetchArgument(const base::CommandLine& command_line) {
   return false;
 }
 
+// Some users are getting stuck in compatibility mode. Try to help them escape.
+// See http://crbug.com/581499. Returns true if a compatibility mode entry was
+// removed.
+bool RemoveAppCompatFlagsEntry() {
+  base::FilePath current_exe;
+  if (!PathService::Get(base::FILE_EXE, &current_exe))
+    return false;
+  if (!current_exe.IsAbsolute())
+    return false;
+  base::win::RegKey key;
+  if (key.Open(HKEY_CURRENT_USER,
+               L"Software\\Microsoft\\Windows "
+               L"NT\\CurrentVersion\\AppCompatFlags\\Layers",
+               KEY_READ | KEY_WRITE) == ERROR_SUCCESS) {
+    std::wstring layers;
+    if (key.ReadValue(current_exe.value().c_str(), &layers) == ERROR_SUCCESS) {
+      std::vector<base::string16> tokens = base::SplitString(
+          layers, L" ", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+      size_t initial_size = tokens.size();
+      static const wchar_t* const kCompatModeTokens[] = {
+          L"WIN95",       L"WIN98",       L"WIN4SP5",  L"WIN2000",  L"WINXPSP2",
+          L"WINXPSP3",    L"VISTARTM",    L"VISTASP1", L"VISTASP2", L"WIN7RTM",
+          L"WINSRV03SP1", L"WINSRV08SP1", L"WIN8RTM",
+      };
+      for (const wchar_t* compat_mode_token : kCompatModeTokens) {
+        tokens.erase(
+            std::remove(tokens.begin(), tokens.end(), compat_mode_token),
+            tokens.end());
+      }
+      LONG result;
+      if (tokens.empty()) {
+        result = key.DeleteValue(current_exe.value().c_str());
+      } else {
+        base::string16 without_compat_mode_tokens =
+            base::JoinString(tokens, L" ");
+        result = key.WriteValue(current_exe.value().c_str(),
+                                without_compat_mode_tokens.c_str());
+      }
+
+      // Return if we changed anything so that we can restart.
+      return tokens.size() != initial_size && result == ERROR_SUCCESS;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 // This helper is looked up in the browser to retrieve the crash reports. See
 // CrashUploadListCrashpad. Note that we do not pass an std::vector here,
 // because we do not want to allocate/free in different modules. The returned
 // pointer is read-only.
-extern "C" __declspec(dllexport) void GetUploadedReportsImpl(
-    const crash_reporter::UploadedReport** reports,
+extern "C" __declspec(dllexport) void GetCrashReportsImpl(
+    const crash_reporter::Report** reports,
     size_t* report_count) {
-  crash_reporter::GetUploadedReports(g_uploaded_reports.Pointer());
-  *reports = g_uploaded_reports.Pointer()->data();
-  *report_count = g_uploaded_reports.Pointer()->size();
+  crash_reporter::GetReports(g_crash_reports.Pointer());
+  *reports = g_crash_reports.Pointer()->data();
+  *report_count = g_crash_reports.Pointer()->size();
 }
 
 #if !defined(WIN_CONSOLE_APP)
@@ -192,8 +229,7 @@ int main() {
   // except for the browser process. Any new process type will have to assign
   // itself a prefetch id. See kPrefetchArgument* constants in
   // content_switches.cc for details.
-  DCHECK(!startup_metric_utils::GetPreReadOptions().use_prefetch_argument ||
-         process_type.empty() ||
+  DCHECK(process_type.empty() ||
          HasValidWindowsPrefetchArgument(*command_line));
 
   if (process_type == crash_reporter::switches::kCrashpadHandler) {
@@ -205,8 +241,6 @@ int main() {
   crash_reporter::InitializeCrashpadWithEmbeddedHandler(process_type.empty(),
                                                         process_type);
 
-  SwitchToLFHeap();
-
   startup_metric_utils::RecordExeMainEntryPointTime(base::Time::Now());
 
   // Signal Chrome Elf that Chrome has begun to start.
@@ -215,14 +249,12 @@ int main() {
   // The exit manager is in charge of calling the dtors of singletons.
   base::AtExitManager exit_manager;
 
-  // We don't want to set DPI awareness on pre-Win7 because we don't support
-  // DirectWrite there. GDI fonts are kerned very badly, so better to leave
-  // DPI-unaware and at effective 1.0. See also ShouldUseDirectWrite().
-  if (base::win::GetVersion() >= base::win::VERSION_WIN7)
-    EnableHighDPISupport();
+  EnableHighDPISupport();
 
   if (AttemptFastNotify(*command_line))
     return 0;
+
+  RemoveAppCompatFlagsEntry();
 
   // Load and launch the chrome dll. *Everything* happens inside.
   VLOG(1) << "About to load main DLL.";

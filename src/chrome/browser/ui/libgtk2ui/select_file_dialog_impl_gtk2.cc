@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -18,7 +19,6 @@
 #undef RootWindow
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -116,9 +116,6 @@ void SelectFileDialogImplGTK::SelectFileImpl(
     gfx::NativeWindow owning_window,
     void* params) {
   type_ = type;
-  // |owning_window| can be null when user right-clicks on a downloadable item
-  // and chooses 'Open Link in New Tab' when 'Ask where to save each file
-  // before downloading.' preference is turned on. (http://crbug.com/29213)
   if (owning_window) {
     owning_window->AddObserver(this);
     parents_.insert(owning_window);
@@ -186,7 +183,7 @@ void SelectFileDialogImplGTK::AddFilters(GtkFileChooser* chooser) {
       if (!current_extension.empty()) {
         if (!filter)
           filter = gtk_file_filter_new();
-        scoped_ptr<std::string> file_extension(
+        std::unique_ptr<std::string> file_extension(
             new std::string("." + current_extension));
         fallback_labels.insert(std::string("*").append(*file_extension));
         gtk_file_filter_add_custom(
@@ -417,11 +414,8 @@ void* SelectFileDialogImplGTK::PopParamsForDialog(GtkWidget* dialog) {
 void SelectFileDialogImplGTK::FileDialogDestroyed(GtkWidget* dialog) {
   dialogs_.erase(dialog);
 
-  // Parent may be NULL in a few cases: 1) on shutdown when
-  // AllBrowsersClosed() trigger this handler after all the browser
-  // windows got destroyed, or 2) when the parent tab has been opened by
-  // 'Open Link in New Tab' context menu on a downloadable item and
-  // the tab has no content (see the comment in SelectFile as well).
+  // |parent| can be NULL when closing the host window
+  // while opening the file-picker.
   aura::Window* parent = GetAuraTransientParent(dialog);
   if (!parent)
     return;

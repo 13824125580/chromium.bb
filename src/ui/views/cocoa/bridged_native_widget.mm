@@ -12,19 +12,21 @@
 #import "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/input_method_factory.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/dip_util.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
 #import "ui/gfx/mac/nswindow_frame_controls.h"
-#include "ui/gfx/screen.h"
 #import "ui/views/cocoa/bridged_content_view.h"
+#import "ui/views/cocoa/drag_drop_client_mac.h"
 #import "ui/views/cocoa/cocoa_mouse_capture.h"
+#import "ui/views/cocoa/cocoa_window_move_loop.h"
 #include "ui/views/cocoa/tooltip_manager_mac.h"
 #import "ui/views/cocoa/views_nswindow_delegate.h"
 #import "ui/views/cocoa/widget_owner_nswindow_adapter.h"
@@ -83,8 +85,20 @@ CGError CGSSetWindowBackgroundBlurRadius(CGSConnection connection,
 
 namespace {
 
+using RankMap = std::map<NSView*, int>;
+
+// SDK 10.11 contains incompatible changes of sortSubviewsUsingFunction.
+// It takes (__kindof NSView*) as comparator argument.
+// https://llvm.org/bugs/show_bug.cgi?id=25149
+#if !defined(MAC_OS_X_VERSION_10_11) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_11
+using NSViewComparatorValue = id;
+#else
+using NSViewComparatorValue = __kindof NSView*;
+#endif
+
 const CGFloat kMavericksMenuOpacity = 251.0 / 255.0;
-const CGFloat kYosemiteMenuOpacity = 194.0 / 255.0;
+const CGFloat kYosemiteMenuOpacity = 177.0 / 255.0;
 const int kYosemiteMenuBlur = 80;
 
 // Margin at edge and corners of the window that trigger resizing. These match
@@ -95,8 +109,8 @@ const int kResizeAreaCornerSize = 12;
 int kWindowPropertiesKey;
 
 float GetDeviceScaleFactorFromView(NSView* view) {
-  gfx::Display display =
-      gfx::Screen::GetScreen()->GetDisplayNearestWindow(view);
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(view);
   DCHECK(display.is_valid());
   return display.device_scale_factor();
 }
@@ -261,6 +275,40 @@ scoped_refptr<base::SingleThreadTaskRunner> GetCompositorTaskRunner() {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       ui::WindowResizeHelperMac::Get()->task_runner();
   return task_runner ? task_runner : base::ThreadTaskRunnerHandle::Get();
+}
+
+void RankNSViews(views::View* view,
+                 const views::BridgedNativeWidget::AssociatedViews& hosts,
+                 RankMap* rank) {
+  auto it = hosts.find(view);
+  if (it != hosts.end())
+    rank->emplace(it->second, rank->size());
+  for (int i = 0; i < view->child_count(); ++i)
+    RankNSViews(view->child_at(i), hosts, rank);
+}
+
+NSComparisonResult SubviewSorter(NSViewComparatorValue lhs,
+                                 NSViewComparatorValue rhs,
+                                 void* rank_as_void) {
+  DCHECK_NE(lhs, rhs);
+
+  const RankMap* rank = static_cast<const RankMap*>(rank_as_void);
+  auto left_rank = rank->find(lhs);
+  auto right_rank = rank->find(rhs);
+  bool left_found = left_rank != rank->end();
+  bool right_found = right_rank != rank->end();
+
+  // Sort unassociated views above associated views.
+  if (left_found != right_found)
+    return left_found ? NSOrderedAscending : NSOrderedDescending;
+
+  if (left_found) {
+    return left_rank->second < right_rank->second ? NSOrderedAscending
+                                                  : NSOrderedDescending;
+  }
+
+  // If both are unassociated, consider that order is not important
+  return NSOrderedSame;
 }
 
 }  // namespace
@@ -473,6 +521,7 @@ void BridgedNativeWidget::SetRootView(views::View* view) {
   // and replaced, pointing at the new view.
   DCHECK(!view || !compositor_widget_);
 
+  drag_drop_client_.reset();
   [bridged_view_ clearView];
   bridged_view_.reset();
   // Note that there can still be references to the old |bridged_view_|
@@ -481,6 +530,8 @@ void BridgedNativeWidget::SetRootView(views::View* view) {
 
   if (view) {
     bridged_view_.reset([[BridgedContentView alloc] initWithView:view]);
+    drag_drop_client_.reset(new DragDropClientMac(this, view));
+
     // Objective C initializers can return nil. However, if |view| is non-NULL
     // this should be treated as an error and caught early.
     CHECK(bridged_view_);
@@ -569,6 +620,39 @@ bool BridgedNativeWidget::HasCapture() {
   return mouse_capture_ && mouse_capture_->IsActive();
 }
 
+Widget::MoveLoopResult BridgedNativeWidget::RunMoveLoop(
+      const gfx::Vector2d& drag_offset) {
+  DCHECK(!HasCapture());
+  DCHECK(!window_move_loop_);
+
+  // RunMoveLoop caller is responsible for updating the window to be under the
+  // mouse, but it does this using possibly outdated coordinate from the mouse
+  // event, and mouse is very likely moved beyound that point.
+
+  // Compensate for mouse drift by shifting the initial mouse position we pass
+  // to CocoaWindowMoveLoop, so as it handles incoming move events the window's
+  // top left corner will be |drag_offset| from the current mouse position.
+
+  const gfx::Rect frame = gfx::ScreenRectFromNSRect([window_ frame]);
+  const gfx::Point mouse_in_screen(frame.x() + drag_offset.x(),
+                                   frame.y() + drag_offset.y());
+  window_move_loop_.reset(new CocoaWindowMoveLoop(
+      this, gfx::ScreenPointToNSPoint(mouse_in_screen)));
+
+  return window_move_loop_->Run();
+
+  // |this| may be destroyed during the RunLoop, causing it to exit early.
+  // Even if that doesn't happen, CocoaWindowMoveLoop will clean itself up by
+  // calling EndMoveLoop(). So window_move_loop_ will always be null before the
+  // function returns. But don't DCHECK since |this| might not be valid.
+}
+
+void BridgedNativeWidget::EndMoveLoop() {
+  DCHECK(window_move_loop_);
+  window_move_loop_->End();
+  window_move_loop_.reset();
+}
+
 void BridgedNativeWidget::SetNativeWindowProperty(const char* name,
                                                   void* value) {
   NSString* key = [NSString stringWithUTF8String:name];
@@ -590,6 +674,14 @@ void BridgedNativeWidget::SetCursor(NSCursor* cursor) {
 }
 
 void BridgedNativeWidget::OnWindowWillClose() {
+  // Ensure BridgedNativeWidget does not have capture, otherwise
+  // OnMouseCaptureLost() may reference a deleted |native_widget_mac_| when
+  // called via ~CocoaMouseCapture() upon the destruction of |mouse_capture_|.
+  // See crbug.com/622201. Also we do this before setting the delegate to nil,
+  // because this may lead to callbacks to bridge which rely on a valid
+  // delegate.
+  ReleaseCapture();
+
   if (parent_) {
     parent_->RemoveChildWindow(this);
     parent_ = nullptr;
@@ -660,11 +752,6 @@ void BridgedNativeWidget::ToggleDesiredFullscreenState() {
   if (!window_visible_)
     SetVisibilityState(SHOW_INACTIVE);
 
-  if (base::mac::IsOSSnowLeopard()) {
-    NOTIMPLEMENTED();
-    return;  // TODO(tapted): Implement this for Snow Leopard.
-  }
-
   // Enable fullscreen collection behavior because:
   // 1: -[NSWindow toggleFullscreen:] would otherwise be ignored,
   // 2: the fullscreen button must be enabled so the user can leave fullscreen.
@@ -688,19 +775,20 @@ void BridgedNativeWidget::OnSizeChanged() {
   // We don't update the window mask during a live resize, instead it is done
   // after the resize is completed in viewDidEndLiveResize: in
   // BridgedContentView.
-  if (base::mac::IsOSMavericksOrEarlier() && ![window_ inLiveResize])
+  if (base::mac::IsOSMavericks() && ![window_ inLiveResize])
     [bridged_view_ updateWindowMask];
 }
 
-void BridgedNativeWidget::OnVisibilityChanged() {
-  OnVisibilityChangedTo([window_ isVisible]);
+void BridgedNativeWidget::OnPositionChanged() {
+  native_widget_mac_->GetWidget()->OnNativeWidgetMove();
 }
 
-void BridgedNativeWidget::OnVisibilityChangedTo(bool new_visibility) {
-  if (window_visible_ == new_visibility)
+void BridgedNativeWidget::OnVisibilityChanged() {
+  const bool window_visible = [window_ isVisible];
+  if (window_visible_ == window_visible)
     return;
 
-  window_visible_ = new_visibility;
+  window_visible_ = window_visible;
 
   // If arriving via SetVisible(), |wants_to_be_visible_| should already be set.
   // If made visible externally (e.g. Cmd+H), just roll with it. Don't try (yet)
@@ -712,7 +800,7 @@ void BridgedNativeWidget::OnVisibilityChangedTo(bool new_visibility) {
     if (parent_)
       [parent_->GetNSWindow() addChildWindow:window_ ordered:NSWindowAbove];
   } else {
-    mouse_capture_.reset();  // Capture on hidden windows is not permitted.
+    ReleaseCapture();  // Capture on hidden windows is not permitted.
 
     // When becoming invisible, remove the entry in any parent's childWindow
     // list. Cocoa's childWindow management breaks down when child windows are
@@ -758,6 +846,9 @@ void BridgedNativeWidget::OnWindowKeyStatusChangedTo(bool is_key) {
   if ([window_ contentView] == [window_ firstResponder]) {
     if (is_key) {
       widget->OnNativeFocus();
+      // Explicitly set the keyboard accessibility state on regaining key
+      // window status.
+      [bridged_view_ updateFullKeyboardAccess];
       widget->GetFocusManager()->RestoreFocusedView();
     } else {
       widget->OnNativeBlur();
@@ -884,6 +975,31 @@ void BridgedNativeWidget::CreateLayer(ui::LayerType layer_type,
   UpdateLayerProperties();
 }
 
+void BridgedNativeWidget::SetAssociationForView(const views::View* view,
+                                                NSView* native_view) {
+  DCHECK_EQ(0u, associated_views_.count(view));
+  associated_views_[view] = native_view;
+  native_widget_mac_->GetWidget()->ReorderNativeViews();
+}
+
+void BridgedNativeWidget::ClearAssociationForView(const views::View* view) {
+  auto it = associated_views_.find(view);
+  DCHECK(it != associated_views_.end());
+  associated_views_.erase(it);
+}
+
+void BridgedNativeWidget::ReorderChildViews() {
+  RankMap rank;
+  Widget* widget = native_widget_mac_->GetWidget();
+  RankNSViews(widget->GetRootView(), associated_views_, &rank);
+  // Unassociated NSViews should be ordered above associated ones. The exception
+  // is the UI compositor's superview, which should always be on the very
+  // bottom, so give it an explicit negative rank.
+  if (compositor_superview_)
+    rank[compositor_superview_] = -1;
+  [bridged_view_ sortSubviewsUsingFunction:&SubviewSorter context:&rank];
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // BridgedNativeWidget, internal::InputMethodDelegate:
 
@@ -907,6 +1023,10 @@ void BridgedNativeWidget::PostCapturedEvent(NSEvent* event) {
 
 void BridgedNativeWidget::OnMouseCaptureLost() {
   native_widget_mac_->GetWidget()->OnMouseCaptureLost();
+}
+
+NSWindow* BridgedNativeWidget::GetWindow() const {
+  return window_;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1080,11 +1200,7 @@ void BridgedNativeWidget::CreateCompositor() {
 
   AddCompositorSuperview();
 
-  // TODO(tapted): Get this value from GpuDataManagerImpl via ViewsDelegate.
-  bool needs_gl_finish_workaround = false;
-
-  compositor_widget_.reset(
-      new ui::AcceleratedWidgetMac(needs_gl_finish_workaround));
+  compositor_widget_.reset(new ui::AcceleratedWidgetMac());
   compositor_.reset(
       new ui::Compositor(context_factory, GetCompositorTaskRunner()));
   compositor_->SetAcceleratedWidget(compositor_widget_->accelerated_widget());

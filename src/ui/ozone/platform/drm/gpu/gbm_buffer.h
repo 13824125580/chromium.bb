@@ -5,6 +5,8 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_GBM_BUFFER_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_GBM_BUFFER_H_
 
+#include <vector>
+
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
 #include "ui/gfx/buffer_types.h"
@@ -26,34 +28,58 @@ class GbmBuffer : public GbmBufferBase {
       gfx::BufferFormat format,
       const gfx::Size& size,
       gfx::BufferUsage usage);
+  static scoped_refptr<GbmBuffer> CreateBufferFromFds(
+      const scoped_refptr<GbmDevice>& gbm,
+      gfx::BufferFormat format,
+      const gfx::Size& size,
+      std::vector<base::ScopedFD>&& fds,
+      const std::vector<int>& strides,
+      const std::vector<int>& offsets);
   gfx::BufferFormat GetFormat() const { return format_; }
   gfx::BufferUsage GetUsage() const { return usage_; }
+  bool AreFdsValid() const;
+  size_t GetFdCount() const;
+  int GetFd(size_t plane) const;
+  int GetStride(size_t plane) const;
+  int GetOffset(size_t plane) const;
+  gfx::Size GetSize() const override;
 
  private:
   GbmBuffer(const scoped_refptr<GbmDevice>& gbm,
             gbm_bo* bo,
             gfx::BufferFormat format,
-            gfx::BufferUsage usage);
+            gfx::BufferUsage usage,
+            std::vector<base::ScopedFD>&& fds,
+            const gfx::Size& size,
+            const std::vector<int>& strides,
+            const std::vector<int>& offsets);
   ~GbmBuffer() override;
 
   gfx::BufferFormat format_;
   gfx::BufferUsage usage_;
+  std::vector<base::ScopedFD> fds_;
+  gfx::Size size_;
+  std::vector<int> strides_;
+  std::vector<int> offsets_;
 
   DISALLOW_COPY_AND_ASSIGN(GbmBuffer);
 };
 
 class GbmPixmap : public NativePixmap {
  public:
-  explicit GbmPixmap(GbmSurfaceFactory* surface_manager);
-  void Initialize(base::ScopedFD dma_buf, int dma_buf_pitch);
-  bool InitializeFromBuffer(const scoped_refptr<GbmBuffer>& buffer);
+  GbmPixmap(GbmSurfaceFactory* surface_manager,
+            const scoped_refptr<GbmBuffer>& buffer);
+
   void SetProcessingCallback(
       const ProcessingCallback& processing_callback) override;
 
   // NativePixmap:
   void* GetEGLClientBuffer() const override;
-  int GetDmaBufFd() const override;
-  int GetDmaBufPitch() const override;
+  bool AreDmaBufFdsValid() const override;
+  size_t GetDmaBufFdCount() const override;
+  int GetDmaBufFd(size_t plane) const override;
+  int GetDmaBufPitch(size_t plane) const override;
+  int GetDmaBufOffset(size_t plane) const override;
   gfx::BufferFormat GetBufferFormat() const override;
   gfx::Size GetBufferSize() const override;
   bool ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
@@ -70,11 +96,8 @@ class GbmPixmap : public NativePixmap {
   scoped_refptr<ScanoutBuffer> ProcessBuffer(const gfx::Size& size,
                                              uint32_t format);
 
-  scoped_refptr<GbmBuffer> buffer_;
-  base::ScopedFD dma_buf_;
-  int dma_buf_pitch_ = -1;
-
   GbmSurfaceFactory* surface_manager_;
+  scoped_refptr<GbmBuffer> buffer_;
 
   // OverlayValidator can request scaling or format conversions as needed for
   // this Pixmap. This holds the processed buffer.

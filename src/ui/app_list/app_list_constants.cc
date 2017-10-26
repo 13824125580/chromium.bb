@@ -83,7 +83,11 @@ const gfx::Tween::Type kFolderFadeOutTweenType = gfx::Tween::FAST_OUT_LINEAR_IN;
 
 // Preferred number of columns and rows in apps grid.
 const int kPreferredCols = 4;
+#if defined(OS_CHROMEOS)
 const int kPreferredRows = 4;
+#else
+const int kPreferredRows = 3;
+#endif  // defined(OS_CHROMEOS)
 const int kGridIconDimension = 48;
 
 // Preferred search result icon sizes.
@@ -102,6 +106,12 @@ const int kCenteredPreferredRows = 3;
 // Preferred number of columns and rows in the experimental app list apps grid.
 const int kExperimentalPreferredCols = 6;
 const int kExperimentalPreferredRows = 4;
+
+// The number of apps shown in the start page app grid.
+const size_t kNumStartPageTiles = 9;
+
+// Maximum number of results to show in the launcher Search UI.
+const size_t kMaxSearchResults = 6;
 
 // Radius of the circle, in which if entered, show re-order preview.
 const int kReorderDroppingCircleRadius = 35;
@@ -122,7 +132,7 @@ size_t kMaxFolderItems = 16;
 const size_t kNumFolderTopItems = 4;
 
 // Maximum length of the folder name in chars.
-const size_t kMaxFolderNameChars = 40;
+const size_t kMaxFolderNameChars = 80;
 
 // Font style for app item labels.
 const ui::ResourceBundle::FontStyle kItemTextFontStyle =

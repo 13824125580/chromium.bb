@@ -22,10 +22,13 @@
 #include "crypto/sha2.h"
 #include "device/bluetooth/bluetooth_device_mac.h"
 
+@class BluetoothLowEnergyPeripheralDelegate;
+
 namespace device {
 
 class BluetoothAdapterMac;
 class BluetoothLowEnergyDiscoverManagerMac;
+class BluetoothRemoteGattServiceMac;
 
 class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
     : public BluetoothDeviceMac {
@@ -79,12 +82,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
       const device::BluetoothUUID& uuid,
       const ConnectToServiceCallback& callback,
       const ConnectToServiceErrorCallback& error_callback) override;
-  void CreateGattConnection(
-      const GattConnectionCallback& callback,
-      const ConnectErrorCallback& error_callback) override;
-
-  // BluetoothDeviceMac override.
-  NSDate* GetLastUpdateTime() const override;
 
  protected:
   // BluetoothDevice override.
@@ -92,10 +89,17 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   void CreateGattConnectionImpl() override;
   void DisconnectGatt() override;
 
+  // Methods used by BluetoothLowEnergyPeripheralBridge.
+  void DidDiscoverPrimaryServices(NSError* error);
+  void DidModifyServices(NSArray* invalidatedServices);
+  void DidDiscoverCharacteristics(CBService* cb_service, NSError* error);
+  void DidUpdateValue(CBCharacteristic* characteristic, NSError* error);
+  void DidWriteValue(CBCharacteristic* characteristic, NSError* error);
+  void DidUpdateNotificationState(CBCharacteristic* characteristic,
+                                  NSError* error);
+
   // Updates information about the device.
-  virtual void Update(CBPeripheral* peripheral,
-                      NSDictionary* advertisement_data,
-                      int rssi);
+  virtual void Update(NSDictionary* advertisement_data, int rssi);
 
   static std::string GetPeripheralIdentifier(CBPeripheral* peripheral);
 
@@ -108,9 +112,30 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
  private:
   friend class BluetoothAdapterMac;
   friend class BluetoothAdapterMacTest;
+  friend class BluetoothLowEnergyPeripheralBridge;
+  friend class BluetoothRemoteGattServiceMac;
+  friend class BluetoothTestMac;
+  friend class BluetoothRemoteGattServiceMac;
+
+  // Returns the Bluetooth adapter.
+  BluetoothAdapterMac* GetMacAdapter();
+
+  // Returns the CoreBluetooth Peripheral.
+  CBPeripheral* GetPeripheral();
+
+  // Returns BluetoothRemoteGattServiceMac based on the CBService.
+  BluetoothRemoteGattServiceMac* GetBluetoothRemoteGattService(
+      CBService* service) const;
+
+  // Callback used when the CoreBluetooth Peripheral is disconnected.
+  void DidDisconnectPeripheral(BluetoothDevice::ConnectErrorCode error_code);
 
   // CoreBluetooth data structure.
   base::scoped_nsobject<CBPeripheral> peripheral_;
+
+  // Objective-C delegate for the CBPeripheral.
+  base::scoped_nsobject<BluetoothLowEnergyPeripheralDelegate>
+      peripheral_delegate_;
 
   // RSSI value.
   int rssi_;
@@ -124,9 +149,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   // A local address for the device created by hashing the peripheral
   // identifier.
   std::string hash_address_;
-
-  // Stores the time of the most recent call to Update().
-  base::scoped_nsobject<NSDate> last_update_time_;
 
   // The services (identified by UUIDs) that this device provides.
   std::set<BluetoothUUID> advertised_uuids_;

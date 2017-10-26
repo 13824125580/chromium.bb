@@ -5,12 +5,15 @@
 #ifndef NET_DNS_DNS_CLIENT_H_
 #define NET_DNS_DNS_CLIENT_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "net/base/net_export.h"
+#include "net/base/rand_callback.h"
 
 namespace net {
 
 class AddressSorter;
+class ClientSocketFactory;
 struct DnsConfig;
 class DnsTransactionFactory;
 class NetLog;
@@ -36,7 +39,15 @@ class NET_EXPORT DnsClient {
   virtual AddressSorter* GetAddressSorter() = 0;
 
   // Creates default client.
-  static scoped_ptr<DnsClient> CreateClient(NetLog* net_log);
+  static std::unique_ptr<DnsClient> CreateClient(NetLog* net_log);
+
+  // Creates a client for testing.  Allows using a mock ClientSocketFactory and
+  // a deterministic random number generator. |socket_factory| must outlive
+  // the returned DnsClient.
+  static std::unique_ptr<DnsClient> CreateClientForTesting(
+      NetLog* net_log,
+      ClientSocketFactory* socket_factory,
+      const RandIntCallback& rand_int_callback);
 };
 
 }  // namespace net

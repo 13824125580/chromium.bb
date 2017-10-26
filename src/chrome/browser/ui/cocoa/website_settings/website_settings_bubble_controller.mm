@@ -4,13 +4,13 @@
 
 #import "chrome/browser/ui/cocoa/website_settings/website_settings_bubble_controller.h"
 
-#include <cmath>
-
 #import <AppKit/AppKit.h>
+
+#include <cmath>
 
 #include "base/i18n/rtl.h"
 #include "base/mac/bind_objc_block.h"
-#include "base/strings/string_number_conversions.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/certificate_viewer.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
@@ -25,7 +25,6 @@
 #import "chrome/browser/ui/cocoa/website_settings/permission_selector_button.h"
 #import "chrome/browser/ui/tab_dialogs.h"
 #include "chrome/browser/ui/website_settings/permission_menu_model.h"
-#include "chrome/browser/ui/website_settings/website_settings_utils.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
@@ -37,10 +36,13 @@
 #include "content/public/browser/ssl_host_state_delegate.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/url_constants.h"
+#include "extensions/common/constants.h"
 #include "grit/components_chromium_strings.h"
 #include "grit/components_google_chrome_strings.h"
 #include "grit/components_strings.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
 #import "ui/base/cocoa/flipped_view.h"
 #import "ui/base/cocoa/hover_image_button.h"
@@ -50,7 +52,8 @@
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 #include "ui/resources/grit/ui_resources.h"
 
-using ChosenObjectInfoPtr = scoped_ptr<WebsiteSettingsUI::ChosenObjectInfo>;
+using ChosenObjectInfoPtr =
+    std::unique_ptr<WebsiteSettingsUI::ChosenObjectInfo>;
 using ChosenObjectDeleteCallback =
     base::Callback<void(const WebsiteSettingsUI::ChosenObjectInfo&)>;
 
@@ -107,6 +110,11 @@ const CGFloat kPermissionPopUpXSpacing = 3;
 // |IDS_WEBSITE_SETTINGS_{FIRST,THIRD}_PARTY_SITE_DATA| next to each other.
 const CGFloat kTextLabelXPadding = 5;
 
+// NOTE: This assumes that there will never be more than one website settings
+// popup shown, and that the one that is shown is associated with the current
+// window. This matches the behaviour in views: see WebsiteSettingsPopupView.
+bool g_is_popup_showing = false;
+
 // Takes in the parent window, which should be a BrowserWindow, and gets the
 // proper anchor point for the bubble. The returned point is in screen
 // coordinates.
@@ -117,7 +125,7 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
     LocationBarViewMac* location_bar = [controller locationBarBridge];
     if (location_bar) {
       NSPoint bubble_point = location_bar->GetPageInfoBubblePoint();
-      origin = [parent convertBaseToScreen:bubble_point];
+      origin = ui::ConvertPointFromWindowToScreen(parent, bubble_point);
     }
   }
   return origin;
@@ -176,16 +184,23 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
   return kDefaultWindowWidth;
 }
 
+bool IsInternalURL(const GURL& url) {
+  return url.SchemeIs(content::kChromeUIScheme) ||
+         url.SchemeIs(extensions::kExtensionScheme) ||
+         url.SchemeIs(content::kViewSourceScheme);
+}
+
 - (id)initWithParentWindow:(NSWindow*)parentWindow
     websiteSettingsUIBridge:(WebsiteSettingsUIBridge*)bridge
                 webContents:(content::WebContents*)webContents
-             isInternalPage:(BOOL)isInternalPage
+                        url:(const GURL&)url
          isDevToolsDisabled:(BOOL)isDevToolsDisabled {
   DCHECK(parentWindow);
 
   webContents_ = webContents;
   permissionsPresent_ = NO;
   isDevToolsDisabled_ = isDevToolsDisabled;
+  url_ = url;
 
   // Use an arbitrary height; it will be changed in performLayout.
   NSRect contentRect = NSMakeRect(0, 0, [self defaultWindowWidth], 1);
@@ -210,10 +225,11 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
     [[[self window] contentView] setSubviews:
         [NSArray arrayWithObject:contentView_.get()]];
 
-    if (isInternalPage)
-      [self initializeContentsForInternalPage];
-    else
+    if (IsInternalURL(url_)) {
+      [self initializeContentsForInternalPage:url_];
+    } else {
       [self initializeContents];
+    }
 
     bridge_.reset(bridge);
     bridge_->set_bubble_controller(self);
@@ -233,14 +249,26 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
 }
 
 // Create the subviews for the bubble for internal Chrome pages.
-- (void)initializeContentsForInternalPage {
+- (void)initializeContentsForInternalPage:(const GURL&)url {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
 
-  NSPoint controlOrigin = NSMakePoint(
-      kInternalPageFramePadding,
-      kInternalPageFramePadding + info_bubble::kBubbleArrowHeight);
-  NSImage* productLogoImage =
-      rb.GetNativeImageNamed(IDR_PRODUCT_LOGO_16).ToNSImage();
+  int text = IDS_PAGE_INFO_INTERNAL_PAGE;
+  int icon = IDR_PRODUCT_LOGO_16;
+  if (url.SchemeIs(extensions::kExtensionScheme)) {
+    text = IDS_PAGE_INFO_EXTENSION_PAGE;
+    icon = IDR_PLUGINS_FAVICON;
+  } else if (url.SchemeIs(content::kViewSourceScheme)) {
+    text = IDS_PAGE_INFO_VIEW_SOURCE_PAGE;
+    // view-source scheme uses the same icon as chrome:// pages.
+    icon = IDR_PRODUCT_LOGO_16;
+  } else if (!url.SchemeIs(content::kChromeUIScheme)) {
+    NOTREACHED();
+  }
+
+  NSPoint controlOrigin =
+      NSMakePoint(kInternalPageFramePadding,
+                  kInternalPageFramePadding + info_bubble::kBubbleArrowHeight);
+  NSImage* productLogoImage = rb.GetNativeImageNamed(icon).ToNSImage();
   NSImageView* imageView = [self addImageWithSize:[productLogoImage size]
                                            toView:contentView_
                                           atPoint:controlOrigin];
@@ -248,8 +276,7 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
 
   NSRect imageFrame = [imageView frame];
   controlOrigin.x += NSWidth(imageFrame) + kInternalPageImageSpacing;
-  base::string16 text = l10n_util::GetStringUTF16(IDS_PAGE_INFO_INTERNAL_PAGE);
-  NSTextField* textField = [self addText:text
+  NSTextField* textField = [self addText:l10n_util::GetStringUTF16(text)
                                 withSize:[NSFont smallSystemFontSize]
                                     bold:NO
                                   toView:contentView_
@@ -648,7 +675,7 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
 
   certificateId_ = identityInfo.cert_id;
 
-  if (identityInfo.show_ssl_decision_revoke_button) {
+  if (certificateId_ &&  identityInfo.show_ssl_decision_revoke_button) {
     NSString* text = l10n_util::GetNSString(
         IDS_PAGEINFO_RESET_INVALID_CERTIFICATE_DECISIONS_BUTTON);
     resetDecisionsButton_ =
@@ -932,13 +959,11 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
   base::string16 thirdPartyLabelText;
   for (const auto& i : cookieInfoList) {
     if (i.is_first_party) {
-      firstPartyLabelText =
-          l10n_util::GetStringFUTF16(IDS_WEBSITE_SETTINGS_FIRST_PARTY_SITE_DATA,
-                                     base::IntToString16(i.allowed));
+      firstPartyLabelText = l10n_util::GetPluralStringFUTF16(
+          IDS_WEBSITE_SETTINGS_FIRST_PARTY_SITE_DATA, i.allowed);
     } else {
-      thirdPartyLabelText =
-          l10n_util::GetStringFUTF16(IDS_WEBSITE_SETTINGS_THIRD_PARTY_SITE_DATA,
-                                     base::IntToString16(i.allowed));
+      thirdPartyLabelText = l10n_util::GetPluralStringFUTF16(
+          IDS_WEBSITE_SETTINGS_THIRD_PARTY_SITE_DATA, i.allowed);
     }
   }
 
@@ -1069,7 +1094,7 @@ NSPoint AnchorPointForWindow(NSWindow* parent) {
 
     for (auto object : chosenObjectInfoList) {
       controlOrigin.y += kPermissionsTabSpacing;
-      NSPoint rowBottomRight = [self addChosenObject:make_scoped_ptr(object)
+      NSPoint rowBottomRight = [self addChosenObject:base::WrapUnique(object)
                                               toView:permissionsView_
                                              atPoint:controlOrigin];
       controlOrigin.y = rowBottomRight.y;
@@ -1089,9 +1114,14 @@ WebsiteSettingsUIBridge::WebsiteSettingsUIBridge(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       web_contents_(web_contents),
-      bubble_controller_(nil) {}
+      bubble_controller_(nil) {
+  DCHECK(!g_is_popup_showing);
+  g_is_popup_showing = true;
+}
 
 WebsiteSettingsUIBridge::~WebsiteSettingsUIBridge() {
+  DCHECK(g_is_popup_showing);
+  g_is_popup_showing = false;
 }
 
 void WebsiteSettingsUIBridge::set_bubble_controller(
@@ -1103,16 +1133,20 @@ void WebsiteSettingsUIBridge::Show(
     gfx::NativeWindow parent,
     Profile* profile,
     content::WebContents* web_contents,
-    const GURL& url,
+    const GURL& virtual_url,
     const security_state::SecurityStateModel::SecurityInfo& security_info) {
-  if (chrome::ToolkitViewsDialogsEnabled()) {
+  if (chrome::ToolkitViewsWebUIDialogsEnabled()) {
     chrome::ShowWebsiteSettingsBubbleViewsAtPoint(
         gfx::ScreenPointFromNSPoint(AnchorPointForWindow(parent)), profile,
-        web_contents, url, security_info);
+        web_contents, virtual_url, security_info);
     return;
   }
 
-  bool is_internal_page = InternalChromePage(url);
+  // Don't show the popup if it's already being shown. Since this method is
+  // called each time the location icon is clicked, each click toggles the popup
+  // in and out.
+  if (g_is_popup_showing)
+    return;
 
   // Create the bridge. This will be owned by the bubble controller.
   WebsiteSettingsUIBridge* bridge = new WebsiteSettingsUIBridge(web_contents);
@@ -1120,22 +1154,23 @@ void WebsiteSettingsUIBridge::Show(
   bool is_devtools_disabled =
       profile->GetPrefs()->GetBoolean(prefs::kDevToolsDisabled);
 
-  // Create the bubble controller. It will dealloc itself when it closes.
+  // Create the bubble controller. It will dealloc itself when it closes,
+  // resetting |g_is_popup_showing|.
   WebsiteSettingsBubbleController* bubble_controller =
       [[WebsiteSettingsBubbleController alloc]
              initWithParentWindow:parent
           websiteSettingsUIBridge:bridge
                       webContents:web_contents
-                   isInternalPage:is_internal_page
+                              url:virtual_url
                isDevToolsDisabled:is_devtools_disabled];
 
-  if (!is_internal_page) {
+  if (!IsInternalURL(virtual_url)) {
     // Initialize the presenter, which holds the model and controls the UI.
     // This is also owned by the bubble controller.
     WebsiteSettings* presenter = new WebsiteSettings(
         bridge, profile,
         TabSpecificContentSettings::FromWebContents(web_contents), web_contents,
-        url, security_info, content::CertStore::GetInstance());
+        virtual_url, security_info, content::CertStore::GetInstance());
     [bubble_controller setPresenter:presenter];
   }
 

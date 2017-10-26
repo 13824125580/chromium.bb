@@ -5,6 +5,7 @@
 #include "core/paint/BoxClipper.h"
 
 #include "core/layout/LayoutBox.h"
+#include "core/paint/ObjectPaintProperties.h"
 #include "core/paint/PaintInfo.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/RuntimeEnabledFeatures.h"
@@ -24,9 +25,18 @@ BoxClipper::BoxClipper(const LayoutBox& box, const PaintInfo& paintInfo, const L
     if (m_paintInfo.phase == PaintPhaseMask)
         return;
 
+    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+        const auto* objectProperties = m_box.objectPaintProperties();
+        if (objectProperties && objectProperties->overflowClip()) {
+            PaintChunkProperties properties(paintInfo.context.getPaintController().currentPaintChunkProperties());
+            properties.clip = objectProperties->overflowClip();
+            m_scopedClipProperty.emplace(paintInfo.context.getPaintController(), properties);
+        }
+        return;
+    }
+
     bool isControlClip = m_box.hasControlClip();
-    bool isOverflowOrContainmentClip = (m_box.hasOverflowClip() && !m_box.layer()->isSelfPaintingLayer())
-        || m_box.style()->containsPaint();
+    bool isOverflowOrContainmentClip = (m_box.hasOverflowClip() || box.styleRef().containsPaint()) && !(m_box.hasLayer() && m_box.layer()->isSelfPaintingLayer());
 
     if (!isControlClip && !isOverflowOrContainmentClip)
         return;
@@ -37,7 +47,8 @@ BoxClipper::BoxClipper(const LayoutBox& box, const PaintInfo& paintInfo, const L
     if (hasBorderRadius)
         clipRoundedRect = m_box.style()->getRoundedInnerBorderFor(LayoutRect(accumulatedOffset, m_box.size()));
 
-    if (contentsClipBehavior == SkipContentsClipIfPossible) {
+    // Selection may extend beyond visual overflow, so this optimization is invalid if selection is present.
+    if (contentsClipBehavior == SkipContentsClipIfPossible && box.getSelectionState() == SelectionNone) {
         LayoutRect contentsVisualOverflow = m_box.contentsVisualOverflowRect();
         if (contentsVisualOverflow.isEmpty())
             return;
@@ -52,12 +63,12 @@ BoxClipper::BoxClipper(const LayoutBox& box, const PaintInfo& paintInfo, const L
             return;
     }
 
-    if (!m_paintInfo.context.paintController().displayItemConstructionIsDisabled()) {
+    if (!m_paintInfo.context.getPaintController().displayItemConstructionIsDisabled()) {
         m_clipType = m_paintInfo.displayItemTypeForClipping();
         Vector<FloatRoundedRect> roundedRects;
         if (hasBorderRadius)
             roundedRects.append(clipRoundedRect);
-        m_paintInfo.context.paintController().createAndAppend<ClipDisplayItem>(m_box, m_clipType, pixelSnappedIntRect(clipRect), roundedRects);
+        m_paintInfo.context.getPaintController().createAndAppend<ClipDisplayItem>(m_box, m_clipType, pixelSnappedIntRect(clipRect), roundedRects);
     }
 }
 
@@ -66,8 +77,8 @@ BoxClipper::~BoxClipper()
     if (m_clipType == DisplayItem::UninitializedType)
         return;
 
-    ASSERT(m_box.hasControlClip() || (m_box.hasOverflowClip() && !m_box.layer()->isSelfPaintingLayer()) || m_box.style()->containsPaint());
-    m_paintInfo.context.paintController().endItem<EndClipDisplayItem>(m_box, DisplayItem::clipTypeToEndClipType(m_clipType));
+    DCHECK(m_box.hasControlClip() || ((m_box.hasOverflowClip() || m_box.style()->containsPaint()) && !(m_box.hasLayer() && m_box.layer()->isSelfPaintingLayer())));
+    m_paintInfo.context.getPaintController().endItem<EndClipDisplayItem>(m_box, DisplayItem::clipTypeToEndClipType(m_clipType));
 }
 
 } // namespace blink

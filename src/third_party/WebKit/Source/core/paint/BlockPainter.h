@@ -25,12 +25,13 @@ public:
 
     void paint(const PaintInfo&, const LayoutPoint& paintOffset);
     void paintObject(const PaintInfo&, const LayoutPoint&);
+    void paintContents(const PaintInfo&, const LayoutPoint&);
     void paintChildren(const PaintInfo&, const LayoutPoint&);
     void paintChild(const LayoutBox&, const PaintInfo&, const LayoutPoint&);
     void paintOverflowControlsIfNeeded(const PaintInfo&, const LayoutPoint&);
 
-    // See ObjectPainter::paintAsPseudoStackingContext for explanation of "pseudo stacking context".
-    void paintChildAsPseudoStackingContext(const LayoutBox&, const PaintInfo&, const LayoutPoint&);
+    // See ObjectPainter::paintAllPhasesAtomically().
+    void paintAllChildPhasesAtomically(const LayoutBox&, const PaintInfo&, const LayoutPoint&);
     static void paintChildrenOfFlexibleBox(const LayoutFlexibleBox&, const PaintInfo&, const LayoutPoint& paintOffset);
     static void paintInlineBox(const InlineBox&, const PaintInfo&, const LayoutPoint& paintOffset);
 
@@ -39,7 +40,6 @@ public:
 
 private:
     void paintCarets(const PaintInfo&, const LayoutPoint&);
-    void paintContents(const PaintInfo&, const LayoutPoint&);
 
     const LayoutBlock& m_layoutBlock;
 };

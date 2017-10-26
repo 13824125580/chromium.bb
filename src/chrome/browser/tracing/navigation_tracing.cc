@@ -11,7 +11,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/tracing/crash_service_uploader.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/tracing/tracing_switches.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/public/browser/background_tracing_config.h"
 #include "content/public/browser/background_tracing_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -36,7 +36,7 @@ void OnUploadComplete(TraceCrashServiceUploader* uploader,
 }
 
 void UploadCallback(const scoped_refptr<base::RefCountedString>& file_contents,
-                    scoped_ptr<const base::DictionaryValue> metadata,
+                    std::unique_ptr<const base::DictionaryValue> metadata,
                     base::Closure callback) {
   TraceCrashServiceUploader* uploader = new TraceCrashServiceUploader(
       g_browser_process->system_request_context());
@@ -61,17 +61,30 @@ void SetupNavigationTracing() {
   base::DictionaryValue dict;
   dict.SetString("mode", "REACTIVE_TRACING_MODE");
 
-  scoped_ptr<base::ListValue> rules_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> rules_list(new base::ListValue());
   {
-    scoped_ptr<base::DictionaryValue> rules_dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> rules_dict(
+        new base::DictionaryValue());
     rules_dict->SetString("rule", "TRACE_ON_NAVIGATION_UNTIL_TRIGGER_OR_FULL");
     rules_dict->SetString("trigger_name", kNavigationTracingConfig);
     rules_dict->SetString("category", "BENCHMARK_DEEP");
     rules_list->Append(std::move(rules_dict));
   }
+  {
+    std::unique_ptr<base::DictionaryValue> rules_dict(
+        new base::DictionaryValue());
+    rules_dict->SetString("rule",
+        "MONITOR_AND_DUMP_WHEN_SPECIFIC_HISTOGRAM_AND_VALUE");
+    rules_dict->SetString("category", "BENCHMARK_MEMORY_HEAVY");
+    rules_dict->SetString("histogram_name", "V8.GCLowMemoryNotification");
+    rules_dict->SetInteger("trigger_delay", 5);
+    rules_dict->SetInteger("histogram_lower_value", 0);
+    rules_dict->SetInteger("histogram_upper_value", 10000);
+    rules_list->Append(std::move(rules_dict));
+  }
   dict.Set("configs", std::move(rules_list));
 
-  scoped_ptr<content::BackgroundTracingConfig> config(
+  std::unique_ptr<content::BackgroundTracingConfig> config(
       content::BackgroundTracingConfig::FromDict(&dict));
   DCHECK(config);
 

@@ -5,11 +5,12 @@
 #ifndef CHROMECAST_COMMON_CAST_RESOURCE_DELEGATE_H_
 #define CHROMECAST_COMMON_CAST_RESOURCE_DELEGATE_H_
 
+#include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/base/resource/resource_bundle.h"
 
 namespace base {
@@ -56,7 +57,7 @@ class CastResourceDelegate : public ui::ResourceBundle::Delegate {
   void ClearAllExtraLocalizedStrings();
 
  private:
-  typedef base::hash_map<int, base::string16> ExtraLocaledStringMap;
+  using ExtraLocaledStringMap = std::unordered_map<int, base::string16>;
 
   ExtraLocaledStringMap extra_localized_strings_;
 

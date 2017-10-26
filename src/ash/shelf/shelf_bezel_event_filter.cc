@@ -7,15 +7,14 @@
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shell.h"
 #include "ui/aura/window.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace ash {
 
-ShelfBezelEventFilter::ShelfBezelEventFilter(
-    ShelfLayoutManager* shelf)
-    : shelf_(shelf),
-      in_touch_drag_(false) {
+ShelfBezelEventFilter::ShelfBezelEventFilter(ShelfLayoutManager* shelf)
+    : shelf_(shelf), in_touch_drag_(false) {
   Shell::GetInstance()->AddPreTargetHandler(this);
 }
 
@@ -23,12 +22,11 @@ ShelfBezelEventFilter::~ShelfBezelEventFilter() {
   Shell::GetInstance()->RemovePreTargetHandler(this);
 }
 
-void ShelfBezelEventFilter::OnGestureEvent(
-    ui::GestureEvent* event) {
+void ShelfBezelEventFilter::OnGestureEvent(ui::GestureEvent* event) {
   gfx::Point point_in_screen(event->location());
   aura::Window* target = static_cast<aura::Window*>(event->target());
   ::wm::ConvertPointToScreen(target, &point_in_screen);
-  gfx::Rect screen = gfx::Screen::GetScreen()
+  gfx::Rect screen = display::Screen::GetScreen()
                          ->GetDisplayNearestPoint(point_in_screen)
                          .bounds();
   if ((!screen.Contains(point_in_screen) &&
@@ -51,28 +49,11 @@ void ShelfBezelEventFilter::OnGestureEvent(
   }
 }
 
-bool ShelfBezelEventFilter::IsShelfOnBezel(
-    const gfx::Rect& screen,
-    const gfx::Point& point) const{
-  switch (shelf_->GetAlignment()) {
-    case SHELF_ALIGNMENT_BOTTOM:
-      if (point.y() >= screen.bottom())
-        return true;
-      break;
-    case SHELF_ALIGNMENT_LEFT:
-      if (point.x() <= screen.x())
-        return true;
-      break;
-    case SHELF_ALIGNMENT_TOP:
-      if (point.y() <= screen.y())
-        return true;
-      break;
-    case SHELF_ALIGNMENT_RIGHT:
-      if (point.x() >= screen.right())
-        return true;
-      break;
-  }
-  return false;
+bool ShelfBezelEventFilter::IsShelfOnBezel(const gfx::Rect& screen,
+                                           const gfx::Point& point) const {
+  return shelf_->SelectValueForShelfAlignment(point.y() >= screen.bottom(),
+                                              point.x() <= screen.x(),
+                                              point.x() >= screen.right());
 }
 
 }  // namespace ash

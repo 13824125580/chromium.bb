@@ -1,17 +1,25 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [35, 35, 50, 50],
-        [10, 10, 100, 100]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow DIV id='square'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV id='square'",
+          "rect": [10, 10, 100, 100],
+          "reason": "subtree"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow DIV id='square'",
+      "reason": "subtree"
     }
   ]
 }

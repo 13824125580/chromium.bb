@@ -4,10 +4,12 @@
 
 #include "chrome/browser/extensions/api/hotword_private/hotword_private_api.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -28,7 +30,7 @@
 #include "ui/base/webui/web_ui_util.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/system/chromeos/devicetype_utils.h"
+#include "ash/common/system/chromeos/devicetype_utils.h"
 #endif
 
 namespace extensions {
@@ -132,24 +134,24 @@ void HotwordPrivateEventService::SignalEvent(
     events::HistogramValue histogram_value,
     const std::string& event_name) {
   SignalEvent(histogram_value, event_name,
-              make_scoped_ptr(new base::ListValue()));
+              base::WrapUnique(new base::ListValue()));
 }
 
 void HotwordPrivateEventService::SignalEvent(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    scoped_ptr<base::ListValue> args) {
+    std::unique_ptr<base::ListValue> args) {
   EventRouter* router = EventRouter::Get(profile_);
   if (!router || !router->HasEventListener(event_name))
     return;
 
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(histogram_value, event_name, std::move(args)));
   router->BroadcastEvent(std::move(event));
 }
 
 bool HotwordPrivateSetEnabledFunction::RunSync() {
-  scoped_ptr<api::hotword_private::SetEnabled::Params> params(
+  std::unique_ptr<api::hotword_private::SetEnabled::Params> params(
       api::hotword_private::SetEnabled::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -159,7 +161,7 @@ bool HotwordPrivateSetEnabledFunction::RunSync() {
 }
 
 bool HotwordPrivateSetAudioLoggingEnabledFunction::RunSync() {
-  scoped_ptr<api::hotword_private::SetAudioLoggingEnabled::Params> params(
+  std::unique_ptr<api::hotword_private::SetAudioLoggingEnabled::Params> params(
       api::hotword_private::SetAudioLoggingEnabled::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -171,9 +173,10 @@ bool HotwordPrivateSetAudioLoggingEnabledFunction::RunSync() {
 }
 
 bool HotwordPrivateSetHotwordAlwaysOnSearchEnabledFunction::RunSync() {
-  scoped_ptr<api::hotword_private::SetHotwordAlwaysOnSearchEnabled::Params>
-      params(api::hotword_private::SetHotwordAlwaysOnSearchEnabled::Params::
-      Create(*args_));
+  std::unique_ptr<api::hotword_private::SetHotwordAlwaysOnSearchEnabled::Params>
+      params(
+          api::hotword_private::SetHotwordAlwaysOnSearchEnabled::Params::Create(
+              *args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   PrefService* prefs = GetProfile()->GetPrefs();
@@ -182,7 +185,7 @@ bool HotwordPrivateSetHotwordAlwaysOnSearchEnabledFunction::RunSync() {
 }
 
 bool HotwordPrivateGetStatusFunction::RunSync() {
-  scoped_ptr<api::hotword_private::GetStatus::Params> params(
+  std::unique_ptr<api::hotword_private::GetStatus::Params> params(
       api::hotword_private::GetStatus::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -218,12 +221,12 @@ bool HotwordPrivateGetStatusFunction::RunSync() {
   PrefService* prefs = GetProfile()->GetPrefs();
   result.enabled_set = prefs->HasPrefPath(prefs::kHotwordSearchEnabled);
 
-  SetResult(result.ToValue().release());
+  SetResult(result.ToValue());
   return true;
 }
 
 bool HotwordPrivateSetHotwordSessionStateFunction::RunSync() {
-  scoped_ptr<api::hotword_private::SetHotwordSessionState::Params> params(
+  std::unique_ptr<api::hotword_private::SetHotwordSessionState::Params> params(
       api::hotword_private::SetHotwordSessionState::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -237,8 +240,9 @@ bool HotwordPrivateSetHotwordSessionStateFunction::RunSync() {
 }
 
 bool HotwordPrivateNotifyHotwordRecognitionFunction::RunSync() {
-  scoped_ptr<api::hotword_private::NotifyHotwordRecognition::Params> params(
-      api::hotword_private::NotifyHotwordRecognition::Params::Create(*args_));
+  std::unique_ptr<api::hotword_private::NotifyHotwordRecognition::Params>
+      params(api::hotword_private::NotifyHotwordRecognition::Params::Create(
+          *args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   scoped_refptr<content::SpeechRecognitionSessionPreamble> preamble;
@@ -279,7 +283,7 @@ bool HotwordPrivateGetLaunchStateFunction::RunSync() {
   api::hotword_private::LaunchState result;
   result.launch_mode =
       hotword_service->GetHotwordAudioVerificationLaunchMode();
-  SetResult(result.ToValue().release());
+  SetResult(result.ToValue());
   return true;
 }
 
@@ -342,7 +346,8 @@ bool HotwordPrivateGetLocalizedStringsFunction::RunSync() {
       l10n_util::GetStringFUTF16(IDS_HOTWORD_BROWSER_NAME, product_name);
 #endif
 
-  base::DictionaryValue* localized_strings = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> localized_strings(
+      new base::DictionaryValue());
 
   localized_strings->SetString(
       "close",
@@ -448,14 +453,14 @@ bool HotwordPrivateGetLocalizedStringsFunction::RunSync() {
       l10n_util::GetStringUTF16(IDS_HOTWORD_OPT_IN_FINISHED_WAIT));
 
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
-  webui::SetLoadTimeDataDefaults(app_locale, localized_strings);
+  webui::SetLoadTimeDataDefaults(app_locale, localized_strings.get());
 
-  SetResult(localized_strings);
+  SetResult(std::move(localized_strings));
   return true;
 }
 
 bool HotwordPrivateSetAudioHistoryEnabledFunction::RunAsync() {
-  scoped_ptr<api::hotword_private::SetAudioHistoryEnabled::Params> params(
+  std::unique_ptr<api::hotword_private::SetAudioHistoryEnabled::Params> params(
       api::hotword_private::SetAudioHistoryEnabled::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -479,7 +484,7 @@ void HotwordPrivateSetAudioHistoryEnabledFunction::SetResultAndSendResponse(
   api::hotword_private::AudioHistoryState result;
   result.success = success;
   result.enabled = new_enabled_value;
-  SetResult(result.ToValue().release());
+  SetResult(result.ToValue());
   SendResponse(true);
 }
 
@@ -503,13 +508,14 @@ void HotwordPrivateGetAudioHistoryEnabledFunction::SetResultAndSendResponse(
   api::hotword_private::AudioHistoryState result;
   result.success = success;
   result.enabled = new_enabled_value;
-  SetResult(result.ToValue().release());
+  SetResult(result.ToValue());
   SendResponse(true);
 }
 
 bool HotwordPrivateSpeakerModelExistsResultFunction::RunSync() {
-  scoped_ptr<api::hotword_private::SpeakerModelExistsResult::Params> params(
-      api::hotword_private::SpeakerModelExistsResult::Params::Create(*args_));
+  std::unique_ptr<api::hotword_private::SpeakerModelExistsResult::Params>
+      params(api::hotword_private::SpeakerModelExistsResult::Params::Create(
+          *args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   HotwordService* hotword_service =

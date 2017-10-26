@@ -40,7 +40,6 @@
 #include "core/html/shadow/ShadowElementNames.h"
 #include "core/html/shadow/TextControlInnerElements.h"
 #include "core/layout/LayoutSearchField.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -52,9 +51,9 @@ inline SearchInputType::SearchInputType(HTMLInputElement& element)
 {
 }
 
-PassRefPtrWillBeRawPtr<InputType> SearchInputType::create(HTMLInputElement& element)
+InputType* SearchInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new SearchInputType(element));
+    return new SearchInputType(element);
 }
 
 void SearchInputType::countUsage()
@@ -82,10 +81,8 @@ void SearchInputType::createShadowSubtree()
     TextFieldInputType::createShadowSubtree();
     Element* container = containerElement();
     Element* viewPort = element().userAgentShadowRoot()->getElementById(ShadowElementNames::editingViewPort());
-    ASSERT(container);
-    ASSERT(viewPort);
-
-    container->insertBefore(SearchFieldDecorationElement::create(element().document()), viewPort);
+    DCHECK(container);
+    DCHECK(viewPort);
     container->insertBefore(SearchFieldCancelButtonElement::create(element().document()), viewPort->nextSibling());
 }
 
@@ -96,11 +93,10 @@ void SearchInputType::handleKeydownEvent(KeyboardEvent* event)
         return;
     }
 
-    const String& key = event->keyIdentifier();
-    if (key == "U+001B") {
-        RefPtrWillBeRawPtr<HTMLInputElement> input(element());
-        input->setValueForUser("");
-        input->onSearch();
+    const String& key = event->key();
+    if (key == "Escape") {
+        element().setValueForUser("");
+        element().onSearch();
         event->setDefaultHandled();
         return;
     }
@@ -109,12 +105,12 @@ void SearchInputType::handleKeydownEvent(KeyboardEvent* event)
 
 void SearchInputType::startSearchEventTimer()
 {
-    ASSERT(element().layoutObject());
+    DCHECK(element().layoutObject());
     unsigned length = element().innerEditorValue().length();
 
     if (!length) {
         m_searchEventTimer.stop();
-        element().document().postTask(BLINK_FROM_HERE, createSameThreadTask(&HTMLInputElement::onSearch, PassRefPtrWillBeRawPtr<HTMLInputElement>(&element())));
+        element().document().postTask(BLINK_FROM_HERE, createSameThreadTask(&HTMLInputElement::onSearch, wrapPersistent(&element())));
         return;
     }
 
@@ -158,7 +154,7 @@ void SearchInputType::updateView()
 
 const AtomicString& SearchInputType::defaultAutocapitalize() const
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, sentences, ("sentences", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, sentences, ("sentences"));
     return sentences;
 }
 

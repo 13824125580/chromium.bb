@@ -129,14 +129,14 @@ ToolbarView::ToolbarView(Browser* browser)
       browser_actions_(nullptr),
       app_menu_button_(nullptr),
       browser_(browser),
-      badge_controller_(browser->profile(), this),
+      app_menu_icon_controller_(browser->profile(), this),
       display_mode_(browser->SupportsWindowFeature(Browser::FEATURE_TABSTRIP)
                         ? DISPLAYMODE_NORMAL
                         : DISPLAYMODE_LOCATION) {
   set_id(VIEW_ID_TOOLBAR);
 
   SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
+      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 
   chrome::AddCommandObserver(browser_, IDC_BACK, this);
   chrome::AddCommandObserver(browser_, IDC_FORWARD, this);
@@ -177,6 +177,7 @@ void ToolbarView::Init() {
   back_ = new BackButton(
       browser_->profile(), this,
       new BackForwardMenuModel(browser_, BackForwardMenuModel::BACKWARD_MENU));
+  back_->set_hide_ink_drop_when_showing_context_menu(false);
   back_->set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_MIDDLE_MOUSE_BUTTON);
   back_->set_tag(IDC_BACK);
@@ -188,6 +189,7 @@ void ToolbarView::Init() {
   forward_ = new ToolbarButton(
       browser_->profile(), this,
       new BackForwardMenuModel(browser_, BackForwardMenuModel::FORWARD_MENU));
+  forward_->set_hide_ink_drop_when_showing_context_menu(false);
   forward_->set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_MIDDLE_MOUSE_BUTTON);
   forward_->set_tag(IDC_FORWARD);
@@ -237,7 +239,7 @@ void ToolbarView::Init() {
 
   LoadImages();
 
-  // Start global error services now so we badge the menu correctly.
+  // Start global error services now so we set the icon on the menu correctly.
 #if !defined(OS_CHROMEOS)
   if (!HasAshShell()) {
     SigninGlobalErrorFactory::GetForProfile(browser_->profile());
@@ -251,11 +253,10 @@ void ToolbarView::Init() {
 #endif
 #endif  // OS_CHROMEOS
 
-  // Add any necessary badges to the menu item based on the system state.
-  // Do this after |app_menu_button_| has been added as a bubble may be shown
-  // that needs the widget (widget found by way of app_menu_button_->
-  // GetWidget()).
-  badge_controller_.UpdateDelegate();
+  // Set the button icon based on the system state. Do this after
+  // |app_menu_button_| has been added as a bubble may be shown that needs
+  // the widget (widget found by way of app_menu_button_->GetWidget()).
+  app_menu_icon_controller_.UpdateDelegate();
 
   location_bar_->Init();
 
@@ -263,8 +264,6 @@ void ToolbarView::Init() {
                          browser_->profile()->GetPrefs(),
                          base::Bind(&ToolbarView::OnShowHomeButtonChanged,
                                     base::Unretained(this)));
-
-  browser_actions_->Init();
 
   // Accessibility specific tooltip text.
   if (content::BrowserAccessibilityState::GetInstance()->
@@ -394,14 +393,10 @@ ToolbarView::GetContentSettingBubbleModelDelegate() {
 
 void ToolbarView::ShowWebsiteSettings(
     content::WebContents* web_contents,
-    const GURL& url,
+    const GURL& virtual_url,
     const security_state::SecurityStateModel::SecurityInfo& security_info) {
-  chrome::ShowWebsiteSettings(browser_, web_contents, url, security_info);
-}
-
-views::Widget* ToolbarView::CreateViewsBubble(
-    views::BubbleDelegateView* bubble_delegate) {
-  return views::BubbleDelegateView::CreateBubble(bubble_delegate);
+  chrome::ShowWebsiteSettings(browser_, web_contents, virtual_url,
+                              security_info);
 }
 
 PageActionImageView* ToolbarView::CreatePageActionImageView(
@@ -650,9 +645,10 @@ bool ToolbarView::DoesIntersectRect(const views::View* target,
   return ViewTargeterDelegate::DoesIntersectRect(this, rect);
 }
 
-void ToolbarView::UpdateBadgeSeverity(AppMenuBadgeController::BadgeType type,
-                                      AppMenuIconPainter::Severity severity,
-                                      bool animate) {
+// AppMenuIconController::Delegate:
+void ToolbarView::UpdateSeverity(AppMenuIconController::IconType type,
+                                 AppMenuIconPainter::Severity severity,
+                                 bool animate) {
   // There's no app menu in tabless windows.
   if (!app_menu_button_)
     return;
@@ -662,28 +658,29 @@ void ToolbarView::UpdateBadgeSeverity(AppMenuBadgeController::BadgeType type,
   DCHECK(app_menu_button_->GetWidget());
 
   base::string16 accname_app = l10n_util::GetStringUTF16(IDS_ACCNAME_APP);
-  if (type == AppMenuBadgeController::BADGE_TYPE_UPGRADE_NOTIFICATION) {
+  if (type == AppMenuIconController::IconType::UPGRADE_NOTIFICATION) {
     accname_app = l10n_util::GetStringFUTF16(
         IDS_ACCNAME_APP_UPGRADE_RECOMMENDED, accname_app);
   }
   app_menu_button_->SetAccessibleName(accname_app);
-  app_menu_button_->SetSeverity(severity, animate);
+  app_menu_button_->SetSeverity(type, severity, animate);
 
-  // Keep track of whether we were showing the badge before, so we don't send
-  // multiple UMA events for example when multiple Chrome windows are open.
-  static bool incompatibility_badge_showing = false;
+  // Keep track of whether we were showing the incompatibility icon before,
+  // so we don't send multiple UMA events for example when multiple Chrome
+  // windows are open.
+  static bool incompatibility_warning_showing = false;
   // Save the old value before resetting it.
-  bool was_showing = incompatibility_badge_showing;
-  incompatibility_badge_showing = false;
+  bool was_showing = incompatibility_warning_showing;
+  incompatibility_warning_showing = false;
 
-  if (type == AppMenuBadgeController::BADGE_TYPE_INCOMPATIBILITY_WARNING) {
+  if (type == AppMenuIconController::IconType::INCOMPATIBILITY_WARNING) {
     if (!was_showing) {
       content::RecordAction(UserMetricsAction("ConflictBadge"));
 #if defined(OS_WIN)
       ConflictingModuleView::MaybeShow(browser_, app_menu_button_);
 #endif
     }
-    incompatibility_badge_showing = true;
+    incompatibility_warning_showing = true;
     return;
   }
 }
@@ -737,7 +734,6 @@ void ToolbarView::LoadImages() {
   const ui::ThemeProvider* tp = GetThemeProvider();
 
   if (ui::MaterialDesignController::IsModeMaterial()) {
-    const int kButtonSize = 16;
     const SkColor normal_color =
         tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
     const SkColor disabled_color =
@@ -745,21 +741,21 @@ void ToolbarView::LoadImages() {
 
     back_->SetImage(views::Button::STATE_NORMAL,
                     gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_BACK,
-                                          kButtonSize, normal_color));
+                                          normal_color));
     back_->SetImage(views::Button::STATE_DISABLED,
                     gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_BACK,
-                                          kButtonSize, disabled_color));
+                                          disabled_color));
     forward_->SetImage(
         views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD, kButtonSize,
+        gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD,
                               normal_color));
     forward_->SetImage(
         views::Button::STATE_DISABLED,
-        gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD, kButtonSize,
+        gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD,
                               disabled_color));
     home_->SetImage(views::Button::STATE_NORMAL,
                     gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_HOME,
-                                          kButtonSize, normal_color));
+                                          normal_color));
     app_menu_button_->UpdateIcon();
 
     back_->set_ink_drop_base_color(normal_color);
@@ -784,9 +780,8 @@ void ToolbarView::LoadImages() {
 
 void ToolbarView::ShowCriticalNotification() {
 #if defined(OS_WIN)
-  CriticalNotificationBubbleView* bubble_delegate =
-      new CriticalNotificationBubbleView(app_menu_button_);
-  views::BubbleDelegateView::CreateBubble(bubble_delegate)->Show();
+  views::BubbleDialogDelegateView::CreateBubble(
+      new CriticalNotificationBubbleView(app_menu_button_))->Show();
 #endif
 }
 
@@ -803,7 +798,9 @@ void ToolbarView::OnShowHomeButtonChanged() {
 }
 
 int ToolbarView::content_shadow_height() const {
-  return GetLayoutConstant(
-      (browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH) ?
-          TOOLBAR_CONTENT_SHADOW_HEIGHT_ASH : TOOLBAR_CONTENT_SHADOW_HEIGHT);
+#if defined(USE_ASH)
+  return GetLayoutConstant(TOOLBAR_CONTENT_SHADOW_HEIGHT_ASH);
+#else
+  return GetLayoutConstant(TOOLBAR_CONTENT_SHADOW_HEIGHT);
+#endif
 }

@@ -404,7 +404,7 @@ WebInspector.DOMPresentationUtils._cssPathStep = function(node, optimized, isTar
     {
         var hexByte = c.charCodeAt(0).toString(16);
         if (hexByte.length === 1)
-          hexByte = "0" + hexByte;
+            hexByte = "0" + hexByte;
         return hexByte;
     }
 
@@ -646,7 +646,7 @@ WebInspector.DOMPresentationUtils.MarkerDecorator.prototype = {
 WebInspector.DOMPresentationUtils.GenericDecorator = function(extension)
 {
     this._title = WebInspector.UIString(extension.title(WebInspector.platform()));
-    this._color = extension.descriptor()['color'];
+    this._color = extension.descriptor()["color"];
 }
 
 WebInspector.DOMPresentationUtils.GenericDecorator.prototype = {

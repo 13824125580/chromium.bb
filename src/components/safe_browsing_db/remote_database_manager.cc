@@ -4,6 +4,7 @@
 
 #include "components/safe_browsing_db/remote_database_manager.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/metrics/histogram_macros.h"
@@ -42,9 +43,9 @@ class RemoteSafeBrowsingDatabaseManager::ClientRequest {
 
   static void OnRequestDoneWeak(const base::WeakPtr<ClientRequest>& req,
                                 SBThreatType matched_threat_type,
-                                const std::string& metadata);
+                                const ThreatMetadata& metadata);
   void OnRequestDone(SBThreatType matched_threat_type,
-                     const std::string& metadata);
+                     const ThreatMetadata& metadata);
 
   // Accessors
   Client* client() const { return client_; }
@@ -74,7 +75,7 @@ RemoteSafeBrowsingDatabaseManager::ClientRequest::ClientRequest(
 void RemoteSafeBrowsingDatabaseManager::ClientRequest::OnRequestDoneWeak(
     const base::WeakPtr<ClientRequest>& req,
     SBThreatType matched_threat_type,
-    const std::string& metadata) {
+    const ThreatMetadata& metadata) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!req)
     return;  // Previously canceled
@@ -83,7 +84,7 @@ void RemoteSafeBrowsingDatabaseManager::ClientRequest::OnRequestDoneWeak(
 
 void RemoteSafeBrowsingDatabaseManager::ClientRequest::OnRequestDone(
     SBThreatType matched_threat_type,
-    const std::string& metadata) {
+    const ThreatMetadata& metadata) {
   DVLOG(1) << "OnRequestDone took " << timer_.Elapsed().InMilliseconds()
            << " ms for client " << client_ << " and URL " << url_;
   client_->OnCheckBrowseUrlResult(url_, matched_threat_type, metadata);
@@ -165,7 +166,7 @@ bool RemoteSafeBrowsingDatabaseManager::CanCheckUrl(const GURL& url) const {
          url.SchemeIs(url::kFtpScheme);
 }
 
-bool RemoteSafeBrowsingDatabaseManager::download_protection_enabled() const {
+bool RemoteSafeBrowsingDatabaseManager::IsDownloadProtectionEnabled() const {
   return false;
 }
 
@@ -206,12 +207,6 @@ bool RemoteSafeBrowsingDatabaseManager::MatchDownloadWhitelistString(
   return true;
 }
 
-bool RemoteSafeBrowsingDatabaseManager::MatchInclusionWhitelistUrl(
-    const GURL& url) {
-  NOTREACHED();
-  return true;
-}
-
 bool RemoteSafeBrowsingDatabaseManager::MatchModuleWhitelistString(
     const std::string& str) {
   NOTREACHED();
@@ -245,13 +240,13 @@ bool RemoteSafeBrowsingDatabaseManager::CheckBrowseUrl(const GURL& url,
   if (!can_check_url)
     return true;  // Safe, continue right away.
 
-  scoped_ptr<ClientRequest> req(new ClientRequest(client, this, url));
+  std::unique_ptr<ClientRequest> req(new ClientRequest(client, this, url));
   std::vector<SBThreatType> threat_types;  // Not currently used.
 
   DVLOG(1) << "Checking for client " << client << " and URL " << url;
   SafeBrowsingApiHandler* api_handler = SafeBrowsingApiHandler::GetInstance();
   // This shouldn't happen since SafeBrowsingResourceThrottle checks
-  // IsSupported() ealier.
+  // IsSupported() earlier.
   DCHECK(api_handler) << "SafeBrowsingApiHandler was never constructed";
   api_handler->StartURLCheck(
       base::Bind(&ClientRequest::OnRequestDoneWeak, req->GetWeakPtr()), url,
@@ -298,7 +293,7 @@ void RemoteSafeBrowsingDatabaseManager::StopOnIOThread(bool shutdown) {
   std::vector<ClientRequest*> to_callback(current_requests_);
   for (auto req : to_callback) {
     DVLOG(1) << "Stopping: Invoking unfinished req for URL " << req->url();
-    req->OnRequestDone(SB_THREAT_TYPE_SAFE, std::string());
+    req->OnRequestDone(SB_THREAT_TYPE_SAFE, ThreatMetadata());
   }
   enabled_ = false;
 

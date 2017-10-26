@@ -43,7 +43,6 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
-#include "wtf/MainThread.h"
 #include "wtf/StdLibExtras.h"
 
 #include <math.h>
@@ -52,6 +51,7 @@ namespace blink {
 
 Image::Image(ImageObserver* observer)
     : m_imageObserver(observer)
+    , m_imageObserverDisabled(false)
 {
 }
 
@@ -106,20 +106,13 @@ void Image::drawTiled(GraphicsContext& ctxt, const FloatRect& destRect, const Fl
     FloatSize scale(scaledTileSize.width() / intrinsicTileSize.width(),
                     scaledTileSize.height() / intrinsicTileSize.height());
 
-    FloatSize actualTileSize(scaledTileSize.width() + repeatSpacing.width(), scaledTileSize.height() + repeatSpacing.height());
-    FloatRect oneTileRect;
-    oneTileRect.setX(destRect.x() + fmodf(fmodf(-srcPoint.x(), actualTileSize.width()) - actualTileSize.width(), actualTileSize.width()));
-    oneTileRect.setY(destRect.y() + fmodf(fmodf(-srcPoint.y(), actualTileSize.height()) - actualTileSize.height(), actualTileSize.height()));
-    oneTileRect.setSize(scaledTileSize);
+    const FloatRect oneTileRect =
+        computeTileContaining(destRect.location(), scaledTileSize, srcPoint, repeatSpacing);
 
     // Check and see if a single draw of the image can cover the entire area we are supposed to tile.
     if (oneTileRect.contains(destRect)) {
-        FloatRect visibleSrcRect;
-        visibleSrcRect.setX((destRect.x() - oneTileRect.x()) / scale.width());
-        visibleSrcRect.setY((destRect.y() - oneTileRect.y()) / scale.height());
-        visibleSrcRect.setWidth(destRect.width() / scale.width());
-        visibleSrcRect.setHeight(destRect.height() / scale.height());
-        ctxt.drawImage(this, destRect, visibleSrcRect, op, DoNotRespectImageOrientation);
+        const FloatRect visibleSrcRect = computeSubsetForTile(oneTileRect, destRect, intrinsicTileSize);
+        ctxt.drawImage(this, destRect, &visibleSrcRect, op, DoNotRespectImageOrientation);
         return;
     }
 
@@ -185,11 +178,11 @@ void Image::drawTiled(GraphicsContext& ctxt, const FloatRect& dstRect, const Flo
 
 namespace {
 
-PassRefPtr<SkShader> createPatternShader(const SkImage* image, const SkMatrix& shaderMatrix,
+sk_sp<SkShader> createPatternShader(const SkImage* image, const SkMatrix& shaderMatrix,
     const SkPaint& paint, const FloatSize& spacing)
 {
     if (spacing.isZero())
-        return adoptRef(image->newShader(SkShader::kRepeat_TileMode, SkShader::kRepeat_TileMode, &shaderMatrix));
+        return image->makeShader(SkShader::kRepeat_TileMode, SkShader::kRepeat_TileMode, &shaderMatrix);
 
     // Arbitrary tiling is currently only supported for SkPictureShader - so we use it instead
     // of a plain bitmap shader to implement spacing.
@@ -200,10 +193,9 @@ PassRefPtr<SkShader> createPatternShader(const SkImage* image, const SkMatrix& s
     SkPictureRecorder recorder;
     SkCanvas* canvas = recorder.beginRecording(tileRect);
     canvas->drawImage(image, 0, 0, &paint);
-    RefPtr<const SkPicture> picture = adoptRef(recorder.endRecordingAsPicture());
 
-    return adoptRef(SkShader::CreatePictureShader(
-        picture.get(), SkShader::kRepeat_TileMode, SkShader::kRepeat_TileMode, &shaderMatrix, nullptr));
+    return SkShader::MakePictureShader(recorder.finishRecordingAsPicture(),
+        SkShader::kRepeat_TileMode, SkShader::kRepeat_TileMode, &shaderMatrix, nullptr);
 }
 
 } // anonymous namespace
@@ -239,7 +231,7 @@ void Image::drawPattern(GraphicsContext& context, const FloatRect& floatSrcRect,
     // Fetch this now as subsetting may swap the image.
     auto imageID = image->uniqueID();
 
-    image = adoptRef(image->newSubset(enclosingIntRect(normSrcRect)));
+    image = fromSkSp(image->makeSubset(enclosingIntRect(normSrcRect)));
     if (!image)
         return;
 
@@ -249,19 +241,13 @@ void Image::drawPattern(GraphicsContext& context, const FloatRect& floatSrcRect,
         paint.setXfermodeMode(compositeOp);
         paint.setFilterQuality(context.computeFilterQuality(this, destRect, normSrcRect));
         paint.setAntiAlias(context.shouldAntialias());
-        RefPtr<SkShader> shader = createPatternShader(image.get(), localMatrix, paint,
-            FloatSize(repeatSpacing.width() / scale.width(), repeatSpacing.height() / scale.height()));
-        paint.setShader(shader.get());
+        paint.setShader(createPatternShader(image.get(), localMatrix, paint,
+            FloatSize(repeatSpacing.width() / scale.width(), repeatSpacing.height() / scale.height())));
         context.drawRect(destRect, paint);
     }
 
     if (currentFrameIsLazyDecoded())
         PlatformInstrumentation::didDrawLazyPixelRef(imageID);
-}
-
-void Image::computeIntrinsicDimensions(FloatSize& intrinsicSize, FloatSize& intrinsicRatio)
-{
-    intrinsicSize = intrinsicRatio = FloatSize(size());
 }
 
 PassRefPtr<Image> Image::imageForDefaultFrame()
@@ -275,6 +261,47 @@ bool Image::isTextureBacked()
 {
     RefPtr<SkImage> image = imageForCurrentFrame();
     return image ? image->isTextureBacked() : false;
+}
+
+bool Image::applyShader(SkPaint& paint, const SkMatrix& localMatrix)
+{
+    // Default shader impl: attempt to build a shader based on the current frame SkImage.
+    RefPtr<SkImage> image = imageForCurrentFrame();
+    if (!image)
+        return false;
+
+    paint.setShader(
+        image->makeShader(SkShader::kRepeat_TileMode, SkShader::kRepeat_TileMode, &localMatrix));
+
+    return true;
+}
+
+FloatRect Image::computeTileContaining(const FloatPoint& point,
+    const FloatSize& tileSize, const FloatPoint& tilePhase, const FloatSize& tileSpacing)
+{
+    const FloatSize actualTileSize(tileSize + tileSpacing);
+    return FloatRect(
+        FloatPoint(
+            point.x() + fmodf(fmodf(-tilePhase.x(), actualTileSize.width()) - actualTileSize.width(), actualTileSize.width()),
+            point.y() + fmodf(fmodf(-tilePhase.y(), actualTileSize.height()) - actualTileSize.height(), actualTileSize.height())
+        ),
+        tileSize);
+}
+
+FloatRect Image::computeSubsetForTile(const FloatRect& tile, const FloatRect& dest,
+    const FloatSize& imageSize)
+{
+    DCHECK(tile.contains(dest));
+
+    const FloatSize scale(tile.width() / imageSize.width(), tile.height() / imageSize.height());
+
+    FloatRect subset = dest;
+    subset.setX((dest.x() - tile.x()) / scale.width());
+    subset.setY((dest.y() - tile.y()) / scale.height());
+    subset.setWidth(dest.width() / scale.width());
+    subset.setHeight(dest.height() / scale.height());
+
+    return subset;
 }
 
 } // namespace blink

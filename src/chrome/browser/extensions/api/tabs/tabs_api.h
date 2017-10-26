@@ -12,7 +12,7 @@
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/common/extensions/api/tabs.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/api/execute_code_function.h"
@@ -44,7 +44,7 @@ class PrefRegistrySyncable;
 namespace extensions {
 
 // Converts a ZoomMode to its ZoomSettings representation.
-void ZoomModeToZoomSettings(ui_zoom::ZoomController::ZoomMode zoom_mode,
+void ZoomModeToZoomSettings(zoom::ZoomController::ZoomMode zoom_mode,
                             api::tabs::ZoomSettings* zoom_settings);
 
 // Windows
@@ -217,6 +217,7 @@ class TabsCaptureVisibleTabFunction
 
   // extensions::WebContentsCaptureClient:
   bool IsScreenshotEnabled() override;
+  bool ClientAllowsTransparency() override;
   void OnCaptureSuccess(const SkBitmap& bitmap) override;
   void OnCaptureFailure(FailureReason reason) override;
 

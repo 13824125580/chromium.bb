@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "net/quic/quic_connection_stats.h"
+#include "net/quic/quic_flags.h"
 #include "net/quic/test_tools/quic_received_packet_manager_peer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -185,9 +186,32 @@ TEST(EntropyTrackerTest, SetCumulativeEntropyUpTo) {
   EXPECT_EQ(42 ^ 21, tracker.EntropyHash(9));
 }
 
-class QuicReceivedPacketManagerTest : public ::testing::Test {
+struct TestParams {
+  explicit TestParams(QuicVersion version) : version(version) {}
+
+  friend std::ostream& operator<<(std::ostream& os, const TestParams& p) {
+    os << "{ version: " << QuicVersionToString(p.version) << " }";
+    return os;
+  }
+
+  QuicVersion version;
+};
+
+vector<TestParams> GetTestParams() {
+  vector<TestParams> params;
+  QuicVersionVector all_supported_versions = QuicSupportedVersions();
+  for (size_t i = 0; i < all_supported_versions.size(); ++i) {
+    params.push_back(TestParams(all_supported_versions[i]));
+  }
+  return params;
+}
+
+class QuicReceivedPacketManagerTest
+    : public ::testing::TestWithParam<TestParams> {
  protected:
-  QuicReceivedPacketManagerTest() : received_manager_(&stats_) {}
+  QuicReceivedPacketManagerTest() : received_manager_(&stats_) {
+    received_manager_.SetVersion(GetParam().version);
+  }
 
   void RecordPacketReceipt(QuicPacketNumber packet_number,
                            QuicPacketEntropyHash entropy_hash) {
@@ -203,15 +227,18 @@ class QuicReceivedPacketManagerTest : public ::testing::Test {
     received_manager_.RecordPacketReceived(0u, header, receipt_time);
   }
 
-  void RecordPacketRevived(QuicPacketNumber packet_number) {
-    received_manager_.RecordPacketRevived(packet_number);
-  }
-
   QuicConnectionStats stats_;
   QuicReceivedPacketManager received_manager_;
 };
 
-TEST_F(QuicReceivedPacketManagerTest, ReceivedPacketEntropyHash) {
+INSTANTIATE_TEST_CASE_P(QuicReceivedPacketManagerTest,
+                        QuicReceivedPacketManagerTest,
+                        ::testing::ValuesIn(GetTestParams()));
+
+TEST_P(QuicReceivedPacketManagerTest, ReceivedPacketEntropyHash) {
+  if (GetParam().version > QUIC_VERSION_33) {
+    return;
+  }
   vector<pair<QuicPacketNumber, QuicPacketEntropyHash>> entropies;
   entropies.push_back(std::make_pair(1, 12));
   entropies.push_back(std::make_pair(7, 1));
@@ -242,19 +269,28 @@ TEST_F(QuicReceivedPacketManagerTest, ReceivedPacketEntropyHash) {
   EXPECT_EQ(2u, stats_.packets_reordered);
 }
 
-TEST_F(QuicReceivedPacketManagerTest, EntropyHashBelowLeastObserved) {
+TEST_P(QuicReceivedPacketManagerTest, EntropyHashBelowLeastObserved) {
+  if (GetParam().version > QUIC_VERSION_33) {
+    return;
+  }
   EXPECT_EQ(0, received_manager_.EntropyHash(0));
   RecordPacketReceipt(4, 5);
   EXPECT_EQ(0, received_manager_.EntropyHash(3));
 }
 
-TEST_F(QuicReceivedPacketManagerTest, EntropyHashAboveLargestObserved) {
+TEST_P(QuicReceivedPacketManagerTest, EntropyHashAboveLargestObserved) {
+  if (GetParam().version > QUIC_VERSION_33) {
+    return;
+  }
   EXPECT_EQ(0, received_manager_.EntropyHash(0));
   RecordPacketReceipt(4, 5);
   EXPECT_EQ(0, received_manager_.EntropyHash(3));
 }
 
-TEST_F(QuicReceivedPacketManagerTest, SetCumulativeEntropyUpTo) {
+TEST_P(QuicReceivedPacketManagerTest, SetCumulativeEntropyUpTo) {
+  if (GetParam().version > QUIC_VERSION_33) {
+    return;
+  }
   vector<pair<QuicPacketNumber, QuicPacketEntropyHash>> entropies;
   entropies.push_back(std::make_pair(1, 12));
   entropies.push_back(std::make_pair(2, 1));
@@ -289,7 +325,7 @@ TEST_F(QuicReceivedPacketManagerTest, SetCumulativeEntropyUpTo) {
   EXPECT_EQ(0u, stats_.packets_reordered);
 }
 
-TEST_F(QuicReceivedPacketManagerTest, DontWaitForPacketsBefore) {
+TEST_P(QuicReceivedPacketManagerTest, DontWaitForPacketsBefore) {
   QuicPacketHeader header;
   header.packet_number = 2u;
   received_manager_.RecordPacketReceived(0u, header, QuicTime::Zero());
@@ -303,7 +339,7 @@ TEST_F(QuicReceivedPacketManagerTest, DontWaitForPacketsBefore) {
   EXPECT_TRUE(received_manager_.IsAwaitingPacket(6u));
 }
 
-TEST_F(QuicReceivedPacketManagerTest, UpdateReceivedPacketInfo) {
+TEST_P(QuicReceivedPacketManagerTest, GetUpdatedAckFrame) {
   QuicPacketHeader header;
   header.packet_number = 2u;
   QuicTime two_ms = QuicTime::Zero().Add(QuicTime::Delta::FromMilliseconds(2));
@@ -311,21 +347,22 @@ TEST_F(QuicReceivedPacketManagerTest, UpdateReceivedPacketInfo) {
   received_manager_.RecordPacketReceived(0u, header, two_ms);
   EXPECT_TRUE(received_manager_.ack_frame_updated());
 
-  QuicAckFrame ack;
-  received_manager_.UpdateReceivedPacketInfo(&ack, QuicTime::Zero());
+  QuicFrame ack = received_manager_.GetUpdatedAckFrame(QuicTime::Zero());
   EXPECT_FALSE(received_manager_.ack_frame_updated());
   // When UpdateReceivedPacketInfo with a time earlier than the time of the
   // largest observed packet, make sure that the delta is 0, not negative.
-  EXPECT_EQ(QuicTime::Delta::Zero(), ack.ack_delay_time);
-  EXPECT_EQ(1u, ack.received_packet_times.size());
+  EXPECT_EQ(QuicTime::Delta::Zero(), ack.ack_frame->ack_delay_time);
+  EXPECT_EQ(1u, ack.ack_frame->received_packet_times.size());
 
   QuicTime four_ms = QuicTime::Zero().Add(QuicTime::Delta::FromMilliseconds(4));
-  received_manager_.UpdateReceivedPacketInfo(&ack, four_ms);
+  ack = received_manager_.GetUpdatedAckFrame(four_ms);
   EXPECT_FALSE(received_manager_.ack_frame_updated());
   // When UpdateReceivedPacketInfo after not having received a new packet,
   // the delta should still be accurate.
-  EXPECT_EQ(QuicTime::Delta::FromMilliseconds(2), ack.ack_delay_time);
-  EXPECT_EQ(0u, ack.received_packet_times.size());
+  EXPECT_EQ(QuicTime::Delta::FromMilliseconds(2),
+            ack.ack_frame->ack_delay_time);
+  // And received packet times won't have change.
+  EXPECT_EQ(1u, ack.ack_frame->received_packet_times.size());
 
   header.packet_number = 999u;
   received_manager_.RecordPacketReceived(0u, header, two_ms);
@@ -334,14 +371,14 @@ TEST_F(QuicReceivedPacketManagerTest, UpdateReceivedPacketInfo) {
   header.packet_number = 1000u;
   received_manager_.RecordPacketReceived(0u, header, two_ms);
   EXPECT_TRUE(received_manager_.ack_frame_updated());
-  received_manager_.UpdateReceivedPacketInfo(&ack, two_ms);
+  ack = received_manager_.GetUpdatedAckFrame(two_ms);
   EXPECT_FALSE(received_manager_.ack_frame_updated());
   // UpdateReceivedPacketInfo should discard any times which can't be
   // expressed on the wire.
-  EXPECT_EQ(2ul, ack.received_packet_times.size());
+  EXPECT_EQ(2u, ack.ack_frame->received_packet_times.size());
 }
 
-TEST_F(QuicReceivedPacketManagerTest, UpdateReceivedConnectionStats) {
+TEST_P(QuicReceivedPacketManagerTest, UpdateReceivedConnectionStats) {
   EXPECT_FALSE(received_manager_.ack_frame_updated());
   RecordPacketReceipt(1, 0);
   EXPECT_TRUE(received_manager_.ack_frame_updated());
@@ -352,57 +389,6 @@ TEST_F(QuicReceivedPacketManagerTest, UpdateReceivedConnectionStats) {
   EXPECT_EQ(4u, stats_.max_sequence_reordering);
   EXPECT_EQ(1000, stats_.max_time_reordering_us);
   EXPECT_EQ(1u, stats_.packets_reordered);
-}
-
-TEST_F(QuicReceivedPacketManagerTest, RevivedPacket) {
-  EXPECT_FALSE(received_manager_.ack_frame_updated());
-  RecordPacketReceipt(1, 0);
-  EXPECT_TRUE(received_manager_.ack_frame_updated());
-  RecordPacketReceipt(3, 0);
-  RecordPacketRevived(2);
-
-  QuicAckFrame ack;
-  received_manager_.UpdateReceivedPacketInfo(&ack, QuicTime::Zero());
-  EXPECT_FALSE(received_manager_.ack_frame_updated());
-  EXPECT_EQ(1u, ack.missing_packets.NumPacketsSlow());
-  EXPECT_EQ(2u, ack.missing_packets.Min());
-  EXPECT_EQ(2u, ack.latest_revived_packet);
-}
-
-TEST_F(QuicReceivedPacketManagerTest, PacketRevivedThenReceived) {
-  EXPECT_FALSE(received_manager_.ack_frame_updated());
-  RecordPacketReceipt(1, 0);
-  EXPECT_TRUE(received_manager_.ack_frame_updated());
-  RecordPacketReceipt(3, 0);
-  RecordPacketRevived(2);
-  RecordPacketReceipt(2, 0);
-
-  QuicAckFrame ack;
-  received_manager_.UpdateReceivedPacketInfo(&ack, QuicTime::Zero());
-  EXPECT_TRUE(ack.missing_packets.Empty());
-  EXPECT_EQ(0u, ack.latest_revived_packet);
-}
-
-TEST_F(QuicReceivedPacketManagerTest, RevivedPacketAckFrameUpdated) {
-  EXPECT_FALSE(received_manager_.ack_frame_updated());
-  RecordPacketReceipt(1, 0);
-  RecordPacketReceipt(3, 0);
-  EXPECT_TRUE(received_manager_.ack_frame_updated());
-
-  QuicAckFrame ack;
-  received_manager_.UpdateReceivedPacketInfo(&ack, QuicTime::Zero());
-  EXPECT_FALSE(received_manager_.ack_frame_updated());
-  EXPECT_EQ(1u, ack.missing_packets.NumPacketsSlow());
-  EXPECT_EQ(2u, ack.missing_packets.Min());
-  EXPECT_EQ(0u, ack.latest_revived_packet);
-
-  RecordPacketRevived(2);
-  EXPECT_TRUE(received_manager_.ack_frame_updated());
-  received_manager_.UpdateReceivedPacketInfo(&ack, QuicTime::Zero());
-  EXPECT_FALSE(received_manager_.ack_frame_updated());
-  EXPECT_EQ(1u, ack.missing_packets.NumPacketsSlow());
-  EXPECT_EQ(2u, ack.missing_packets.Min());
-  EXPECT_EQ(2u, ack.latest_revived_packet);
 }
 
 }  // namespace

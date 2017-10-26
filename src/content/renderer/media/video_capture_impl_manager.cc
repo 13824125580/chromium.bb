@@ -27,7 +27,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/child/child_process.h"
 #include "content/renderer/media/video_capture_impl.h"
 #include "content/renderer/media/video_capture_message_filter.h"
@@ -94,6 +94,18 @@ base::Closure VideoCaptureImplManager::StartCapture(
                  client_id, params, state_update_cb, deliver_frame_cb));
   return base::Bind(&VideoCaptureImplManager::StopCapture,
                     weak_factory_.GetWeakPtr(), client_id, id);
+}
+
+void VideoCaptureImplManager::RequestRefreshFrame(
+    media::VideoCaptureSessionId id) {
+  DCHECK(render_main_task_runner_->BelongsToCurrentThread());
+  const VideoCaptureDeviceMap::const_iterator it = devices_.find(id);
+  DCHECK(it != devices_.end());
+  VideoCaptureImpl* const impl = it->second.second;
+  ChildProcess::current()->io_task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&VideoCaptureImpl::RequestRefreshFrame,
+                 base::Unretained(impl)));
 }
 
 void VideoCaptureImplManager::GetDeviceSupportedFormats(

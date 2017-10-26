@@ -8,16 +8,17 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/media/combined_desktop_media_list.h"
 #include "chrome/browser/media/desktop_media_list_ash.h"
 #include "chrome/browser/media/desktop_streams_registry.h"
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/native_desktop_media_list.h"
 #include "chrome/browser/media/tab_desktop_media_list.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "chrome/common/channel_info.h"
+#include "components/version_info/version_info.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -64,7 +65,7 @@ void DesktopCaptureChooseDesktopMediaFunctionBase::Cancel() {
   scoped_refptr<DesktopCaptureChooseDesktopMediaFunctionBase> self(this);
   if (picker_) {
     picker_.reset();
-    SetResult(new base::StringValue(std::string()));
+    SetResult(base::MakeUnique<base::StringValue>(std::string()));
     SendResponse(true);
   }
 }
@@ -100,13 +101,24 @@ bool DesktopCaptureChooseDesktopMediaFunctionBase::Execute(
         if (base::CommandLine::ForCurrentProcess()->HasSwitch(
                 extensions::switches::kEnableTabForDesktopShare)) {
           show_tabs = true;
+        } else if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            extensions::switches::kDisableTabForDesktopShare)) {
+          show_tabs = false;
+        } else {
+          const version_info::Channel channel = chrome::GetChannel();
+          if ((channel == version_info::Channel::STABLE) ||
+              (channel == version_info::Channel::BETA)) {
+            show_tabs = false;
+          } else {
+            show_tabs = true;
+          }
         }
         break;
 
       case api::desktop_capture::DESKTOP_CAPTURE_SOURCE_TYPE_AUDIO:
         bool has_flag = base::CommandLine::ForCurrentProcess()->HasSwitch(
-            extensions::switches::kEnableDesktopCaptureAudio);
-        request_audio = has_flag;
+            extensions::switches::kDisableDesktopCaptureAudio);
+        request_audio = !has_flag;
         break;
     }
   }
@@ -118,46 +130,58 @@ bool DesktopCaptureChooseDesktopMediaFunctionBase::Execute(
 
   const gfx::NativeWindow parent_window =
       web_contents->GetTopLevelNativeWindow();
-  scoped_ptr<DesktopMediaList> media_list;
+  std::unique_ptr<DesktopMediaList> screen_list;
+  std::unique_ptr<DesktopMediaList> window_list;
+  std::unique_ptr<DesktopMediaList> tab_list;
   if (g_picker_factory) {
-    media_list = g_picker_factory->CreateModel(
-        show_screens, show_windows);
+    PickerFactory::MediaListArray media_lists =
+        g_picker_factory->CreateModel(show_screens, show_windows, show_tabs,
+                                      request_audio);
+    screen_list = std::move(media_lists[0]);
+    window_list = std::move(media_lists[1]);
+    tab_list = std::move(media_lists[2]);
     picker_ = g_picker_factory->CreatePicker();
   } else {
-    std::vector<scoped_ptr<DesktopMediaList>> media_lists;
-    // Create a screens/windows list and push it into media_lists.
-    if (show_screens || show_windows) {
+    // Create a screens list.
+    if (show_screens) {
 #if defined(USE_ASH)
-      if (chrome::IsNativeWindowInAsh(parent_window)) {
-        media_lists.push_back(make_scoped_ptr(new DesktopMediaListAsh(
-            (show_screens ? DesktopMediaListAsh::SCREENS : 0) |
-            (show_windows ? DesktopMediaListAsh::WINDOWS : 0))));
-      }
+      screen_list = base::WrapUnique(
+          new DesktopMediaListAsh(DesktopMediaListAsh::SCREENS));
 #endif
-      if (!media_list) {
+      if (!screen_list) {
         webrtc::DesktopCaptureOptions options =
             webrtc::DesktopCaptureOptions::CreateDefault();
         options.set_disable_effects(false);
-        scoped_ptr<webrtc::ScreenCapturer> screen_capturer(
-            show_screens ? webrtc::ScreenCapturer::Create(options) : NULL);
-        scoped_ptr<webrtc::WindowCapturer> window_capturer(
-            show_windows ? webrtc::WindowCapturer::Create(options) : NULL);
+        std::unique_ptr<webrtc::ScreenCapturer> screen_capturer(
+            webrtc::ScreenCapturer::Create(options));
 
-        media_lists.push_back(make_scoped_ptr(new NativeDesktopMediaList(
-            std::move(screen_capturer), std::move(window_capturer))));
+        screen_list = base::WrapUnique(
+            new NativeDesktopMediaList(std::move(screen_capturer), nullptr));
+      }
+    }
+
+    // Create a windows list.
+    if (show_windows) {
+#if defined(USE_ASH)
+      window_list = base::WrapUnique(
+          new DesktopMediaListAsh(DesktopMediaListAsh::WINDOWS));
+#endif
+      if (!window_list) {
+        webrtc::DesktopCaptureOptions options =
+            webrtc::DesktopCaptureOptions::CreateDefault();
+        options.set_disable_effects(false);
+        std::unique_ptr<webrtc::WindowCapturer> window_capturer(
+            webrtc::WindowCapturer::Create(options));
+
+        window_list = base::WrapUnique(
+            new NativeDesktopMediaList(nullptr, std::move(window_capturer)));
       }
     }
 
     if (show_tabs)
-      media_lists.push_back(make_scoped_ptr(new TabDesktopMediaList()));
+      tab_list = base::WrapUnique(new TabDesktopMediaList());
 
-    DCHECK(!media_lists.empty());
-
-    if (media_lists.size() == 1) {
-      media_list = std::move(media_lists[0]);
-    } else {
-      media_list.reset(new CombinedDesktopMediaList(media_lists));
-    }
+    DCHECK(screen_list || window_list || tab_list);
 
     // DesktopMediaPicker is implemented only for Windows, OSX and
     // Aura Linux builds.
@@ -175,7 +199,8 @@ bool DesktopCaptureChooseDesktopMediaFunctionBase::Execute(
 
   picker_->Show(web_contents, parent_window, parent_window,
                 base::UTF8ToUTF16(extension()->name()), target_name,
-                std::move(media_list), request_audio, callback);
+                std::move(screen_list), std::move(window_list),
+                std::move(tab_list), request_audio, callback);
   origin_ = origin;
   return true;
 }
@@ -205,7 +230,7 @@ void DesktopCaptureChooseDesktopMediaFunctionBase::OnPickerDialogResults(
                                       extension()->name());
   }
 
-  SetResult(new base::StringValue(result));
+  SetResult(base::MakeUnique<base::StringValue>(result));
   SendResponse(true);
 }
 

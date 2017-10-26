@@ -39,7 +39,8 @@ void deleteProcessHost(ProcessHost* processHost)
 
 ProcessHostManager::ProcessHostManager()
 : d_timer(false, false)
-, d_wakeupEvent(true, false)
+, d_wakeupEvent(base::WaitableEvent::ResetPolicy::MANUAL,
+                base::WaitableEvent::InitialState::NOT_SIGNALED)
 , d_isShuttingDown(false)
 {
     DCHECK(Statics::isInBrowserMainThread());

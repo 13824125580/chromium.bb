@@ -28,7 +28,6 @@
 #include <blpwtk2_textdirection.h>
 #include <blpwtk2_webview.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <base/memory/weak_ptr.h>
 #include <ipc/ipc_listener.h>
 #include <ipc/ipc_sender.h>
@@ -127,6 +126,7 @@ class WebViewProxy : public WebView,
     void rootWindowPositionChanged() override;
     void rootWindowSettingsChanged() override;
     void print() override;
+    String printToPDF(const char *propertyNameOnIframeToPrint) override;
     void handleInputEvents(const InputEvent *events, size_t eventsCount) override;
     void setDelegate(WebViewDelegate* delegate) override;
     void drawContentsToBlob(Blob *blob, const DrawParams& params) override;
@@ -191,8 +191,8 @@ class WebViewProxy : public WebView,
     ProfileProxy* d_profileProxy;
     ProcessClient* d_processClient;
     WebViewDelegate* d_delegate;
-    scoped_ptr<FindOnPage> d_find;
-    scoped_ptr<WebFrameImpl> d_mainFrame;
+    std::unique_ptr<FindOnPage> d_find;
+    std::unique_ptr<WebFrameImpl> d_mainFrame;
     blpwtk2::NativeView d_nativeWebView;
     blpwtk2::NativeView d_nativeHiddenView;
     int d_routingId;

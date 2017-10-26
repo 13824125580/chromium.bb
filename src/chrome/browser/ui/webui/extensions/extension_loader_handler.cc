@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/extensions/extension_loader_handler.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -186,18 +188,19 @@ void ExtensionLoaderHandler::AddFailure(
   failed_paths_.push_back(file_path);
   base::FilePath prettified_path = path_util::PrettifyPath(file_path);
 
-  scoped_ptr<base::DictionaryValue> manifest_value(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> manifest_value(
+      new base::DictionaryValue());
   SourceHighlighter highlighter(manifest, line_number);
   // If the line number is 0, this highlights no regions, but still adds the
   // full manifest.
   highlighter.SetHighlightedRegions(manifest_value.get());
 
-  scoped_ptr<base::DictionaryValue> failure(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> failure(new base::DictionaryValue());
   failure->Set("path",
                new base::StringValue(prettified_path.LossyDisplayName()));
   failure->Set("error", new base::StringValue(base::UTF8ToUTF16(error)));
   failure->Set("manifest", manifest_value.release());
-  failures_.Append(failure.release());
+  failures_.Append(std::move(failure));
 
   // Only notify the frontend if the frontend UI is ready.
   if (ui_ready_)
@@ -205,9 +208,8 @@ void ExtensionLoaderHandler::AddFailure(
 }
 
 void ExtensionLoaderHandler::NotifyFrontendOfFailure() {
-  web_ui()->CallJavascriptFunction(
-      "extensions.ExtensionLoader.notifyLoadFailed",
-      failures_);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.ExtensionLoader.notifyLoadFailed", failures_);
   failures_.Clear();
 }
 

@@ -32,6 +32,8 @@
 
 #include "bindings/core/v8/ScriptController.h"
 
+#include "platform/v8_inspector/V8StackTraceImpl.h"
+
 namespace blink {
 
 void WebScriptController::registerExtension(v8::Extension* extension)
@@ -41,7 +43,7 @@ void WebScriptController::registerExtension(v8::Extension* extension)
 
 void WebScriptController::setStackCaptureControlledByInspector(bool enable)
 {
-    ScriptController::s_stackCaptureControlledByInspector = enable;
+    V8StackTraceImpl::s_stackCaptureControlledByInspector = enable;
 }
 
 } // namespace blink

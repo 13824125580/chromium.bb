@@ -43,9 +43,7 @@
     "extension_types": ["extension", "platform_app"],
     "whitelist": [
       "EE17C698905F7F2E6DDC87C9C30F11E164C829F4",  // For unit testing ALP
-      "90113DA9516526D24DAF156C629CC41C049E8882",  // http://crbug.com/520205
-      "736F218710D373A285B3A9C70BF90C567B22321A",  // http://crbug.com/520205
-      "A9EFD71948A480C87D3B7C758FD938215F445F00",  // Obsolete
+      "C50DC2AC31D826BC977032AF12DE4694CC8467DC",  // For unit testing ALP
       "AE27D69DBE571F4B1694F05C89B710C646792231",  // Published ADT.
       "5107DE9024C329EEA9C9A72D94C16723790C6422"   // Apps Developer Tool Dev.
     ]
@@ -158,7 +156,8 @@
       "81986D4F846CEDDDB962643FA501D1780DD441BB",  // http://crbug.com/407693
       "B620CF4203315F9F2E046EDED22C7571A935958D",  // http://crbug.com/510270
       "B206D8716769728278D2D300349C6CB7D7DE2EF9",  // http://crbug.com/510270
-      "F0CA817739BF63A227F634D6BF570C34CC6E676E"   // http://crbug.com/557054
+      "A3E3DE9E9F16B41D4A2FAD106BD6CA76B94A0C94",  // http://crbug.com/590259
+      "C2ABD68C33A5B485971C9638B80D6A2E9CBA78C4"   // http://crbug.com/590259
     ]
   },
   "clipboardRead": {
@@ -514,19 +513,13 @@
     "channel": "trunk",
     "extension_types": ["extension"]
   },
-  "input": [{
+  "input": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app"],
     // TODO(kalman): Um what does this inply?
     "inplies_full_url_access": true,
-    "platforms": ["chromeos"]
-  }, {
-    "channel": "dev",
-    "extension_types": ["extension", "legacy_packaged_app"],
-    // TODO(kalman): Um what does this inply?
-    "inplies_full_url_access": true,
-    "platforms": ["win", "linux"]
-  }],
+    "platforms": ["chromeos", "win", "linux"]
+  },
   "inputMethodPrivate": [{
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
@@ -554,21 +547,6 @@
       "A948368FC53BE437A55FEB414106E207925482F5"  // File Manager
     ]
   },
-  "location": [
-    {
-      "channel": "dev",
-      "extension_types": [
-        "extension", "legacy_packaged_app", "platform_app"
-      ]
-    },
-    {
-      "channel": "stable",
-      "extension_types": [
-        "extension", "legacy_packaged_app", "hosted_app", "platform_app"
-      ],
-      "location": "component"
-    }
-  ],
   "logPrivate": {
     "channel": "stable",
     "extension_types": ["extension", "platform_app"],
@@ -821,13 +799,6 @@
       "location": "component"
     }
   ],
-  "principalsPrivate": {
-    "channel": "stable",
-    "extension_types": ["extension"],
-    "whitelist": [
-      "2779FA8B45841D61A37207CCFAC9CB393964FE5B"  // Login Proxy (prototype)
-    ]
-  },
   "privacy": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app"]
@@ -1048,7 +1019,11 @@
       // Hangouts test extension
       "80B9DC58E5210749F052F5B4DB239C50CF72AEB6",
       // Hangout Services component extension.
-      "DF84F03F9B960409CCDE0D895B9650EBE81C0A8E"
+      "DF84F03F9B960409CCDE0D895B9650EBE81C0A8E",
+      // Media Router dev extension
+      "63ED55E43214C211F82122ED56407FF1A807F2A3",
+      // Media Router release extension
+      "226CF815E39A363090A1E547D53063472B8279FA"
     ]
   },
   "webstorePrivate": {

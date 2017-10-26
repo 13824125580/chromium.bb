@@ -24,17 +24,16 @@
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/tabs/window_finder.h"
-#include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_function_dispatcher.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/gestures/gesture_recognizer.h"
 #include "ui/gfx/geometry/point_conversions.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/focus/view_storage.h"
 #include "ui/views/widget/root_view.h"
@@ -42,9 +41,10 @@
 
 #if defined(USE_ASH)
 #include "ash/accelerators/accelerator_commands.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/shell.h"
 #include "ash/wm/maximize_mode/maximize_mode_controller.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ui/wm/core/coordinate_conversion.h"
 #endif
 
@@ -168,7 +168,7 @@ class EscapeTracker : public ui::EventHandler {
   }
 
   base::Closure escape_callback_;
-  scoped_ptr<views::EventMonitor> event_monitor_;
+  std::unique_ptr<views::EventMonitor> event_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(EscapeTracker);
 };
@@ -222,6 +222,7 @@ TabDragController::TabDragController()
       is_mutating_(false),
       attach_x_(-1),
       attach_index_(-1),
+      window_finder_(new WindowFinder),
       weak_factory_(this) {
   instance_ = this;
 }
@@ -334,6 +335,14 @@ void TabDragController::SetMoveBehavior(MoveBehavior behavior) {
   move_behavior_ = behavior;
 }
 
+bool TabDragController::IsDraggingTab(content::WebContents* contents) {
+  for (auto drag_data : drag_data_) {
+    if (drag_data.contents == contents)
+      return true;
+  }
+  return false;
+}
+
 void TabDragController::Drag(const gfx::Point& point_in_screen) {
   TRACE_EVENT1("views", "TabDragController::Drag",
                "point_in_screen", point_in_screen.ToString());
@@ -386,7 +395,8 @@ void TabDragController::Drag(const gfx::Point& point_in_screen) {
     }
   }
 
-  ContinueDragging(point_in_screen);
+  if (ContinueDragging(point_in_screen) == Liveness::DELETED)
+    return;
 }
 
 void TabDragController::EndDrag(EndDragReason reason) {
@@ -409,32 +419,6 @@ void TabDragController::InitTabDragData(Tab* tab,
   drag_data->contents = GetModel(source_tabstrip_)->GetWebContentsAt(
       drag_data->source_model_index);
   drag_data->pinned = source_tabstrip_->IsTabPinned(tab);
-  registrar_.Add(
-      this,
-      content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
-      content::Source<WebContents>(drag_data->contents));
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// TabDragController, content::NotificationObserver implementation:
-
-void TabDragController::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK_EQ(content::NOTIFICATION_WEB_CONTENTS_DESTROYED, type);
-  WebContents* destroyed_web_contents =
-      content::Source<WebContents>(source).ptr();
-  for (size_t i = 0; i < drag_data_.size(); ++i) {
-    if (drag_data_[i].contents == destroyed_web_contents) {
-      // One of the tabs we're dragging has been destroyed. Cancel the drag.
-      drag_data_[i].contents = NULL;
-      EndDragImpl(TAB_DESTROYED);
-      return;
-    }
-  }
-  // If we get here it means we got notification for a tab we don't know about.
-  NOTREACHED();
 }
 
 void TabDragController::OnWidgetBoundsChanged(views::Widget* widget,
@@ -474,7 +458,7 @@ gfx::Point TabDragController::GetWindowCreatePoint(
   // If the cursor is outside the monitor area, move it inside. For example,
   // dropping a tab onto the task bar on Windows produces this situation.
   gfx::Rect work_area =
-      gfx::Screen::GetScreen()->GetDisplayNearestPoint(origin).work_area();
+      display::Screen::GetScreen()->GetDisplayNearestPoint(origin).work_area();
   gfx::Point create_point(origin);
   if (!work_area.IsEmpty()) {
     if (create_point.x() < work_area.x())
@@ -527,14 +511,19 @@ bool TabDragController::CanStartDrag(const gfx::Point& point_in_screen) const {
               pow(static_cast<float>(y_offset), 2)) > kMinimumDragDistance;
 }
 
-void TabDragController::ContinueDragging(const gfx::Point& point_in_screen) {
+TabDragController::Liveness TabDragController::ContinueDragging(
+    const gfx::Point& point_in_screen) {
   TRACE_EVENT1("views", "TabDragController::ContinueDragging",
                "point_in_screen", point_in_screen.ToString());
 
   DCHECK(attached_tabstrip_);
 
-  TabStrip* target_tabstrip = detach_behavior_ == DETACHABLE ?
-      GetTargetTabStripForPoint(point_in_screen) : source_tabstrip_;
+  TabStrip* target_tabstrip = source_tabstrip_;
+  if (detach_behavior_ == DETACHABLE &&
+      GetTargetTabStripForPoint(point_in_screen, &target_tabstrip) ==
+          Liveness::DELETED) {
+    return Liveness::DELETED;
+  }
   bool tab_strip_changed = (target_tabstrip != attached_tabstrip_);
 
   if (attached_tabstrip_) {
@@ -551,7 +540,7 @@ void TabDragController::ContinueDragging(const gfx::Point& point_in_screen) {
     did_restore_window_ = false;
     if (DragBrowserToNewTabStrip(target_tabstrip, point_in_screen) ==
         DRAG_BROWSER_RESULT_STOP) {
-      return;
+      return Liveness::ALIVE;
     }
   }
   if (is_dragging_window_) {
@@ -573,6 +562,7 @@ void TabDragController::ContinueDragging(const gfx::Point& point_in_screen) {
       }
     }
   }
+  return Liveness::ALIVE;
 }
 
 TabDragController::DragBrowserResultType
@@ -591,7 +581,8 @@ TabDragController::DragBrowserToNewTabStrip(
   // Only Aura windows are gesture consumers.
   ui::GestureRecognizer::Get()->TransferEventsTo(
       GetAttachedBrowserWidget()->GetNativeView(),
-      target_tabstrip->GetWidget()->GetNativeView());
+      target_tabstrip->GetWidget()->GetNativeView(),
+      ui::GestureRecognizer::ShouldCancelTouches::DontCancel);
 #endif
 
   if (is_dragging_window_) {
@@ -816,8 +807,10 @@ TabDragController::DetachPosition TabDragController::GetDetachPosition(
   return DETACH_ABOVE_OR_BELOW;
 }
 
-TabStrip* TabDragController::GetTargetTabStripForPoint(
-    const gfx::Point& point_in_screen) {
+TabDragController::Liveness TabDragController::GetTargetTabStripForPoint(
+    const gfx::Point& point_in_screen,
+    TabStrip** tab_strip) {
+  *tab_strip = nullptr;
   TRACE_EVENT1("views", "TabDragController::GetTargetTabStripForPoint",
                "point_in_screen", point_in_screen.ToString());
 
@@ -827,20 +820,29 @@ TabStrip* TabDragController::GetTargetTabStripForPoint(
     gfx::Rect tabstrip_bounds = GetViewScreenBounds(attached_tabstrip_);
     if (DoesRectContainVerticalPointExpanded(tabstrip_bounds,
                                              kTouchVerticalDetachMagnetism,
-                                             point_in_screen.y()))
-      return attached_tabstrip_;
+                                             point_in_screen.y())) {
+      *tab_strip = attached_tabstrip_;
+      return Liveness::ALIVE;
+    }
   }
-  gfx::NativeWindow local_window =
-      GetLocalProcessWindow(point_in_screen, is_dragging_window_);
+  gfx::NativeWindow local_window;
+  const Liveness state = GetLocalProcessWindow(
+      point_in_screen, is_dragging_window_, &local_window);
+  if (state == Liveness::DELETED)
+    return Liveness::DELETED;
+
   // Do not allow dragging into a window with a modal dialog, it causes a weird
   // behavior.  See crbug.com/336691
   if (!GetModalTransient(local_window)) {
-    TabStrip* tab_strip = GetTabStripForWindow(local_window);
-    if (tab_strip && DoesTabStripContain(tab_strip, point_in_screen))
-      return tab_strip;
+    TabStrip* result = GetTabStripForWindow(local_window);
+    if (result && DoesTabStripContain(result, point_in_screen)) {
+      *tab_strip = result;
+      return Liveness::ALIVE;
+    }
   }
 
-  return is_dragging_window_ ? attached_tabstrip_ : NULL;
+  *tab_strip = is_dragging_window_ ? attached_tabstrip_ : nullptr;
+  return Liveness::ALIVE;
 }
 
 TabStrip* TabDragController::GetTabStripForWindow(gfx::NativeWindow window) {
@@ -1035,7 +1037,8 @@ void TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
   gfx::NativeView attached_native_view =
       attached_tabstrip_->GetWidget()->GetNativeView();
   ui::GestureRecognizer::Get()->TransferEventsTo(
-      attached_native_view, dragged_widget->GetNativeView());
+      attached_native_view, dragged_widget->GetNativeView(),
+      ui::GestureRecognizer::ShouldCancelTouches::DontCancel);
 #endif
 
   Detach(can_release_capture_ ? RELEASE_CAPTURE : DONT_RELEASE_CAPTURE);
@@ -1554,7 +1557,11 @@ gfx::Rect TabDragController::GetViewScreenBounds(
 
 void TabDragController::BringWindowUnderPointToFront(
     const gfx::Point& point_in_screen) {
-  gfx::NativeWindow window = GetLocalProcessWindow(point_in_screen, true);
+  gfx::NativeWindow window;
+  if (GetLocalProcessWindow(point_in_screen, true, &window) ==
+      Liveness::DELETED) {
+    return;
+  }
 
   // Only bring browser windows to front - only windows with a TabStrip can
   // be tab drag targets.
@@ -1634,7 +1641,7 @@ gfx::Rect TabDragController::CalculateDraggedBrowserBounds(
   views::View::ConvertPointToWidget(source, &center);
   gfx::Rect new_bounds(source->GetWidget()->GetRestoredBounds());
 
-  gfx::Rect work_area = gfx::Screen::GetScreen()
+  gfx::Rect work_area = display::Screen::GetScreen()
                             ->GetDisplayNearestPoint(last_point_in_screen_)
                             .work_area();
   if (new_bounds.size().width() >= work_area.size().width() &&
@@ -1767,7 +1774,7 @@ gfx::Point TabDragController::GetCursorScreenPoint() {
   }
 #endif
 
-  return gfx::Screen::GetScreen()->GetCursorScreenPoint();
+  return display::Screen::GetScreen()->GetCursorScreenPoint();
 }
 
 gfx::Vector2d TabDragController::GetWindowOffset(
@@ -1781,9 +1788,10 @@ gfx::Vector2d TabDragController::GetWindowOffset(
   return point.OffsetFromOrigin();
 }
 
-gfx::NativeWindow TabDragController::GetLocalProcessWindow(
+TabDragController::Liveness TabDragController::GetLocalProcessWindow(
     const gfx::Point& screen_point,
-    bool exclude_dragged_view) {
+    bool exclude_dragged_view,
+    gfx::NativeWindow* window) {
   std::set<gfx::NativeWindow> exclude;
   if (exclude_dragged_view) {
     gfx::NativeWindow dragged_window =
@@ -1802,5 +1810,7 @@ gfx::NativeWindow TabDragController::GetLocalProcessWindow(
       exclude.insert(browser->window()->GetNativeWindow());
   }
 #endif
-  return GetLocalProcessWindowAtPoint(screen_point, exclude);
+  base::WeakPtr<TabDragController> ref(weak_factory_.GetWeakPtr());
+  *window = window_finder_->GetLocalProcessWindowAtPoint(screen_point, exclude);
+  return ref ? Liveness::ALIVE : Liveness::DELETED;
 }

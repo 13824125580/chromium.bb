@@ -6,13 +6,6 @@
 
 namespace content {
 
-SyncCompositorCommonBrowserParams::SyncCompositorCommonBrowserParams()
-    : bytes_limit(0u),
-      update_root_scroll_offset(false),
-      begin_frame_source_paused(false) {}
-
-SyncCompositorCommonBrowserParams::~SyncCompositorCommonBrowserParams() {}
-
 SyncCompositorDemandDrawHwParams::SyncCompositorDemandDrawHwParams() {}
 
 SyncCompositorDemandDrawHwParams::SyncCompositorDemandDrawHwParams(
@@ -45,7 +38,6 @@ SyncCompositorCommonRendererParams::SyncCompositorCommonRendererParams()
       max_page_scale_factor(0.f),
       need_animate_scroll(false),
       need_invalidate_count(0u),
-      need_begin_frame(false),
       did_activate_pending_tree_count(0u) {}
 
 SyncCompositorCommonRendererParams::~SyncCompositorCommonRendererParams() {}

@@ -11,7 +11,6 @@ import android.app.SearchManager;
 import android.app.assist.AssistContent;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -19,13 +18,11 @@ import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
 import android.os.MessageQueue;
 import android.os.SystemClock;
-import android.preference.PreferenceManager;
 import android.support.v7.app.AlertDialog;
 import android.util.DisplayMetrics;
 import android.view.Menu;
@@ -39,9 +36,6 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityManager.AccessibilityStateChangeListener;
 import android.view.accessibility.AccessibilityManager.TouchExplorationStateChangeListener;
-import android.view.inputmethod.InputMethodInfo;
-import android.view.inputmethod.InputMethodManager;
-import android.view.inputmethod.InputMethodSubtype;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApiCompatibilityUtils;
@@ -60,7 +54,6 @@ import org.chromium.chrome.browser.appmenu.AppMenu;
 import org.chromium.chrome.browser.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.appmenu.AppMenuObserver;
 import org.chromium.chrome.browser.appmenu.AppMenuPropertiesDelegate;
-import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkModelObserver;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
@@ -77,6 +70,7 @@ import org.chromium.chrome.browser.datausage.DataUseTabUIManager;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.dom_distiller.DistilledPagePrefsView;
 import org.chromium.chrome.browser.dom_distiller.ReaderModeManager;
+import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.gsa.ContextReporter;
 import org.chromium.chrome.browser.gsa.GSAServiceClient;
@@ -87,6 +81,8 @@ import org.chromium.chrome.browser.init.AsyncInitializationActivity;
 import org.chromium.chrome.browser.metrics.LaunchMetrics;
 import org.chromium.chrome.browser.metrics.StartupMetrics;
 import org.chromium.chrome.browser.metrics.UmaSessionStats;
+import org.chromium.chrome.browser.metrics.UmaUtils;
+import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.nfc.BeamController;
 import org.chromium.chrome.browser.nfc.BeamProvider;
 import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
@@ -120,6 +116,7 @@ import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.webapps.AddToHomescreenDialog;
 import org.chromium.chrome.browser.widget.ControlContainer;
+import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.content.browser.ContentVideoView;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.common.ContentSwitches;
@@ -131,12 +128,12 @@ import org.chromium.policy.CombinedPolicyProvider.PolicyChangeListener;
 import org.chromium.printing.PrintManagerDelegateImpl;
 import org.chromium.printing.PrintingController;
 import org.chromium.ui.base.ActivityWindowAndroid;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.PageTransition;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -162,13 +159,10 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
      */
     static final int NO_CONTROL_CONTAINER = -1;
 
-    /** Prevents race conditions when deleting snapshot database. */
-    private static final Object SNAPSHOT_DATABASE_LOCK = new Object();
-    private static final String SNAPSHOT_DATABASE_REMOVED = "snapshot_database_removed";
-    private static final String SNAPSHOT_DATABASE_NAME = "snapshots.db";
-
     /** Delay in ms after first page load finishes before we initiate deferred startup actions. */
     private static final int DEFERRED_STARTUP_DELAY_MS = 1000;
+
+    private static final int RECORD_MULTI_WINDOW_SCREEN_WIDTH_DELAY_MS = 5000;
 
     /**
      * Timeout in ms for reading PartnerBrowserCustomizations provider.
@@ -205,6 +199,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     private ActivityWindowAndroid mWindowAndroid;
     private ChromeFullscreenManager mFullscreenManager;
     private CompositorViewHolder mCompositorViewHolder;
+    private InsetObserverView mInsetObserverView;
     private ContextualSearchManager mContextualSearchManager;
     private ReaderModeManager mReaderModeManager;
     private SnackbarManager mSnackbarManager;
@@ -212,12 +207,18 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     private AppMenuPropertiesDelegate mAppMenuPropertiesDelegate;
     private AppMenuHandler mAppMenuHandler;
     private ToolbarManager mToolbarManager;
-    private BookmarkModelObserver mBookmarkObserver;
 
     // Time in ms that it took took us to inflate the initial layout
     private long mInflateInitialLayoutDurationMs;
 
+    private int mScreenWidthDp;
+    private Runnable mRecordMultiWindowModeScreenWidthRunnable;
+
     private AssistStatusHandler mAssistStatusHandler;
+
+    // A set of views obscuring all tabs. When this set is nonempty,
+    // all tab content will be hidden from the accessibility tree.
+    private List<View> mViewsObscuringAllTabs = new ArrayList<View>();
 
     private static AppMenuHandlerFactory sAppMenuHandlerFactory = new AppMenuHandlerFactory() {
         @Override
@@ -249,11 +250,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
         ApplicationInitialization.enableFullscreenFlags(
                 getResources(), this, getControlContainerHeightResource());
-        // TODO(twellington): Remove this work around when the underlying bug is fixed.
-        //                    See crbug.com/583099.
-        if (!Build.VERSION.CODENAME.equals("N")) {
-            getWindow().setBackgroundDrawable(getBackgroundDrawable());
-        }
+        getWindow().setBackgroundDrawable(getBackgroundDrawable());
         mWindowAndroid = ((ChromeApplication) getApplicationContext())
                 .createActivityWindowAndroid(this);
         mWindowAndroid.restoreInstanceState(getSavedInstanceState());
@@ -264,7 +261,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     public void postInflationStartup() {
         super.postInflationStartup();
 
-        mSnackbarManager = new SnackbarManager(getWindow());
+        mSnackbarManager = new SnackbarManager(this);
         mDataUseSnackbarController = new DataUseSnackbarController(this, getSnackbarManager());
 
         mAssistStatusHandler = createAssistStatusHandler();
@@ -352,8 +349,18 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
         // black status bar
         ApiCompatibilityUtils.setStatusBarColor(getWindow(), Color.BLACK);
 
+        ViewGroup rootView = (ViewGroup) getWindow().getDecorView().getRootView();
         mCompositorViewHolder = (CompositorViewHolder) findViewById(R.id.compositor_view_holder);
-        mCompositorViewHolder.setRootView(getWindow().getDecorView().getRootView());
+        mCompositorViewHolder.setRootView(rootView);
+
+        // Setting fitsSystemWindows to false ensures that the root view doesn't consume the insets.
+        rootView.setFitsSystemWindows(false);
+
+        // Add a custom view right after the root view that stores the insets to access later.
+        // ContentViewCore needs the insets to determine the portion of the screen obscured by
+        // non-content displaying things such as the OSK.
+        mInsetObserverView = InsetObserverView.create(this);
+        rootView.addView(mInsetObserverView, 0);
     }
 
     /**
@@ -458,7 +465,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
                 DeviceClassManager.enableSnapshots()));
         mCompositorViewHolder.onNativeLibraryReady(mWindowAndroid, getTabContentManager());
 
-        if (isContextualSearchAllowed() && ContextualSearchFieldTrial.isEnabled(this)) {
+        if (isContextualSearchAllowed() && ContextualSearchFieldTrial.isEnabled()) {
             mContextualSearchManager = new ContextualSearchManager(this, mWindowAndroid, this);
         }
 
@@ -484,9 +491,11 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
         mTabModelSelectorTabObserver = new TabModelSelectorTabObserver(tabModelSelector) {
             @Override
             public void didFirstVisuallyNonEmptyPaint(Tab tab) {
-                if (DataUseTabUIManager.checkAndResetDataUseTrackingStarted(tab)) {
+                if (DataUseTabUIManager.checkAndResetDataUseTrackingStarted(tab)
+                        && DataUseTabUIManager.shouldShowDataUseStartedUI()) {
                     mDataUseSnackbarController.showDataUseTrackingStartedBar();
-                } else if (DataUseTabUIManager.shouldShowDataUseEndedSnackbar(
+                } else if (DataUseTabUIManager.shouldShowDataUseEndedUI()
+                        && DataUseTabUIManager.shouldShowDataUseEndedSnackbar(
                                    getApplicationContext())
                         && DataUseTabUIManager.checkAndResetDataUseTrackingEnded(tab)) {
                     mDataUseSnackbarController.showDataUseTrackingEndedBar();
@@ -530,7 +539,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
                 setStatusBarColor(tab, color);
 
                 if (getToolbarManager() == null) return;
-                getToolbarManager().updatePrimaryColor(color);
+                getToolbarManager().updatePrimaryColor(color, true);
 
                 ControlContainer controlContainer =
                         (ControlContainer) findViewById(R.id.control_container);
@@ -549,7 +558,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
         UpdateMenuItemHelper.getInstance().onStart();
         getChromeApplication().onStartWithNative();
         FeatureUtilities.setDocumentModeEnabled(FeatureUtilities.isDocumentMode(this));
-        WarmupManager.getInstance().clearWebContentsIfNecessary();
 
         if (GSAState.getInstance(this).isGsaAvailable()) {
             mGSAServiceClient = new GSAServiceClient(this);
@@ -559,6 +567,14 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
             ContextReporter.reportStatus(ContextReporter.STATUS_GSA_NOT_AVAILABLE);
         }
         mCompositorViewHolder.resetFlags();
+
+        // postDeferredStartupIfNeeded() is called in TabModelSelectorTabObsever#onLoadStopped(),
+        // #onPageLoadFinished() and #onCrash(). If we are not actively loading a tab (e.g.
+        // in Android N multi-instance, which is created by re-parenting an existing tab),
+        // ensure onDeferredStartup() gets called by calling postDeferredStartupIfNeeded() here.
+        if (getActivityTab() == null || !getActivityTab().isLoading()) {
+            postDeferredStartupIfNeeded();
+        }
     }
 
     @Override
@@ -621,15 +637,19 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     public void onResumeWithNative() {
         super.onResumeWithNative();
         markSessionResume();
+        RecordUserAction.record("MobileComeToForeground");
 
         if (getActivityTab() != null) {
             LaunchMetrics.commitLaunchMetrics(getActivityTab().getWebContents());
         }
         FeatureUtilities.setCustomTabVisible(isCustomTab());
+        FeatureUtilities.setIsInMultiWindowMode(
+                MultiWindowUtils.getInstance().isInMultiWindowMode(this));
     }
 
     @Override
     public void onPauseWithNative() {
+        RecordUserAction.record("MobileGoToBackground");
         markSessionEnd();
         super.onPauseWithNative();
     }
@@ -671,11 +691,14 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     @Override
     protected void onDeferredStartup() {
         super.onDeferredStartup();
-        boolean crashDumpUploadingDisabled =
-                CommandLine.getInstance().hasSwitch(ChromeSwitches.DISABLE_CRASH_DUMP_UPLOAD);
-        DeferredStartupHandler.getInstance()
-                .onDeferredStartup(getChromeApplication(), crashDumpUploadingDisabled);
+        DeferredStartupHandler.getInstance().onDeferredStartupForApp();
+        onDeferredStartupForActivity();
+    }
 
+    /**
+     * All deferred startup tasks that require the activity rather than the app should go here.
+     */
+    private void onDeferredStartupForActivity() {
         BeamController.registerForBeam(this, new BeamProvider() {
             @Override
             public String getTabUrlForBeam() {
@@ -687,14 +710,27 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
         UpdateMenuItemHelper.getInstance().checkForUpdateOnBackgroundThread(this);
 
-        removeSnapshotDatabase();
         if (mToolbarManager != null) {
             String simpleName = getClass().getSimpleName();
             RecordHistogram.recordTimesHistogram("MobileStartup.ToolbarInflationTime." + simpleName,
                     mInflateInitialLayoutDurationMs, TimeUnit.MILLISECONDS);
             mToolbarManager.onDeferredStartup(getOnCreateTimestampMs(), simpleName);
         }
-        recordKeyboardLocaleUma();
+
+        if (MultiWindowUtils.getInstance().isInMultiWindowMode(this)) {
+            onDeferredStartupForMultiWindowMode();
+        }
+    }
+
+    /**
+     * Actions that may be run at some point after startup for Android N multi-window mode. Should
+     * be called from #onDeferredStartup() if the activity is in multi-window mode.
+     */
+    protected void onDeferredStartupForMultiWindowMode() {
+        // If the Activity was launched in multi-window mode, record a user action and the screen
+        // width.
+        recordMultiWindowModeChangedUserAction(true);
+        recordMultiWindowModeScreenWidth();
     }
 
     @Override
@@ -725,6 +761,8 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
         // been re-started after closing due to the last tab being closed when homepage is enabled.
         // See crbug.com/541546.
         checkAccessibility();
+
+        mScreenWidthDp = getResources().getConfiguration().screenWidthDp;
     }
 
     @Override
@@ -867,6 +905,22 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     protected Drawable getBackgroundDrawable() {
         return new ColorDrawable(
                 ApiCompatibilityUtils.getColor(getResources(), R.color.light_background_color));
+    }
+
+    @Override
+    public void finishNativeInitialization() {
+        // The window background color is used as the resizing background color in Android N+
+        // multi-window mode. See crbug.com/602366.
+        if (Build.VERSION.CODENAME.equals("N") || Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
+            getWindow().setBackgroundDrawable(new ColorDrawable(
+                    ApiCompatibilityUtils.getColor(getResources(),
+                            R.color.resizing_background_color)));
+        } else {
+            removeWindowBackground();
+        }
+        DownloadManagerService.getDownloadManagerService(
+                getApplicationContext()).onActivityLaunched();
+        super.finishNativeInitialization();
     }
 
     /**
@@ -1043,8 +1097,17 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
             public void run() {
                 // Gives up the bookmarking if the tab is being destroyed.
                 if (!tabToBookmark.isClosing() && tabToBookmark.isInitialized()) {
-                    BookmarkUtils.addOrEditBookmark(bookmarkId, bookmarkModel,
-                            tabToBookmark, getSnackbarManager(), ChromeActivity.this);
+                    // The BookmarkModel will be destroyed by BookmarkUtils#addOrEditBookmark() when
+                    // done.
+                    BookmarkId newBookmarkId =
+                            BookmarkUtils.addOrEditBookmark(bookmarkId, bookmarkModel,
+                                    tabToBookmark, getSnackbarManager(), ChromeActivity.this);
+                    // If a new bookmark was created, try to save an offline page for it.
+                    if (newBookmarkId != null && newBookmarkId.getId() != bookmarkId) {
+                        OfflinePageUtils.saveBookmarkOffline(newBookmarkId, tabToBookmark);
+                    }
+                } else {
+                    bookmarkModel.destroy();
                 }
             }
         });
@@ -1057,6 +1120,15 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
      */
     public TabModelSelector getTabModelSelector() {
         return mTabModelSelector;
+    }
+
+    /**
+     * Returns the {@link InsetObserverView} that has the current system window
+     * insets information.
+     * @return The {@link InsetObserverView}, possibly null.
+     */
+    public InsetObserverView getInsetObserverView() {
+        return mInsetObserverView;
     }
 
     @Override
@@ -1169,6 +1241,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     /**
      * @return The {@code ReaderModeManager} or {@code null} if none;
      */
+    @VisibleForTesting
     public ReaderModeManager getReaderModeManager() {
         return mReaderModeManager;
     }
@@ -1179,7 +1252,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
      *                         manager.
      * @return A {@link ChromeFullscreenManager} instance that's been created.
      */
-    protected ChromeFullscreenManager createFullscreenManager(View controlContainer) {
+    protected ChromeFullscreenManager createFullscreenManager(ControlContainer controlContainer) {
         return new ChromeFullscreenManager(this, controlContainer, getTabModelSelector(),
                 getControlContainerHeightResource(), true);
     }
@@ -1218,7 +1291,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
             LayoutManagerDocument layoutManager, View urlBar, ViewGroup contentContainer,
             ControlContainer controlContainer) {
         if (controlContainer != null) {
-            mFullscreenManager = createFullscreenManager((View) controlContainer);
+            mFullscreenManager = createFullscreenManager(controlContainer);
         }
 
         if (mContextualSearchManager != null) {
@@ -1251,10 +1324,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
     @Override
     public void onOrientationChange(int orientation) {
-        // TODO(mdjones): Orientation change for panels should not be handled here. The event
-        // should probably be passed to the OverlayPanelManager.
-        if (mContextualSearchManager != null) mContextualSearchManager.onOrientationChange();
-        if (mReaderModeManager != null) mReaderModeManager.onOrientationChange();
         if (mToolbarManager != null) mToolbarManager.onOrientationChange();
     }
 
@@ -1262,32 +1331,92 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     public void onConfigurationChanged(Configuration newConfig) {
         if (mAppMenuHandler != null) mAppMenuHandler.hideAppMenu();
         super.onConfigurationChanged(newConfig);
+
+        if (newConfig.screenWidthDp != mScreenWidthDp) {
+            mScreenWidthDp = newConfig.screenWidthDp;
+            final Activity activity = this;
+
+            if (mRecordMultiWindowModeScreenWidthRunnable != null) {
+                mHandler.removeCallbacks(mRecordMultiWindowModeScreenWidthRunnable);
+            }
+
+            // When exiting Android N multi-window mode, onConfigurationChanged() gets called before
+            // isInMultiWindowMode() returns false. Delay to avoid recording width when exiting
+            // multi-window mode. This also ensures that we don't record intermediate widths seen
+            // only for a brief period of time.
+            mRecordMultiWindowModeScreenWidthRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    mRecordMultiWindowModeScreenWidthRunnable = null;
+                    if (MultiWindowUtils.getInstance().isInMultiWindowMode(activity)) {
+                        recordMultiWindowModeScreenWidth();
+                    }
+                }
+            };
+            mHandler.postDelayed(mRecordMultiWindowModeScreenWidthRunnable,
+                    RECORD_MULTI_WINDOW_SCREEN_WIDTH_DELAY_MS);
+        }
+    }
+
+    /**
+     * Called by the system when the activity changes from fullscreen mode to multi-window mode
+     * and visa-versa.
+     * @param isInMultiWindowMode True if the activity is in multi-window mode.
+     */
+    public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
+        recordMultiWindowModeChangedUserAction(isInMultiWindowMode);
+
+        if (!isInMultiWindowMode
+                && ApplicationStatus.getStateForActivity(this) == ActivityState.RESUMED) {
+            // Start a new UMA session when exiting multi-window mode if the activity is currently
+            // resumed. When entering multi-window Android recents gains focus, so ChromeActivity
+            // will get a call to onPauseWithNative(), ending the current UMA session. When exiting
+            // multi-window, however, if ChromeActivity is resumed it stays in that state.
+            markSessionEnd();
+            markSessionResume();
+            FeatureUtilities.setIsInMultiWindowMode(
+                    MultiWindowUtils.getInstance().isInMultiWindowMode(this));
+        }
+    }
+
+    /**
+     * Records user actions associated with entering and exiting Android N multi-window mode
+     * @param isInMultiWindowMode True if the activity is in multi-window mode.
+     */
+    protected void recordMultiWindowModeChangedUserAction(boolean isInMultiWindowMode) {
+        if (isInMultiWindowMode) {
+            RecordUserAction.record("Android.MultiWindowMode.Enter");
+        } else {
+            RecordUserAction.record("Android.MultiWindowMode.Exit");
+        }
     }
 
     @Override
     public final void onBackPressed() {
+        RecordUserAction.record("SystemBack");
         if (mCompositorViewHolder != null) {
             LayoutManager layoutManager = mCompositorViewHolder.getLayoutManager();
-            boolean layoutConsumed = layoutManager != null && layoutManager.onBackPressed();
-            if (layoutConsumed || mContextualSearchManager != null
-                    && mContextualSearchManager.onBackPressed()) {
-                RecordUserAction.record("SystemBack");
-                return;
-            }
+            if (layoutManager != null && layoutManager.onBackPressed()) return;
         }
-        if (!isSelectActionBarShowing() && handleBackPressed()) {
+
+        ContentViewCore contentViewCore = getContentViewCore();
+        if (contentViewCore != null && contentViewCore.isSelectActionBarShowing()) {
+            contentViewCore.clearSelection();
             return;
         }
-        // This will close the select action bar if it is showing, otherwise close the activity.
+
+        if (mContextualSearchManager != null && mContextualSearchManager.onBackPressed()) return;
+
+        if (handleBackPressed()) return;
+
         super.onBackPressed();
     }
 
-    private boolean isSelectActionBarShowing() {
+
+    private ContentViewCore getContentViewCore() {
         Tab tab = getActivityTab();
-        if (tab == null) return false;
-        ContentViewCore contentViewCore = tab.getContentViewCore();
-        if (contentViewCore == null) return false;
-        return contentViewCore.isSelectActionBarShowing();
+        if (tab == null) return null;
+        return tab.getContentViewCore();
     }
 
     @Override
@@ -1374,7 +1503,8 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
                 RecordUserAction.record("MobileToolbarReload");
             }
         } else if (id == R.id.info_menu_id) {
-            WebsiteSettingsPopup.show(this, currentTab, null);
+            WebsiteSettingsPopup.show(
+                    this, currentTab, null, WebsiteSettingsPopup.OPENED_FROM_MENU);
         } else if (id == R.id.open_history_menu_id) {
             currentTab.loadUrl(
                     new LoadUrlParams(UrlConstants.HISTORY_URL, PageTransition.AUTO_TOPLEVEL));
@@ -1419,6 +1549,39 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
             return false;
         }
         return true;
+    }
+
+    /**
+     * Add a view to the set of views that obscure the content of all tabs for
+     * accessibility. As long as this set is nonempty, all tabs should be
+     * hidden from the accessibility tree.
+     *
+     * @param view The view that obscures the contents of all tabs.
+     */
+    public void addViewObscuringAllTabs(View view) {
+        mViewsObscuringAllTabs.add(view);
+
+        Tab tab = getActivityTab();
+        if (tab != null) tab.updateAccessibilityVisibility();
+    }
+
+    /**
+     * Remove a view that previously obscured the content of all tabs.
+     *
+     * @param view The view that no longer obscures the contents of all tabs.
+     */
+    public void removeViewObscuringAllTabs(View view) {
+        mViewsObscuringAllTabs.remove(view);
+
+        Tab tab = getActivityTab();
+        if (tab != null) tab.updateAccessibilityVisibility();
+    }
+
+    /**
+     * Returns whether or not any views obscure all tabs.
+     */
+    public boolean isViewObscuringAllTabs() {
+        return !mViewsObscuringAllTabs.isEmpty();
     }
 
     private void markSessionResume() {
@@ -1472,6 +1635,11 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
     protected final void postDeferredStartupIfNeeded() {
         if (!mDeferredStartupNotified) {
+            RecordHistogram.recordLongTimesHistogram(
+                    "UMA.Debug.EnableCrashUpload.PostDeferredStartUptime",
+                    SystemClock.uptimeMillis() - UmaUtils.getMainEntryPointTime(),
+                    TimeUnit.MILLISECONDS);
+
             // We want to perform deferred startup tasks a short time after the first page
             // load completes, but only when the main thread Looper has become idle.
             mHandler.postDelayed(new Runnable() {
@@ -1498,56 +1666,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
      */
     public boolean isOverlayVisible() {
         return false;
-    }
-
-    /**
-     * Deletes the snapshot database which is no longer used because the feature has been removed
-     * in Chrome M41.
-     */
-    private void removeSnapshotDatabase() {
-        final Context appContext = getApplicationContext();
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... voids) {
-                synchronized (SNAPSHOT_DATABASE_LOCK) {
-                    SharedPreferences prefs =
-                            PreferenceManager.getDefaultSharedPreferences(appContext);
-                    if (!prefs.getBoolean(SNAPSHOT_DATABASE_REMOVED, false)) {
-                        deleteDatabase(SNAPSHOT_DATABASE_NAME);
-                        prefs.edit().putBoolean(SNAPSHOT_DATABASE_REMOVED, true).apply();
-                    }
-                }
-                return null;
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-    }
-
-    private void recordKeyboardLocaleUma() {
-        InputMethodManager imm =
-                (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-        List<InputMethodInfo> ims = imm.getEnabledInputMethodList();
-        ArrayList<String> uniqueLanguages = new ArrayList<String>();
-        for (InputMethodInfo method : ims) {
-            List<InputMethodSubtype> submethods =
-                    imm.getEnabledInputMethodSubtypeList(method, true);
-            for (InputMethodSubtype submethod : submethods) {
-                if (submethod.getMode().equals("keyboard")) {
-                    String language = submethod.getLocale().split("_")[0];
-                    if (!uniqueLanguages.contains(language)) {
-                        uniqueLanguages.add(language);
-                    }
-                }
-            }
-        }
-        RecordHistogram.recordCountHistogram("InputMethod.ActiveCount", uniqueLanguages.size());
-
-        InputMethodSubtype currentSubtype = imm.getCurrentInputMethodSubtype();
-        Locale systemLocale = Locale.getDefault();
-        if (currentSubtype != null && currentSubtype.getLocale() != null && systemLocale != null) {
-            String keyboardLanguage = currentSubtype.getLocale().split("_")[0];
-            boolean match = systemLocale.getLanguage().equalsIgnoreCase(keyboardLanguage);
-            RecordHistogram.recordBooleanHistogram("InputMethod.MatchesSystemLanguage", match);
-        }
     }
 
     @Override
@@ -1614,5 +1732,23 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
     private void setLowEndTheme() {
         if (getThemeId() == R.style.MainTheme_LowEnd) setTheme(R.style.MainTheme_LowEnd);
+    }
+
+    /**
+     * Records UMA histograms for the current screen width. Should only be called when the activity
+     * is in Android N multi-window mode.
+     */
+    protected void recordMultiWindowModeScreenWidth() {
+        if (!DeviceFormFactor.isTablet(this)) return;
+
+        RecordHistogram.recordBooleanHistogram(
+                "Android.MultiWindowMode.IsTabletScreenWidthBelow600",
+                mScreenWidthDp < DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP);
+
+        if (mScreenWidthDp < DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP) {
+            RecordHistogram.recordLinearCountHistogram(
+                    "Android.MultiWindowMode.TabletScreenWidth", mScreenWidthDp, 1,
+                    DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP, 50);
+        }
     }
 }

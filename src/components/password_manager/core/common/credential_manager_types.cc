@@ -9,6 +9,18 @@
 
 namespace password_manager {
 
+std::ostream& operator<<(std::ostream& os, CredentialType value) {
+  switch (value) {
+    case CredentialType::CREDENTIAL_TYPE_EMPTY:
+      return os << "CredentialType::CREDENTIAL_TYPE_EMPTY";
+    case CredentialType::CREDENTIAL_TYPE_PASSWORD:
+      return os << "CredentialType::CREDENTIAL_TYPE_PASSWORD";
+    case CredentialType::CREDENTIAL_TYPE_FEDERATED:
+      return os << "CredentialType::CREDENTIAL_TYPE_FEDERATED";
+  }
+  return os << "Unknown CredentialType value: " << static_cast<int32_t>(value);
+}
+
 CredentialInfo::CredentialInfo() : type(CredentialType::CREDENTIAL_TYPE_EMPTY) {
 }
 
@@ -39,10 +51,16 @@ CredentialInfo::CredentialInfo(const CredentialInfo& other) = default;
 CredentialInfo::~CredentialInfo() {
 }
 
-scoped_ptr<autofill::PasswordForm> CreatePasswordFormFromCredentialInfo(
+bool CredentialInfo::operator==(const CredentialInfo& rhs) const {
+  return (type == rhs.type && id == rhs.id && name == rhs.name &&
+          icon == rhs.icon && password == rhs.password &&
+          federation.Serialize() == rhs.federation.Serialize());
+}
+
+std::unique_ptr<autofill::PasswordForm> CreatePasswordFormFromCredentialInfo(
     const CredentialInfo& info,
     const GURL& origin) {
-  scoped_ptr<autofill::PasswordForm> form;
+  std::unique_ptr<autofill::PasswordForm> form;
   if (info.type == CredentialType::CREDENTIAL_TYPE_EMPTY)
     return form;
 
@@ -63,10 +81,15 @@ scoped_ptr<autofill::PasswordForm> CreatePasswordFormFromCredentialInfo(
   form->username_value = info.id;
   return form;
 }
-bool CredentialInfo::operator==(const CredentialInfo& rhs) const {
-  return (type == rhs.type && id == rhs.id && name == rhs.name &&
-          icon == rhs.icon && password == rhs.password &&
-          federation.Serialize() == rhs.federation.Serialize());
+
+std::unique_ptr<autofill::PasswordForm> CreateObservedPasswordFormFromOrigin(
+    const GURL& origin) {
+  std::unique_ptr<autofill::PasswordForm> form(new autofill::PasswordForm);
+  form->origin = origin;
+  form->scheme = autofill::PasswordForm::SCHEME_HTML;
+  form->type = autofill::PasswordForm::TYPE_API;
+  form->signon_realm = origin.spec();
+  return form;
 }
 
 }  // namespace password_manager

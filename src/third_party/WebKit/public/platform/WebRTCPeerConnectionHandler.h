@@ -36,6 +36,7 @@ namespace blink {
 class WebMediaConstraints;
 class WebMediaStream;
 class WebMediaStreamTrack;
+class WebRTCAnswerOptions;
 class WebRTCConfiguration;
 class WebRTCDTMFSenderHandler;
 class WebRTCDataChannelHandler;
@@ -48,6 +49,14 @@ class WebRTCVoidRequest;
 class WebString;
 struct WebRTCDataChannelInit;
 
+// Used to back histogram value of "WebRTC.PeerConnection.SelectedRtcpMuxPolicy", so treat as append-only.
+enum RtcpMuxPolicy {
+    RtcpMuxPolicyRequire,
+    RtcpMuxPolicyNegotiate,
+    RtcpMuxPolicyDefault,
+    RtcpMuxPolicyMax
+};
+
 class WebRTCPeerConnectionHandler {
 public:
     virtual ~WebRTCPeerConnectionHandler() { }
@@ -55,13 +64,15 @@ public:
     virtual bool initialize(const WebRTCConfiguration&, const WebMediaConstraints&) = 0;
 
     virtual void createOffer(const WebRTCSessionDescriptionRequest&, const WebMediaConstraints&) = 0;
-    virtual void createOffer(const WebRTCSessionDescriptionRequest&, const WebRTCOfferOptions&) { }
+    virtual void createOffer(const WebRTCSessionDescriptionRequest&, const WebRTCOfferOptions&) = 0;
     virtual void createAnswer(const WebRTCSessionDescriptionRequest&, const WebMediaConstraints&) = 0;
+    virtual void createAnswer(const WebRTCSessionDescriptionRequest&, const WebRTCAnswerOptions&) = 0;
     virtual void setLocalDescription(const WebRTCVoidRequest&, const WebRTCSessionDescription&) = 0;
     virtual void setRemoteDescription(const WebRTCVoidRequest&, const WebRTCSessionDescription&) = 0;
     virtual WebRTCSessionDescription localDescription() = 0;
     virtual WebRTCSessionDescription remoteDescription() = 0;
-    virtual bool updateICE(const WebRTCConfiguration&, const WebMediaConstraints&) = 0;
+    virtual bool updateICE(const WebRTCConfiguration&) = 0;
+    virtual void logSelectedRtcpMuxPolicy(RtcpMuxPolicy) = 0;
 
     // DEPRECATED
     virtual bool addICECandidate(const WebRTCICECandidate&) { return false; }

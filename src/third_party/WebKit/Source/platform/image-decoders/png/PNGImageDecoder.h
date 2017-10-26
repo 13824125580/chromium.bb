@@ -27,6 +27,7 @@
 #define PNGImageDecoder_h
 
 #include "platform/image-decoders/ImageDecoder.h"
+#include <memory>
 
 namespace blink {
 
@@ -40,7 +41,6 @@ public:
 
     // ImageDecoder:
     String filenameExtension() const override { return "png"; }
-    bool hasColorProfile() const override { return m_hasColorProfile; }
 
     // Callbacks from libpng
     void headerAvailable();
@@ -57,8 +57,7 @@ private:
     // data coming, sets the "decode failure" flag.
     void decode(bool onlySize);
 
-    OwnPtr<PNGImageReader> m_reader;
-    bool m_hasColorProfile;
+    std::unique_ptr<PNGImageReader> m_reader;
     const unsigned m_offset;
 };
 

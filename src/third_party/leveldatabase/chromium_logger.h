@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/format_macros.h"
 #include "base/strings/string_util.h"
@@ -84,7 +86,7 @@ class ChromiumLogger : public Logger {
   }
 
  private:
-  scoped_ptr<base::File> file_;
+  std::unique_ptr<base::File> file_;
 };
 
 }  // namespace leveldb

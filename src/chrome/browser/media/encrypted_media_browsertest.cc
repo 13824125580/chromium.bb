@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/windows_version.h"
@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/test_launcher_utils.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest-spi.h"
@@ -23,21 +24,12 @@
 #include "base/android/build_info.h"
 #endif
 
-#include "widevine_cdm_version.h"  //  In SHARED_INTERMEDIATE_DIR.
-
 #if defined(ENABLE_PEPPER_CDMS)
-// Platform-specific filename relative to the chrome executable.
-const char kClearKeyCdmAdapterFileName[] =
-#if defined(OS_MACOSX)
-    "clearkeycdmadapter.plugin";
-#elif defined(OS_WIN)
-    "clearkeycdmadapter.dll";
-#elif defined(OS_POSIX)
-    "libclearkeycdmadapter.so";
+#include "chrome/browser/media/pepper_cdm_test_constants.h"
+#include "chrome/browser/media/pepper_cdm_test_helper.h"
 #endif
 
-const char kClearKeyCdmPluginMimeType[] = "application/x-ppapi-clearkey-cdm";
-#endif  // defined(ENABLE_PEPPER_CDMS)
+#include "widevine_cdm_version.h"  //  In SHARED_INTERMEDIATE_DIR.
 
 // Available key systems.
 const char kClearKeyKeySystem[] = "org.w3.clearkey";
@@ -108,8 +100,6 @@ static bool IsMSESupported() {
 // Base class for encrypted media tests.
 class EncryptedMediaTestBase : public MediaBrowserTest {
  public:
-  EncryptedMediaTestBase() : is_pepper_cdm_registered_(false) {}
-
   bool IsExternalClearKey(const std::string& key_system) {
     if (key_system == kExternalClearKeyKeySystem)
       return true;
@@ -196,7 +186,8 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
   // 'licenseServerURL' query parameter to |query_params|.
   void StartLicenseServerIfNeeded(const std::string& key_system,
                                   base::StringPairs* query_params) {
-    scoped_ptr<TestLicenseServerConfig> config = GetServerConfig(key_system);
+    std::unique_ptr<TestLicenseServerConfig> config =
+        GetServerConfig(key_system);
     if (!config)
       return;
     license_server_.reset(new TestLicenseServer(std::move(config)));
@@ -213,11 +204,12 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
     return true;
   }
 
-  scoped_ptr<TestLicenseServerConfig> GetServerConfig(
+  std::unique_ptr<TestLicenseServerConfig> GetServerConfig(
       const std::string& key_system) {
 #if defined(WIDEVINE_CDM_AVAILABLE)
     if (IsWidevine(key_system)) {
-      scoped_ptr<TestLicenseServerConfig> config(new WVTestLicenseServerConfig);
+      std::unique_ptr<TestLicenseServerConfig> config(
+          new WVTestLicenseServerConfig);
       if (config->IsPlatformSupported())
         return config;
     }
@@ -226,7 +218,7 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
   }
 
  protected:
-  scoped_ptr<TestLicenseServer> license_server_;
+  std::unique_ptr<TestLicenseServer> license_server_;
 
   // We want to fail quickly when a test fails because an error is encountered.
   void AddWaitForTitles(content::TitleWatcher* title_watcher) override {
@@ -249,6 +241,15 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
         switches::kDisableGestureRequirementForMediaPlayback);
   }
 
+#if defined(ENABLE_PEPPER_CDMS)
+  void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
+    base::CommandLine default_command_line(base::CommandLine::NO_PROGRAM);
+    InProcessBrowserTest::SetUpDefaultCommandLine(&default_command_line);
+    test_launcher_utils::RemoveCommandLineSwitch(
+        default_command_line, switches::kDisableComponentUpdate, command_line);
+  }
+#endif  // defined(ENABLE_PEPPER_CDMS)
+
   void SetUpCommandLineForKeySystem(const std::string& key_system,
                                     base::CommandLine* command_line) {
     if (GetServerConfig(key_system))
@@ -259,56 +260,12 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
 
 #if defined(ENABLE_PEPPER_CDMS)
     if (IsExternalClearKey(key_system)) {
-      RegisterPepperCdm(command_line, kClearKeyCdmAdapterFileName, key_system);
+      RegisterPepperCdm(command_line, kClearKeyCdmBaseDirectory,
+                        kClearKeyCdmAdapterFileName, kClearKeyCdmDisplayName,
+                        kClearKeyCdmPepperMimeType);
     }
-#if defined(WIDEVINE_CDM_AVAILABLE) && defined(WIDEVINE_CDM_IS_COMPONENT)
-    else if (IsWidevine(key_system)) {  // NOLINT
-      RegisterPepperCdm(command_line, kWidevineCdmAdapterFileName, key_system);
-    }
-#endif  // defined(WIDEVINE_CDM_AVAILABLE) && defined(WIDEVINE_CDM_IS_COMPONENT)
 #endif  // defined(ENABLE_PEPPER_CDMS)
   }
-
- private:
-#if defined(ENABLE_PEPPER_CDMS)
-  void RegisterPepperCdm(base::CommandLine* command_line,
-                         const std::string& adapter_name,
-                         const std::string& key_system) {
-    DCHECK(!is_pepper_cdm_registered_)
-        << "RegisterPepperCdm() can only be called once.";
-    is_pepper_cdm_registered_ = true;
-
-    // Append the switch to register the Clear Key CDM Adapter.
-    base::FilePath plugin_dir;
-    EXPECT_TRUE(PathService::Get(base::DIR_MODULE, &plugin_dir));
-    base::FilePath plugin_lib = plugin_dir.AppendASCII(adapter_name);
-    EXPECT_TRUE(base::PathExists(plugin_lib)) << plugin_lib.value();
-    base::FilePath::StringType pepper_plugin = plugin_lib.value();
-    pepper_plugin.append(FILE_PATH_LITERAL("#CDM#0.1.0.0;"));
-#if defined(OS_WIN)
-    pepper_plugin.append(base::ASCIIToUTF16(GetPepperType(key_system)));
-#else
-    pepper_plugin.append(GetPepperType(key_system));
-#endif
-    command_line->AppendSwitchNative(switches::kRegisterPepperPlugins,
-                                     pepper_plugin);
-  }
-
-  // Adapted from key_systems.cc.
-  std::string GetPepperType(const std::string& key_system) {
-    if (IsExternalClearKey(key_system))
-      return kClearKeyCdmPluginMimeType;
-#if defined(WIDEVINE_CDM_AVAILABLE)
-    if (IsWidevine(key_system))
-      return kWidevineCdmPluginMimeType;
-#endif  // WIDEVINE_CDM_AVAILABLE
-
-    NOTREACHED();
-    return "";
-  }
-#endif  // defined(ENABLE_PEPPER_CDMS)
-
-  bool is_pepper_cdm_registered_;
 };
 
 #if defined(ENABLE_PEPPER_CDMS)
@@ -566,7 +523,13 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, FrameSizeChangeVideo) {
 }
 
 #if defined(USE_PROPRIETARY_CODECS)
-IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoOnly_MP4) {
+// Crashes on Mac only.  http://crbug.com/621857
+#if defined(OS_MACOSX)
+#define MAYBE_Playback_VideoOnly_MP4 DISABLED_Playback_VideoOnly_MP4
+#else
+#define MAYBE_Playback_VideoOnly_MP4 Playback_VideoOnly_MP4
+#endif
+IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, MAYBE_Playback_VideoOnly_MP4) {
   // MP4 without MSE is not support yet, http://crbug.com/170793.
   if (CurrentSourceType() != MSE) {
     DVLOG(0) << "Skipping test; Can only play MP4 encrypted streams by MSE.";

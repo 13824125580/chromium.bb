@@ -4,8 +4,11 @@
 
 #include "blimp/client/feature/render_widget_feature.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
+#include "blimp/client/feature/mock_render_widget_feature_delegate.h"
 #include "blimp/common/create_blimp_message.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/common/proto/compositor.pb.h"
@@ -26,33 +29,6 @@ namespace client {
 
 namespace {
 
-class MockRenderWidgetFeatureDelegate
-    : public RenderWidgetFeature::RenderWidgetFeatureDelegate {
- public:
-  // RenderWidgetFeatureDelegate implementation.
-  void OnRenderWidgetCreated(int render_widget_id) override {
-    MockableOnRenderWidgetCreated(render_widget_id);
-  }
-  void OnRenderWidgetInitialized(int render_widget_id) override {
-    MockableOnRenderWidgetInitialized(render_widget_id);
-  }
-  void OnRenderWidgetDeleted(int render_widget_id) override {
-    MockableOnRenderWidgetDeleted(render_widget_id);
-  }
-  void OnCompositorMessageReceived(
-      int render_widget_id,
-      scoped_ptr<cc::proto::CompositorMessage> message) override {
-    MockableOnCompositorMessageReceived(render_widget_id, *message);
-  }
-
-  MOCK_METHOD1(MockableOnRenderWidgetCreated, void(int render_widget_id));
-  MOCK_METHOD1(MockableOnRenderWidgetInitialized, void(int render_widget_id));
-  MOCK_METHOD1(MockableOnRenderWidgetDeleted, void(int render_widget_id));
-  MOCK_METHOD2(MockableOnCompositorMessageReceived,
-               void(int render_widget_id,
-                    const cc::proto::CompositorMessage& message));
-};
-
 MATCHER_P2(CompMsgEquals, tab_id, rw_id, "") {
   return arg.compositor().render_widget_id() == rw_id &&
          arg.target_tab_id() == tab_id;
@@ -63,7 +39,7 @@ void SendRenderWidgetMessage(BlimpMessageProcessor* processor,
                              int rw_id,
                              RenderWidgetMessage::Type message_type) {
   RenderWidgetMessage* details;
-  scoped_ptr<BlimpMessage> message = CreateBlimpMessage(&details, tab_id);
+  std::unique_ptr<BlimpMessage> message = CreateBlimpMessage(&details, tab_id);
   details->set_type(message_type);
   details->set_render_widget_id(rw_id);
   net::TestCompletionCallback cb;
@@ -75,7 +51,7 @@ void SendCompositorMessage(BlimpMessageProcessor* processor,
                            int tab_id,
                            int rw_id) {
   CompositorMessage* details;
-  scoped_ptr<BlimpMessage> message = CreateBlimpMessage(&details, tab_id);
+  std::unique_ptr<BlimpMessage> message = CreateBlimpMessage(&details, tab_id);
   details->set_render_widget_id(rw_id);
   net::TestCompletionCallback cb;
   processor->ProcessMessage(std::move(message), cb.callback());
@@ -93,9 +69,9 @@ class RenderWidgetFeatureTest : public testing::Test {
     out_input_processor_ = new MockBlimpMessageProcessor();
     out_compositor_processor_ = new MockBlimpMessageProcessor();
     feature_.set_outgoing_input_message_processor(
-        make_scoped_ptr(out_input_processor_));
+        base::WrapUnique(out_input_processor_));
     feature_.set_outgoing_compositor_message_processor(
-        make_scoped_ptr(out_compositor_processor_));
+        base::WrapUnique(out_compositor_processor_));
 
     feature_.SetDelegate(1, &delegate1_);
     feature_.SetDelegate(2, &delegate2_);
@@ -114,11 +90,11 @@ class RenderWidgetFeatureTest : public testing::Test {
 };
 
 TEST_F(RenderWidgetFeatureTest, DelegateCallsOK) {
-  EXPECT_CALL(delegate1_, MockableOnRenderWidgetCreated(1));
+  EXPECT_CALL(delegate1_, OnRenderWidgetCreated(1));
   EXPECT_CALL(delegate1_, MockableOnCompositorMessageReceived(1, _));
-  EXPECT_CALL(delegate1_, MockableOnRenderWidgetInitialized(1));
-  EXPECT_CALL(delegate2_, MockableOnRenderWidgetCreated(2));
-  EXPECT_CALL(delegate1_, MockableOnRenderWidgetDeleted(1));
+  EXPECT_CALL(delegate1_, OnRenderWidgetInitialized(1));
+  EXPECT_CALL(delegate2_, OnRenderWidgetCreated(2));
+  EXPECT_CALL(delegate1_, OnRenderWidgetDeleted(1));
 
   SendRenderWidgetMessage(&feature_, 1, 1, RenderWidgetMessage::CREATED);
   SendCompositorMessage(&feature_, 1, 1);

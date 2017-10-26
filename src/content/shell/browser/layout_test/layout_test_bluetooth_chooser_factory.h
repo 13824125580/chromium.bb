@@ -5,8 +5,7 @@
 #ifndef CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_BLUETOOTH_CHOOSER_FACTORY_H_
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_BLUETOOTH_CHOOSER_FACTORY_H_
 
-#include "content/public/browser/bluetooth_chooser.h"
-
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -26,7 +25,7 @@ class LayoutTestBluetoothChooserFactory {
   LayoutTestBluetoothChooserFactory();
   ~LayoutTestBluetoothChooserFactory();
 
-  scoped_ptr<BluetoothChooser> RunBluetoothChooser(
+  std::unique_ptr<BluetoothChooser> RunBluetoothChooser(
       RenderFrameHost* frame,
       const BluetoothChooser::EventHandler& event_handler);
 

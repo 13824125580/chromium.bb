@@ -5,13 +5,23 @@
 #include "content/public/browser/content_browser_client.h"
 
 #include "base/files/file_path.h"
+#include "base/guid.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/geolocation_delegate.h"
+#include "content/public/browser/vpn_service_proxy.h"
 #include "content/public/common/sandbox_type.h"
+#include "content/shell/common/shell_switches.h"
 #include "media/base/cdm_factory.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
+
+#if defined(OS_WIN)
+#include "content/common/sandbox_win.h"
+#include "sandbox/win/src/sandbox.h"
+#endif
 
 namespace content {
 
@@ -25,6 +35,10 @@ void ContentBrowserClient::PostAfterStartupTask(
     const scoped_refptr<base::TaskRunner>& task_runner,
     const base::Closure& task) {
   task_runner->PostTask(from_here, task);
+}
+
+bool ContentBrowserClient::IsBrowserStartupComplete() {
+  return true;
 }
 
 WebContentsViewDelegate* ContentBrowserClient::GetWebContentsViewDelegate(
@@ -55,23 +69,6 @@ bool ContentBrowserClient::ShouldLockToOrigin(BrowserContext* browser_context,
 
 bool ContentBrowserClient::LogWebUIUrl(const GURL& web_ui_url) const {
   return false;
-}
-
-net::URLRequestContextGetter* ContentBrowserClient::CreateRequestContext(
-    BrowserContext* browser_context,
-    ProtocolHandlerMap* protocol_handlers,
-    URLRequestInterceptorScopedVector request_interceptors) {
-  return nullptr;
-}
-
-net::URLRequestContextGetter*
-ContentBrowserClient::CreateRequestContextForStoragePartition(
-    BrowserContext* browser_context,
-    const base::FilePath& partition_path,
-    bool in_memory,
-    ProtocolHandlerMap* protocol_handlers,
-    URLRequestInterceptorScopedVector request_interceptors) {
-  return nullptr;
 }
 
 bool ContentBrowserClient::IsHandledURL(const GURL& url) {
@@ -115,7 +112,12 @@ bool ContentBrowserClient::ShouldSwapBrowsingInstancesForNavigation(
   return false;
 }
 
-scoped_ptr<media::CdmFactory> ContentBrowserClient::CreateCdmFactory() {
+media::ScopedAudioManagerPtr ContentBrowserClient::CreateAudioManager(
+    media::AudioLogFactory* audio_log_factory) {
+  return nullptr;
+}
+
+std::unique_ptr<media::CdmFactory> ContentBrowserClient::CreateCdmFactory() {
   return nullptr;
 }
 
@@ -188,15 +190,6 @@ bool ContentBrowserClient::AllowSaveLocalState(ResourceContext* context) {
   return true;
 }
 
-bool ContentBrowserClient::AllowWorkerDatabase(
-    const GURL& url,
-    const base::string16& name,
-    const base::string16& display_name,
-    ResourceContext* context,
-    const std::vector<std::pair<int, int> >& render_frames) {
-  return true;
-}
-
 void ContentBrowserClient::AllowWorkerFileSystem(
     const GURL& url,
     ResourceContext* context,
@@ -226,28 +219,32 @@ bool ContentBrowserClient::AllowKeygen(const GURL& url,
   return true;
 }
 
-bool ContentBrowserClient::AllowWebBluetooth(
+ContentBrowserClient::AllowWebBluetoothResult
+ContentBrowserClient::AllowWebBluetooth(
     content::BrowserContext* browser_context,
     const url::Origin& requesting_origin,
     const url::Origin& embedding_origin) {
-  return true;
+  return AllowWebBluetoothResult::ALLOW;
+}
+
+std::string ContentBrowserClient::GetWebBluetoothBlacklist() {
+  return std::string();
 }
 
 QuotaPermissionContext* ContentBrowserClient::CreateQuotaPermissionContext() {
   return nullptr;
 }
 
-scoped_ptr<storage::QuotaEvictionPolicy>
+std::unique_ptr<storage::QuotaEvictionPolicy>
 ContentBrowserClient::GetTemporaryStorageEvictionPolicy(
     content::BrowserContext* context) {
-  return scoped_ptr<storage::QuotaEvictionPolicy>();
+  return std::unique_ptr<storage::QuotaEvictionPolicy>();
 }
 
 void ContentBrowserClient::SelectClientCertificate(
     WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
-    scoped_ptr<ClientCertificateDelegate> delegate) {
-}
+    std::unique_ptr<ClientCertificateDelegate> delegate) {}
 
 net::URLRequestContext* ContentBrowserClient::OverrideRequestContextForURL(
     const GURL& url, ResourceContext* context) {
@@ -318,7 +315,8 @@ net::NetLog* ContentBrowserClient::GetNetLog() {
   return nullptr;
 }
 
-AccessTokenStore* ContentBrowserClient::CreateAccessTokenStore() {
+GeolocationDelegate* ContentBrowserClient::CreateGeolocationDelegate() {
+  // We don't need to override anything, the default implementation is good.
   return nullptr;
 }
 
@@ -355,12 +353,19 @@ bool ContentBrowserClient::AllowPepperSocketAPI(
   return false;
 }
 
-ui::SelectFilePolicy* ContentBrowserClient::CreateSelectFilePolicy(
-    WebContents* web_contents) {
+bool ContentBrowserClient::IsPepperVpnProviderAPIAllowed(
+    BrowserContext* browser_context,
+    const GURL& url) {
+  return false;
+}
+
+std::unique_ptr<VpnServiceProxy> ContentBrowserClient::GetVpnServiceProxy(
+    BrowserContext* browser_context) {
   return nullptr;
 }
 
-LocationProvider* ContentBrowserClient::OverrideSystemLocationProvider() {
+ui::SelectFilePolicy* ContentBrowserClient::CreateSelectFilePolicy(
+    WebContents* web_contents) {
   return nullptr;
 }
 
@@ -370,10 +375,6 @@ DevToolsManagerDelegate* ContentBrowserClient::GetDevToolsManagerDelegate() {
 
 TracingDelegate* ContentBrowserClient::GetTracingDelegate() {
   return nullptr;
-}
-
-bool ContentBrowserClient::IsNPAPIEnabled() {
-  return false;
 }
 
 bool ContentBrowserClient::IsPluginAllowedToCallRequestOSFileHandle(
@@ -386,6 +387,11 @@ bool ContentBrowserClient::IsPluginAllowedToUseDevChannelAPIs(
     BrowserContext* browser_context,
     const GURL& url) {
   return false;
+}
+
+std::string ContentBrowserClient::GetShellUserIdForBrowserContext(
+    BrowserContext* browser_context) {
+  return base::GenerateGUID();
 }
 
 PresentationServiceDelegate*
@@ -431,10 +437,6 @@ bool ContentBrowserClient::IsWin32kLockdownEnabledForMimeType(
   // TODO(wfh): Enable this by default once Win32k lockdown for PPAPI processes
   // is enabled by default in Chrome. See crbug.com/523278.
   return false;
-}
-
-bool ContentBrowserClient::ShouldUseWindowsPrefetchArgument() const {
-  return true;
 }
 #endif  // defined(OS_WIN)
 

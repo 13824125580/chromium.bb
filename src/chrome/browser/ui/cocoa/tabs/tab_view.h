@@ -77,6 +77,7 @@ const CGFloat kImageNoFocusAlpha = 0.65;
   base::scoped_nsobject<NSString> toolTipText_;
 }
 
+@property(readonly, nonatomic) BOOL isActiveTab;
 @property(retain, nonatomic) NSString* title;
 @property(assign, nonatomic) NSRect titleFrame;
 @property(retain, nonatomic) NSColor* titleColor;
@@ -119,6 +120,16 @@ const CGFloat kImageNoFocusAlpha = 0.65;
 // Returns the width of the largest part of the tab that is available for the
 // user to click to select/activate the tab.
 - (int)widthOfLargestSelectableRegion;
+
+// Returns the Material Design color of the "x".
+- (SkColor)closeButtonColor;
+
+// Updates the label font after changes to either state or the system "Increase
+// Contrast" setting.
+- (void)updateLabelFont;
+
+// Called when systemwide accessibility options change.
+- (void)accessibilityOptionsDidChange:(id)ignored;
 
 @end
 

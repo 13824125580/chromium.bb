@@ -33,9 +33,6 @@
 
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
-#include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
 #include "wtf/text/StringHash.h"
 
@@ -47,10 +44,9 @@ class SharedBuffer;
 
 struct SerializedResource;
 
-class PLATFORM_EXPORT MHTMLArchive final : public RefCountedWillBeGarbageCollectedFinalized<MHTMLArchive> {
+class PLATFORM_EXPORT MHTMLArchive final : public GarbageCollected<MHTMLArchive> {
 public:
-    static PassRefPtrWillBeRawPtr<MHTMLArchive> create(const KURL&, SharedBuffer*);
-    ~MHTMLArchive();
+    static MHTMLArchive* create(const KURL&, SharedBuffer*);
 
     // Binary encoding results in smaller MHTML files but they might not work in other browsers.
     enum EncodingPolicy {
@@ -90,7 +86,7 @@ public:
         const String& boundary,
         SharedBuffer& outputBuffer);
 
-    typedef WillBeHeapHashMap<String, RefPtrWillBeMember<ArchiveResource>> SubArchiveResources;
+    typedef HeapHashMap<String, Member<ArchiveResource>> SubArchiveResources;
 
     ArchiveResource* mainResource() { return m_mainResource.get(); }
     ArchiveResource* subresourceForURL(const KURL&) const;
@@ -100,10 +96,10 @@ public:
 private:
     MHTMLArchive();
 
-    void setMainResource(PassRefPtrWillBeRawPtr<ArchiveResource>);
+    void setMainResource(ArchiveResource*);
     void addSubresource(ArchiveResource*);
 
-    RefPtrWillBeMember<ArchiveResource> m_mainResource;
+    Member<ArchiveResource> m_mainResource;
     SubArchiveResources m_subresources;
 };
 

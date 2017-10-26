@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/base64.h"
@@ -62,22 +64,23 @@ class MessageSender : public content::NotificationObserver {
   }
 
  private:
-  static scoped_ptr<base::ListValue> BuildEventArguments(
+  static std::unique_ptr<base::ListValue> BuildEventArguments(
       const bool last_message,
       const std::string& data) {
-    base::DictionaryValue* event = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> event(new base::DictionaryValue());
     event->SetBoolean("lastMessage", last_message);
     event->SetString("data", data);
-    scoped_ptr<base::ListValue> arguments(new base::ListValue());
-    arguments->Append(event);
+    std::unique_ptr<base::ListValue> arguments(new base::ListValue());
+    arguments->Append(std::move(event));
     return arguments;
   }
 
-  static scoped_ptr<Event> BuildEvent(scoped_ptr<base::ListValue> event_args,
-                                      Profile* profile,
-                                      GURL event_url) {
-    scoped_ptr<Event> event(new Event(events::TEST_ON_MESSAGE, "test.onMessage",
-                                      std::move(event_args)));
+  static std::unique_ptr<Event> BuildEvent(
+      std::unique_ptr<base::ListValue> event_args,
+      Profile* profile,
+      GURL event_url) {
+    std::unique_ptr<Event> event(new Event(
+        events::TEST_ON_MESSAGE, "test.onMessage", std::move(event_args)));
     event->restrict_to_browser_context = profile;
     event->event_url = event_url;
     return event;
@@ -128,7 +131,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_Messaging) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MessagingCrash) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  ExtensionTestMessageListener ready_to_crash("ready_to_crash", true);
+  ExtensionTestMessageListener ready_to_crash("ready_to_crash", false);
   ASSERT_TRUE(LoadExtension(
           test_data_dir_.AppendASCII("messaging/connect_crash")));
   ui_test_utils::NavigateToURL(
@@ -344,6 +347,10 @@ class ExternallyConnectableMessagingTest : public ExtensionApiTest {
     return GetURLForPath("www.chromium.org", "/chromium.org.html");
   }
 
+  GURL popup_opener_url() {
+    return GetURLForPath("www.chromium.org", "/popup_opener.html");
+  }
+
   GURL google_com_url() {
     return GetURLForPath("www.google.com", "/google.com.html");
   }
@@ -522,10 +529,11 @@ IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest, NotInstalled) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
           .SetID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Fake extension")
-                                     .Set("version", "1")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Fake extension")
+                           .Set("version", "1")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
 
   ui_test_utils::NavigateToURL(browser(), chromium_org_url());
@@ -1014,19 +1022,57 @@ IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest,
   EXPECT_FALSE(AreAnyNonWebApisDefinedForIFrame());
 }
 
+IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest, FromPopup) {
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisablePopupBlocking);
+
+  InitializeTestServer();
+  scoped_refptr<const Extension> extension = LoadChromiumConnectableExtension();
+
+  // This will let us wait for the chromium.org.html page to load in a popup.
+  ui_test_utils::UrlLoadObserver url_observer(
+      chromium_org_url(), content::NotificationService::AllSources());
+
+  // The page at popup_opener_url() should open chromium_org_url() as a popup.
+  ui_test_utils::NavigateToURL(browser(), popup_opener_url());
+  url_observer.Wait();
+
+  // Find the WebContents that committed the chromium_org_url().
+  // TODO(devlin) - it would be nice if UrlLoadObserver handled this for
+  // us, which it could pretty easily do.
+  content::WebContents* popup_contents = nullptr;
+  for (int i = 0; i < browser()->tab_strip_model()->count(); i++) {
+    content::WebContents* contents =
+        browser()->tab_strip_model()->GetWebContentsAt(i);
+    if (contents->GetLastCommittedURL() == chromium_org_url()) {
+      popup_contents = contents;
+      break;
+    }
+  }
+  ASSERT_NE(nullptr, popup_contents) << "Could not find WebContents for popup";
+
+  // Make sure the popup can connect and send messages to the extension.
+  content::RenderFrameHost* popup_frame = popup_contents->GetMainFrame();
+
+  EXPECT_EQ(OK, CanConnectAndSendMessagesToFrame(popup_frame, extension.get(),
+                                                 nullptr));
+  EXPECT_FALSE(AreAnyNonWebApisDefinedForFrame(popup_frame));
+}
+
 // Tests externally_connectable between a web page and an extension with a
 // TLS channel ID created for the origin.
 class ExternallyConnectableMessagingWithTlsChannelIdTest :
   public ExternallyConnectableMessagingTest {
  public:
   ExternallyConnectableMessagingWithTlsChannelIdTest()
-      : tls_channel_id_created_(false, false) {
-  }
+      : tls_channel_id_created_(
+            base::WaitableEvent::ResetPolicy::AUTOMATIC,
+            base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   std::string CreateTlsChannelId() {
     scoped_refptr<net::URLRequestContextGetter> request_context_getter(
         profile()->GetRequestContext());
-    scoped_ptr<crypto::ECPrivateKey> channel_id_key;
+    std::unique_ptr<crypto::ECPrivateKey> channel_id_key;
     net::ChannelIDService::Request request;
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
@@ -1050,7 +1096,7 @@ class ExternallyConnectableMessagingWithTlsChannelIdTest :
 
  private:
   void CreateDomainBoundCertOnIOThread(
-      scoped_ptr<crypto::ECPrivateKey>* channel_id_key,
+      std::unique_ptr<crypto::ECPrivateKey>* channel_id_key,
       net::ChannelIDService::Request* request,
       scoped_refptr<net::URLRequestContextGetter> request_context_getter) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -1238,10 +1284,11 @@ IN_PROC_BROWSER_TEST_F(ExternallyConnectableMessagingTest,
       ExtensionBuilder()
           // A bit scary that this works...
           .SetID("invalid")
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Fake extension")
-                                     .Set("version", "1")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Fake extension")
+                           .Set("version", "1")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
 
   ui_test_utils::NavigateToURL(browser(), chromium_org_url());

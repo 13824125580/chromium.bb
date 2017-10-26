@@ -4,7 +4,7 @@
 
 #include "ash/test/test_suite.h"
 
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/i18n/rtl.h"
@@ -26,15 +26,13 @@ namespace ash {
 namespace test {
 
 AuraShellTestSuite::AuraShellTestSuite(int argc, char** argv)
-    : TestSuite(argc, argv) {
-}
+    : TestSuite(argc, argv) {}
 
-AuraShellTestSuite::~AuraShellTestSuite() {
-}
+AuraShellTestSuite::~AuraShellTestSuite() {}
 
 void AuraShellTestSuite::Initialize() {
   base::TestSuite::Initialize();
-  gfx::GLSurfaceTestSupport::InitializeOneOff();
+  gl::GLSurfaceTestSupport::InitializeOneOff();
 
 #if defined(OS_WIN)
   base::win::Version version = base::win::GetVersion();
@@ -72,11 +70,11 @@ void AuraShellTestSuite::Initialize() {
   rb.AddDataPackFromPath(ash_test_resources_200, ui::SCALE_FACTOR_200P);
 
   base::DiscardableMemoryAllocator::SetInstance(&discardable_memory_allocator_);
-  aura::Env::CreateInstance(true);
+  env_ = aura::Env::CreateInstance();
 }
 
 void AuraShellTestSuite::Shutdown() {
-  aura::Env::DeleteInstance();
+  env_.reset();
   ui::ResourceBundle::CleanupSharedInstance();
 #if defined(OS_WIN)
   com_initializer_.reset();

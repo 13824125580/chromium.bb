@@ -5,14 +5,17 @@
 #include "components/autofill/core/browser/webdata/autofill_profile_syncable_service.h"
 
 #include <stddef.h>
+
 #include <utility>
 
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/country_names.h"
 #include "components/autofill/core/browser/webdata/autofill_change.h"
+#include "components/autofill/core/common/autofill_constants.h"
 #include "sync/api/sync_error_factory.h"
 #include "sync/api/sync_error_factory_mock.h"
 #include "sync/protocol/sync.pb.h"
@@ -37,7 +40,6 @@ const char kGuid3[] = "EDC609ED-7EEE-4F27-B00C-423242A9C44D";
 const char kGuid4[] = "EDC609ED-7EEE-4F27-B00C-423242A9C44E";
 const char kHttpOrigin[] = "http://www.example.com/";
 const char kHttpsOrigin[] = "https://www.example.com/";
-const char kSettingsOrigin[] = "Chrome settings";
 
 class MockAutofillProfileSyncableService
     : public AutofillProfileSyncableService {
@@ -134,8 +136,8 @@ class TestSyncChangeProcessor : public syncer::SyncChangeProcessor {
 
 // Returns a profile with all fields set.  Contains identical data to the data
 // returned from ConstructCompleteSyncData().
-scoped_ptr<AutofillProfile> ConstructCompleteProfile() {
-  scoped_ptr<AutofillProfile> profile(
+std::unique_ptr<AutofillProfile> ConstructCompleteProfile() {
+  std::unique_ptr<AutofillProfile> profile(
       new AutofillProfile(kGuid1, kHttpsOrigin));
 
   profile->set_use_count(7);
@@ -244,14 +246,14 @@ class AutofillProfileSyncableServiceTest : public testing::Test {
     // Takes ownership of sync_processor_.
     autofill_syncable_service_.MergeDataAndStartSyncing(
         syncer::AUTOFILL_PROFILE, data_list, std::move(sync_processor_),
-        scoped_ptr<syncer::SyncErrorFactory>(
+        std::unique_ptr<syncer::SyncErrorFactory>(
             new syncer::SyncErrorFactoryMock()));
   }
 
  protected:
   base::MessageLoop message_loop_;
   MockAutofillProfileSyncableService autofill_syncable_service_;
-  scoped_ptr<MockSyncChangeProcessor> sync_processor_;
+  std::unique_ptr<MockSyncChangeProcessor> sync_processor_;
 };
 
 TEST_F(AutofillProfileSyncableServiceTest, MergeDataAndStartSyncing) {
@@ -400,6 +402,9 @@ TEST_F(AutofillProfileSyncableServiceTest, MergeSimilarProfiles) {
   // should never overwrite a verified one.
   AutofillProfile expected_profile(profile1);
   expected_profile.set_origin(origin_present1);
+  expected_profile.SetRawInfo(NAME_FULL, ASCIIToUTF16("John"));
+  // Merging two profile adds their user count.
+  expected_profile.set_use_count(2);
   syncer::SyncChangeList expected_change_list;
   expected_change_list.push_back(
       syncer::SyncChange(FROM_HERE,
@@ -447,6 +452,8 @@ TEST_F(AutofillProfileSyncableServiceTest, MergeDataEmptyOrigins) {
   autofill_specifics->add_email_address(std::string());
   autofill_specifics->add_phone_home_whole_number(std::string());
   autofill_specifics->set_address_home_line1("1 1st st");
+  autofill_specifics->set_use_count(profile.use_count());
+  autofill_specifics->set_use_date(profile.use_date().ToTimeT());
   EXPECT_FALSE(autofill_specifics->has_origin());
 
   syncer::SyncDataList data_list;
@@ -593,62 +600,94 @@ TEST_F(AutofillProfileSyncableServiceTest, UpdateField) {
   EXPECT_EQ(profile.GetRawInfo(COMPANY_NAME), ASCIIToUTF16(company2));
 }
 
-TEST_F(AutofillProfileSyncableServiceTest, MergeProfile) {
-  AutofillProfile profile1(kGuid1, kHttpOrigin);
-  profile1.SetRawInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("111 First St."));
+// Tests that MergeSimilarProfiles adds the additional information of
+// |from_profile| into |into_profile| but not the other way around.
+TEST_F(AutofillProfileSyncableServiceTest,
+       MergeSimilarProfiles_AdditionalInfoInBothProfiles) {
+  AutofillProfile into_profile(kGuid1, kHttpOrigin);
+  into_profile.SetRawInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("111 First St."));
 
-  AutofillProfile profile2(kGuid2, kHttpsOrigin);
-  profile2.SetRawInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("111 First St."));
+  AutofillProfile from_profile(kGuid2, kHttpsOrigin);
+  from_profile.SetRawInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("111 First St."));
 
-  profile1.SetRawInfo(EMAIL_ADDRESS, ASCIIToUTF16("1@1.com"));
-  profile2.SetRawInfo(EMAIL_ADDRESS, ASCIIToUTF16("1@1.com"));
+  from_profile.set_use_count(0);
+  into_profile.set_use_count(0);
 
-  profile1.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));
-  profile2.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));
+  into_profile.set_use_date(base::Time::FromTimeT(1234));
+  from_profile.set_use_date(base::Time::FromTimeT(1234));
 
-  profile1.SetRawInfo(NAME_LAST, ASCIIToUTF16("Doe"));
-  profile2.SetRawInfo(NAME_LAST, ASCIIToUTF16("Doe"));
+  into_profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));
+  from_profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));
 
-  profile2.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("650234567"));
+  into_profile.SetRawInfo(NAME_LAST, ASCIIToUTF16("Doe"));
+  from_profile.SetRawInfo(NAME_LAST, ASCIIToUTF16("Doe"));
 
-  profile1.set_language_code("en");
+  from_profile.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("650234567"));
 
-  EXPECT_FALSE(AutofillProfileSyncableService::MergeProfile(profile2, &profile1,
-                                                            "en-US"));
+  into_profile.set_language_code("en");
 
-  // The more recent use_date is maintained and synced back.
-  profile2.set_use_date(base::Time::FromTimeT(30));
-  profile1.set_use_date(base::Time::FromTimeT(25));
-  EXPECT_FALSE(AutofillProfileSyncableService::MergeProfile(profile2, &profile1,
-                                                            "en-US"));
-  EXPECT_EQ(base::Time::FromTimeT(30), profile1.use_date());
-  profile1.set_use_date(base::Time::FromTimeT(35));
-  EXPECT_TRUE(AutofillProfileSyncableService::MergeProfile(profile2, &profile1,
-                                                           "en-US"));
-  EXPECT_EQ(base::Time::FromTimeT(35), profile1.use_date());
-
-  EXPECT_EQ(ASCIIToUTF16("John"), profile1.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(ASCIIToUTF16("Doe"), profile1.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(ASCIIToUTF16("1@1.com"), profile1.GetRawInfo(EMAIL_ADDRESS));
+  // Expect true because the phone number and origin of |from_profile| were
+  // saved in |into_profile|.
+  EXPECT_TRUE(AutofillProfileSyncableService::MergeSimilarProfiles(
+      from_profile, &into_profile, "en-US"));
   EXPECT_EQ(ASCIIToUTF16("650234567"),
-            profile1.GetRawInfo(PHONE_HOME_WHOLE_NUMBER));
+            into_profile.GetRawInfo(PHONE_HOME_WHOLE_NUMBER));
+  EXPECT_EQ(kHttpsOrigin, into_profile.origin());
 
-  EXPECT_EQ(profile2.origin(), profile1.origin());
+  // Make sure that the language code of |into_profile| was not added to
+  // |from_profile|.
+  EXPECT_EQ("", from_profile.language_code());
+}
 
-  AutofillProfile profile3(kGuid3, kHttpOrigin);
-  profile3.SetRawInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("111 First St."));
-  profile3.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Jane"));
-  profile3.SetRawInfo(NAME_LAST, ASCIIToUTF16("Doe"));
+// Tests that MergeSimilarProfiles keeps the most recent use date of the two
+// profiles being merged.
+TEST_F(AutofillProfileSyncableServiceTest,
+       MergeSimilarProfiles_DifferentUseDates) {
+  // Different guids, same origin.
+  AutofillProfile into_profile(kGuid1, kHttpOrigin);
+  AutofillProfile from_profile(kGuid2, kHttpOrigin);
 
-  EXPECT_TRUE(AutofillProfileSyncableService::MergeProfile(profile3,
-                                                           &profile1,
-                                                           "en-US"));
+  from_profile.set_use_count(0);
+  into_profile.set_use_count(0);
 
-  EXPECT_EQ(ASCIIToUTF16("Jane"), profile1.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(ASCIIToUTF16("Doe"), profile1.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(ASCIIToUTF16("1@1.com"), profile1.GetRawInfo(EMAIL_ADDRESS));
-  EXPECT_EQ(ASCIIToUTF16("650234567"),
-            profile1.GetRawInfo(PHONE_HOME_WHOLE_NUMBER));
+  // |from_profile| has a more recent use date.
+  from_profile.set_use_date(base::Time::FromTimeT(30));
+  into_profile.set_use_date(base::Time::FromTimeT(25));
+
+  // Expect true because the use date of |from_profile| replaced the use date of
+  // |into_profile|.
+  EXPECT_TRUE(AutofillProfileSyncableService::MergeSimilarProfiles(
+      from_profile, &into_profile, "en-US"));
+  EXPECT_EQ(base::Time::FromTimeT(30), into_profile.use_date());
+
+  // |into_profile| has a more recent use date.
+  into_profile.set_use_date(base::Time::FromTimeT(35));
+
+  // Expect false because |from_profile| was not updated in any way by
+  // |into_profile|.
+  EXPECT_FALSE(AutofillProfileSyncableService::MergeSimilarProfiles(
+      from_profile, &into_profile, "en-US"));
+  EXPECT_EQ(base::Time::FromTimeT(35), into_profile.use_date());
+}
+
+// Tests that MergeSimilarProfiles saves the sum of the use counts of the two
+// profiles in |into_profile|.
+TEST_F(AutofillProfileSyncableServiceTest,
+       MergeSimilarProfiles_NonZeroUseCounts) {
+  // Different guids, same origin, same use date.
+  AutofillProfile into_profile(kGuid1, kHttpOrigin);
+  AutofillProfile from_profile(kGuid2, kHttpOrigin);
+  from_profile.set_use_date(base::Time::FromTimeT(1234));
+  into_profile.set_use_date(base::Time::FromTimeT(1234));
+
+  from_profile.set_use_count(5);
+  into_profile.set_use_count(12);
+
+  // Expect true because the use count of |from_profile| was added to the use
+  // count of |into_profile|.
+  EXPECT_TRUE(AutofillProfileSyncableService::MergeSimilarProfiles(
+      from_profile, &into_profile, "en-US"));
+  EXPECT_EQ(17U, into_profile.use_count());
 }
 
 // Ensure that all profile fields are able to be synced up from the client to
@@ -685,7 +724,8 @@ TEST_F(AutofillProfileSyncableServiceTest, SyncAllFieldsToClient) {
   // Set up expectations: All fields correctly copied to the WebDB, and no
   // changes propagated to Sync.
   syncer::SyncChangeList expected_change_list;
-  scoped_ptr<AutofillProfile> expected_profile = ConstructCompleteProfile();
+  std::unique_ptr<AutofillProfile> expected_profile =
+      ConstructCompleteProfile();
   MockAutofillProfileSyncableService::DataBundle expected_bundle;
   expected_bundle.profiles_to_add.push_back(expected_profile.get());
 
@@ -777,6 +817,8 @@ TEST_F(AutofillProfileSyncableServiceTest, MergeDataEmptyStreetAddress) {
   autofill_specifics->add_phone_home_whole_number(std::string());
   autofill_specifics->set_address_home_line1("123 Example St.");
   autofill_specifics->set_address_home_line2("Apt. 42");
+  autofill_specifics->set_use_count(profile.use_count());
+  autofill_specifics->set_use_date(profile.use_date().ToTimeT());
   EXPECT_FALSE(autofill_specifics->has_address_home_street_address());
 
   syncer::SyncDataList data_list;
@@ -853,6 +895,8 @@ TEST_F(AutofillProfileSyncableServiceTest, NoLanguageCodeNoSync) {
   autofill_specifics->add_name_full(std::string());
   autofill_specifics->add_email_address(std::string());
   autofill_specifics->add_phone_home_whole_number(std::string());
+  autofill_specifics->set_use_count(profile.use_count());
+  autofill_specifics->set_use_date(profile.use_date().ToTimeT());
   EXPECT_FALSE(autofill_specifics->has_address_home_language_code());
 
   syncer::SyncDataList data_list;
@@ -1039,6 +1083,8 @@ TEST_F(AutofillProfileSyncableServiceTest, NoFullNameNoSync) {
   autofill_specifics->add_name_middle(std::string());
   autofill_specifics->add_name_last(std::string());
   autofill_specifics->add_email_address(std::string());
+  autofill_specifics->set_use_count(profile.use_count());
+  autofill_specifics->set_use_date(profile.use_date().ToTimeT());
   autofill_specifics->add_phone_home_whole_number(std::string());
 
   syncer::SyncDataList data_list;
@@ -1101,6 +1147,8 @@ TEST_F(AutofillProfileSyncableServiceTest, NoUsageStatsNoSync) {
   // Local autofill profile has 0 for use_count/use_date.
   AutofillProfile profile(kGuid1, kHttpsOrigin);
   profile.set_language_code("en");
+  profile.set_use_count(0);
+  profile.set_use_date(base::Time());
   EXPECT_EQ(0U, profile.use_count());
   EXPECT_EQ(base::Time(), profile.use_date());
   profiles_from_web_db.push_back(new AutofillProfile(profile));
@@ -1136,52 +1184,74 @@ TEST_F(AutofillProfileSyncableServiceTest, NoUsageStatsNoSync) {
 }
 
 // Usage stats should be updated by sync.
-TEST_F(AutofillProfileSyncableServiceTest, SyncUpdatesEmptyUsageStats) {
-  std::vector<AutofillProfile*> profiles_from_web_db;
+TEST_F(AutofillProfileSyncableServiceTest, SyncUpdatesUsageStats) {
+  typedef struct {
+    size_t local_use_count;
+    base::Time local_use_date;
+    size_t remote_use_count;
+    int remote_use_date;
+    size_t synced_use_count;
+    base::Time synced_use_date;
+  } TestCase;
 
-  // Local autofill profile has 0 for use_count/use_date.
-  AutofillProfile profile(kGuid1, kHttpsOrigin);
-  profile.set_language_code("en");
-  EXPECT_EQ(0U, profile.use_count());
-  EXPECT_EQ(base::Time(), profile.use_date());
-  profiles_from_web_db.push_back(new AutofillProfile(profile));
+  TestCase test_cases[] = {
+      // Local profile with default stats.
+      {0U, base::Time(), 9U, 4321, 9U, base::Time::FromTimeT(4321)},
+      // Local profile has older stats than the server.
+      {3U, base::Time::FromTimeT(1234), 9U, 4321, 9U,
+       base::Time::FromTimeT(4321)},
+      // Local profile has newer stats than the server
+      {10U, base::Time::FromTimeT(9999), 9U, 4321, 9U,
+       base::Time::FromTimeT(4321)}};
 
-  // Remote data has usage stats.
-  sync_pb::EntitySpecifics specifics;
-  sync_pb::AutofillProfileSpecifics* autofill_specifics =
-      specifics.mutable_autofill_profile();
-  autofill_specifics->set_guid(profile.guid());
-  autofill_specifics->set_origin(profile.origin());
-  autofill_specifics->add_name_first(std::string());
-  autofill_specifics->add_name_middle(std::string());
-  autofill_specifics->add_name_last(std::string());
-  autofill_specifics->add_name_full(std::string());
-  autofill_specifics->add_email_address(std::string());
-  autofill_specifics->add_phone_home_whole_number(std::string());
-  autofill_specifics->set_address_home_language_code("en");
-  autofill_specifics->set_use_count(9);
-  autofill_specifics->set_use_date(1423182153);
-  EXPECT_TRUE(autofill_specifics->has_use_count());
-  EXPECT_TRUE(autofill_specifics->has_use_date());
+  for (const TestCase& test_case : test_cases) {
+    SetUp();
+    std::vector<AutofillProfile*> profiles_from_web_db;
 
-  syncer::SyncDataList data_list;
-  data_list.push_back(
-      syncer::SyncData::CreateLocalData(
-          profile.guid(), profile.guid(), specifics));
+    AutofillProfile profile(kGuid1, kHttpsOrigin);
+    profile.set_language_code("en");
+    profile.set_use_count(test_case.local_use_count);
+    profile.set_use_date(test_case.local_use_date);
+    EXPECT_EQ(test_case.local_use_count, profile.use_count());
+    EXPECT_EQ(test_case.local_use_date, profile.use_date());
+    profiles_from_web_db.push_back(new AutofillProfile(profile));
 
-  // Expect the local autofill profile to have usage stats after sync.
-  MockAutofillProfileSyncableService::DataBundle expected_bundle;
-  AutofillProfile expected_profile = profile;
-  expected_profile.set_use_count(9U);
-  expected_profile.set_use_date(base::Time::FromTimeT(1423182153));
-  expected_bundle.profiles_to_update.push_back(&expected_profile);
+    // Remote data has usage stats.
+    sync_pb::EntitySpecifics specifics;
+    sync_pb::AutofillProfileSpecifics* autofill_specifics =
+        specifics.mutable_autofill_profile();
+    autofill_specifics->set_guid(profile.guid());
+    autofill_specifics->set_origin(profile.origin());
+    autofill_specifics->add_name_first(std::string());
+    autofill_specifics->add_name_middle(std::string());
+    autofill_specifics->add_name_last(std::string());
+    autofill_specifics->add_name_full(std::string());
+    autofill_specifics->add_email_address(std::string());
+    autofill_specifics->add_phone_home_whole_number(std::string());
+    autofill_specifics->set_address_home_language_code("en");
+    autofill_specifics->set_use_count(test_case.remote_use_count);
+    autofill_specifics->set_use_date(test_case.remote_use_date);
+    EXPECT_TRUE(autofill_specifics->has_use_count());
+    EXPECT_TRUE(autofill_specifics->has_use_date());
 
-  // Expect no changes to remote data.
-  syncer::SyncChangeList expected_empty_change_list;
+    syncer::SyncDataList data_list;
+    data_list.push_back(syncer::SyncData::CreateLocalData(
+        profile.guid(), profile.guid(), specifics));
 
-  MergeDataAndStartSyncing(profiles_from_web_db, data_list,
-                           expected_bundle, expected_empty_change_list);
-  autofill_syncable_service_.StopSyncing(syncer::AUTOFILL_PROFILE);
+    // Expect the local autofill profile to have usage stats after sync.
+    MockAutofillProfileSyncableService::DataBundle expected_bundle;
+    AutofillProfile expected_profile = profile;
+    expected_profile.set_use_count(test_case.synced_use_count);
+    expected_profile.set_use_date(test_case.synced_use_date);
+    expected_bundle.profiles_to_update.push_back(&expected_profile);
+
+    // Expect no changes to remote data.
+    syncer::SyncChangeList expected_empty_change_list;
+
+    MergeDataAndStartSyncing(profiles_from_web_db, data_list, expected_bundle,
+                             expected_empty_change_list);
+    autofill_syncable_service_.StopSyncing(syncer::AUTOFILL_PROFILE);
+  }
 }
 
 // Usage stats should be updated by the client.
@@ -1217,10 +1287,9 @@ TEST_F(AutofillProfileSyncableServiceTest, ClientOverwritesUsageStats) {
       .Times(1)
       .WillOnce(Return(true));
   autofill_syncable_service_.MergeDataAndStartSyncing(
-      syncer::AUTOFILL_PROFILE,
-      data_list,
-      make_scoped_ptr(sync_change_processor),
-      scoped_ptr<syncer::SyncErrorFactory>(
+      syncer::AUTOFILL_PROFILE, data_list,
+      base::WrapUnique(sync_change_processor),
+      std::unique_ptr<syncer::SyncErrorFactory>(
           new syncer::SyncErrorFactoryMock()));
 
   // Update to the usage stats for that profile.
@@ -1255,8 +1324,9 @@ TEST_F(AutofillProfileSyncableServiceTest, IgnoreServerProfileUpdate) {
       .WillOnce(Return(true));
   autofill_syncable_service_.MergeDataAndStartSyncing(
       syncer::AUTOFILL_PROFILE, syncer::SyncDataList(),
-      make_scoped_ptr(new TestSyncChangeProcessor),
-      scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
+      base::WrapUnique(new TestSyncChangeProcessor),
+      std::unique_ptr<syncer::SyncErrorFactory>(
+          new syncer::SyncErrorFactoryMock()));
   AutofillProfile server_profile(AutofillProfile::SERVER_PROFILE, "server-id");
 
   // Should not crash:

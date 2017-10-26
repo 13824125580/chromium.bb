@@ -16,15 +16,15 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window_state.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 
 #if defined(USE_ASH)
+#include "ash/common/wm/window_positioner.h"
 #include "ash/shell.h"
-#include "ash/wm/window_positioner.h"
 #include "chrome/browser/ui/ash/ash_util.h"
 #endif
 
@@ -79,13 +79,14 @@ class DefaultStateProvider : public WindowSizer::StateProvider {
       wp_pref->GetInteger("work_area_right", &work_area_right);
       if (*show_state == ui::SHOW_STATE_DEFAULT && maximized)
         *show_state = ui::SHOW_STATE_MAXIMIZED;
+#if defined(USE_ASH)
       bool docked = false;
       wp_pref->GetBoolean("docked", &docked);
       if (*show_state == ui::SHOW_STATE_DEFAULT && docked &&
-          !browser_->is_type_tabbed() &&
-          browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH) {
+          !browser_->is_type_tabbed()) {
         *show_state = ui::SHOW_STATE_DOCKED;
       }
+#endif  // USE_ASH
     }
     work_area->SetRect(work_area_left, work_area_top,
                       std::max(0, work_area_right - work_area_left),
@@ -151,8 +152,8 @@ class DefaultTargetDisplayProvider : public WindowSizer::TargetDisplayProvider {
   DefaultTargetDisplayProvider() {}
   ~DefaultTargetDisplayProvider() override {}
 
-  gfx::Display GetTargetDisplay(const gfx::Screen* screen,
-                                const gfx::Rect& bounds) const override {
+  display::Display GetTargetDisplay(const display::Screen* screen,
+                                    const gfx::Rect& bounds) const override {
 #if defined(USE_ASH)
     // Use the target display on ash.
     if (chrome::ShouldOpenAshOnStartup()) {
@@ -175,18 +176,18 @@ class DefaultTargetDisplayProvider : public WindowSizer::TargetDisplayProvider {
 // WindowSizer, public:
 
 WindowSizer::WindowSizer(
-    scoped_ptr<StateProvider> state_provider,
-    scoped_ptr<TargetDisplayProvider> target_display_provider,
+    std::unique_ptr<StateProvider> state_provider,
+    std::unique_ptr<TargetDisplayProvider> target_display_provider,
     const Browser* browser)
     : state_provider_(std::move(state_provider)),
       target_display_provider_(std::move(target_display_provider)),
-      screen_(gfx::Screen::GetScreen()),
+      screen_(display::Screen::GetScreen()),
       browser_(browser) {}
 
 WindowSizer::WindowSizer(
-    scoped_ptr<StateProvider> state_provider,
-    scoped_ptr<TargetDisplayProvider> target_display_provider,
-    gfx::Screen* screen,
+    std::unique_ptr<StateProvider> state_provider,
+    std::unique_ptr<TargetDisplayProvider> target_display_provider,
+    display::Screen* screen,
     const Browser* browser)
     : state_provider_(std::move(state_provider)),
       target_display_provider_(std::move(target_display_provider)),
@@ -205,9 +206,9 @@ void WindowSizer::GetBrowserWindowBoundsAndShowState(
     const Browser* browser,
     gfx::Rect* window_bounds,
     ui::WindowShowState* show_state) {
-  scoped_ptr<StateProvider> state_provider(
+  std::unique_ptr<StateProvider> state_provider(
       new DefaultStateProvider(app_name, browser));
-  scoped_ptr<TargetDisplayProvider> target_display_provider(
+  std::unique_ptr<TargetDisplayProvider> target_display_provider(
       new DefaultTargetDisplayProvider);
   const WindowSizer sizer(std::move(state_provider),
                           std::move(target_display_provider), browser);
@@ -268,7 +269,6 @@ bool WindowSizer::GetLastActiveWindowBounds(
   if (!state_provider_.get() ||
       !state_provider_->GetLastActiveWindowState(bounds, show_state))
     return false;
-  gfx::Rect last_window_bounds = *bounds;
   bounds->Offset(kWindowTilePixels, kWindowTilePixels);
   AdjustBoundsToBeVisibleOnDisplay(screen_->GetDisplayMatching(*bounds),
                                    gfx::Rect(),
@@ -292,7 +292,7 @@ bool WindowSizer::GetSavedWindowBounds(gfx::Rect* bounds,
   return true;
 }
 
-void WindowSizer::GetDefaultWindowBounds(const gfx::Display& display,
+void WindowSizer::GetDefaultWindowBounds(const display::Display& display,
                                          gfx::Rect* default_bounds) const {
   DCHECK(default_bounds);
 #if defined(USE_ASH)
@@ -333,7 +333,7 @@ void WindowSizer::GetDefaultWindowBounds(const gfx::Display& display,
 }
 
 void WindowSizer::AdjustBoundsToBeVisibleOnDisplay(
-    const gfx::Display& display,
+    const display::Display& display,
     const gfx::Rect& saved_work_area,
     gfx::Rect* bounds) const {
   DCHECK(bounds);
@@ -403,7 +403,7 @@ void WindowSizer::AdjustBoundsToBeVisibleOnDisplay(
 #endif  // defined(OS_MACOSX)
 }
 
-gfx::Display WindowSizer::GetTargetDisplay(const gfx::Rect& bounds) const {
+display::Display WindowSizer::GetTargetDisplay(const gfx::Rect& bounds) const {
   return target_display_provider_->GetTargetDisplay(screen_, bounds);
 }
 

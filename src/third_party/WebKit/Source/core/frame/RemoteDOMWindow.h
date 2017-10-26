@@ -12,17 +12,16 @@ namespace blink {
 
 class RemoteDOMWindow final : public DOMWindow {
 public:
-    static PassRefPtrWillBeRawPtr<RemoteDOMWindow> create(RemoteFrame& frame)
+    static RemoteDOMWindow* create(RemoteFrame& frame)
     {
-        return adoptRefWillBeNoop(new RemoteDOMWindow(frame));
+        return new RemoteDOMWindow(frame);
     }
 
     // EventTarget overrides:
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
 
     // DOMWindow overrides:
     DECLARE_VIRTUAL_TRACE();
-    bool isRemoteDOMWindow() const override { return true; }
     RemoteFrame* frame() const override;
     Screen* screen() const override;
     History* history() const override;
@@ -54,14 +53,13 @@ public:
     double devicePixelRatio() const override;
     ApplicationCache* applicationCache() const override;
     int orientation() const override;
-    Console* console() const override;
     DOMSelection* getSelection() override;
     void blur() override;
-    void print() override;
+    void print(ScriptState*) override;
     void stop() override;
-    void alert(const String& message = String()) override;
-    bool confirm(const String& message) override;
-    String prompt(const String& message, const String& defaultValue) override;
+    void alert(ScriptState*, const String& message = String()) override;
+    bool confirm(ScriptState*, const String& message) override;
+    String prompt(ScriptState*, const String& message, const String& defaultValue) override;
     bool find(const String&, bool caseSensitive, bool backwards, bool wrap, bool wholeWord, bool searchInFrames, bool showDialog) const override;
     void scrollBy(double x, double y, ScrollBehavior = ScrollBehaviorAuto) const override;
     void scrollBy(const ScrollToOptions&) const override;
@@ -71,21 +69,31 @@ public:
     void moveTo(int x, int y) const override;
     void resizeBy(int x, int y) const override;
     void resizeTo(int width, int height) const override;
-    PassRefPtrWillBeRawPtr<MediaQueryList> matchMedia(const String&) override;
-    PassRefPtrWillBeRawPtr<CSSStyleDeclaration> getComputedStyle(Element*, const String& pseudoElt) const override;
-    PassRefPtrWillBeRawPtr<CSSRuleList> getMatchedCSSRules(Element*, const String& pseudoElt) const override;
+    MediaQueryList* matchMedia(const String&) override;
+    CSSStyleDeclaration* getComputedStyle(Element*, const String& pseudoElt) const override;
+    CSSRuleList* getMatchedCSSRules(Element*, const String& pseudoElt) const override;
     int requestAnimationFrame(FrameRequestCallback*) override;
     int webkitRequestAnimationFrame(FrameRequestCallback*) override;
     void cancelAnimationFrame(int id) override;
     int requestIdleCallback(IdleRequestCallback*, const IdleRequestOptions&) override;
     void cancelIdleCallback(int id) override;
+    CustomElementsRegistry* customElements(ScriptState*) const override;
 
     void frameDetached();
+
+protected:
+    // Protected DOMWindow overrides:
+    void schedulePostMessage(MessageEvent*, PassRefPtr<SecurityOrigin> target, Document* source) override;
 
 private:
     explicit RemoteDOMWindow(RemoteFrame&);
 
-    RawPtrWillBeMember<RemoteFrame> m_frame;
+    // Intentionally private to prevent redundant checks when the type is
+    // already RemoteDOMWindow.
+    bool isLocalDOMWindow() const override { return false; }
+    bool isRemoteDOMWindow() const override { return true; }
+
+    Member<RemoteFrame> m_frame;
 };
 
 } // namespace blink

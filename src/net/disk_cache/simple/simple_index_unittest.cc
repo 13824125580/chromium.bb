@@ -6,12 +6,12 @@
 
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <utility>
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/hash.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "base/sha1.h"
 #include "base/strings/stringprintf.h"
@@ -34,8 +34,7 @@ const uint64_t kTestEntrySize = 789;
 
 }  // namespace
 
-
-class EntryMetadataTest  : public testing::Test {
+class EntryMetadataTest : public testing::Test {
  public:
   EntryMetadata NewEntryMetadataWithValues() {
     return EntryMetadata(kTestLastUsedTime, kTestEntrySize);
@@ -67,7 +66,8 @@ class MockSimpleIndexFile : public SimpleIndexFile,
     ++load_index_entries_calls_;
   }
 
-  void WriteToDisk(const SimpleIndex::EntrySet& entry_set,
+  void WriteToDisk(SimpleIndex::IndexWriteToDiskReason reason,
+                   const SimpleIndex::EntrySet& entry_set,
                    uint64_t cache_size,
                    const base::TimeTicks& start,
                    bool app_on_background,
@@ -105,7 +105,7 @@ class SimpleIndexTest  : public testing::Test, public SimpleIndexDelegate {
   }
 
   void SetUp() override {
-    scoped_ptr<MockSimpleIndexFile> index_file(new MockSimpleIndexFile());
+    std::unique_ptr<MockSimpleIndexFile> index_file(new MockSimpleIndexFile());
     index_file_ = index_file->AsWeakPtr();
     index_.reset(
         new SimpleIndex(NULL, this, net::DISK_CACHE, std::move(index_file)));
@@ -161,7 +161,7 @@ class SimpleIndexTest  : public testing::Test, public SimpleIndexDelegate {
   int doom_entries_calls() const { return doom_entries_calls_; }
 
   const simple_util::ImmutableArray<uint64_t, 16> hashes_;
-  scoped_ptr<SimpleIndex> index_;
+  std::unique_ptr<SimpleIndex> index_;
   base::WeakPtr<MockSimpleIndexFile> index_file_;
 
   std::vector<uint64_t> last_doom_entry_hashes_;
@@ -182,6 +182,25 @@ TEST_F(EntryMetadataTest, Basics) {
   EXPECT_LT(new_time - base::TimeDelta::FromSeconds(2),
             entry_metadata.GetLastUsedTime());
   EXPECT_GT(new_time + base::TimeDelta::FromSeconds(2),
+            entry_metadata.GetLastUsedTime());
+}
+
+// Tests that setting an unusually small/large last used time results in
+// truncation (rather than crashing).
+TEST_F(EntryMetadataTest, SaturatedLastUsedTime) {
+  EntryMetadata entry_metadata;
+
+  // Set a time that is too large to be represented internally as 32-bit unix
+  // timestamp. Will saturate to a large timestamp (in year 2106).
+  entry_metadata.SetLastUsedTime(base::Time::Max());
+  EXPECT_EQ(INT64_C(15939440895000000),
+            entry_metadata.GetLastUsedTime().ToInternalValue());
+
+  // Set a time that is too small to be represented by a unix timestamp (before
+  // 1970).
+  entry_metadata.SetLastUsedTime(
+      base::Time::FromInternalValue(7u));  // This is a date in 1601.
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(1),
             entry_metadata.GetLastUsedTime());
 }
 
@@ -207,13 +226,13 @@ TEST_F(SimpleIndexTest, IndexSizeCorrectOnMerge) {
   index()->UpdateEntrySize(hashes_.at<4>(), 4);
   EXPECT_EQ(9U, index()->cache_size_);
   {
-    scoped_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
+    std::unique_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
     result->did_load = true;
     index()->MergeInitializingSet(std::move(result));
   }
   EXPECT_EQ(9U, index()->cache_size_);
   {
-    scoped_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
+    std::unique_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
     result->did_load = true;
     const uint64_t new_hash_key = hashes_.at<11>();
     result->entries.insert(

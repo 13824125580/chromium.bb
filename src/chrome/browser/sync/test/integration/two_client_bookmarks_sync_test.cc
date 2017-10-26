@@ -4,6 +4,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
@@ -2205,15 +2208,15 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, ManagedBookmarks) {
 
   // Set the ManagedBookmarks policy for the first Profile,
   // which will add one new managed bookmark.
-  base::DictionaryValue* bookmark = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> bookmark(new base::DictionaryValue());
   bookmark->SetString("name", "Managed bookmark");
   bookmark->SetString("url", "youtube.com");
-  base::ListValue* list = new base::ListValue();
-  list->Append(bookmark);
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
+  list->Append(std::move(bookmark));
   policy::PolicyMap policy;
-  policy.Set(policy::key::kManagedBookmarks,
-             policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-             policy::POLICY_SOURCE_CLOUD, list, nullptr);
+  policy.Set(policy::key::kManagedBookmarks, policy::POLICY_LEVEL_MANDATORY,
+             policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
+             std::move(list), nullptr);
   policy_provider_.UpdateChromePolicy(policy);
   base::RunLoop().RunUntilIdle();
 

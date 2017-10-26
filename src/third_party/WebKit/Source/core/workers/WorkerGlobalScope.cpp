@@ -29,13 +29,12 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScheduledAction.h"
-#include "bindings/core/v8/ScriptCallStack.h"
 #include "bindings/core/v8/ScriptSourceCode.h"
 #include "bindings/core/v8/ScriptValue.h"
+#include "bindings/core/v8/SourceLocation.h"
 #include "bindings/core/v8/V8AbstractEventListener.h"
 #include "bindings/core/v8/V8CacheOptions.h"
 #include "core/dom/ActiveDOMObject.h"
-#include "core/dom/AddConsoleMessageTask.h"
 #include "core/dom/ContextLifecycleNotifier.h"
 #include "core/dom/CrossThreadTask.h"
 #include "core/dom/DOMURL.h"
@@ -49,13 +48,12 @@
 #include "core/frame/Deprecation.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/inspector/ConsoleMessage.h"
-#include "core/inspector/ConsoleMessageStorage.h"
-#include "core/inspector/InspectorConsoleInstrumentation.h"
+#include "core/inspector/IdentifiersFactory.h"
+#include "core/inspector/InspectorInstrumentation.h"
 #include "core/inspector/WorkerInspectorController.h"
+#include "core/inspector/WorkerThreadDebugger.h"
 #include "core/loader/WorkerThreadableLoader.h"
-#include "core/workers/WorkerNavigator.h"
 #include "core/workers/WorkerClients.h"
-#include "core/workers/WorkerConsole.h"
 #include "core/workers/WorkerLoaderProxy.h"
 #include "core/workers/WorkerLocation.h"
 #include "core/workers/WorkerNavigator.h"
@@ -68,52 +66,49 @@
 #include "public/platform/Platform.h"
 #include "public/platform/WebScheduler.h"
 #include "public/platform/WebURLRequest.h"
+#include <memory>
 
 namespace blink {
 
-WorkerGlobalScope::WorkerGlobalScope(const KURL& url, const String& userAgent, WorkerThread* thread, double timeOrigin, PassOwnPtr<SecurityOrigin::PrivilegeData> starterOriginPrivilageData, PassOwnPtrWillBeRawPtr<WorkerClients> workerClients)
+WorkerGlobalScope::WorkerGlobalScope(const KURL& url, const String& userAgent, WorkerThread* thread, double timeOrigin, std::unique_ptr<SecurityOrigin::PrivilegeData> starterOriginPrivilageData, WorkerClients* workerClients)
     : m_url(url)
     , m_userAgent(userAgent)
     , m_v8CacheOptions(V8CacheOptionsDefault)
     , m_scriptController(WorkerOrWorkletScriptController::create(this, thread->isolate()))
     , m_thread(thread)
-    , m_workerInspectorController(adoptRefWillBeNoop(new WorkerInspectorController(this)))
+    , m_workerInspectorController(WorkerInspectorController::create(this))
     , m_closing(false)
     , m_eventQueue(WorkerEventQueue::create(this))
     , m_workerClients(workerClients)
     , m_timers(Platform::current()->currentThread()->scheduler()->timerTaskRunner()->adoptClone())
     , m_timeOrigin(timeOrigin)
-    , m_messageStorage(ConsoleMessageStorage::create())
-    , m_workerExceptionUniqueIdentifier(0)
 {
     setSecurityOrigin(SecurityOrigin::create(url));
     if (starterOriginPrivilageData)
-        securityOrigin()->transferPrivilegesFrom(starterOriginPrivilageData);
+        getSecurityOrigin()->transferPrivilegesFrom(std::move(starterOriginPrivilageData));
 
     if (m_workerClients)
         m_workerClients->reattachThread();
-
-    m_thread->setWorkerInspectorController(m_workerInspectorController.get());
 }
 
 WorkerGlobalScope::~WorkerGlobalScope()
 {
-    ASSERT(!m_scriptController);
-    ASSERT(!m_workerInspectorController);
+    DCHECK(!m_scriptController);
+    DCHECK(!m_workerInspectorController);
 }
 
 void WorkerGlobalScope::applyContentSecurityPolicyFromVector(const Vector<CSPHeaderAndType>& headers)
 {
     if (!contentSecurityPolicy()) {
-        RefPtrWillBeRawPtr<ContentSecurityPolicy> csp = ContentSecurityPolicy::create();
+        ContentSecurityPolicy* csp = ContentSecurityPolicy::create();
         setContentSecurityPolicy(csp);
     }
     for (const auto& policyAndType : headers)
         contentSecurityPolicy()->didReceiveHeader(policyAndType.first, policyAndType.second, ContentSecurityPolicyHeaderSourceHTTP);
-    contentSecurityPolicy()->bindToExecutionContext(executionContext());
+    contentSecurityPolicy()->bindToExecutionContext(getExecutionContext());
 }
 
-ExecutionContext* WorkerGlobalScope::executionContext() const
+ExecutionContext* WorkerGlobalScope::getExecutionContext() const
 {
     return const_cast<WorkerGlobalScope*>(this);
 }
@@ -162,15 +157,9 @@ WorkerLocation* WorkerGlobalScope::location() const
 
 void WorkerGlobalScope::close()
 {
-    // Let current script run to completion, but tell the worker micro task runner to tear down the thread after this task.
+    // Let current script run to completion, but tell the worker micro task
+    // runner to tear down the thread after this task.
     m_closing = true;
-}
-
-WorkerConsole* WorkerGlobalScope::console()
-{
-    if (!m_console)
-        m_console = WorkerConsole::create(this);
-    return m_console.get();
 }
 
 WorkerNavigator* WorkerGlobalScope::navigator() const
@@ -180,35 +169,35 @@ WorkerNavigator* WorkerGlobalScope::navigator() const
     return m_navigator.get();
 }
 
-void WorkerGlobalScope::postTask(const WebTraceLocation& location, PassOwnPtr<ExecutionContextTask> task)
+void WorkerGlobalScope::postTask(const WebTraceLocation& location, std::unique_ptr<ExecutionContextTask> task, const String& taskNameForInstrumentation)
 {
-    thread()->postTask(location, task);
+    thread()->postTask(location, std::move(task), !taskNameForInstrumentation.isEmpty());
 }
 
 void WorkerGlobalScope::clearScript()
 {
-    ASSERT(m_scriptController);
+    DCHECK(m_scriptController);
     m_scriptController->dispose();
     m_scriptController.clear();
 }
 
 void WorkerGlobalScope::clearInspector()
 {
-    ASSERT(m_workerInspectorController);
-    thread()->setWorkerInspectorController(nullptr);
-    m_workerInspectorController->dispose();
-    m_workerInspectorController.clear();
+    if (m_workerInspectorController) {
+        m_workerInspectorController->dispose();
+        m_workerInspectorController.clear();
+    }
 }
 
 void WorkerGlobalScope::dispose()
 {
-    ASSERT(thread()->isCurrentThread());
+    DCHECK(thread()->isCurrentThread());
     stopActiveDOMObjects();
 
     // Event listeners would keep DOMWrapperWorld objects alive for too long. Also, they have references to JS objects,
     // which become dangling once Heap is destroyed.
     for (auto it = m_eventListeners.begin(); it != m_eventListeners.end(); ) {
-        RefPtrWillBeRawPtr<V8AbstractEventListener> listener = *it;
+        V8AbstractEventListener* listener = *it;
         // clearListenerObject() will unregister the listener from
         // m_eventListeners, and invalidate the iterator, so we have to advance
         // it first.
@@ -220,13 +209,7 @@ void WorkerGlobalScope::dispose()
     clearScript();
     clearInspector();
     m_eventQueue->close();
-
-    // We do not clear the thread field of the
-    // WorkerGlobalScope. Other objects keep the worker global scope
-    // alive because they need its thread field to check that work is
-    // being carried out on the right thread. We therefore cannot clear
-    // the thread field before all references to the worker global
-    // scope are gone.
+    m_thread = nullptr;
 }
 
 void WorkerGlobalScope::didEvaluateWorkerScript()
@@ -235,10 +218,10 @@ void WorkerGlobalScope::didEvaluateWorkerScript()
 
 void WorkerGlobalScope::importScripts(const Vector<String>& urls, ExceptionState& exceptionState)
 {
-    ASSERT(contentSecurityPolicy());
-    ASSERT(executionContext());
+    DCHECK(contentSecurityPolicy());
+    DCHECK(getExecutionContext());
 
-    ExecutionContext& executionContext = *this->executionContext();
+    ExecutionContext& executionContext = *this->getExecutionContext();
 
     Vector<KURL> completedURLs;
     for (const String& urlString : urls) {
@@ -247,7 +230,7 @@ void WorkerGlobalScope::importScripts(const Vector<String>& urls, ExceptionState
             exceptionState.throwDOMException(SyntaxError, "The URL '" + urlString + "' is invalid.");
             return;
         }
-        if (!contentSecurityPolicy()->allowScriptFromSource(url)) {
+        if (!contentSecurityPolicy()->allowScriptFromSource(url, AtomicString())) {
             exceptionState.throwDOMException(NetworkError, "The script at '" + url.elidedString() + "' failed to load.");
             return;
         }
@@ -257,7 +240,7 @@ void WorkerGlobalScope::importScripts(const Vector<String>& urls, ExceptionState
     for (const KURL& completeURL : completedURLs) {
         RefPtr<WorkerScriptLoader> scriptLoader(WorkerScriptLoader::create());
         scriptLoader->setRequestContext(WebURLRequest::RequestContextScript);
-        scriptLoader->loadSynchronously(executionContext, completeURL, AllowCrossOriginRequests);
+        scriptLoader->loadSynchronously(executionContext, completeURL, AllowCrossOriginRequests, executionContext.securityContext().addressSpace());
 
         // If the fetching attempt failed, throw a NetworkError exception and abort all these steps.
         if (scriptLoader->failed()) {
@@ -268,12 +251,12 @@ void WorkerGlobalScope::importScripts(const Vector<String>& urls, ExceptionState
         InspectorInstrumentation::scriptImported(&executionContext, scriptLoader->identifier(), scriptLoader->script());
         scriptLoaded(scriptLoader->script().length(), scriptLoader->cachedMetadata() ? scriptLoader->cachedMetadata()->size() : 0);
 
-        RefPtrWillBeRawPtr<ErrorEvent> errorEvent = nullptr;
-        OwnPtr<Vector<char>> cachedMetaData(scriptLoader->releaseCachedMetadata());
-        OwnPtrWillBeRawPtr<CachedMetadataHandler> handler(createWorkerScriptCachedMetadataHandler(completeURL, cachedMetaData.get()));
-        m_scriptController->evaluate(ScriptSourceCode(scriptLoader->script(), scriptLoader->responseURL()), &errorEvent, handler.get(), m_v8CacheOptions);
+        ErrorEvent* errorEvent = nullptr;
+        std::unique_ptr<Vector<char>> cachedMetaData(scriptLoader->releaseCachedMetadata());
+        CachedMetadataHandler* handler(createWorkerScriptCachedMetadataHandler(completeURL, cachedMetaData.get()));
+        m_scriptController->evaluate(ScriptSourceCode(scriptLoader->script(), scriptLoader->responseURL()), &errorEvent, handler, m_v8CacheOptions);
         if (errorEvent) {
-            m_scriptController->rethrowExceptionFromImportedScript(errorEvent.release(), exceptionState);
+            m_scriptController->rethrowExceptionFromImportedScript(errorEvent, exceptionState);
             return;
         }
     }
@@ -284,14 +267,9 @@ EventTarget* WorkerGlobalScope::errorEventTarget()
     return this;
 }
 
-void WorkerGlobalScope::logExceptionToConsole(const String& errorMessage, int, const String& sourceURL, int lineNumber, int columnNumber, PassRefPtr<ScriptCallStack> callStack)
+void WorkerGlobalScope::logExceptionToConsole(const String& errorMessage, std::unique_ptr<SourceLocation> location)
 {
-    unsigned long exceptionId = ++m_workerExceptionUniqueIdentifier;
-    RefPtrWillBeRawPtr<ConsoleMessage> consoleMessage = ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, errorMessage, sourceURL, lineNumber, columnNumber);
-    consoleMessage->setCallStack(callStack);
-    m_pendingMessages.set(exceptionId, consoleMessage);
-
-    thread()->workerReportingProxy().reportException(errorMessage, lineNumber, columnNumber, sourceURL, exceptionId);
+    thread()->workerReportingProxy().reportException(errorMessage, std::move(location));
 }
 
 void WorkerGlobalScope::reportBlockedScriptExecutionToInspector(const String& directiveText)
@@ -299,18 +277,30 @@ void WorkerGlobalScope::reportBlockedScriptExecutionToInspector(const String& di
     InspectorInstrumentation::scriptExecutionBlockedByCSP(this, directiveText);
 }
 
-void WorkerGlobalScope::addConsoleMessage(PassRefPtrWillBeRawPtr<ConsoleMessage> prpConsoleMessage)
+void WorkerGlobalScope::addConsoleMessage(ConsoleMessage* consoleMessage)
 {
-    ASSERT(isContextThread());
-    RefPtrWillBeRawPtr<ConsoleMessage> consoleMessage = prpConsoleMessage;
+    DCHECK(isContextThread());
     thread()->workerReportingProxy().reportConsoleMessage(consoleMessage);
-    addMessageToWorkerConsole(consoleMessage.release());
+    addMessageToWorkerConsole(consoleMessage);
 }
 
-void WorkerGlobalScope::addMessageToWorkerConsole(PassRefPtrWillBeRawPtr<ConsoleMessage> consoleMessage)
+void WorkerGlobalScope::addMessageToWorkerConsole(ConsoleMessage* consoleMessage)
 {
-    ASSERT(isContextThread());
-    m_messageStorage->reportMessage(this, consoleMessage);
+    DCHECK(isContextThread());
+    WorkerThreadDebugger* debugger = WorkerThreadDebugger::from(thread()->isolate());
+    if (!debugger)
+        return;
+    debugger->debugger()->addConsoleMessage(
+        debugger->contextGroupId(),
+        consoleMessage->source(),
+        consoleMessage->level(),
+        consoleMessage->message(),
+        consoleMessage->location()->url(),
+        consoleMessage->location()->lineNumber(),
+        consoleMessage->location()->columnNumber(),
+        consoleMessage->location()->cloneStackTrace(),
+        consoleMessage->location()->scriptId(),
+        IdentifiersFactory::requestId(consoleMessage->requestIdentifier()));
 }
 
 bool WorkerGlobalScope::isContextThread() const
@@ -323,7 +313,7 @@ bool WorkerGlobalScope::isJSExecutionForbidden() const
     return m_scriptController->isExecutionForbidden();
 }
 
-WorkerEventQueue* WorkerGlobalScope::eventQueue() const
+WorkerEventQueue* WorkerGlobalScope::getEventQueue() const
 {
     return m_eventQueue.get();
 }
@@ -343,34 +333,29 @@ void WorkerGlobalScope::deregisterEventListener(V8AbstractEventListener* eventLi
 
 void WorkerGlobalScope::countFeature(UseCounter::Feature) const
 {
-    // FIXME: How should we count features for shared/service workers?
+    // TODO(nhiroki): How should we count features for shared/service workers?
+    // (http://crbug.com/376039)
 }
 
 void WorkerGlobalScope::countDeprecation(UseCounter::Feature feature) const
 {
-    // FIXME: How should we count features for shared/service workers?
+    // TODO(nhiroki): How should we count features for shared/service workers?
+    // (http://crbug.com/376039)
 
-    ASSERT(isSharedWorkerGlobalScope() || isServiceWorkerGlobalScope() || isCompositorWorkerGlobalScope());
+    DCHECK(isSharedWorkerGlobalScope() || isServiceWorkerGlobalScope() || isCompositorWorkerGlobalScope());
     // For each deprecated feature, send console message at most once
     // per worker lifecycle.
     if (!m_deprecationWarningBits.hasRecordedMeasurement(feature)) {
         m_deprecationWarningBits.recordMeasurement(feature);
-        ASSERT(!Deprecation::deprecationMessage(feature).isEmpty());
-        ASSERT(executionContext());
-        executionContext()->addConsoleMessage(ConsoleMessage::create(DeprecationMessageSource, WarningMessageLevel, Deprecation::deprecationMessage(feature)));
+        DCHECK(!Deprecation::deprecationMessage(feature).isEmpty());
+        DCHECK(getExecutionContext());
+        getExecutionContext()->addConsoleMessage(ConsoleMessage::create(DeprecationMessageSource, WarningMessageLevel, Deprecation::deprecationMessage(feature)));
     }
 }
 
-ConsoleMessageStorage* WorkerGlobalScope::messageStorage()
+void WorkerGlobalScope::exceptionUnhandled(const String& errorMessage, std::unique_ptr<SourceLocation> location)
 {
-    return m_messageStorage.get();
-}
-
-void WorkerGlobalScope::exceptionHandled(int exceptionId, bool isHandled)
-{
-    RefPtrWillBeRawPtr<ConsoleMessage> consoleMessage = m_pendingMessages.take(exceptionId);
-    if (!isHandled)
-        addConsoleMessage(consoleMessage.release());
+    addConsoleMessage(ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, errorMessage, std::move(location)));
 }
 
 bool WorkerGlobalScope::isSecureContext(String& errorMessage, const SecureContextCheck privilegeContextCheck) const
@@ -381,9 +366,9 @@ bool WorkerGlobalScope::isSecureContext(String& errorMessage, const SecureContex
     // |isSecureContext| check here, we can check the responsible
     // document for a privileged context at worker creation time, pass
     // it in via WorkerThreadStartupData, and check it here.
-    if (securityOrigin()->isPotentiallyTrustworthy())
+    if (getSecurityOrigin()->isPotentiallyTrustworthy())
         return true;
-    errorMessage = securityOrigin()->isPotentiallyTrustworthyErrorMessage();
+    errorMessage = getSecurityOrigin()->isPotentiallyTrustworthyErrorMessage();
     return false;
 }
 
@@ -401,20 +386,18 @@ v8::Local<v8::Object> WorkerGlobalScope::wrap(v8::Isolate*, v8::Local<v8::Object
 {
     // WorkerGlobalScope must never be wrapped with wrap method.  The global
     // object of ECMAScript environment is used as the wrapper.
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_NOTREACHED();
     return v8::Local<v8::Object>();
 }
 
 v8::Local<v8::Object> WorkerGlobalScope::associateWithWrapper(v8::Isolate*, const WrapperTypeInfo*, v8::Local<v8::Object> wrapper)
 {
-    RELEASE_ASSERT_NOT_REACHED(); // same as wrap method
+    RELEASE_NOTREACHED(); // same as wrap method
     return v8::Local<v8::Object>();
 }
 
 DEFINE_TRACE(WorkerGlobalScope)
 {
-#if ENABLE(OILPAN)
-    visitor->trace(m_console);
     visitor->trace(m_location);
     visitor->trace(m_navigator);
     visitor->trace(m_scriptController);
@@ -422,14 +405,11 @@ DEFINE_TRACE(WorkerGlobalScope)
     visitor->trace(m_eventQueue);
     visitor->trace(m_workerClients);
     visitor->trace(m_timers);
-    visitor->trace(m_messageStorage);
-    visitor->trace(m_pendingMessages);
     visitor->trace(m_eventListeners);
-    HeapSupplementable<WorkerGlobalScope>::trace(visitor);
-#endif
     ExecutionContext::trace(visitor);
     EventTargetWithInlineData::trace(visitor);
     SecurityContext::trace(visitor);
+    Supplementable<WorkerGlobalScope>::trace(visitor);
 }
 
 } // namespace blink

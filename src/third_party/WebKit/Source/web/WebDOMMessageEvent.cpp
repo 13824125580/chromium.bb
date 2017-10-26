@@ -51,8 +51,8 @@ WebDOMMessageEvent::WebDOMMessageEvent(const WebSerializedScriptValue& messageDa
         window = sourceFrame->toImplBase()->frame()->domWindow();
     MessagePortArray* ports = nullptr;
     if (!targetDocument.isNull()) {
-        RefPtrWillBeRawPtr<Document> coreDocument = PassRefPtrWillBeRawPtr<Document>(targetDocument);
-        ports = MessagePort::toMessagePortArray(coreDocument.get(), channels);
+        Document* coreDocument = targetDocument;
+        ports = MessagePort::toMessagePortArray(coreDocument, channels);
     }
     // Use an empty array for |ports| when it is null because this function
     // is used to implement postMessage().
@@ -78,7 +78,7 @@ WebMessagePortChannelArray WebDOMMessageEvent::releaseChannels()
     WebMessagePortChannelArray webChannels(channels ? channels->size() : 0);
     if (channels) {
         for (size_t i = 0; i < channels->size(); ++i)
-            webChannels[i] = (*channels)[i].leakPtr();
+            webChannels[i] = (*channels)[i].release();
     }
     return webChannels;
 }

@@ -6,8 +6,10 @@
 #define UI_COMPOSITOR_TEST_IN_PROCESS_CONTEXT_FACTORY_H_
 
 #include <stdint.h>
+#include <memory>
 
 #include "base/macros.h"
+#include "cc/surfaces/display.h"
 #include "cc/test/test_gpu_memory_buffer_manager.h"
 #include "cc/test/test_image_factory.h"
 #include "cc/test/test_shared_bitmap_manager.h"
@@ -19,7 +21,6 @@ class Thread;
 }
 
 namespace cc {
-class OnscreenDisplayClient;
 class SurfaceManager;
 }
 
@@ -40,11 +41,15 @@ class InProcessContextFactory : public ContextFactory {
     use_test_surface_ = use_test_surface;
   }
 
+  // This is used to call OnLostResources on all clients, to ensure they stop
+  // using the SharedMainThreadContextProvider.
+  void SendOnLostResources();
+
   // ContextFactory implementation
   void CreateOutputSurface(base::WeakPtr<Compositor> compositor) override;
 
-  scoped_ptr<Reflector> CreateReflector(Compositor* mirrored_compositor,
-                                        Layer* mirroring_layer) override;
+  std::unique_ptr<Reflector> CreateReflector(Compositor* mirrored_compositor,
+                                             Layer* mirroring_layer) override;
   void RemoveReflector(Reflector* reflector) override;
 
   scoped_refptr<cc::ContextProvider> SharedMainThreadContextProvider() override;
@@ -55,9 +60,17 @@ class InProcessContextFactory : public ContextFactory {
   cc::SharedBitmapManager* GetSharedBitmapManager() override;
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
-  scoped_ptr<cc::SurfaceIdAllocator> CreateSurfaceIdAllocator() override;
+  std::unique_ptr<cc::SurfaceIdAllocator> CreateSurfaceIdAllocator() override;
+  cc::SurfaceManager* GetSurfaceManager() override;
   void ResizeDisplay(ui::Compositor* compositor,
                      const gfx::Size& size) override;
+  void SetDisplayColorSpace(ui::Compositor* compositor,
+                            const gfx::ColorSpace& color_space) override {}
+  void SetAuthoritativeVSyncInterval(ui::Compositor* compositor,
+                                     base::TimeDelta interval) override {}
+  void SetOutputIsSecure(ui::Compositor* compositor, bool secure) override {}
+  void AddObserver(ContextFactoryObserver* observer) override;
+  void RemoveObserver(ContextFactoryObserver* observer) override;
 
  private:
   scoped_refptr<InProcessContextProvider> shared_main_thread_contexts_;
@@ -70,8 +83,10 @@ class InProcessContextFactory : public ContextFactory {
   bool use_test_surface_;
   bool context_factory_for_test_;
   cc::SurfaceManager* surface_manager_;
+  base::ObserverList<ContextFactoryObserver> observer_list_;
 
-  base::hash_map<Compositor*, cc::OnscreenDisplayClient*> per_compositor_data_;
+  base::hash_map<Compositor*, std::unique_ptr<cc::Display>>
+      per_compositor_data_;
 
   DISALLOW_COPY_AND_ASSIGN(InProcessContextFactory);
 };

@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/extension_disabled_ui.h"
 
 #include <bitset>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -12,14 +13,14 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/scoped_observer.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/extension_install_error_menu_item_id_provider.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -71,9 +72,10 @@ static const int kIconSize = extension_misc::EXTENSION_ICON_SMALL;
 
 class ExtensionDisabledDialogDelegate {
  public:
-  ExtensionDisabledDialogDelegate(ExtensionService* service,
-                                  scoped_ptr<ExtensionInstallPrompt> install_ui,
-                                  const Extension* extension);
+  ExtensionDisabledDialogDelegate(
+      ExtensionService* service,
+      std::unique_ptr<ExtensionInstallPrompt> install_ui,
+      const Extension* extension);
 
  private:
   ~ExtensionDisabledDialogDelegate();
@@ -81,7 +83,7 @@ class ExtensionDisabledDialogDelegate {
   void InstallPromptDone(ExtensionInstallPrompt::Result result);
 
   // The UI for showing the install dialog when enabling.
-  scoped_ptr<ExtensionInstallPrompt> install_ui_;
+  std::unique_ptr<ExtensionInstallPrompt> install_ui_;
 
   ExtensionService* service_;
   const Extension* extension_;
@@ -91,7 +93,7 @@ class ExtensionDisabledDialogDelegate {
 
 ExtensionDisabledDialogDelegate::ExtensionDisabledDialogDelegate(
     ExtensionService* service,
-    scoped_ptr<ExtensionInstallPrompt> install_ui,
+    std::unique_ptr<ExtensionInstallPrompt> install_ui,
     const Extension* extension)
     : install_ui_(std::move(install_ui)),
       service_(service),
@@ -105,7 +107,7 @@ ExtensionDisabledDialogDelegate::ExtensionDisabledDialogDelegate(
       base::Bind(&ExtensionDisabledDialogDelegate::InstallPromptDone,
                  base::Unretained(this)),
       extension_, nullptr,
-      make_scoped_ptr(new ExtensionInstallPrompt::Prompt(type)),
+      base::WrapUnique(new ExtensionInstallPrompt::Prompt(type)),
       ExtensionInstallPrompt::GetDefaultShowDialogCallback());
 }
 
@@ -191,7 +193,7 @@ class ExtensionDisabledGlobalError
   };
   UserResponse user_response_;
 
-  scoped_ptr<extensions::ExtensionUninstallDialog> uninstall_dialog_;
+  std::unique_ptr<extensions::ExtensionUninstallDialog> uninstall_dialog_;
 
   // Helper to get menu command ID assigned for this extension's error.
   extensions::ExtensionInstallErrorMenuItemIdProvider id_provider_;
@@ -295,11 +297,6 @@ ExtensionDisabledGlobalError::GetBubbleViewMessages() {
   PermissionMessages permission_warnings =
       extension_->permissions_data()->GetPermissionMessages();
   if (is_remote_install_) {
-    messages.push_back(l10n_util::GetStringFUTF16(
-        extension_->is_app()
-            ? IDS_APP_DISABLED_REMOTE_INSTALL_ERROR_LABEL
-            : IDS_EXTENSION_DISABLED_REMOTE_INSTALL_ERROR_LABEL,
-        base::UTF8ToUTF16(extension_->name())));
     if (!permission_warnings.empty())
       messages.push_back(
           l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WILL_HAVE_ACCESS_TO));
@@ -454,7 +451,7 @@ void ExtensionDisabledGlobalError::RemoveGlobalError() {
   registry_observer_.RemoveAll();
   // Delete this object after any running tasks, so that the extension dialog
   // still has it as a delegate to finish the current tasks.
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 // Globals --------------------------------------------------------------------
@@ -494,7 +491,7 @@ void AddExtensionDisabledError(ExtensionService* service,
 void ShowExtensionDisabledDialog(ExtensionService* service,
                                  content::WebContents* web_contents,
                                  const Extension* extension) {
-  scoped_ptr<ExtensionInstallPrompt> install_ui(
+  std::unique_ptr<ExtensionInstallPrompt> install_ui(
       new ExtensionInstallPrompt(web_contents));
   // This object manages its own lifetime.
   new ExtensionDisabledDialogDelegate(service, std::move(install_ui),

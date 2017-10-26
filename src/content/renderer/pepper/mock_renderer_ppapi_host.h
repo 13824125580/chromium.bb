@@ -5,8 +5,9 @@
 #ifndef CONTENT_RENDERER_PEPPER_MOCK_RENDERER_PPAPI_HOST_H_
 #define CONTENT_RENDERER_PEPPER_MOCK_RENDERER_PPAPI_HOST_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/content_renderer_pepper_host_factory.h"
 #include "ppapi/host/ppapi_host.h"
@@ -64,11 +65,12 @@ class MockRendererPpapiHost : public RendererPpapiHost {
   ppapi::host::PpapiHost ppapi_host_;
 
   RenderView* render_view_;
+  RenderFrame* render_frame_;
   PP_Instance pp_instance_;
 
   bool has_user_gesture_;
 
-  scoped_ptr<FakePepperPluginInstance> plugin_instance_;
+  std::unique_ptr<FakePepperPluginInstance> plugin_instance_;
 
   DISALLOW_COPY_AND_ASSIGN(MockRendererPpapiHost);
 };

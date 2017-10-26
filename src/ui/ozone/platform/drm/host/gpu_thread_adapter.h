@@ -8,6 +8,7 @@
 #include "base/file_descriptor_posix.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 #include "ui/ozone/public/overlay_candidates_ozone.h"
 
@@ -58,8 +59,11 @@ class GpuThreadAdapter {
   virtual bool GpuDisableNativeDisplay(int64_t display_id) = 0;
   virtual bool GpuGetHDCPState(int64_t display_id) = 0;
   virtual bool GpuSetHDCPState(int64_t display_id, ui::HDCPState state) = 0;
-  virtual bool GpuSetGammaRamp(int64_t display_id,
-                               const std::vector<GammaRampRGBEntry>& lut) = 0;
+  virtual bool GpuSetColorCorrection(
+      int64_t display_id,
+      const std::vector<GammaRampRGBEntry>& degamma_lut,
+      const std::vector<GammaRampRGBEntry>& gamma_lut,
+      const std::vector<float>& correction_matrix) = 0;
 
   // Services needed by DrmWindowHost
   virtual bool GpuDestroyWindow(gfx::AcceleratedWidget widget) = 0;

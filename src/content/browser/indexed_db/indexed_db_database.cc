@@ -5,16 +5,20 @@
 #include "content/browser/indexed_db/indexed_db_database.h"
 
 #include <math.h>
+
 #include <limits>
+#include <memory>
 #include <set>
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,9 +37,11 @@
 #include "content/common/indexed_db/indexed_db_constants.h"
 #include "content/common/indexed_db/indexed_db_key_path.h"
 #include "content/common/indexed_db/indexed_db_key_range.h"
+#include "content/public/common/content_switches.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseException.h"
 #include "third_party/leveldatabase/env_chromium.h"
+#include "url/origin.h"
 
 using base::ASCIIToUTF16;
 using base::Int64ToString16;
@@ -71,12 +77,13 @@ HistogramIDBKeyPathType HistogramKeyPathType(const IndexedDBKeyPath& key_path) {
 
 }  // namespace
 
-// PendingUpgradeCall has a scoped_ptr<IndexedDBConnection> because it owns the
+// PendingUpgradeCall has a std::unique_ptr<IndexedDBConnection> because it owns
+// the
 // in-progress connection.
 class IndexedDBDatabase::PendingUpgradeCall {
  public:
   PendingUpgradeCall(scoped_refptr<IndexedDBCallbacks> callbacks,
-                     scoped_ptr<IndexedDBConnection> connection,
+                     std::unique_ptr<IndexedDBConnection> connection,
                      int64_t transaction_id,
                      int64_t version)
       : callbacks_(callbacks),
@@ -85,7 +92,7 @@ class IndexedDBDatabase::PendingUpgradeCall {
         transaction_id_(transaction_id) {}
   scoped_refptr<IndexedDBCallbacks> callbacks() const { return callbacks_; }
   // Takes ownership of the connection object.
-  scoped_ptr<IndexedDBConnection> ReleaseConnection() WARN_UNUSED_RESULT {
+  std::unique_ptr<IndexedDBConnection> ReleaseConnection() WARN_UNUSED_RESULT {
     return std::move(connection_);
   }
   int64_t version() const { return version_; }
@@ -93,7 +100,7 @@ class IndexedDBDatabase::PendingUpgradeCall {
 
  private:
   scoped_refptr<IndexedDBCallbacks> callbacks_;
-  scoped_ptr<IndexedDBConnection> connection_;
+  std::unique_ptr<IndexedDBConnection> connection_;
   int64_t version_;
   const int64_t transaction_id_;
 };
@@ -153,7 +160,10 @@ IndexedDBDatabase::IndexedDBDatabase(const base::string16& name,
                 IndexedDBDatabaseMetadata::NO_VERSION,
                 kInvalidId),
       identifier_(unique_identifier),
-      factory_(factory) {
+      factory_(factory),
+      experimental_web_platform_features_enabled_(
+          base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kEnableExperimentalWebPlatformFeatures)) {
   DCHECK(factory != NULL);
 }
 
@@ -229,10 +239,10 @@ size_t IndexedDBDatabase::GetMaxMessageSizeInBytes() const {
   return kMaxIDBMessageSizeInBytes;
 }
 
-scoped_ptr<IndexedDBConnection> IndexedDBDatabase::CreateConnection(
+std::unique_ptr<IndexedDBConnection> IndexedDBDatabase::CreateConnection(
     scoped_refptr<IndexedDBDatabaseCallbacks> database_callbacks,
     int child_process_id) {
-  scoped_ptr<IndexedDBConnection> connection(
+  std::unique_ptr<IndexedDBConnection> connection(
       new IndexedDBConnection(this, database_callbacks));
   connections_.insert(connection.get());
   backing_store_->GrantChildProcessPermissions(child_process_id);
@@ -344,8 +354,7 @@ void IndexedDBDatabase::CreateObjectStore(int64_t transaction_id,
             object_store_metadata.name + ASCIIToUTF16("'."));
     transaction->Abort(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
 
@@ -475,8 +484,7 @@ void IndexedDBDatabase::DeleteIndexOperation(
                                  error_string);
     transaction->Abort(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
 
@@ -536,7 +544,7 @@ void IndexedDBDatabase::Abort(int64_t transaction_id,
 void IndexedDBDatabase::GetAll(int64_t transaction_id,
                                int64_t object_store_id,
                                int64_t index_id,
-                               scoped_ptr<IndexedDBKeyRange> key_range,
+                               std::unique_ptr<IndexedDBKeyRange> key_range,
                                bool key_only,
                                int64_t max_count,
                                scoped_refptr<IndexedDBCallbacks> callbacks) {
@@ -558,7 +566,7 @@ void IndexedDBDatabase::GetAll(int64_t transaction_id,
 void IndexedDBDatabase::Get(int64_t transaction_id,
                             int64_t object_store_id,
                             int64_t index_id,
-                            scoped_ptr<IndexedDBKeyRange> key_range,
+                            std::unique_ptr<IndexedDBKeyRange> key_range,
                             bool key_only,
                             scoped_refptr<IndexedDBCallbacks> callbacks) {
   IDB_TRACE1("IndexedDBDatabase::Get", "txn.id", transaction_id);
@@ -579,7 +587,7 @@ void IndexedDBDatabase::Get(int64_t transaction_id,
 void IndexedDBDatabase::GetOperation(
     int64_t object_store_id,
     int64_t index_id,
-    scoped_ptr<IndexedDBKeyRange> key_range,
+    std::unique_ptr<IndexedDBKeyRange> key_range,
     indexed_db::CursorType cursor_type,
     scoped_refptr<IndexedDBCallbacks> callbacks,
     IndexedDBTransaction* transaction) {
@@ -593,7 +601,7 @@ void IndexedDBDatabase::GetOperation(
   const IndexedDBKey* key;
 
   leveldb::Status s;
-  scoped_ptr<IndexedDBBackingStore::Cursor> backing_store_cursor;
+  std::unique_ptr<IndexedDBBackingStore::Cursor> backing_store_cursor;
   if (key_range->IsOnlyKey()) {
     key = &key_range->lower();
   } else {
@@ -634,8 +642,7 @@ void IndexedDBDatabase::GetOperation(
       IndexedDBDatabaseError error(blink::WebIDBDatabaseExceptionUnknownError,
                                    "Internal error deleting data in range");
       if (s.IsCorruption()) {
-        factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                               error);
+        factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
       }
     }
 
@@ -647,7 +654,7 @@ void IndexedDBDatabase::GetOperation(
     key = &backing_store_cursor->key();
   }
 
-  scoped_ptr<IndexedDBKey> primary_key;
+  std::unique_ptr<IndexedDBKey> primary_key;
   if (index_id == IndexedDBIndexMetadata::kInvalidId) {
     // Object Store Retrieval Operation
     IndexedDBReturnValue value;
@@ -662,8 +669,7 @@ void IndexedDBDatabase::GetOperation(
       callbacks->OnError(error);
 
       if (s.IsCorruption())
-        factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                               error);
+        factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
       return;
     }
 
@@ -695,8 +701,7 @@ void IndexedDBDatabase::GetOperation(
                                  "Internal error in GetPrimaryKeyViaIndex.");
     callbacks->OnError(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
   if (!primary_key) {
@@ -721,8 +726,7 @@ void IndexedDBDatabase::GetOperation(
                                  "Internal error in GetRecord.");
     callbacks->OnError(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
 
@@ -741,7 +745,7 @@ void IndexedDBDatabase::GetOperation(
 void IndexedDBDatabase::GetAllOperation(
     int64_t object_store_id,
     int64_t index_id,
-    scoped_ptr<IndexedDBKeyRange> key_range,
+    std::unique_ptr<IndexedDBKeyRange> key_range,
     indexed_db::CursorType cursor_type,
     int64_t max_count,
     scoped_refptr<IndexedDBCallbacks> callbacks,
@@ -757,7 +761,7 @@ void IndexedDBDatabase::GetAllOperation(
 
   leveldb::Status s;
 
-  scoped_ptr<IndexedDBBackingStore::Cursor> cursor;
+  std::unique_ptr<IndexedDBBackingStore::Cursor> cursor;
 
   if (cursor_type == indexed_db::CURSOR_KEY_ONLY) {
     // Retrieving keys
@@ -793,8 +797,7 @@ void IndexedDBDatabase::GetAllOperation(
                                  "Internal error in GetAllOperation");
     callbacks->OnError(error);
     if (s.IsCorruption()) {
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     }
     return;
   }
@@ -827,8 +830,7 @@ void IndexedDBDatabase::GetAllOperation(
                                    "Internal error in GetAllOperation.");
       callbacks->OnError(error);
       if (s.IsCorruption())
-        factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                               error);
+        factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
       return;
     }
 
@@ -875,7 +877,7 @@ void IndexedDBDatabase::GetAllOperation(
   }
 }
 
-static scoped_ptr<IndexedDBKey> GenerateKey(
+static std::unique_ptr<IndexedDBKey> GenerateKey(
     IndexedDBBackingStore* backing_store,
     IndexedDBTransaction* transaction,
     int64_t database_id,
@@ -890,12 +892,13 @@ static scoped_ptr<IndexedDBKey> GenerateKey(
       &current_number);
   if (!s.ok()) {
     LOG(ERROR) << "Failed to GetKeyGeneratorCurrentNumber";
-    return make_scoped_ptr(new IndexedDBKey());
+    return base::WrapUnique(new IndexedDBKey());
   }
   if (current_number < 0 || current_number > max_generator_value)
-    return make_scoped_ptr(new IndexedDBKey());
+    return base::WrapUnique(new IndexedDBKey());
 
-  return make_scoped_ptr(new IndexedDBKey(current_number, WebIDBKeyTypeNumber));
+  return base::WrapUnique(
+      new IndexedDBKey(current_number, WebIDBKeyTypeNumber));
 }
 
 static leveldb::Status UpdateKeyGenerator(IndexedDBBackingStore* backing_store,
@@ -915,7 +918,7 @@ struct IndexedDBDatabase::PutOperationParams {
   int64_t object_store_id;
   IndexedDBValue value;
   ScopedVector<storage::BlobDataHandle> handles;
-  scoped_ptr<IndexedDBKey> key;
+  std::unique_ptr<IndexedDBKey> key;
   blink::WebIDBPutMode put_mode;
   scoped_refptr<IndexedDBCallbacks> callbacks;
   std::vector<IndexKeys> index_keys;
@@ -928,7 +931,7 @@ void IndexedDBDatabase::Put(int64_t transaction_id,
                             int64_t object_store_id,
                             IndexedDBValue* value,
                             ScopedVector<storage::BlobDataHandle>* handles,
-                            scoped_ptr<IndexedDBKey> key,
+                            std::unique_ptr<IndexedDBKey> key,
                             blink::WebIDBPutMode put_mode,
                             scoped_refptr<IndexedDBCallbacks> callbacks,
                             const std::vector<IndexKeys>& index_keys) {
@@ -943,7 +946,7 @@ void IndexedDBDatabase::Put(int64_t transaction_id,
 
   DCHECK(key);
   DCHECK(value);
-  scoped_ptr<PutOperationParams> params(new PutOperationParams());
+  std::unique_ptr<PutOperationParams> params(new PutOperationParams());
   params->object_store_id = object_store_id;
   params->value.swap(*value);
   params->handles.swap(*handles);
@@ -955,7 +958,7 @@ void IndexedDBDatabase::Put(int64_t transaction_id,
       &IndexedDBDatabase::PutOperation, this, base::Passed(&params)));
 }
 
-void IndexedDBDatabase::PutOperation(scoped_ptr<PutOperationParams> params,
+void IndexedDBDatabase::PutOperation(std::unique_ptr<PutOperationParams> params,
                                      IndexedDBTransaction* transaction) {
   IDB_TRACE1("IndexedDBDatabase::PutOperation", "txn.id", transaction->id());
   DCHECK_NE(transaction->mode(), blink::WebIDBTransactionModeReadOnly);
@@ -967,10 +970,10 @@ void IndexedDBDatabase::PutOperation(scoped_ptr<PutOperationParams> params,
       metadata_.object_stores[params->object_store_id];
   DCHECK(object_store.auto_increment || params->key->IsValid());
 
-  scoped_ptr<IndexedDBKey> key;
+  std::unique_ptr<IndexedDBKey> key;
   if (params->put_mode != blink::WebIDBPutModeCursorUpdate &&
       object_store.auto_increment && !params->key->IsValid()) {
-    scoped_ptr<IndexedDBKey> auto_inc_key = GenerateKey(
+    std::unique_ptr<IndexedDBKey> auto_inc_key = GenerateKey(
         backing_store_.get(), transaction, id(), params->object_store_id);
     key_was_generated = true;
     if (!auto_inc_key->IsValid()) {
@@ -1001,8 +1004,7 @@ void IndexedDBDatabase::PutOperation(scoped_ptr<PutOperationParams> params,
                                    "Internal error checking key existence.");
       params->callbacks->OnError(error);
       if (s.IsCorruption())
-        factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                               error);
+        factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
       return;
     }
     if (found) {
@@ -1054,8 +1056,7 @@ void IndexedDBDatabase::PutOperation(scoped_ptr<PutOperationParams> params,
         "Internal error: backing store error performing put/add.");
     params->callbacks->OnError(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
   {
@@ -1085,8 +1086,7 @@ void IndexedDBDatabase::PutOperation(scoped_ptr<PutOperationParams> params,
                                    "Internal error updating key generator.");
       params->callbacks->OnError(error);
       if (s.IsCorruption())
-        factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                               error);
+        factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
       return;
     }
   }
@@ -1099,7 +1099,7 @@ void IndexedDBDatabase::PutOperation(scoped_ptr<PutOperationParams> params,
 
 void IndexedDBDatabase::SetIndexKeys(int64_t transaction_id,
                                      int64_t object_store_id,
-                                     scoped_ptr<IndexedDBKey> primary_key,
+                                     std::unique_ptr<IndexedDBKey> primary_key,
                                      const std::vector<IndexKeys>& index_keys) {
   IDB_TRACE1("IndexedDBDatabase::SetIndexKeys", "txn.id", transaction_id);
   IndexedDBTransaction* transaction = GetTransaction(transaction_id);
@@ -1123,8 +1123,7 @@ void IndexedDBDatabase::SetIndexKeys(int64_t transaction_id,
                                  "Internal error setting index keys.");
     transaction->Abort(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
   if (!found) {
@@ -1199,7 +1198,7 @@ struct IndexedDBDatabase::OpenCursorOperationParams {
   OpenCursorOperationParams() {}
   int64_t object_store_id;
   int64_t index_id;
-  scoped_ptr<IndexedDBKeyRange> key_range;
+  std::unique_ptr<IndexedDBKeyRange> key_range;
   blink::WebIDBCursorDirection direction;
   indexed_db::CursorType cursor_type;
   blink::WebIDBTaskType task_type;
@@ -1213,7 +1212,7 @@ void IndexedDBDatabase::OpenCursor(
     int64_t transaction_id,
     int64_t object_store_id,
     int64_t index_id,
-    scoped_ptr<IndexedDBKeyRange> key_range,
+    std::unique_ptr<IndexedDBKeyRange> key_range,
     blink::WebIDBCursorDirection direction,
     bool key_only,
     blink::WebIDBTaskType task_type,
@@ -1226,7 +1225,8 @@ void IndexedDBDatabase::OpenCursor(
   if (!ValidateObjectStoreIdAndOptionalIndexId(object_store_id, index_id))
     return;
 
-  scoped_ptr<OpenCursorOperationParams> params(new OpenCursorOperationParams());
+  std::unique_ptr<OpenCursorOperationParams> params(
+      new OpenCursorOperationParams());
   params->object_store_id = object_store_id;
   params->index_id = index_id;
   params->key_range = std::move(key_range);
@@ -1240,7 +1240,7 @@ void IndexedDBDatabase::OpenCursor(
 }
 
 void IndexedDBDatabase::OpenCursorOperation(
-    scoped_ptr<OpenCursorOperationParams> params,
+    std::unique_ptr<OpenCursorOperationParams> params,
     IndexedDBTransaction* transaction) {
   IDB_TRACE1(
       "IndexedDBDatabase::OpenCursorOperation", "txn.id", transaction->id());
@@ -1253,7 +1253,7 @@ void IndexedDBDatabase::OpenCursorOperation(
     transaction->AddPreemptiveEvent();
 
   leveldb::Status s;
-  scoped_ptr<IndexedDBBackingStore::Cursor> backing_store_cursor;
+  std::unique_ptr<IndexedDBBackingStore::Cursor> backing_store_cursor;
   if (params->index_id == IndexedDBIndexMetadata::kInvalidId) {
     if (params->cursor_type == indexed_db::CURSOR_KEY_ONLY) {
       DCHECK_EQ(params->task_type, blink::WebIDBTaskTypeNormal);
@@ -1301,8 +1301,7 @@ void IndexedDBDatabase::OpenCursorOperation(
     IndexedDBDatabaseError error(blink::WebIDBDatabaseExceptionUnknownError,
                                  "Internal error opening cursor operation");
     if (s.IsCorruption()) {
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     }
   }
 
@@ -1322,7 +1321,7 @@ void IndexedDBDatabase::OpenCursorOperation(
 void IndexedDBDatabase::Count(int64_t transaction_id,
                               int64_t object_store_id,
                               int64_t index_id,
-                              scoped_ptr<IndexedDBKeyRange> key_range,
+                              std::unique_ptr<IndexedDBKeyRange> key_range,
                               scoped_refptr<IndexedDBCallbacks> callbacks) {
   IDB_TRACE1("IndexedDBDatabase::Count", "txn.id", transaction_id);
   IndexedDBTransaction* transaction = GetTransaction(transaction_id);
@@ -1343,12 +1342,12 @@ void IndexedDBDatabase::Count(int64_t transaction_id,
 void IndexedDBDatabase::CountOperation(
     int64_t object_store_id,
     int64_t index_id,
-    scoped_ptr<IndexedDBKeyRange> key_range,
+    std::unique_ptr<IndexedDBKeyRange> key_range,
     scoped_refptr<IndexedDBCallbacks> callbacks,
     IndexedDBTransaction* transaction) {
   IDB_TRACE1("IndexedDBDatabase::CountOperation", "txn.id", transaction->id());
   uint32_t count = 0;
-  scoped_ptr<IndexedDBBackingStore::Cursor> backing_store_cursor;
+  std::unique_ptr<IndexedDBBackingStore::Cursor> backing_store_cursor;
 
   leveldb::Status s;
   if (index_id == IndexedDBIndexMetadata::kInvalidId) {
@@ -1374,8 +1373,7 @@ void IndexedDBDatabase::CountOperation(
     IndexedDBDatabaseError error(blink::WebIDBDatabaseExceptionUnknownError,
                                  "Internal error performing count operation");
     if (s.IsCorruption()) {
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     }
   }
   if (!backing_store_cursor) {
@@ -1395,7 +1393,7 @@ void IndexedDBDatabase::CountOperation(
 void IndexedDBDatabase::DeleteRange(
     int64_t transaction_id,
     int64_t object_store_id,
-    scoped_ptr<IndexedDBKeyRange> key_range,
+    std::unique_ptr<IndexedDBKeyRange> key_range,
     scoped_refptr<IndexedDBCallbacks> callbacks) {
   IDB_TRACE1("IndexedDBDatabase::DeleteRange", "txn.id", transaction_id);
   IndexedDBTransaction* transaction = GetTransaction(transaction_id);
@@ -1415,16 +1413,15 @@ void IndexedDBDatabase::DeleteRange(
 
 void IndexedDBDatabase::DeleteRangeOperation(
     int64_t object_store_id,
-    scoped_ptr<IndexedDBKeyRange> key_range,
+    std::unique_ptr<IndexedDBKeyRange> key_range,
     scoped_refptr<IndexedDBCallbacks> callbacks,
     IndexedDBTransaction* transaction) {
-  IDB_TRACE1(
-      "IndexedDBDatabase::DeleteRangeOperation", "txn.id", transaction->id());
+  IDB_TRACE1("IndexedDBDatabase::DeleteRangeOperation", "txn.id",
+             transaction->id());
+  size_t delete_count = 0;
   leveldb::Status s =
-      backing_store_->DeleteRange(transaction->BackingStoreTransaction(),
-                                  id(),
-                                  object_store_id,
-                                  *key_range);
+      backing_store_->DeleteRange(transaction->BackingStoreTransaction(), id(),
+                                  object_store_id, *key_range, &delete_count);
   if (!s.ok()) {
     base::string16 error_string =
         ASCIIToUTF16("Internal error deleting data in range");
@@ -1432,12 +1429,15 @@ void IndexedDBDatabase::DeleteRangeOperation(
                                  error_string);
     transaction->Abort(error);
     if (s.IsCorruption()) {
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     }
     return;
   }
-  callbacks->OnSuccess();
+  if (experimental_web_platform_features_enabled_) {
+    callbacks->OnSuccess(base::checked_cast<int64_t>(delete_count));
+  } else {
+    callbacks->OnSuccess();
+  }
 }
 
 void IndexedDBDatabase::Clear(int64_t transaction_id,
@@ -1468,8 +1468,7 @@ void IndexedDBDatabase::ClearOperation(
                                  "Internal error clearing object store");
     callbacks->OnError(error);
     if (s.IsCorruption()) {
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     }
     return;
   }
@@ -1497,8 +1496,7 @@ void IndexedDBDatabase::DeleteObjectStoreOperation(
                                  error_string);
     transaction->Abort(error);
     if (s.IsCorruption())
-      factory_->HandleBackingStoreCorruption(backing_store_->origin_url(),
-                                             error);
+      factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
     return;
   }
 
@@ -1512,7 +1510,7 @@ void IndexedDBDatabase::DeleteObjectStoreOperation(
 void IndexedDBDatabase::VersionChangeOperation(
     int64_t version,
     scoped_refptr<IndexedDBCallbacks> callbacks,
-    scoped_ptr<IndexedDBConnection> connection,
+    std::unique_ptr<IndexedDBConnection> connection,
     IndexedDBTransaction* transaction) {
   IDB_TRACE1(
       "IndexedDBDatabase::VersionChangeOperation", "txn.id", transaction->id());
@@ -1556,7 +1554,7 @@ void IndexedDBDatabase::TransactionFinished(IndexedDBTransaction* transaction,
         DCHECK(metadata_.id != kInvalidId);
 
         // Connection was already minted for OnUpgradeNeeded callback.
-        scoped_ptr<IndexedDBConnection> connection;
+        std::unique_ptr<IndexedDBConnection> connection;
         pending_second_half_open_->callbacks()->OnSuccess(std::move(connection),
                                                           this->metadata());
       } else {
@@ -1577,9 +1575,9 @@ void IndexedDBDatabase::TransactionCommitFailed(const leveldb::Status& status) {
   if (status.IsCorruption()) {
     IndexedDBDatabaseError error(blink::WebIDBDatabaseExceptionUnknownError,
                                  "Error committing transaction");
-    factory_->HandleBackingStoreCorruption(backing_store_->origin_url(), error);
+    factory_->HandleBackingStoreCorruption(backing_store_->origin(), error);
   } else {
-    factory_->HandleBackingStoreFailure(backing_store_->origin_url());
+    factory_->HandleBackingStoreFailure(backing_store_->origin());
   }
 }
 
@@ -1609,7 +1607,7 @@ void IndexedDBDatabase::ProcessPendingCalls() {
   if (pending_run_version_change_transaction_call_ && ConnectionCount() == 1) {
     DCHECK(pending_run_version_change_transaction_call_->version() >
            metadata_.version);
-    scoped_ptr<PendingUpgradeCall> pending_call =
+    std::unique_ptr<PendingUpgradeCall> pending_call =
         std::move(pending_run_version_change_transaction_call_);
     RunVersionChangeTransactionFinal(pending_call->callbacks(),
                                      pending_call->ReleaseConnection(),
@@ -1624,12 +1622,12 @@ void IndexedDBDatabase::ProcessPendingCalls() {
   }
 
   if (!IsDeleteDatabaseBlocked()) {
-    PendingDeleteCallList pending_delete_calls;
+    std::list<PendingDeleteCall*> pending_delete_calls;
     pending_delete_calls_.swap(pending_delete_calls);
     while (!pending_delete_calls.empty()) {
       // Only the first delete call will delete the database, but each must fire
       // callbacks.
-      scoped_ptr<PendingDeleteCall> pending_delete_call(
+      std::unique_ptr<PendingDeleteCall> pending_delete_call(
           pending_delete_calls.front());
       pending_delete_calls.pop_front();
       DeleteDatabaseFinal(pending_delete_call->callbacks());
@@ -1640,11 +1638,11 @@ void IndexedDBDatabase::ProcessPendingCalls() {
   }
 
   if (!IsOpenConnectionBlocked()) {
-    PendingOpenCallList pending_open_calls;
+    std::queue<IndexedDBPendingConnection> pending_open_calls;
     pending_open_calls_.swap(pending_open_calls);
     while (!pending_open_calls.empty()) {
       OpenConnection(pending_open_calls.front());
-      pending_open_calls.pop_front();
+      pending_open_calls.pop();
     }
   }
 }
@@ -1693,7 +1691,7 @@ void IndexedDBDatabase::OpenConnection(
     // presence of existing connections means we didn't even check for data loss
     // so there'd better not be any.
     DCHECK_NE(blink::WebIDBDataLossTotal, connection.callbacks->data_loss());
-    pending_open_calls_.push_back(connection);
+    pending_open_calls_.push(connection);
     return;
   }
 
@@ -1776,7 +1774,7 @@ void IndexedDBDatabase::OpenConnection(
 
 void IndexedDBDatabase::RunVersionChangeTransaction(
     scoped_refptr<IndexedDBCallbacks> callbacks,
-    scoped_ptr<IndexedDBConnection> connection,
+    std::unique_ptr<IndexedDBConnection> connection,
     int64_t transaction_id,
     int64_t requested_version) {
   DCHECK(callbacks.get());
@@ -1805,7 +1803,7 @@ void IndexedDBDatabase::RunVersionChangeTransaction(
 
 void IndexedDBDatabase::RunVersionChangeTransactionFinal(
     scoped_refptr<IndexedDBCallbacks> callbacks,
-    scoped_ptr<IndexedDBConnection> connection,
+    std::unique_ptr<IndexedDBConnection> connection,
     int64_t transaction_id,
     int64_t requested_version) {
   std::vector<int64_t> object_store_ids;
@@ -1856,9 +1854,9 @@ void IndexedDBDatabase::DeleteDatabaseFinal(
                                  "Internal error deleting database.");
     callbacks->OnError(error);
     if (s.IsCorruption()) {
-      GURL origin_url = backing_store_->origin_url();
+      url::Origin origin = backing_store_->origin();
       backing_store_ = NULL;
-      factory_->HandleBackingStoreCorruption(origin_url, error);
+      factory_->HandleBackingStoreCorruption(origin, error);
     }
     return;
   }
@@ -1925,13 +1923,10 @@ void IndexedDBDatabase::Close(IndexedDBConnection* connection, bool forced) {
   ProcessPendingCalls();
 
   // TODO(jsbell): Add a test for the pending_open_calls_ cases below.
-  if (!ConnectionCount() && !pending_open_calls_.size() &&
+  if (!ConnectionCount() && pending_open_calls_.empty() &&
       !pending_delete_calls_.size()) {
     DCHECK(transactions_.empty());
-
-    const GURL origin_url = backing_store_->origin_url();
     backing_store_ = NULL;
-
     factory_->ReleaseDatabase(identifier_, forced);
   }
 }

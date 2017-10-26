@@ -29,10 +29,10 @@
 
   'includes': [
     '../chrome/js_unittest_vars.gypi',
-    'remoting_android.gypi',
     'remoting_client.gypi',
     'remoting_host.gypi',
     'remoting_host_srcs.gypi',
+    'remoting_ios.gypi',
     'remoting_key_tester.gypi',
     'remoting_locales.gypi',
     'remoting_options.gypi',
@@ -40,7 +40,6 @@
     'remoting_test.gypi',
     'remoting_version.gypi',
     'remoting_webapp_files.gypi',
-    'app_remoting_webapp_files.gypi',
   ],
 
   'target_defaults': {
@@ -50,6 +49,8 @@
       'BINARY_HOST_ME2ME=3',
       'BINARY_NATIVE_MESSAGING_HOST=4',
       'BINARY_REMOTE_ASSISTANCE_HOST=5',
+      'BINARY_REMOTE_SECURITY_KEY=6',
+      'BINARY_REMOTING_START_HOST=7',
     ],
     'include_dirs': [
       '..',  # Root of Chrome checkout
@@ -131,8 +132,7 @@
           'host/win/host_messages.mc.jinja2',
           'host/win/version.rc.jinja2',
           'resources/play_store_resources.cc',
-          '<@(desktop_remoting_webapp_localizable_files)',
-          '<@(app_remoting_webapp_localizable_files)',
+          '<@(desktop_remoting_webapp_localizable_files )',
         ],
       },
       'actions': [
@@ -199,7 +199,7 @@
         '../media/media.gyp:media',
         '../media/media.gyp:shared_memory_support',
         '../net/net.gyp:net',
-        '../third_party/libvpx_new/libvpx.gyp:libvpx_new',
+        '../third_party/libvpx/libvpx.gyp:libvpx',
         '../third_party/libyuv/libyuv.gyp:libyuv',
         '../third_party/opus/opus.gyp:opus',
         '../third_party/protobuf/protobuf.gyp:protobuf_lite',
@@ -207,6 +207,7 @@
         '../ui/base/ui_base.gyp:ui_base',
         '../ui/gfx/gfx.gyp:gfx',
         '../ui/gfx/gfx.gyp:gfx_geometry',
+        '../url/url.gyp:url_lib',
         'proto/chromotocol.gyp:chromotocol_proto_lib',
         'remoting_resources',
       ],
@@ -235,6 +236,7 @@
         '../crypto/crypto.gyp:crypto',
         '../jingle/jingle.gyp:jingle_glue',
         '../net/net.gyp:net',
+        '../third_party/boringssl/boringssl.gyp:boringssl',
         '../third_party/expat/expat.gyp:expat',
         '../third_party/libjingle/libjingle.gyp:libjingle',
         '../third_party/libyuv/libyuv.gyp:libyuv',
@@ -249,10 +251,9 @@
         '<@(remoting_signaling_sources)',
       ],
       'conditions': [
-        ['enable_webrtc==1', {
+        ['enable_webrtc == 1', {
           'dependencies': [
             '../third_party/libjingle/libjingle.gyp:libjingle_webrtc',
-            '../third_party/libjingle/libjingle.gyp:libpeerconnection',
           ],
         }],
       ],

@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "content/browser/frame_host/frame_tree.h"
@@ -29,6 +30,7 @@ class NavigationEntry;
 class NavigationControllerImpl;
 class RenderViewHostImpl;
 class RenderWidgetHostView;
+class TextInputManager;
 class WebContentsView;
 
 enum ResourceRequestAction {
@@ -139,12 +141,15 @@ class CONTENT_EXPORT InterstitialPageImpl
                        blink::WebPopupType popup_type) override;
   void CreateNewFullscreenWidget(int32_t render_process_id,
                                  int32_t route_id) override;
-  void ShowCreatedWindow(int route_id,
+  void ShowCreatedWindow(int process_id,
+                         int route_id,
                          WindowOpenDisposition disposition,
                          const gfx::Rect& initial_rect,
                          bool user_gesture) override;
-  void ShowCreatedWidget(int route_id, const gfx::Rect& initial_rect) override;
-  void ShowCreatedFullscreenWidget(int route_id) override;
+  void ShowCreatedWidget(int process_id,
+                         int route_id,
+                         const gfx::Rect& initial_rect) override;
+  void ShowCreatedFullscreenWidget(int process_id, int route_id) override;
 
   SessionStorageNamespace* GetSessionStorageNamespace(
       SiteInstance* instance) override;
@@ -156,9 +161,7 @@ class CONTENT_EXPORT InterstitialPageImpl
   bool PreHandleKeyboardEvent(const NativeWebKeyboardEvent& event,
                               bool* is_keyboard_shortcut) override;
   void HandleKeyboardEvent(const NativeWebKeyboardEvent& event) override;
-#if defined(OS_WIN)
-  gfx::NativeViewAccessible GetParentNativeViewAccessible() override;
-#endif
+  TextInputManager* GetTextInputManager() override;
 
   bool enabled() const { return enabled_; }
   WebContents* web_contents() const;
@@ -282,7 +285,7 @@ class CONTENT_EXPORT InterstitialPageImpl
   base::string16 original_web_contents_title_;
 
   // Our RenderViewHostDelegateView, necessary for accelerators to work.
-  scoped_ptr<InterstitialPageRVHDelegateView> rvh_delegate_view_;
+  std::unique_ptr<InterstitialPageRVHDelegateView> rvh_delegate_view_;
 
   // Settings passed to the renderer.
   mutable RendererPreferences renderer_preferences_;
@@ -294,7 +297,7 @@ class CONTENT_EXPORT InterstitialPageImpl
   // user chooses to proceed.
   bool pause_throbber_;
 
-  scoped_ptr<InterstitialPageDelegate> delegate_;
+  std::unique_ptr<InterstitialPageDelegate> delegate_;
 
   scoped_refptr<SessionStorageNamespace> session_storage_namespace_;
 

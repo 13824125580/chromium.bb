@@ -12,7 +12,6 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/scoped_hdc.h"
 #include "base/win/scoped_select_object.h"
@@ -23,15 +22,16 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkShader.h"
 #include "ui/base/material_design/material_design_controller.h"
+#include "ui/display/win/dpi.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/gdi_util.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/skia_util.h"
-#include "ui/gfx/win/dpi.h"
 #include "ui/native_theme/common_theme.h"
 
 // This was removed from Winvers.h but is still used.
@@ -77,12 +77,9 @@ void SetCheckerboardShader(SkPaint* paint, const RECT& align_rect) {
   SkMatrix local_matrix;
   local_matrix.setTranslate(SkIntToScalar(align_rect.left),
                             SkIntToScalar(align_rect.top));
-  skia::RefPtr<SkShader> shader =
-      skia::AdoptRef(SkShader::CreateBitmapShader(bitmap,
-                                                  SkShader::kRepeat_TileMode,
-                                                  SkShader::kRepeat_TileMode,
-                                                  &local_matrix));
-  paint->setShader(shader.get());
+  paint->setShader(
+      SkShader::MakeBitmapShader(bitmap, SkShader::kRepeat_TileMode,
+                                 SkShader::kRepeat_TileMode, &local_matrix));
 }
 
 //    <-a->
@@ -196,10 +193,6 @@ NativeThemeWin* NativeThemeWin::instance() {
 gfx::Size NativeThemeWin::GetPartSize(Part part,
                                       State state,
                                       const ExtraParams& extra) const {
-  gfx::Size part_size = CommonThemeGetPartSize(part, state, extra);
-  if (!part_size.IsEmpty())
-    return part_size;
-
   // The GetThemePartSize call below returns the default size without
   // accounting for user customization (crbug/218291).
   switch (part) {
@@ -211,7 +204,7 @@ gfx::Size NativeThemeWin::GetPartSize(Part part,
     case kScrollbarVerticalThumb:
     case kScrollbarHorizontalTrack:
     case kScrollbarVerticalTrack: {
-      int size = gfx::win::GetSystemMetricsInDIP(SM_CXVSCROLL);
+      int size = display::win::GetSystemMetricsInDIP(SM_CXVSCROLL);
       if (size == 0)
         size = 17;
       return gfx::Size(size, size);
@@ -245,9 +238,6 @@ void NativeThemeWin::Paint(SkCanvas* canvas,
     return;
 
   switch (part) {
-    case kComboboxArrow:
-      CommonThemePaintComboboxArrow(canvas, rect);
-      return;
     case kMenuPopupGutter:
       PaintMenuGutter(canvas, rect);
       return;
@@ -467,7 +457,6 @@ void NativeThemeWin::PaintDirect(SkCanvas* canvas,
     case kWindowResizeGripper:
       PaintWindowResizeGripper(hdc, rect);
       return;
-    case kComboboxArrow:
     case kSliderTrack:
     case kSliderThumb:
     case kMaxPart:
@@ -476,8 +465,26 @@ void NativeThemeWin::PaintDirect(SkCanvas* canvas,
 }
 
 SkColor NativeThemeWin::GetSystemColor(ColorId color_id) const {
+  const bool md = ui::MaterialDesignController::IsModeMaterial();
+  if (!md) {
+    // Link:
+    const SkColor kLinkPressedColor = SkColorSetRGB(200, 0, 0);
+
+    switch (color_id) {
+      // Link
+      case kColorId_LinkDisabled:
+        return system_colors_[COLOR_WINDOWTEXT];
+      case kColorId_LinkEnabled:
+        return system_colors_[COLOR_HOTLIGHT];
+      case kColorId_LinkPressed:
+        return kLinkPressedColor;
+
+      default:
+        break;
+    }
+  }
+
   // TODO: Obtain the correct colors using GetSysColor.
-  const SkColor kUrlTextColor = SkColorSetRGB(0x0b, 0x80, 0x43);
   // Dialogs:
   const SkColor kDialogBackgroundColor = SkColorSetRGB(251, 251, 251);
   // FocusableBorder:
@@ -491,11 +498,13 @@ SkColor NativeThemeWin::GetSystemColor(ColorId color_id) const {
   // MenuItem:
   const SkColor kMenuSchemeHighlightBackgroundColorInvert =
       SkColorSetRGB(0x30, 0x30, 0x30);
-  // Link:
-  const SkColor kLinkPressedColor = SkColorSetRGB(200, 0, 0);
   // Table:
   const SkColor kPositiveTextColor = SkColorSetRGB(0x0b, 0x80, 0x43);
   const SkColor kNegativeTextColor = SkColorSetRGB(0xc5, 0x39, 0x29);
+  // Results Tables:
+  const SkColor kResultsTableUrlColor =
+      md ? gfx::kGoogleBlue700 : SkColorSetRGB(0x0b, 0x80, 0x43);
+  const SkColor kResultsTableSelectedUrlColor = SK_ColorWHITE;
 
   switch (color_id) {
     // Windows
@@ -532,20 +541,6 @@ SkColor NativeThemeWin::GetSystemColor(ColorId color_id) const {
       return system_colors_[COLOR_GRAYTEXT];
     case kColorId_LabelBackgroundColor:
       return system_colors_[COLOR_WINDOW];
-
-    // Link
-    case kColorId_LinkDisabled:
-      if (ui::MaterialDesignController::IsModeMaterial())
-        break;
-      return system_colors_[COLOR_WINDOWTEXT];
-    case kColorId_LinkEnabled:
-      if (ui::MaterialDesignController::IsModeMaterial())
-        break;
-      return system_colors_[COLOR_HOTLIGHT];
-    case kColorId_LinkPressed:
-      if (ui::MaterialDesignController::IsModeMaterial())
-        break;
-      return kLinkPressedColor;
 
     // Textfield
     case kColorId_TextfieldDefaultColor:
@@ -629,15 +624,16 @@ SkColor NativeThemeWin::GetSystemColor(ColorId color_id) const {
       return color_utils::AlphaBlend(system_colors_[COLOR_HIGHLIGHTTEXT],
                                      system_colors_[COLOR_HIGHLIGHT], 0x80);
     case kColorId_ResultsTableNormalUrl:
-      return color_utils::GetReadableColor(kUrlTextColor,
-                                           system_colors_[COLOR_WINDOW]);
+      return color_utils::GetReadableColor(kResultsTableUrlColor,
+                                            system_colors_[COLOR_WINDOW]);
     case kColorId_ResultsTableHoveredUrl:
-      return color_utils::GetReadableColor(
-          kUrlTextColor,
+      return color_utils::PickContrastingColor(
+          kResultsTableUrlColor, kResultsTableSelectedUrlColor,
           GetSystemColor(kColorId_ResultsTableHoveredBackground));
     case kColorId_ResultsTableSelectedUrl:
-      return color_utils::GetReadableColor(kUrlTextColor,
-                                           system_colors_[COLOR_HIGHLIGHT]);
+      return color_utils::PickContrastingColor(
+          kResultsTableUrlColor, kResultsTableSelectedUrlColor,
+          system_colors_[COLOR_HIGHLIGHT]);
     case kColorId_ResultsTablePositiveText:
       return color_utils::GetReadableColor(kPositiveTextColor,
                                            system_colors_[COLOR_WINDOW]);
@@ -687,7 +683,7 @@ void NativeThemeWin::PaintIndirect(SkCanvas* canvas,
   //                  keeping a cache of the resulting bitmaps.
 
   // Create an offscreen canvas that is backed by an HDC.
-  skia::RefPtr<skia::BitmapPlatformDevice> device = skia::AdoptRef(
+  sk_sp<skia::BitmapPlatformDevice> device(
       skia::BitmapPlatformDevice::Create(
           rect.width(), rect.height(), false, NULL));
   DCHECK(device);
@@ -723,12 +719,7 @@ void NativeThemeWin::PaintIndirect(SkCanvas* canvas,
   // Draw the theme controls using existing HDC-drawing code.
   PaintDirect(&offscreen_canvas, part, state, adjusted_rect, adjusted_extra);
 
-  // Copy the pixels to a bitmap that has ref-counted pixel storage, which is
-  // necessary to have when drawing to a SkPicture.
-  const SkBitmap& hdc_bitmap =
-      offscreen_canvas.getDevice()->accessBitmap(false);
-  SkBitmap bitmap;
-  hdc_bitmap.copyTo(&bitmap, kN32_SkColorType);
+  SkBitmap bitmap = skia::ReadPixels(&offscreen_canvas);
 
   // Post-process the pixels to fix up the alpha values (see big comment above).
   const SkPMColor placeholder_value = SkPreMultiplyColor(placeholder);
@@ -1716,7 +1707,6 @@ NativeThemeWin::ThemeName NativeThemeWin::GetThemeName(Part part) {
       return TEXTFIELD;
     case kWindowResizeGripper:
       return STATUS;
-    case kComboboxArrow:
     case kMenuCheckBackground:
     case kMenuPopupBackground:
     case kMenuItemBackground:
@@ -1762,7 +1752,6 @@ int NativeThemeWin::GetWindowsPart(Part part,
       return SBP_THUMBBTNVERT;
     case kWindowResizeGripper:
       return SP_GRIPPER;
-    case kComboboxArrow:
     case kInnerSpinButton:
     case kMenuList:
     case kMenuCheckBackground:
@@ -1956,7 +1945,6 @@ int NativeThemeWin::GetWindowsState(Part part,
           NOTREACHED();
           return 0;
       }
-    case kComboboxArrow:
     case kInnerSpinButton:
     case kMenuList:
     case kMenuCheckBackground:

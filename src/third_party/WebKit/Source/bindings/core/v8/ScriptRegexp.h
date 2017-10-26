@@ -28,6 +28,7 @@
 #define ScriptRegexp_h
 
 #include "bindings/core/v8/ScopedPersistent.h"
+#include "core/CoreExport.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/text/WTFString.h"
 #include <v8.h>
@@ -39,7 +40,7 @@ enum MultilineMode {
     MultilineEnabled
 };
 
-class ScriptRegexp {
+class CORE_EXPORT ScriptRegexp {
     USING_FAST_MALLOC(ScriptRegexp); WTF_MAKE_NONCOPYABLE(ScriptRegexp);
 public:
     enum CharacterMode {
@@ -52,9 +53,12 @@ public:
     int match(const String&, int startFrom = 0, int* matchLength = 0) const;
 
     bool isValid() const { return !m_regex.isEmpty(); }
+    // exceptionMessage is available only if !isValid().
+    String exceptionMessage() const { return m_exceptionMessage; }
 
 private:
     ScopedPersistent<v8::RegExp> m_regex;
+    String m_exceptionMessage;
 };
 
 } // namespace blink

@@ -31,7 +31,7 @@ class VIEWS_EXPORT MenuRunnerImplCocoa : public MenuRunnerImplInterface {
                                   MenuAnchorPosition anchor,
                                   int32_t run_types) override;
   void Cancel() override;
-  base::TimeDelta GetClosingEventTime() const override;
+  base::TimeTicks GetClosingEventTime() const override;
 
  private:
   ~MenuRunnerImplCocoa() override;
@@ -39,11 +39,14 @@ class VIEWS_EXPORT MenuRunnerImplCocoa : public MenuRunnerImplInterface {
   // The Cocoa menu controller that this instance is bridging.
   base::scoped_nsobject<MenuController> menu_controller_;
 
+  // Are we in run waiting for it to return?
+  bool running_;
+
   // Set if |running_| and Release() has been invoked.
   bool delete_after_run_;
 
   // The timestamp of the event which closed the menu - or 0.
-  base::TimeDelta closing_event_time_;
+  base::TimeTicks closing_event_time_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuRunnerImplCocoa);
 };

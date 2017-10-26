@@ -26,226 +26,252 @@
 #ifndef WTF_Functional_h
 #define WTF_Functional_h
 
+#include "base/bind.h"
+#include "base/threading/thread_checker.h"
 #include "base/tuple.h"
 #include "wtf/Allocator.h"
 #include "wtf/Assertions.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
 #include "wtf/ThreadSafeRefCounted.h"
+#include "wtf/TypeTraits.h"
 #include "wtf/WeakPtr.h"
 #include <tuple>
 #include <utility>
+
+namespace blink {
+template <typename T> class Member;
+template <typename T> class WeakMember;
+}
+
+namespace base {
+
+template <typename T>
+struct IsWeakReceiver<WTF::WeakPtr<T>> : std::true_type {};
+
+}
 
 namespace WTF {
 
 // Functional.h provides a very simple way to bind a function pointer and arguments together into a function object
 // that can be stored, copied and invoked, similar to how boost::bind and std::bind in C++11.
-//
-// Use threadSafeBind() or createCrossThreadTask() if the function/task is
-// called on a (potentially) different thread from the current thread.
 
-// Bind and rvalue references:
+// Thread Safety:
 //
-// For unbound parameters (arguments supplied later on the bound functor), we don't support moving-in and moving-out
-// at this moment, but we are willing to support that soon.
+// WTF::bind() and WTF::Closure should be used for same-thread closures
+// only, i.e. the closures must be created, executed and destructed on
+// the same thread.
+// Use crossThreadBind() and CrossThreadClosure if the function/task is called
+// or destructed on a (potentially) different thread from the current thread.
+
+// WTF::bind() and move semantics
+// ==============================
+//
+// For unbound parameters (arguments supplied later on the bound functor directly), there are two ways to pass movable
+// arguments:
+//
+//     1) Pass by rvalue reference.
+//
+//            void yourFunction(Argument&& argument) { ... }
+//            std::unique_ptr<Function<void(Argument&&)>> functor = bind<Argument&&>(yourFunction);
+//
+//     2) Pass by value.
+//
+//            void yourFunction(Argument argument) { ... }
+//            std::unique_ptr<Function<void(Argument)>> functor = bind<Argument>(yourFunction);
+//
+// Note that with the latter there will be *two* move constructions happening, because there needs to be at least one
+// intermediary function call taking an argument of type "Argument" (i.e. passed by value). The former case does not
+// require any move constructions inbetween.
 //
 // For bound parameters (arguments supplied on the creation of a functor), you can move your argument into the internal
 // storage of the functor by supplying an rvalue to that argument (this is done in wrap() of ParamStorageTraits).
 // However, to make the functor be able to get called multiple times, the stored object does not get moved out
-// automatically when the underlying function is actually invoked. If you want to move the argument throughout the
-// process, you can do so by receiving the argument as a non-const lvalue reference and applying std::move() to it:
+// automatically when the underlying function is actually invoked. If you want to make an argument "auto-passed",
+// you can do so by wrapping your bound argument with passed() function, as shown below:
 //
-//     void yourFunction(Argument& argument)
+//     void yourFunction(Argument argument)
 //     {
-//         std::move(argument); // Move out the argument from the internal storage.
+//         // |argument| is passed from the internal storage of functor.
 //         ...
 //     }
 //
 //     ...
-//     OwnPtr<Function<void()>> functor = bind(yourFunction, Argument()); // Pass the argument by rvalue.
+//     std::unique_ptr<Function<void()>> functor = bind(yourFunction, passed(Argument()));
 //     ...
 //     (*functor)();
+//
+// The underlying function must receive the argument wrapped by passed() by rvalue reference or by value.
+//
+// Obviously, if you create a functor this way, you shouldn't call the functor twice or more; after the second call,
+// the passed argument may be invalid.
 
-// A FunctionWrapper is a class template that can wrap a function pointer or a member function pointer and
-// provide a unified interface for calling that function.
-template <typename>
-class FunctionWrapper;
-
-// Bound static functions:
-template <typename R, typename... Parameters>
-class FunctionWrapper<R(*)(Parameters...)> {
-    DISALLOW_NEW();
-public:
-    typedef R ResultType;
-
-    explicit FunctionWrapper(R(*function)(Parameters...))
-        : m_function(function)
-    {
-    }
-
-    template <typename... IncomingParameters>
-    R operator()(IncomingParameters&&... parameters)
-    {
-        return m_function(std::forward<IncomingParameters>(parameters)...);
-    }
-
-private:
-    R(*m_function)(Parameters...);
+enum FunctionThreadAffinity {
+    CrossThreadAffinity,
+    SameThreadAffinity
 };
 
-// Bound member functions:
-
-template <typename R, typename C, typename... Parameters>
-class FunctionWrapper<R(C::*)(Parameters...)> {
-    DISALLOW_NEW();
+template <typename T>
+class PassedWrapper final {
 public:
-    typedef R ResultType;
-
-    explicit FunctionWrapper(R(C::*function)(Parameters...))
-        : m_function(function)
-    {
-    }
-
-    template <typename... IncomingParameters>
-    R operator()(C* c, IncomingParameters&&... parameters)
-    {
-        return (c->*m_function)(std::forward<IncomingParameters>(parameters)...);
-    }
-
-    template <typename... IncomingParameters>
-    R operator()(PassOwnPtr<C> c, IncomingParameters&&... parameters)
-    {
-        return (c.get()->*m_function)(std::forward<IncomingParameters>(parameters)...);
-    }
-
-    template <typename... IncomingParameters>
-    R operator()(const WeakPtr<C>& c, IncomingParameters&&... parameters)
-    {
-        C* obj = c.get();
-        if (!obj)
-            return R();
-        return (obj->*m_function)(std::forward<IncomingParameters>(parameters)...);
-    }
+    explicit PassedWrapper(T&& scoper) : m_scoper(std::move(scoper)) { }
+    PassedWrapper(PassedWrapper&& other) : m_scoper(std::move(other.m_scoper)) { }
+    T moveOut() const { return std::move(m_scoper); }
 
 private:
-    R(C::*m_function)(Parameters...);
+    mutable T m_scoper;
 };
+
+template <typename T>
+PassedWrapper<T> passed(T&& value)
+{
+    static_assert(!std::is_reference<T>::value,
+        "You must pass an rvalue to passed() so it can be moved. Add std::move() if necessary.");
+    static_assert(!std::is_const<T>::value, "|value| must not be const so it can be moved.");
+    return PassedWrapper<T>(std::move(value));
+}
+
+template <typename T, FunctionThreadAffinity threadAffinity>
+class UnretainedWrapper final {
+public:
+    explicit UnretainedWrapper(T* ptr) : m_ptr(ptr) { }
+    T* value() const { return m_ptr; }
+
+private:
+    T* m_ptr;
+};
+
+template <typename T>
+UnretainedWrapper<T, SameThreadAffinity> unretained(T* value)
+{
+    static_assert(!WTF::IsGarbageCollectedType<T>::value, "unretained() + GCed type is forbidden");
+    return UnretainedWrapper<T, SameThreadAffinity>(value);
+}
+
+template <typename T>
+UnretainedWrapper<T, CrossThreadAffinity> crossThreadUnretained(T* value)
+{
+    static_assert(!WTF::IsGarbageCollectedType<T>::value, "crossThreadUnretained() + GCed type is forbidden");
+    return UnretainedWrapper<T, CrossThreadAffinity>(value);
+}
 
 template <typename T>
 struct ParamStorageTraits {
     typedef T StorageType;
 
-    static StorageType wrap(const T& value) { return value; } // Copy.
-    static StorageType wrap(T&& value) { return std::move(value); }
-
-    // Don't move out, because the functor may be called multiple times.
-    static T& unwrap(StorageType& value) { return value; }
+    static_assert(!std::is_pointer<T>::value, "Raw pointers are not allowed to bind into WTF::Function. Wrap it with either wrapPersistent, wrapWeakPersistent, wrapCrossThreadPersistent, wrapCrossThreadWeakPersistent, RefPtr or unretained.");
+    static_assert(!IsSubclassOfTemplate<T, blink::Member>::value && !IsSubclassOfTemplate<T, blink::WeakMember>::value, "Member and WeakMember are not allowed to bind into WTF::Function. Wrap it with either wrapPersistent, wrapWeakPersistent, wrapCrossThreadPersistent or wrapCrossThreadWeakPersistent.");
 };
 
 template <typename T>
 struct ParamStorageTraits<PassRefPtr<T>> {
     typedef RefPtr<T> StorageType;
-
-    static StorageType wrap(PassRefPtr<T> value) { return value; }
-    static T* unwrap(const StorageType& value) { return value.get(); }
 };
 
 template <typename T>
 struct ParamStorageTraits<RefPtr<T>> {
     typedef RefPtr<T> StorageType;
-
-    static StorageType wrap(RefPtr<T> value) { return value.release(); }
-    static T* unwrap(const StorageType& value) { return value.get(); }
 };
+
+template <typename T>
+T* Unwrap(const RefPtr<T>& wrapped)
+{
+    return wrapped.get();
+}
 
 template <typename> class RetainPtr;
 
 template <typename T>
 struct ParamStorageTraits<RetainPtr<T>> {
     typedef RetainPtr<T> StorageType;
-
-    static StorageType wrap(const RetainPtr<T>& value) { return value; }
-    static typename RetainPtr<T>::PtrType unwrap(const StorageType& value) { return value.get(); }
 };
 
-template<> struct ParamStorageTraits<void*> {
-    typedef void* StorageType;
-
-    static StorageType wrap(void* value) { return value; }
-    static void* unwrap(const StorageType& value) { return value; }
+template <typename T>
+struct ParamStorageTraits<PassedWrapper<T>> {
+    typedef PassedWrapper<T> StorageType;
 };
 
-template<typename>
+template <typename T>
+T Unwrap(const PassedWrapper<T>& wrapped)
+{
+    return wrapped.moveOut();
+}
+
+template <typename T, FunctionThreadAffinity threadAffinity>
+struct ParamStorageTraits<UnretainedWrapper<T, threadAffinity>> {
+    typedef UnretainedWrapper<T, threadAffinity> StorageType;
+};
+
+template <typename T, FunctionThreadAffinity threadAffinity>
+T* Unwrap(const UnretainedWrapper<T, threadAffinity>& wrapped)
+{
+    return wrapped.value();
+}
+
+template<typename Signature, FunctionThreadAffinity threadAffinity = SameThreadAffinity>
 class Function;
 
-template<typename R, typename... Args>
-class Function<R(Args...)> {
+template<typename R, typename... Args, FunctionThreadAffinity threadAffinity>
+class Function<R(Args...), threadAffinity> {
     USING_FAST_MALLOC(Function);
     WTF_MAKE_NONCOPYABLE(Function);
 public:
-    virtual ~Function() { }
-    virtual R operator()(Args... args) = 0;
-protected:
-    Function() = default;
-};
+    Function(base::Callback<R(Args...)> callback)
+        : m_callback(std::move(callback)) { }
 
-template <typename BoundParametersTuple, typename FunctionWrapper, typename... UnboundParameters>
-class PartBoundFunctionImpl;
-
-template <typename... BoundParameters, typename FunctionWrapper, typename... UnboundParameters>
-class PartBoundFunctionImpl<std::tuple<BoundParameters...>, FunctionWrapper, UnboundParameters...> final : public Function<typename FunctionWrapper::ResultType(UnboundParameters...)> {
-public:
-    // We would like to use StorageTraits<UnboundParameters>... with StorageTraits defined as below in order to obtain
-    // storage traits of UnboundParameters, but unfortunately MSVC can't handle template using declarations correctly.
-    // So, sadly, we have write down the full type signature in all places where storage traits are needed.
-    //
-    // template <typename T>
-    // using StorageTraits = ParamStorageTraits<typename std::decay<T>::type>;
-
-    // Note that BoundParameters can be const T&, T&& or a mix of these.
-    explicit PartBoundFunctionImpl(FunctionWrapper functionWrapper, BoundParameters... bound)
-        : m_functionWrapper(functionWrapper)
-        , m_bound(ParamStorageTraits<typename std::decay<BoundParameters>::type>::wrap(std::forward<BoundParameters>(bound))...)
+    ~Function()
     {
+        DCHECK(m_threadChecker.CalledOnValidThread());
     }
 
-    typename FunctionWrapper::ResultType operator()(UnboundParameters... unbound) override
+    R operator()(Args... args)
     {
-        // What we really want to do is to call m_functionWrapper(m_bound..., unbound...), but to do that we need to
-        // pass a list of indices to a worker function template.
-        return callInternal(unbound..., base::MakeIndexSequence<sizeof...(BoundParameters)>());
+        DCHECK(m_threadChecker.CalledOnValidThread());
+        return m_callback.Run(std::forward<Args>(args)...);
+    }
+
+    explicit operator base::Callback<R(Args...)>()
+    {
+        return m_callback;
     }
 
 private:
-    template <std::size_t... boundIndices>
-    typename FunctionWrapper::ResultType callInternal(UnboundParameters... unbound, const base::IndexSequence<boundIndices...>&)
-    {
-        // Get each element in m_bound, unwrap them, and call the function with the desired arguments.
-        return m_functionWrapper(ParamStorageTraits<typename std::decay<BoundParameters>::type>::unwrap(std::get<boundIndices>(m_bound))..., unbound...);
-    }
-
-    FunctionWrapper m_functionWrapper;
-    std::tuple<typename ParamStorageTraits<typename std::decay<BoundParameters>::type>::StorageType...> m_bound;
+    using MaybeThreadChecker = typename std::conditional<
+        threadAffinity == SameThreadAffinity,
+        base::ThreadChecker,
+        base::ThreadCheckerDoNothing>::type;
+    MaybeThreadChecker m_threadChecker;
+    base::Callback<R(Args...)> m_callback;
 };
 
-template <typename... UnboundParameters, typename FunctionType, typename... BoundParameters>
-PassOwnPtr<Function<typename FunctionWrapper<FunctionType>::ResultType(UnboundParameters...)>> bind(FunctionType function, BoundParameters&&... boundParameters)
+template <FunctionThreadAffinity threadAffinity, typename FunctionType, typename... BoundParameters>
+std::unique_ptr<Function<base::MakeUnboundRunType<FunctionType, BoundParameters...>, threadAffinity>> bindInternal(FunctionType function, BoundParameters&&... boundParameters)
 {
     // Bound parameters' types are wrapped with std::tuple so we can pass two template parameter packs (bound
     // parameters and unbound) to PartBoundFunctionImpl. Note that a tuple of this type isn't actually created;
     // std::tuple<> is just for carrying the bound parameters' types. Any other class template taking a type parameter
     // pack can be used instead of std::tuple. std::tuple is used just because it's most convenient for this purpose.
-    using BoundFunctionType = PartBoundFunctionImpl<std::tuple<BoundParameters&&...>, FunctionWrapper<FunctionType>, UnboundParameters...>;
-    return adoptPtr(new BoundFunctionType(FunctionWrapper<FunctionType>(function), std::forward<BoundParameters>(boundParameters)...));
+    using UnboundRunType = base::MakeUnboundRunType<FunctionType, BoundParameters...>;
+    return wrapUnique(new Function<UnboundRunType, threadAffinity>(base::Bind(function, typename ParamStorageTraits<typename std::decay<BoundParameters>::type>::StorageType(std::forward<BoundParameters>(boundParameters))...)));
 }
 
-typedef Function<void()> Closure;
+template <typename FunctionType, typename... BoundParameters>
+std::unique_ptr<Function<base::MakeUnboundRunType<FunctionType, BoundParameters...>, SameThreadAffinity>> bind(FunctionType function, BoundParameters&&... boundParameters)
+{
+    return bindInternal<SameThreadAffinity>(function, std::forward<BoundParameters>(boundParameters)...);
+}
+
+typedef Function<void(), SameThreadAffinity> Closure;
+typedef Function<void(), CrossThreadAffinity> CrossThreadClosure;
 
 } // namespace WTF
 
+using WTF::passed;
+using WTF::unretained;
+using WTF::crossThreadUnretained;
+
 using WTF::Function;
-using WTF::bind;
-using WTF::Closure;
+using WTF::CrossThreadClosure;
 
 #endif // WTF_Functional_h

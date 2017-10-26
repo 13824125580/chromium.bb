@@ -28,6 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "base/memory/discardable_memory_allocator.h"
+#include "base/test/test_discardable_memory_allocator.h"
 #include "base/test/test_io_thread.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/test/scoped_ipc_support.h"
@@ -35,17 +37,20 @@
 #include "platform/HTTPNames.h"
 #include "platform/heap/Heap.h"
 #include "platform/testing/TestingPlatformSupport.h"
+#include "public/platform/Platform.h"
 #include "wtf/CryptographicallyRandomNumber.h"
 #include "wtf/CurrentTime.h"
-#include "wtf/MainThread.h"
-#include "wtf/Partitions.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/WTF.h"
+#include "wtf/allocator/Partitions.h"
 #include <base/bind.h>
 #include <base/bind_helpers.h>
 #include <base/command_line.h>
+#include <base/metrics/statistics_recorder.h>
 #include <base/test/launcher/unit_test_launcher.h>
 #include <base/test/test_suite.h>
 #include <cc/blink/web_compositor_support_impl.h>
+#include <memory>
 
 namespace {
 
@@ -57,9 +62,14 @@ double dummyCurrentTime()
 int runTestSuite(base::TestSuite* testSuite)
 {
     int result = testSuite->Run();
-    blink::Heap::collectAllGarbage();
+    blink::ThreadHeap::collectAllGarbage();
     return result;
 }
+
+class DummyPlatform final : public blink::Platform {
+public:
+    DummyPlatform() { }
+};
 
 } // namespace
 
@@ -67,35 +77,40 @@ int main(int argc, char** argv)
 {
     base::CommandLine::Init(argc, argv);
 
+    base::TestDiscardableMemoryAllocator discardableMemoryAllocator;
+    base::DiscardableMemoryAllocator::SetInstance(&discardableMemoryAllocator);
+
+    base::StatisticsRecorder::Initialize();
+
+    std::unique_ptr<DummyPlatform> platform = wrapUnique(new DummyPlatform);
+    blink::Platform::setCurrentPlatformForTesting(platform.get());
+
     WTF::Partitions::initialize(nullptr);
     WTF::setTimeFunctionsForTesting(dummyCurrentTime);
     WTF::initialize(nullptr);
-    WTF::initializeMainThread(0);
+    int result = 0;
+    {
+        blink::TestingPlatformSupport::Config platformConfig;
+        cc_blink::WebCompositorSupportImpl compositorSupport;
+        platformConfig.compositorSupport = &compositorSupport;
+        blink::TestingPlatformSupport platform(platformConfig);
 
-    blink::TestingPlatformSupport::Config platformConfig;
-    cc_blink::WebCompositorSupportImpl compositorSupport;
-    platformConfig.compositorSupport = &compositorSupport;
-    blink::TestingPlatformSupport platform(platformConfig);
+        blink::ProcessHeap::init();
+        blink::ThreadState::attachMainThread();
+        blink::ThreadState::current()->registerTraceDOMWrappers(nullptr, nullptr, nullptr);
+        blink::EventTracer::initialize();
+        blink::HTTPNames::init();
 
-    blink::Heap::init();
-    blink::ThreadState::attachMainThread();
-    blink::ThreadState::current()->registerTraceDOMWrappers(nullptr, nullptr);
-    blink::EventTracer::initialize();
+        base::TestSuite testSuite(argc, argv);
 
-    blink::HTTPNames::init();
+        mojo::edk::Init();
+        base::TestIOThread testIoThread(base::TestIOThread::kAutoStart);
+        std::unique_ptr<mojo::edk::test::ScopedIPCSupport> ipcSupport(wrapUnique(new mojo::edk::test::ScopedIPCSupport(testIoThread.task_runner())));
+        result = base::LaunchUnitTests(argc, argv, base::Bind(runTestSuite, base::Unretained(&testSuite)));
 
-    base::TestSuite testSuite(argc, argv);
-
-    mojo::edk::Init();
-    base::TestIOThread testIoThread(base::TestIOThread::kAutoStart);
-    WTF::OwnPtr<mojo::edk::test::ScopedIPCSupport> ipcSupport(
-        adoptPtr(new mojo::edk::test::ScopedIPCSupport(testIoThread.task_runner())));
-
-    int result = base::LaunchUnitTests(argc, argv, base::Bind(runTestSuite, base::Unretained(&testSuite)));
-
-    blink::ThreadState::detachMainThread();
-    blink::Heap::shutdown();
-
+        blink::ThreadState::detachMainThread();
+        blink::ProcessHeap::shutdown();
+    }
     WTF::shutdown();
     WTF::Partitions::shutdown();
     return result;

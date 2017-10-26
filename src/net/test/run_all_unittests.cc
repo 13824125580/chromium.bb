@@ -10,6 +10,7 @@
 #include "net/socket/ssl_server_socket.h"
 #include "net/spdy/spdy_session.h"
 #include "net/test/net_test_suite.h"
+#include "url/url_features.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
@@ -18,14 +19,14 @@
 #include "base/test/test_ui_thread_android.h"
 #include "net/android/dummy_spnego_authenticator.h"
 #include "net/android/net_jni_registrar.h"
+#if BUILDFLAG(USE_PLATFORM_ICU_ALTERNATIVES)
+#include "url/android/url_jni_registrar.h"  // nogncheck
 #endif
 
-#if defined(USE_ICU_ALTERNATIVES_ON_ANDROID)
-#include "url/android/url_jni_registrar.h"
 #endif
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/embedder.h"  // nogncheck
 #endif
 
 using net::internal::ClientSocketPoolBaseHelper;
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
     {"NetAndroid", net::android::RegisterJni},
     {"TestFileUtil", base::RegisterContentUriTestUtils},
     {"TestUiThreadAndroid", base::RegisterTestUiThreadAndroid},
-#if defined(USE_ICU_ALTERNATIVES_ON_ANDROID)
+#if BUILDFLAG(USE_PLATFORM_ICU_ALTERNATIVES)
     {"UrlAndroid", url::android::RegisterJni},
 #endif
   };
@@ -57,11 +58,6 @@ int main(int argc, char** argv) {
 
   NetTestSuite test_suite(argc, argv);
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-
-#if defined(OS_WIN) && !defined(USE_OPENSSL)
-  // We want to be sure to init NSPR on the main thread.
-  crypto::EnsureNSPRInit();
-#endif
 
   // Enable support for SSL server sockets, which must be done while
   // single-threaded.

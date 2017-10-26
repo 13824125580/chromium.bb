@@ -34,4 +34,8 @@ RenderViewObserverImpl::~RenderViewObserverImpl()
 {
 }
 
+void RenderViewObserverImpl::OnDestruct()
+{
+}
+
 }  // close namespace blpwtk2

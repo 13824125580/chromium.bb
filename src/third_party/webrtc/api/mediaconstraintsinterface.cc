@@ -10,6 +10,7 @@
 
 #include "webrtc/api/mediaconstraintsinterface.h"
 
+#include "webrtc/api/peerconnectioninterface.h"
 #include "webrtc/base/stringencode.h"
 
 namespace webrtc {
@@ -45,6 +46,8 @@ const char MediaConstraintsInterface::kNoiseSuppression[] =
     "googNoiseSuppression";
 const char MediaConstraintsInterface::kExperimentalNoiseSuppression[] =
     "googNoiseSuppression2";
+const char MediaConstraintsInterface::kIntelligibilityEnhancer[] =
+    "intelligibilityEnhancer";
 const char MediaConstraintsInterface::kHighpassFilter[] =
     "googHighpassFilter";
 const char MediaConstraintsInterface::kTypingNoiseDetection[] =
@@ -118,14 +121,92 @@ bool FindConstraint(const MediaConstraintsInterface* constraints,
     return false;
   }
   if (constraints->GetMandatory().FindFirst(key, &string_value)) {
-    if (mandatory_constraints)
+    if (mandatory_constraints) {
       ++*mandatory_constraints;
+    }
     return rtc::FromString(string_value, value);
   }
   if (constraints->GetOptional().FindFirst(key, &string_value)) {
     return rtc::FromString(string_value, value);
   }
   return false;
+}
+
+// As above, but for integers.
+bool FindConstraint(const MediaConstraintsInterface* constraints,
+                    const std::string& key,
+                    int* value,
+                    size_t* mandatory_constraints) {
+  std::string string_value;
+  if (!constraints) {
+    return false;
+  }
+  if (constraints->GetMandatory().FindFirst(key, &string_value)) {
+    if (mandatory_constraints) {
+      ++*mandatory_constraints;
+    }
+    return rtc::FromString(string_value, value);
+  }
+  if (constraints->GetOptional().FindFirst(key, &string_value)) {
+    return rtc::FromString(string_value, value);
+  }
+  return false;
+}
+
+void ConstraintToOptionalBool(const MediaConstraintsInterface* constraints,
+                              const std::string& key,
+                              rtc::Optional<bool>* value_out) {
+  bool value;
+  bool present = FindConstraint(constraints, key, &value, nullptr);
+  if (present) {
+    *value_out = rtc::Optional<bool>(value);
+  }
+}
+
+void ConstraintToOptionalInt(const MediaConstraintsInterface* constraints,
+                             const std::string& key,
+                             rtc::Optional<int>* value_out) {
+  int value;
+  bool present = FindConstraint(constraints, key, &value, nullptr);
+  if (present) {
+    *value_out = rtc::Optional<int>(value);
+  }
+}
+
+void CopyConstraintsIntoRtcConfiguration(
+    const MediaConstraintsInterface* constraints,
+    PeerConnectionInterface::RTCConfiguration* configuration) {
+  // Copy info from constraints into configuration, if present.
+  if (!constraints) {
+    return;
+  }
+
+  bool enable_ipv6;
+  if (FindConstraint(constraints, MediaConstraintsInterface::kEnableIPv6,
+                     &enable_ipv6, nullptr)) {
+    configuration->disable_ipv6 = !enable_ipv6;
+  }
+  FindConstraint(constraints, MediaConstraintsInterface::kEnableDscp,
+                 &configuration->media_config.enable_dscp, nullptr);
+  FindConstraint(
+      constraints, MediaConstraintsInterface::kCpuOveruseDetection,
+      &configuration->media_config.video.enable_cpu_overuse_detection, nullptr);
+  FindConstraint(constraints, MediaConstraintsInterface::kEnableRtpDataChannels,
+                 &configuration->enable_rtp_data_channel, nullptr);
+  // Find Suspend Below Min Bitrate constraint.
+  FindConstraint(constraints,
+                 MediaConstraintsInterface::kEnableVideoSuspendBelowMinBitrate,
+                 &configuration->media_config.video.suspend_below_min_bitrate,
+                 nullptr);
+  ConstraintToOptionalInt(constraints,
+                          MediaConstraintsInterface::kScreencastMinBitrate,
+                          &configuration->screencast_min_bitrate);
+  ConstraintToOptionalBool(constraints,
+                           MediaConstraintsInterface::kCombinedAudioVideoBwe,
+                           &configuration->combined_audio_video_bwe);
+  ConstraintToOptionalBool(constraints,
+                           MediaConstraintsInterface::kEnableDtlsSrtp,
+                           &configuration->enable_dtls_srtp);
 }
 
 }  // namespace webrtc

@@ -1,31 +1,28 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [14, 404, 355, 36],
-        [8, 386, 418, 54]
-      ],
-      "paintInvalidationClients": [
-        "InlineTextBox 'for turns,\n'",
-        "InlineTextBox 'quarrelling all the while, and fighting'",
-        "RootInlineBox",
-        "InlineTextBox 'for the hedgehogs; and in\n'",
-        "InlineTextBox 'a very short time '",
-        "InlineTextBox ''",
-        "RootInlineBox",
-        "InlineTextBox ''",
-        "InlineTextBox ' was in a furious passion, and went\n'",
-        "InlineTextBox 'stamping'",
-        "RootInlineBox",
-        "LayoutBlockFlow P",
-        "LayoutInline SPAN id='theQueen'",
-        "LayoutText #text",
-        "InlineTextBox 'the'",
-        "InlineTextBox 'Queen'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutText #text",
+          "rect": [14, 422, 355, 54],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [14, 404, 355, 36],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [65, 386, 304, 36],
+          "reason": "forced by layout"
+        }
       ]
     }
   ]

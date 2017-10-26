@@ -7,12 +7,12 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -205,15 +205,9 @@ class SpellcheckService : public KeyedService,
   // A pointer to the BrowserContext which this service refers to.
   content::BrowserContext* context_;
 
-  scoped_ptr<SpellCheckHostMetrics> metrics_;
-
-  // SHEZ: Remove dependency on Chrome's custom dictionary.
-  // scoped_ptr<SpellcheckCustomDictionary> custom_dictionary_;
+  std::unique_ptr<SpellCheckHostMetrics> metrics_;
 
   ScopedVector<SpellcheckHunspellDictionary> hunspell_dictionaries_;
-
-  // SHEZ: Remove feedback sender
-  // scoped_ptr<spellcheck::FeedbackSender> feedback_sender_;
 
   base::WeakPtrFactory<SpellcheckService> weak_ptr_factory_;
 

@@ -5,8 +5,9 @@
 #ifndef CONTENT_TEST_TEST_NAVIGATION_URL_LOADER_FACTORY_H_
 #define CONTENT_TEST_TEST_NAVIGATION_URL_LOADER_FACTORY_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/loader/navigation_url_loader_factory.h"
 
 namespace content {
@@ -25,10 +26,10 @@ class TestNavigationURLLoaderFactory : public NavigationURLLoaderFactory {
   ~TestNavigationURLLoaderFactory() override;
 
   // TestNavigationURLLoaderFactory implementation.
-  scoped_ptr<NavigationURLLoader> CreateLoader(
+  std::unique_ptr<NavigationURLLoader> CreateLoader(
       BrowserContext* browser_context,
-      scoped_ptr<NavigationRequestInfo> request_info,
-      ServiceWorkerNavigationHandle* service_worker_handle,
+      std::unique_ptr<NavigationRequestInfo> request_info,
+      ServiceWorkerContextWrapper* service_worker_context_wrapper,
       NavigationURLLoaderDelegate* delegate) override;
 
  private:

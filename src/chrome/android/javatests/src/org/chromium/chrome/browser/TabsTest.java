@@ -11,7 +11,6 @@ import android.content.pm.ActivityInfo;
 import android.os.Debug;
 import android.os.Environment;
 import android.os.SystemClock;
-import android.test.FlakyTest;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
@@ -27,6 +26,7 @@ import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
@@ -70,6 +70,7 @@ import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.Locale;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -156,12 +157,12 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("Tab never spawned in normal model.") {
+        CriteriaHelper.pollUiThread(Criteria.equals(2, new Callable<Integer>() {
             @Override
-            public boolean isSatisfied() {
-                return getActivity().getTabModelSelector().getModel(false).getCount() == 2;
+            public Integer call() {
+                return getActivity().getTabModelSelector().getModel(false).getCount();
             }
-        });
+        }));
     }
 
     @MediumTest
@@ -185,7 +186,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
         final AtomicReference<JavascriptAppModalDialog> dialog =
                 new AtomicReference<JavascriptAppModalDialog>();
 
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 dialog.set(JavascriptAppModalDialog.getCurrentDialogForTest());
@@ -203,7 +204,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
 
         dialog.set(null);
 
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return JavascriptAppModalDialog.getCurrentDialogForTest() == null;
@@ -257,7 +258,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 Tab tab = getActivity().getCurrentTabModel().getTabAt(1);
@@ -408,12 +409,11 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
      * Verify close button works in the TabSwitcher in landscape mode.
      * This code does not handle properly different screen densities.
      * @throws InterruptedException
-     * Bug: crbug.com/170179
      * @Restriction({RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
      * @LargeTest
      * @Feature({"Android-TabSwitcher"})
      */
-    @FlakyTest
+    @FlakyTest(message = "crbug.com/170179")
     public void testTabSwitcherLandscapeCloseButton() throws InterruptedException {
         getActivity().setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         // Hard-coded coordinates of the close button on the bottom left of the screen.
@@ -490,9 +490,8 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
      * @EnormousTest
      * @TimeoutScale(30)
      * @Feature({"Navigation"})
-     * crbug/223110
      */
-    @FlakyTest
+    @FlakyTest(message = "crbug.com/223110")
     public void testOpenManyTabsAtOnce10() throws InterruptedException {
         openAndVerifyManyTestTabs(10);
     }
@@ -619,11 +618,10 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
      * Verifies that the tab are actually stacking at the bottom and top of the screen.
      */
     /**
-     * Bug: crbug.com/170179
      * @LargeTest
      * @Feature({"Android-TabSwitcher"})
      */
-    @FlakyTest
+    @FlakyTest(message = "crbug.com/170179")
     @Restriction({ChromeRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     public void testTabsStacking() throws InterruptedException {
         final int count = openTabs(12, false);
@@ -685,11 +683,10 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
      * Verify that switching back and forth to the tabswitcher does not leak memory.
      */
     /**
-     * Bug: crbug.com/303319
      * @LargeTest
      * @Feature({"Android-TabSwitcher"})
      */
-    @FlakyTest
+    @FlakyTest(message = "crbug.com/303319")
     @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     public void testTabSwitcherMemoryLeak() throws InterruptedException {
         openTabs(4, true);
@@ -758,11 +755,10 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
     }
 
     /**
-     * Bug: crbug.com/170179
      * @LargeTest
      * @Feature({"Android-TabSwitcher"})
      */
-    @FlakyTest
+    @FlakyTest(message = "crbug.com/170179")
     @Restriction({ChromeRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     public void testTabSelectionLandscape() throws InterruptedException {
         getActivity().setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
@@ -937,7 +933,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("Did not finish animation") {
+        CriteriaHelper.pollUiThread(new Criteria("Did not finish animation") {
             @Override
             public boolean isSatisfied() {
                 Layout layout = getActivity().getLayoutManager().getActiveLayout();
@@ -1233,7 +1229,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
                 R.id.close_all_tabs_menu_id);
         UiUtils.settleDownUI(getInstrumentation());
 
-        CriteriaHelper.pollForCriteria(new Criteria("Should be in overview mode") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Should be in overview mode") {
             @Override
             public boolean isSatisfied() {
                 return getActivity().isInOverviewMode();
@@ -1419,7 +1415,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
     }
 
     private void waitForStaticLayout() throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Static Layout never selected after side swipe") {
                     @Override
                     public boolean isSatisfied() {
@@ -1477,7 +1473,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Layout still requesting Tab Android view be attached") {
                     @Override
                     public boolean isSatisfied() {
@@ -1495,7 +1491,7 @@ public class TabsTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Layout not requesting Tab Android view be attached") {
                     @Override
                     public boolean isSatisfied() {

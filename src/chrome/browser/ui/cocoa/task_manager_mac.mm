@@ -13,8 +13,11 @@
 #include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/task_management/task_manager_interface.h"
+#include "chrome/browser/task_manager/task_manager.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #import "chrome/browser/ui/cocoa/window_size_autosaver.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
@@ -174,10 +177,6 @@ class SortHelper {
 
   [tableView_ reloadData];
   [self adjustSelectionAndEndProcessButton];
-}
-
-- (IBAction)statsLinkClicked:(id)sender {
-  TaskManager::GetInstance()->OpenAboutMemory();
 }
 
 - (IBAction)killSelectedProcesses:(id)sender {
@@ -415,7 +414,8 @@ class SortHelper {
     [tableView_ selectRowIndexes:indexSet byExtendingSelection:YES];
   }
 
-  bool enabled = [selection count] > 0 && !selectionContainsBrowserProcess;
+  bool enabled = [selection count] > 0 && !selectionContainsBrowserProcess &&
+    task_management::TaskManagerInterface::IsEndProcessEnabled();
   [endProcessButton_ setEnabled:enabled];
 }
 
@@ -597,12 +597,30 @@ void TaskManagerMac::Hide() {
 namespace chrome {
 
 // Declared in browser_dialogs.h.
-void ShowTaskManager(Browser* browser) {
+ui::TableModel* ShowTaskManager(Browser* browser) {
+  if (chrome::ToolkitViewsDialogsEnabled())
+    return chrome::ShowTaskManagerViews(browser);
+
   TaskManagerMac::Show();
+  return nullptr;  // No ui::TableModel* to return on Mac, so return nullptr.
 }
 
 void HideTaskManager() {
+  if (chrome::ToolkitViewsDialogsEnabled()) {
+    chrome::HideTaskManagerViews();
+    return;
+  }
+
   TaskManagerMac::Hide();
+}
+
+bool NotifyOldTaskManagerBytesRead(const net::URLRequest& request,
+                                   int64_t bytes_read) {
+  if (task_management::TaskManagerInterface::IsNewTaskManagerEnabled())
+    return false;
+
+  TaskManager::GetInstance()->model()->NotifyBytesRead(request, bytes_read);
+  return true;
 }
 
 }  // namespace chrome

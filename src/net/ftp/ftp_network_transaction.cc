@@ -14,7 +14,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "net/base/address_list.h"
-#include "net/base/connection_type_histograms.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
 #include "net/base/port_util.h"
@@ -487,8 +486,9 @@ std::string FtpNetworkTransaction::GetRequestPathForFtpCommand(
   // with a trailing slash.
   if (!is_directory && path.length() > 1 && path.back() == '/')
     path.erase(path.length() - 1);
-  UnescapeRule::Type unescape_rules = UnescapeRule::SPACES |
-                                      UnescapeRule::URL_SPECIAL_CHARS;
+  UnescapeRule::Type unescape_rules =
+      UnescapeRule::SPACES |
+      UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS;
   // This may unescape to non-ASCII characters, but we allow that. See the
   // comment for IsValidFTPCommandString.
   path = UnescapeURLComponent(path, unescape_rules);
@@ -654,7 +654,7 @@ int FtpNetworkTransaction::DoCtrlResolveHostComplete(int result) {
 int FtpNetworkTransaction::DoCtrlConnect() {
   next_state_ = STATE_CTRL_CONNECT_COMPLETE;
   ctrl_socket_ = socket_factory_->CreateTransportClientSocket(
-      addresses_, net_log_.net_log(), net_log_.source());
+      addresses_, NULL, net_log_.net_log(), net_log_.source());
   net_log_.AddEvent(
       NetLog::TYPE_FTP_CONTROL_CONNECTION,
       ctrl_socket_->NetLog().source().ToEventParametersCallback());
@@ -1231,7 +1231,7 @@ int FtpNetworkTransaction::DoDataConnect() {
   data_address = AddressList::CreateFromIPAddress(
       ip_endpoint.address(), data_connection_port_);
   data_socket_ = socket_factory_->CreateTransportClientSocket(
-        data_address, net_log_.net_log(), net_log_.source());
+      data_address, NULL, net_log_.net_log(), net_log_.source());
   net_log_.AddEvent(
       NetLog::TYPE_FTP_DATA_CONNECTION,
       data_socket_->NetLog().source().ToEventParametersCallback());

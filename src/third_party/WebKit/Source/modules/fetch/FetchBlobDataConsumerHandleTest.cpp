@@ -19,7 +19,9 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 #include <string.h>
 
 namespace blink {
@@ -51,15 +53,20 @@ using Checkpoint = StrictMock<::testing::MockFunction<void(int)>>;
 
 class MockLoaderFactory : public FetchBlobDataConsumerHandle::LoaderFactory {
 public:
-    MOCK_METHOD4(create, PassRefPtr<ThreadableLoader>(ExecutionContext&, ThreadableLoaderClient*, const ThreadableLoaderOptions&, const ResourceLoaderOptions&));
+    std::unique_ptr<ThreadableLoader> create(ExecutionContext& executionContext, ThreadableLoaderClient* client, const ThreadableLoaderOptions& threadableLoaderOptions, const ResourceLoaderOptions& resourceLoaderOptions) override
+    {
+        return wrapUnique(createInternal(executionContext, client, threadableLoaderOptions, resourceLoaderOptions));
+    }
+
+    MOCK_METHOD4(createInternal, ThreadableLoader*(ExecutionContext&, ThreadableLoaderClient*, const ThreadableLoaderOptions&, const ResourceLoaderOptions&));
 };
 
 PassRefPtr<BlobDataHandle> createBlobDataHandle(const char* s)
 {
-    OwnPtr<BlobData> data = BlobData::create();
+    std::unique_ptr<BlobData> data = BlobData::create();
     data->appendText(s, false);
     auto size = data->length();
-    return BlobDataHandle::create(data.release(), size);
+    return BlobDataHandle::create(std::move(data), size);
 }
 
 String toString(const Vector<char>& data)
@@ -75,13 +82,13 @@ public:
     {
         m_dummyPageHolder = nullptr;
         // We need this to collect garbage-collected mocks.
-        Heap::collectAllGarbage();
+        ThreadHeap::collectAllGarbage();
     }
 
     Document& document() { return m_dummyPageHolder->document(); }
 
 private:
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
 };
 
 TEST_F(FetchBlobDataConsumerHandleTest, CreateLoader)
@@ -93,20 +100,21 @@ TEST_F(FetchBlobDataConsumerHandleTest, CreateLoader)
     ThreadableLoaderOptions options;
     ResourceLoaderOptions resourceLoaderOptions;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(DoAll(
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(DoAll(
         SaveArg<2>(&options),
         SaveArg<3>(&resourceLoaderOptions),
-        Return(loader.get())));
-    EXPECT_CALL(*loader, start(_)).WillOnce(SaveArg<0>(&request));
+        Return(loader.release())));
+    EXPECT_CALL(*loaderPtr, start(_)).WillOnce(SaveArg<0>(&request));
     EXPECT_CALL(checkpoint, Call(2));
-    EXPECT_CALL(*loader, cancel());
+    EXPECT_CALL(*loaderPtr, cancel());
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
     testing::runPendingTasks();
 
@@ -116,7 +124,7 @@ TEST_F(FetchBlobDataConsumerHandleTest, CreateLoader)
     testing::runPendingTasks();
     checkpoint.Call(2);
 
-    EXPECT_TRUE(request.url().string().startsWith("blob:"));
+    EXPECT_TRUE(request.url().getString().startsWith("blob:"));
     EXPECT_TRUE(request.useStreamOnResponse());
 
     EXPECT_EQ(ConsiderPreflight, options.preflightPolicy);
@@ -137,18 +145,19 @@ TEST_F(FetchBlobDataConsumerHandleTest, CancelLoaderWhenStopped)
     auto factory = new StrictMock<MockLoaderFactory>;
     Checkpoint checkpoint;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(Return(loader.get()));
-    EXPECT_CALL(*loader, start(_));
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(Return(loader.release()));
+    EXPECT_CALL(*loaderPtr, start(_));
     EXPECT_CALL(checkpoint, Call(2));
-    EXPECT_CALL(*loader, cancel());
+    EXPECT_CALL(*loaderPtr, cancel());
     EXPECT_CALL(checkpoint, Call(3));
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
     testing::runPendingTasks();
 
@@ -166,21 +175,22 @@ TEST_F(FetchBlobDataConsumerHandleTest, CancelLoaderWhenDestinationDetached)
     auto factory = new StrictMock<MockLoaderFactory>;
     Checkpoint checkpoint;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(Return(loader.get()));
-    EXPECT_CALL(*loader, start(_));
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(Return(loader.release()));
+    EXPECT_CALL(*loaderPtr, start(_));
     EXPECT_CALL(checkpoint, Call(2));
     EXPECT_CALL(checkpoint, Call(3));
-    EXPECT_CALL(*loader, cancel());
+    EXPECT_CALL(*loaderPtr, cancel());
     EXPECT_CALL(checkpoint, Call(4));
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
-    OwnPtr<WebDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
+    std::unique_ptr<WebDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
     testing::runPendingTasks();
 
     size_t size = 0;
@@ -191,7 +201,7 @@ TEST_F(FetchBlobDataConsumerHandleTest, CancelLoaderWhenDestinationDetached)
     handle = nullptr;
     reader = nullptr;
     checkpoint.Call(3);
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
     checkpoint.Call(4);
 }
 
@@ -200,21 +210,22 @@ TEST_F(FetchBlobDataConsumerHandleTest, ReadTest)
     auto factory = new StrictMock<MockLoaderFactory>;
     Checkpoint checkpoint;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
     ThreadableLoaderClient* client = nullptr;
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.get())));
-    EXPECT_CALL(*loader, start(_));
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.release())));
+    EXPECT_CALL(*loaderPtr, start(_));
     EXPECT_CALL(checkpoint, Call(2));
-    EXPECT_CALL(*loader, cancel());
+    EXPECT_CALL(*loaderPtr, cancel());
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
 
-    OwnPtr<ReplayingHandle> src = ReplayingHandle::create();
+    std::unique_ptr<ReplayingHandle> src = ReplayingHandle::create();
     src->add(Command(Command::Wait));
     src->add(Command(Command::Data, "hello, "));
     src->add(Command(Command::Data, "world"));
@@ -226,9 +237,9 @@ TEST_F(FetchBlobDataConsumerHandleTest, ReadTest)
     checkpoint.Call(1);
     testing::runPendingTasks();
     checkpoint.Call(2);
-    client->didReceiveResponse(0, ResourceResponse(), src.release());
-    HandleReaderRunner<HandleReader> runner(handle.release());
-    OwnPtr<HandleReadResult> r = runner.wait();
+    client->didReceiveResponse(0, ResourceResponse(), std::move(src));
+    HandleReaderRunner<HandleReader> runner(std::move(handle));
+    std::unique_ptr<HandleReadResult> r = runner.wait();
     EXPECT_EQ(kDone, r->result());
     EXPECT_EQ("hello, world", toString(r->data()));
 }
@@ -238,21 +249,22 @@ TEST_F(FetchBlobDataConsumerHandleTest, TwoPhaseReadTest)
     auto factory = new StrictMock<MockLoaderFactory>;
     Checkpoint checkpoint;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
     ThreadableLoaderClient* client = nullptr;
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.get())));
-    EXPECT_CALL(*loader, start(_));
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.release())));
+    EXPECT_CALL(*loaderPtr, start(_));
     EXPECT_CALL(checkpoint, Call(2));
-    EXPECT_CALL(*loader, cancel());
+    EXPECT_CALL(*loaderPtr, cancel());
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
 
-    OwnPtr<ReplayingHandle> src = ReplayingHandle::create();
+    std::unique_ptr<ReplayingHandle> src = ReplayingHandle::create();
     src->add(Command(Command::Wait));
     src->add(Command(Command::Data, "hello, "));
     src->add(Command(Command::Data, "world"));
@@ -264,9 +276,9 @@ TEST_F(FetchBlobDataConsumerHandleTest, TwoPhaseReadTest)
     checkpoint.Call(1);
     testing::runPendingTasks();
     checkpoint.Call(2);
-    client->didReceiveResponse(0, ResourceResponse(), src.release());
-    HandleReaderRunner<HandleTwoPhaseReader> runner(handle.release());
-    OwnPtr<HandleReadResult> r = runner.wait();
+    client->didReceiveResponse(0, ResourceResponse(), std::move(src));
+    HandleReaderRunner<HandleTwoPhaseReader> runner(std::move(handle));
+    std::unique_ptr<HandleReadResult> r = runner.wait();
     EXPECT_EQ(kDone, r->result());
     EXPECT_EQ("hello, world", toString(r->data()));
 }
@@ -276,17 +288,18 @@ TEST_F(FetchBlobDataConsumerHandleTest, LoadErrorTest)
     auto factory = new StrictMock<MockLoaderFactory>;
     Checkpoint checkpoint;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
     ThreadableLoaderClient* client = nullptr;
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.get())));
-    EXPECT_CALL(*loader, start(_));
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.release())));
+    EXPECT_CALL(*loaderPtr, start(_));
     EXPECT_CALL(checkpoint, Call(2));
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
 
     size_t size = 0;
@@ -295,8 +308,8 @@ TEST_F(FetchBlobDataConsumerHandleTest, LoadErrorTest)
     testing::runPendingTasks();
     checkpoint.Call(2);
     client->didFail(ResourceError());
-    HandleReaderRunner<HandleReader> runner(handle.release());
-    OwnPtr<HandleReadResult> r = runner.wait();
+    HandleReaderRunner<HandleReader> runner(std::move(handle));
+    std::unique_ptr<HandleReadResult> r = runner.wait();
     EXPECT_EQ(kUnexpectedError, r->result());
 }
 
@@ -305,21 +318,22 @@ TEST_F(FetchBlobDataConsumerHandleTest, BodyLoadErrorTest)
     auto factory = new StrictMock<MockLoaderFactory>;
     Checkpoint checkpoint;
 
-    RefPtr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    std::unique_ptr<MockThreadableLoader> loader = MockThreadableLoader::create();
+    MockThreadableLoader* loaderPtr = loader.get();
     ThreadableLoaderClient* client = nullptr;
 
     InSequence s;
     EXPECT_CALL(checkpoint, Call(1));
-    EXPECT_CALL(*factory, create(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.get())));
-    EXPECT_CALL(*loader, start(_));
+    EXPECT_CALL(*factory, createInternal(Ref(document()), _, _, _)).WillOnce(DoAll(SaveArg<1>(&client), Return(loader.release())));
+    EXPECT_CALL(*loaderPtr, start(_));
     EXPECT_CALL(checkpoint, Call(2));
-    EXPECT_CALL(*loader, cancel());
+    EXPECT_CALL(*loaderPtr, cancel());
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<WebDataConsumerHandle> handle
+    std::unique_ptr<WebDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
 
-    OwnPtr<ReplayingHandle> src = ReplayingHandle::create();
+    std::unique_ptr<ReplayingHandle> src = ReplayingHandle::create();
     src->add(Command(Command::Wait));
     src->add(Command(Command::Data, "hello, "));
     src->add(Command(Command::Error));
@@ -329,9 +343,9 @@ TEST_F(FetchBlobDataConsumerHandleTest, BodyLoadErrorTest)
     checkpoint.Call(1);
     testing::runPendingTasks();
     checkpoint.Call(2);
-    client->didReceiveResponse(0, ResourceResponse(), src.release());
-    HandleReaderRunner<HandleReader> runner(handle.release());
-    OwnPtr<HandleReadResult> r = runner.wait();
+    client->didReceiveResponse(0, ResourceResponse(), std::move(src));
+    HandleReaderRunner<HandleReader> runner(std::move(handle));
+    std::unique_ptr<HandleReadResult> r = runner.wait();
     EXPECT_EQ(kUnexpectedError, r->result());
 }
 
@@ -340,7 +354,7 @@ TEST_F(FetchBlobDataConsumerHandleTest, DrainAsBlobDataHandle)
     auto factory = new StrictMock<MockLoaderFactory>;
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<FetchDataConsumerHandle> handle
+    std::unique_ptr<FetchDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
 
     size_t size = 0;
@@ -355,7 +369,7 @@ TEST_F(FetchBlobDataConsumerHandleTest, DrainAsFormData)
     auto factory = new StrictMock<MockLoaderFactory>;
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<FetchDataConsumerHandle> handle
+    std::unique_ptr<FetchDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
 
     RefPtr<EncodedFormData> formData = handle->obtainReader(nullptr)->drainAsFormData();
@@ -376,9 +390,9 @@ TEST_F(FetchBlobDataConsumerHandleTest, ZeroByteReadDoesNotAffectDraining)
     auto factory = new StrictMock<MockLoaderFactory>;
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<FetchDataConsumerHandle> handle
+    std::unique_ptr<FetchDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
-    OwnPtr<FetchDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
+    std::unique_ptr<FetchDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
 
     size_t readSize;
     EXPECT_EQ(kShouldWait, reader->read(nullptr, 0, kNone, &readSize));
@@ -390,9 +404,9 @@ TEST_F(FetchBlobDataConsumerHandleTest, OneByteReadAffectsDraining)
     auto factory = new StrictMock<MockLoaderFactory>;
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<FetchDataConsumerHandle> handle
+    std::unique_ptr<FetchDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
-    OwnPtr<FetchDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
+    std::unique_ptr<FetchDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
 
     size_t readSize;
     char c;
@@ -405,9 +419,9 @@ TEST_F(FetchBlobDataConsumerHandleTest, BeginReadAffectsDraining)
     auto factory = new StrictMock<MockLoaderFactory>;
 
     RefPtr<BlobDataHandle> blobDataHandle = createBlobDataHandle("Once upon a time");
-    OwnPtr<FetchDataConsumerHandle> handle
+    std::unique_ptr<FetchDataConsumerHandle> handle
         = FetchBlobDataConsumerHandle::create(&document(), blobDataHandle, factory);
-    OwnPtr<FetchDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
+    std::unique_ptr<FetchDataConsumerHandle::Reader> reader = handle->obtainReader(nullptr);
 
     const void* buffer;
     size_t available;

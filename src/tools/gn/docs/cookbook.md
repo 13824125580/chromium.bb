@@ -122,6 +122,7 @@ component("base") {
 'sources': [
   'a.cc',
   'b.cc',
+  'c.cc',
 ],
 'dependencies': [
   '<(DEPTH)/base/base.gyp:foo',
@@ -149,21 +150,25 @@ component("base") {
 
 ```
 sources = [
-  "a.cc",
-  "b.cc",
+  "c.cc",
 ]
 deps = [
   "//base:foo",
 ]
 
 if (is_win) {
-  sources -= [ "a.cc" ]
-  sources += [ "foo.cc" ]
+  sources += [
+    "b.cc",
+    "foo.cc',
+  ]
   deps += [ "//base:bar" ]
 } else {
-  sources -= [ "b.cc" ]
+  sources += [ "a.cc" ]
 }
 ```
+
+Note that in GN we prefer to only add files when needed, and don't add all of
+them at first only to remove them later like in gyp.
 
 ## Variable mappings
 
@@ -217,6 +222,8 @@ places are noted in the table below.
 | `mac_sdk_min`                                   | `mac_sdk_min`                              | `//build/config/mac/mac_sdk.gni`               |
 | `mac_sdk_path`                                  | `mac_sdk_path`                             | `//build/config/mac/mac_sdk.gni`               |
 | `mac_sdk`                                       | `mac_sdk_version`                          | `//build/config/mac/mac_sdk.gni`               |
+| `mac_strip_release`                             | `enable_stripping`                         | `//build/config/mac/symbols.gni`               |
+| `mac_want_real_dsym`                            | `enable_dsyms`                             | `//build/config/mac/symbols.gni`               |
 | `msan` (0/1)                                    | `is_msan` (true/false)                     | `//build/config/sanitizers/sanitizers.gni`     |
 | `SDKROOT` (Mac)                                 | `sysroot`                                  | `//build/config/sysroot.gni`                   |
 | `sysroot`                                       | `sysroot`                                  | `//build/config/sysroot.gni`                   |
@@ -279,7 +286,6 @@ places are noted in the table below.
 | `use_gnome_keyring` (0/1)               | `is_desktop_linux` (true/false)                |                               |
 | `use_goma` (0/1)                        | `use_goma` (true/false)                        | `//build/toolchain/goma.gni`  |
 | `use_nss_certs` (0/1)                   | `use_nss_certs` (true/false)                   | `//build/config/crypto.gni` (Many of these conditions can be deleted, see the "SSL" notes on targets below.) |
-| `use_openssl` (0/1)                     | `use_openssl` (true/false)                     | `//build/config/crypto.gni` (Many of these conditions can be deleted, see the "SSL" notes on targets below.) |
 | `use_pango` (0/1)                       | `use_pango` (true/false)                       | `//build/config/ui.gni`       |
 | `use_ozone` (0/1)                       | `use_ozone` (true/false)                       | `//build/config/ui.gni`       |
 | `use_seccomp_bpf` (0/1)                 | `use_seccomp_bpf` (true/false)                 | `//build/config/features.gni` |
@@ -301,8 +307,8 @@ targets only, don't add stuff here just because you converted it.)
 | `base/base.gyp:run_all_unittests`                                                  | `//base/test:run_all_unittests`          |                      |
 | `base/base.gyp:test_support_base`                                                  | `//base/test:test_support`               |                      |
 | `base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations` | `//base/third_party/dynamic_annotations` |                      |
-| `build/linux/system.gyp:*` (except ssl)                                            | `//build/config/linux:*`                 | Linux system targets |
-| `build/linux/system.gyp:ssl`                                                       | `//crypto:platform`                      | SSL                  |
+| `build/linux/system.gyp:*` (except nss)                                            | `//build/config/linux:*`                 | Linux system targets |
+| `build/linux/system.gyp:nss`                                                       | `//crypto:platform`                      | SSL                  |
 | `net/third_party/nss/ssl.gyp:libssl`                                               | `//crypto:platform`                      | SSL                  |
 | `skia/skia.gyp:skia`                                                               | `//skia`                                 |                      |
 | `testing/gmock.gyp:gmock`                                                          | `//testing/gmock`                        | Secondary tree       |

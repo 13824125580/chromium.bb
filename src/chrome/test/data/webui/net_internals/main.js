@@ -26,7 +26,6 @@ TEST_F('NetInternalsTest', 'netInternalsTourTabs', function() {
     import: true,
     proxy: true,
     events: true,
-    waterfall: true,
     timeline: true,
     dns: true,
     sockets: true,
@@ -42,7 +41,7 @@ TEST_F('NetInternalsTest', 'netInternalsTourTabs', function() {
     chromeos: cr.isChromeOS
   };
 
-  NetInternalsTest.checkTabHandleVisibility(tabVisibilityState, true);
+  NetInternalsTest.checkTabLinkVisibility(tabVisibilityState, true);
 
   testDone();
 });

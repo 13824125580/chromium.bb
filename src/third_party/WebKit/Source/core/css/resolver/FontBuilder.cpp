@@ -24,11 +24,11 @@
 #include "core/css/resolver/FontBuilder.h"
 
 #include "core/CSSValueKeywords.h"
+#include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
-#include "core/layout/LayoutTheme.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/TextAutosizer.h"
+#include "core/style/ComputedStyle.h"
 #include "platform/FontFamilyNames.h"
 #include "platform/fonts/FontDescription.h"
 
@@ -105,6 +105,11 @@ AtomicString FontBuilder::genericFontFamilyName(FontDescription::GenericFamilyTy
     }
 }
 
+float FontBuilder::fontSizeForKeyword(unsigned keyword, bool isMonospace) const
+{
+    return FontSize::fontSizeForKeyword(m_document, keyword, isMonospace);
+}
+
 void FontBuilder::setFamilyDescription(const FontDescription::FamilyDescription& familyDescription)
 {
     setFamilyDescription(m_fontDescription, familyDescription);
@@ -150,11 +155,11 @@ void FontBuilder::setStyle(FontStyle italic)
     m_fontDescription.setStyle(italic);
 }
 
-void FontBuilder::setVariant(FontVariant smallCaps)
+void FontBuilder::setVariantCaps(FontDescription::FontVariantCaps caps)
 {
-    set(PropertySetFlag::Variant);
+    set(PropertySetFlag::VariantCaps);
 
-    m_fontDescription.setVariant(smallCaps);
+    m_fontDescription.setVariantCaps(caps);
 }
 
 void FontBuilder::setVariantLigatures(const FontDescription::VariantLigatures& ligatures)
@@ -162,6 +167,13 @@ void FontBuilder::setVariantLigatures(const FontDescription::VariantLigatures& l
     set(PropertySetFlag::VariantLigatures);
 
     m_fontDescription.setVariantLigatures(ligatures);
+}
+
+void FontBuilder::setVariantNumeric(const FontVariantNumeric& variantNumeric)
+{
+    set(PropertySetFlag::VariantNumeric);
+
+    m_fontDescription.setVariantNumeric(variantNumeric);
 }
 
 void FontBuilder::setTextRendering(TextRenderingMode textRenderingMode)
@@ -235,12 +247,12 @@ float FontBuilder::getComputedSizeFromSpecifiedSize(FontDescription& fontDescrip
     return FontSize::getComputedSizeFromSpecifiedSize(m_document, zoomFactor, fontDescription.isAbsoluteSize(), specifiedSize);
 }
 
-static FontOrientation fontOrientation(const ComputedStyle& style)
+static FontOrientation computeFontOrientation(const ComputedStyle& style)
 {
     if (style.isHorizontalWritingMode())
         return FontOrientation::Horizontal;
 
-    switch (style.textOrientation()) {
+    switch (style.getTextOrientation()) {
     case TextOrientationMixed:
         return FontOrientation::VerticalMixed;
     case TextOrientationUpright:
@@ -255,7 +267,7 @@ static FontOrientation fontOrientation(const ComputedStyle& style)
 
 void FontBuilder::updateOrientation(FontDescription& description, const ComputedStyle& style)
 {
-    description.setOrientation(fontOrientation(style));
+    description.setOrientation(computeFontOrientation(style));
 }
 
 void FontBuilder::checkForGenericFamilyChange(const FontDescription& oldDescription, FontDescription& newDescription)
@@ -277,7 +289,7 @@ void FontBuilder::checkForGenericFamilyChange(const FontDescription& oldDescript
     // multiplying by our scale factor.
     float size;
     if (newDescription.keywordSize()) {
-        size = FontSize::fontSizeForKeyword(m_document, newDescription.keywordSize(), newDescription.isMonospace());
+        size = fontSizeForKeyword(newDescription.keywordSize(), newDescription.isMonospace());
     } else {
         Settings* settings = m_document->settings();
         float fixedScaleFactor = (settings && settings->defaultFixedFontSize() && settings->defaultFontSize())
@@ -296,11 +308,11 @@ void FontBuilder::updateSpecifiedSize(FontDescription& fontDescription, const Co
     float specifiedSize = fontDescription.specifiedSize();
 
     if (!specifiedSize && fontDescription.keywordSize())
-        specifiedSize = FontSize::fontSizeForKeyword(m_document, fontDescription.keywordSize(), fontDescription.isMonospace());
+        specifiedSize = fontSizeForKeyword(fontDescription.keywordSize(), fontDescription.isMonospace());
 
     fontDescription.setSpecifiedSize(specifiedSize);
 
-    checkForGenericFamilyChange(style.fontDescription(), fontDescription);
+    checkForGenericFamilyChange(style.getFontDescription(), fontDescription);
 }
 
 void FontBuilder::updateAdjustedSize(FontDescription& fontDescription, const ComputedStyle& style, FontSelector* fontSelector)
@@ -316,16 +328,15 @@ void FontBuilder::updateAdjustedSize(FontDescription& fontDescription, const Com
 
     Font font(fontDescription);
     font.update(fontSelector);
-    if (!font.fontMetrics().hasXHeight())
+    if (!font.getFontMetrics().hasXHeight())
         return;
 
     const float sizeAdjust = fontDescription.sizeAdjust();
-    float aspectValue = font.fontMetrics().xHeight() / specifiedSize;
+    float aspectValue = font.getFontMetrics().xHeight() / specifiedSize;
     float adjustedSize = (sizeAdjust / aspectValue) * specifiedSize;
     adjustedSize = getComputedSizeFromSpecifiedSize(fontDescription, style.effectiveZoom(), adjustedSize);
 
     float multiplier = style.textAutosizingMultiplier();
-    if (multiplier > 1)
         adjustedSize = TextAutosizer::computeAutosizedFontSize(adjustedSize, multiplier);
     fontDescription.setAdjustedSize(adjustedSize);
 }
@@ -334,17 +345,16 @@ void FontBuilder::updateComputedSize(FontDescription& fontDescription, const Com
 {
     float computedSize = getComputedSizeFromSpecifiedSize(fontDescription, style.effectiveZoom(), fontDescription.specifiedSize());
     float multiplier = style.textAutosizingMultiplier();
-    if (multiplier > 1)
         computedSize = TextAutosizer::computeAutosizedFontSize(computedSize, multiplier);
     fontDescription.setComputedSize(computedSize);
 }
 
-void FontBuilder::createFont(PassRefPtrWillBeRawPtr<FontSelector> fontSelector, ComputedStyle& style)
+void FontBuilder::createFont(FontSelector* fontSelector, ComputedStyle& style)
 {
     if (!m_flags)
         return;
 
-    FontDescription description = style.fontDescription();
+    FontDescription description = style.getFontDescription();
 
     if (isSet(PropertySetFlag::Family)) {
         description.setGenericFamily(m_fontDescription.genericFamily());
@@ -367,14 +377,16 @@ void FontBuilder::createFont(PassRefPtrWillBeRawPtr<FontSelector> fontSelector, 
         description.setLocale(m_fontDescription.locale(false));
     if (isSet(PropertySetFlag::Style))
         description.setStyle(m_fontDescription.style());
-    if (isSet(PropertySetFlag::Variant))
-        description.setVariant(m_fontDescription.variant());
+    if (isSet(PropertySetFlag::VariantCaps))
+        description.setVariantCaps(m_fontDescription.variantCaps());
     if (isSet(PropertySetFlag::VariantLigatures))
-        description.setVariantLigatures(m_fontDescription.variantLigatures());
+        description.setVariantLigatures(m_fontDescription.getVariantLigatures());
+    if (isSet(PropertySetFlag::VariantNumeric))
+        description.setVariantNumeric(m_fontDescription.variantNumeric());
     if (isSet(PropertySetFlag::TextRendering))
         description.setTextRendering(m_fontDescription.textRendering());
     if (isSet(PropertySetFlag::Kerning))
-        description.setKerning(m_fontDescription.kerning());
+        description.setKerning(m_fontDescription.getKerning());
     if (isSet(PropertySetFlag::FontSmoothing))
         description.setFontSmoothing(m_fontDescription.fontSmoothing());
     if (isSet(PropertySetFlag::TextOrientation) || isSet(PropertySetFlag::WritingMode))
@@ -382,14 +394,14 @@ void FontBuilder::createFont(PassRefPtrWillBeRawPtr<FontSelector> fontSelector, 
 
     updateSpecifiedSize(description, style);
     updateComputedSize(description, style);
-    updateAdjustedSize(description, style, fontSelector.get());
+    updateAdjustedSize(description, style, fontSelector);
 
     style.setFontDescription(description);
     style.font().update(fontSelector);
     m_flags = 0;
 }
 
-void FontBuilder::createFontForDocument(PassRefPtrWillBeRawPtr<FontSelector> fontSelector, ComputedStyle& documentStyle)
+void FontBuilder::createFontForDocument(FontSelector* fontSelector, ComputedStyle& documentStyle)
 {
     FontDescription fontDescription = FontDescription();
     fontDescription.setLocale(documentStyle.locale());

@@ -31,4 +31,8 @@ void ShellRenderViewObserver::DidClearWindowObject(
 #endif
 }
 
+void ShellRenderViewObserver::OnDestruct() {
+  delete this;
+}
+
 }  // namespace content

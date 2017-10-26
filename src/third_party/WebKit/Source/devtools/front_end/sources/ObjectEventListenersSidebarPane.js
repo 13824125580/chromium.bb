@@ -16,7 +16,7 @@ WebInspector.ObjectEventListenersSidebarPane = function()
     this._refreshButton.setEnabled(false);
     this.toolbar().appendToolbarItem(this._refreshButton);
 
-    this._eventListenersView = new WebInspector.EventListenersView(this.element);
+    this._eventListenersView = new WebInspector.EventListenersView(this.element, this.update.bind(this));
 }
 
 WebInspector.ObjectEventListenersSidebarPane._objectGroupName = "object-event-listeners-sidebar-pane";
@@ -66,7 +66,7 @@ WebInspector.ObjectEventListenersSidebarPane.prototype = {
          */
         function windowObjectInContext(fulfill, reject)
         {
-            executionContext.evaluate("self", WebInspector.ObjectEventListenersSidebarPane._objectGroupName, false, true, false, false, mycallback);
+            executionContext.evaluate("self", WebInspector.ObjectEventListenersSidebarPane._objectGroupName, false, true, false, false, false, mycallback);
             /**
              * @param {?WebInspector.RemoteObject} object
              */

@@ -18,31 +18,9 @@
 
 namespace content {
 
-// Constraint keys. Specified by draft-alvestrand-constraints-resolution-00b
-const char MediaStreamVideoSource::kMinAspectRatio[] = "minAspectRatio";
-const char MediaStreamVideoSource::kMaxAspectRatio[] = "maxAspectRatio";
-const char MediaStreamVideoSource::kMaxWidth[] = "maxWidth";
-const char MediaStreamVideoSource::kMinWidth[] = "minWidth";
-const char MediaStreamVideoSource::kMaxHeight[] = "maxHeight";
-const char MediaStreamVideoSource::kMinHeight[] = "minHeight";
-const char MediaStreamVideoSource::kMaxFrameRate[] = "maxFrameRate";
-const char MediaStreamVideoSource::kMinFrameRate[] = "minFrameRate";
-
-// TODO(mcasas): Find a way to guarantee all constraints are added to the array.
-const char* kSupportedConstraints[] = {
-  MediaStreamVideoSource::kMaxAspectRatio,
-  MediaStreamVideoSource::kMinAspectRatio,
-  MediaStreamVideoSource::kMaxWidth,
-  MediaStreamVideoSource::kMinWidth,
-  MediaStreamVideoSource::kMaxHeight,
-  MediaStreamVideoSource::kMinHeight,
-  MediaStreamVideoSource::kMaxFrameRate,
-  MediaStreamVideoSource::kMinFrameRate,
-};
-
 namespace {
 
-const char* kLegalVideoConstraints[] = {
+const char* const kLegalVideoConstraints[] = {
     "width",      "height",   "aspectRatio", "frameRate",
     "facingMode", "deviceId", "groupId",     "mediaStreamSource",
 };
@@ -298,23 +276,18 @@ media::VideoCaptureFormat GetBestCaptureFormat(
 // static
 MediaStreamVideoSource* MediaStreamVideoSource::GetVideoSource(
     const blink::WebMediaStreamSource& source) {
-  return static_cast<MediaStreamVideoSource*>(source.extraData());
-}
-
-// static, deprecated
-bool MediaStreamVideoSource::IsConstraintSupported(const std::string& name) {
-  return std::find(kSupportedConstraints,
-                   kSupportedConstraints + arraysize(kSupportedConstraints),
-                   name) !=
-         kSupportedConstraints + arraysize(kSupportedConstraints);
+  if (source.isNull() ||
+      source.getType() != blink::WebMediaStreamSource::TypeVideo) {
+    return nullptr;
+  }
+  return static_cast<MediaStreamVideoSource*>(source.getExtraData());
 }
 
 MediaStreamVideoSource::MediaStreamVideoSource()
     : state_(NEW),
       track_adapter_(
           new VideoTrackAdapter(ChildProcess::current()->io_task_runner())),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 MediaStreamVideoSource::~MediaStreamVideoSource() {
   DCHECK(CalledOnValidThread());
@@ -329,6 +302,7 @@ void MediaStreamVideoSource::AddTrack(
   DCHECK(!constraints.isNull());
   DCHECK(std::find(tracks_.begin(), tracks_.end(), track) == tracks_.end());
   tracks_.push_back(track);
+  secure_tracker_.Add(track, true);
 
   track_descriptors_.push_back(
       TrackDescriptor(track, frame_callback, constraints, callback));
@@ -337,6 +311,7 @@ void MediaStreamVideoSource::AddTrack(
     case NEW: {
       // Tab capture and Screen capture needs the maximum requested height
       // and width to decide on the resolution.
+      // NOTE: Optional constraints are deliberately ignored.
       int max_requested_width = 0;
       if (constraints.basic().width.hasMax())
         max_requested_width = constraints.basic().width.max();
@@ -379,6 +354,7 @@ void MediaStreamVideoSource::RemoveTrack(MediaStreamVideoTrack* video_track) {
       std::find(tracks_.begin(), tracks_.end(), video_track);
   DCHECK(it != tracks_.end());
   tracks_.erase(it);
+  secure_tracker_.Remove(video_track);
 
   for (std::vector<TrackDescriptor>::iterator it = track_descriptors_.begin();
        it != track_descriptors_.end(); ++it) {
@@ -396,9 +372,24 @@ void MediaStreamVideoSource::RemoveTrack(MediaStreamVideoTrack* video_track) {
     StopSource();
 }
 
+void MediaStreamVideoSource::UpdateCapturingLinkSecure(
+    MediaStreamVideoTrack* track,
+    bool is_secure) {
+  secure_tracker_.Update(track, is_secure);
+  SetCapturingLinkSecured(secure_tracker_.is_capturing_secure());
+}
+
 base::SingleThreadTaskRunner* MediaStreamVideoSource::io_task_runner() const {
   DCHECK(CalledOnValidThread());
   return track_adapter_->io_task_runner();
+}
+
+const media::VideoCaptureFormat*
+    MediaStreamVideoSource::GetCurrentFormat() const {
+  DCHECK(CalledOnValidThread());
+  if (state_ == STARTING || state_ == STARTED)
+    return &current_format_;
+  return nullptr;
 }
 
 void MediaStreamVideoSource::DoStopSource() {
@@ -529,6 +520,8 @@ void MediaStreamVideoSource::FinalizeAddTrack() {
                                      &min_aspect_ratio,
                                      &max_aspect_ratio);
       double max_frame_rate = 0.0f;
+      // Note: Optional and ideal constraints are ignored; this is
+      // purely a hard max limit.
       if (track.constraints.basic().frameRate.hasMax())
         max_frame_rate = track.constraints.basic().frameRate.max();
 

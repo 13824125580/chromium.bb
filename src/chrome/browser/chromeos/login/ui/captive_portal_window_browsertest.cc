@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/screens/error_screen.h"
 #include "chrome/browser/chromeos/login/screens/network_error_view.h"
@@ -89,12 +93,13 @@ class CaptivePortalWindowTest : public InProcessBrowserTest {
 
   void TearDownOnMainThread() override {
     captive_portal_window_proxy_.reset();
-    base::MessageLoopForUI::current()->DeleteSoon(FROM_HERE, host_);
+    base::MessageLoopForUI::current()->task_runner()->DeleteSoon(FROM_HERE,
+                                                                 host_);
     base::MessageLoopForUI::current()->RunUntilIdle();
   }
 
  private:
-  scoped_ptr<CaptivePortalWindowProxy> captive_portal_window_proxy_;
+  std::unique_ptr<CaptivePortalWindowProxy> captive_portal_window_proxy_;
   CaptivePortalWindowProxyStubDelegate delegate_;
 
   LoginDisplayHost* host_;
@@ -223,7 +228,7 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowCtorDtorTest, OpenPortalDialog) {
 
   ASSERT_EQ(PortalDetectorStrategy::STRATEGY_ID_LOGIN_SCREEN, strategy_id());
   network_portal_detector()->NotifyObserversForTesting();
-  OobeScreenWaiter(OobeDisplay::SCREEN_ERROR_MESSAGE).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_ERROR_MESSAGE).Wait();
   ASSERT_EQ(PortalDetectorStrategy::STRATEGY_ID_ERROR_SCREEN, strategy_id());
 
   error_screen->ShowCaptivePortal();

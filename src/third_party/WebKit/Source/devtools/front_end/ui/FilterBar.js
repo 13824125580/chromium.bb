@@ -265,6 +265,14 @@ WebInspector.TextFilterUI.prototype = {
     },
 
     /**
+     * @return {boolean}
+     */
+    isRegexChecked: function()
+    {
+        return this._supportRegex ? this._regexCheckBox.checked : false;
+    },
+
+    /**
      * @return {string}
      */
     value: function()
@@ -279,6 +287,15 @@ WebInspector.TextFilterUI.prototype = {
     {
         this._filterInputElement.value = value;
         this._valueChanged(false);
+    },
+
+    /**
+     * @param {boolean} checked
+     */
+    setRegexChecked: function(checked)
+    {
+        if (this._supportRegex)
+            this._regexCheckBox.checked = checked;
     },
 
     /**
@@ -341,6 +358,11 @@ WebInspector.TextFilterUI.prototype = {
     {
         if (!this._suggestionBuilder)
             return;
+        if (this.isRegexChecked()) {
+            if (this._suggestBox.visible())
+                this._suggestBox.hide();
+            return;
+        }
         var suggestions = this._suggestionBuilder.buildSuggestions(this._filterInputElement);
         if (suggestions && suggestions.length) {
             if (this._suppressSuggestion)
@@ -369,7 +391,7 @@ WebInspector.TextFilterUI.prototype = {
         this._regex = null;
         this._filterInputElement.classList.remove("filter-text-invalid");
         if (filterQuery) {
-            if (this._supportRegex && this._regexCheckBox.checked) {
+            if (this.isRegexChecked()) {
                 try {
                     this._regex = new RegExp(filterQuery, "i");
                 } catch (e) {
@@ -395,13 +417,13 @@ WebInspector.TextFilterUI.prototype = {
     _onInputKeyDown: function(event)
     {
         var handled = false;
-        if (event.keyIdentifier === "U+0008") { // Backspace
+        if (event.key === "Backspace") {
             this._suppressSuggestion = true;
         } else if (this._suggestBox.visible()) {
-            if (event.keyIdentifier === "U+001B") { // Esc
+            if (event.key === "Escape") {
                 this._cancelSuggestion();
                 handled = true;
-            } else if (event.keyIdentifier === "U+0009") { // Tab
+            } else if (event.key === "Tab") {
                 this._suggestBox.acceptSuggestion();
                 this._valueChanged(true);
                 handled = true;
@@ -490,7 +512,7 @@ WebInspector.NamedBitSetFilterUI = function(items, setting)
         setting.addChangeListener(this._settingChanged.bind(this));
         this._settingChanged();
     } else {
-        this._toggleTypeFilter(WebInspector.NamedBitSetFilterUI.ALL_TYPES, false);
+        this._toggleTypeFilter(WebInspector.NamedBitSetFilterUI.ALL_TYPES, false /* allowMultiSelect */);
     }
 }
 
@@ -500,6 +522,11 @@ WebInspector.NamedBitSetFilterUI.Item;
 WebInspector.NamedBitSetFilterUI.ALL_TYPES = "all";
 
 WebInspector.NamedBitSetFilterUI.prototype = {
+    reset: function()
+    {
+        this._toggleTypeFilter(WebInspector.NamedBitSetFilterUI.ALL_TYPES, false /* allowMultiSelect */);
+    },
+
     /**
      * @override
      * @return {boolean}
@@ -720,6 +747,14 @@ WebInspector.CheckboxFilterUI.prototype = {
     checked: function()
     {
         return this._checkboxElement.checked;
+    },
+
+    /**
+     * @param {boolean} checked
+     */
+    setChecked: function(checked)
+    {
+        this._checkboxElement.checked = checked;
     },
 
     /**

@@ -15,7 +15,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/message_center_observer.h"
 #include "ui/message_center/views/message_center_controller.h"
@@ -26,13 +25,12 @@ namespace base {
 class RunLoop;
 }
 
-namespace views {
-class Widget;
+namespace display {
+class Display;
 }
 
-namespace gfx {
-class Display;
-class Screen;
+namespace views {
+class Widget;
 }
 
 namespace message_center {
@@ -54,11 +52,7 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
     : public MessageCenterController,
       public MessageCenterObserver {
  public:
-  // |parent| specifies the parent widget of the toast windows. The default
-  // parent will be used for NULL. Usually each icon is spacing against its
-  // predecessor.
-  MessagePopupCollection(gfx::NativeView parent,
-                         MessageCenter* message_center,
+  MessagePopupCollection(MessageCenter* message_center,
                          MessageCenterTray* tray,
                          PopupAlignmentDelegate* alignment_delegate);
   ~MessagePopupCollection() override;
@@ -67,7 +61,7 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   void ClickOnNotification(const std::string& notification_id) override;
   void RemoveNotification(const std::string& notification_id,
                           bool by_user) override;
-  scoped_ptr<ui::MenuModel> CreateMenuModel(
+  std::unique_ptr<ui::MenuModel> CreateMenuModel(
       const NotifierId& notifier_id,
       const base::string16& display_source) override;
   bool HasClickedListener(const std::string& notification_id) override;
@@ -99,10 +93,7 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   void ForgetToast(ToastContentsView* toast);
 
   // Called when the display bounds has been changed. Used in Windows only.
-  void OnDisplayMetricsChanged(const gfx::Display& display);
-
-  // Used by ToastContentsView to locate itself.
-  gfx::NativeView parent() const { return parent_; }
+  void OnDisplayMetricsChanged(const display::Display& display);
 
  private:
   friend class test::MessagePopupCollectionTest;
@@ -150,7 +141,6 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   void WaitForTest();
   gfx::Rect GetToastRectAt(size_t index) const;
 
-  gfx::NativeView parent_;
   MessageCenter* message_center_;
   MessageCenterTray* tray_;
   Toasts toasts_;
@@ -168,16 +158,16 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   // happens to be right under the mouse, and the user can just dispose of
   // multipel toasts by clicking. The mode ends when defer_timer_ expires.
   bool user_is_closing_toasts_by_clicking_;
-  scoped_ptr<base::OneShotTimer> defer_timer_;
+  std::unique_ptr<base::OneShotTimer> defer_timer_;
   // The top edge to align the position of the next toast during 'close by
   // clicking" mode.
   // Only to be used when user_is_closing_toasts_by_clicking_ is true.
   int target_top_edge_;
 
   // Weak, only exists temporarily in tests.
-  scoped_ptr<base::RunLoop> run_loop_for_test_;
+  std::unique_ptr<base::RunLoop> run_loop_for_test_;
 
-  scoped_ptr<MessageViewContextMenuController> context_menu_controller_;
+  std::unique_ptr<MessageViewContextMenuController> context_menu_controller_;
 
   // Gives out weak pointers to toast contents views which have an unrelated
   // lifetime.  Must remain the last member variable.

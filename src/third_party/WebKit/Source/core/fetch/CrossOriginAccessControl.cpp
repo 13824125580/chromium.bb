@@ -26,6 +26,7 @@
 
 #include "core/fetch/CrossOriginAccessControl.h"
 
+#include "core/fetch/FetchUtils.h"
 #include "core/fetch/Resource.h"
 #include "core/fetch/ResourceLoaderOptions.h"
 #include "platform/network/HTTPParsers.h"
@@ -33,16 +34,18 @@
 #include "platform/network/ResourceResponse.h"
 #include "platform/weborigin/SchemeRegistry.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/Threading.h"
 #include "wtf/text/AtomicString.h"
 #include "wtf/text/StringBuilder.h"
 #include <algorithm>
+#include <memory>
 
 namespace blink {
 
-static PassOwnPtr<HTTPHeaderSet> createAllowedCrossOriginResponseHeadersSet()
+static std::unique_ptr<HTTPHeaderSet> createAllowedCrossOriginResponseHeadersSet()
 {
-    OwnPtr<HTTPHeaderSet> headerSet = adoptPtr(new HashSet<String, CaseFoldingHash>);
+    std::unique_ptr<HTTPHeaderSet> headerSet = wrapUnique(new HashSet<String, CaseFoldingHash>);
 
     headerSet->add("cache-control");
     headerSet->add("content-language");
@@ -51,12 +54,12 @@ static PassOwnPtr<HTTPHeaderSet> createAllowedCrossOriginResponseHeadersSet()
     headerSet->add("last-modified");
     headerSet->add("pragma");
 
-    return headerSet.release();
+    return headerSet;
 }
 
 bool isOnAccessControlResponseHeaderWhitelist(const String& name)
 {
-    DEFINE_THREAD_SAFE_STATIC_LOCAL(HTTPHeaderSet, allowedCrossOriginResponseHeaders, (createAllowedCrossOriginResponseHeadersSet().leakPtr()));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(HTTPHeaderSet, allowedCrossOriginResponseHeaders, (createAllowedCrossOriginResponseHeadersSet().release()));
 
     return allowedCrossOriginResponseHeaders.contains(name);
 }
@@ -78,36 +81,36 @@ ResourceRequest createAccessControlPreflightRequest(const ResourceRequest& reque
     preflightRequest.setHTTPHeaderField(HTTPNames::Access_Control_Request_Method, AtomicString(request.httpMethod()));
     preflightRequest.setPriority(request.priority());
     preflightRequest.setRequestContext(request.requestContext());
-    preflightRequest.setSkipServiceWorker(true);
+    preflightRequest.setSkipServiceWorker(WebURLRequest::SkipServiceWorker::All);
+
+    if (request.isExternalRequest())
+        preflightRequest.setHTTPHeaderField(HTTPNames::Access_Control_Request_External, "true");
 
     const HTTPHeaderMap& requestHeaderFields = request.httpHeaderFields();
 
     if (requestHeaderFields.size() > 0) {
-        // Sort header names lexicographically: https://crbug.com/452391
         // Fetch API Spec:
         //   https://fetch.spec.whatwg.org/#cors-preflight-fetch-0
         Vector<String> headers;
         for (const auto& header : requestHeaderFields) {
+            if (FetchUtils::isSimpleHeader(header.key, header.value)) {
+                // Exclude simple headers.
+                continue;
+            }
             if (equalIgnoringCase(header.key, "referer")) {
                 // When the request is from a Worker, referrer header was added
                 // by WorkerThreadableLoader. But it should not be added to
                 // Access-Control-Request-Headers header.
                 continue;
             }
-            if (equalIgnoringCase(header.key, "save-data")) {
-                // As a short-term fix, exclude Save-Data from
-                // Access-Control-Request-Headers header.
-                // TODO(rajendrant): crbug.com/601092 Longer-term all simple
-                // headers should be excluded as well.
-                continue;
-            }
             headers.append(header.key.lower());
         }
+        // Sort header names lexicographically.
         std::sort(headers.begin(), headers.end(), WTF::codePointCompareLessThan);
         StringBuilder headerBuffer;
         for (const String& header : headers) {
             if (!headerBuffer.isEmpty())
-                headerBuffer.appendLiteral(", ");
+                headerBuffer.append(", ");
             headerBuffer.append(header);
         }
         preflightRequest.setHTTPHeaderField(HTTPNames::Access_Control_Request_Headers, AtomicString(headerBuffer.toString()));
@@ -136,9 +139,9 @@ static String buildAccessControlFailureMessage(const String& detail, SecurityOri
 
 bool passesAccessControlCheck(const ResourceResponse& response, StoredCredentials includeCredentials, SecurityOrigin* securityOrigin, String& errorDescription, WebURLRequest::RequestContext context)
 {
-    DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, allowOriginHeaderName, (new AtomicString("access-control-allow-origin", AtomicString::ConstructFromLiteral)));
-    DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, allowCredentialsHeaderName, (new AtomicString("access-control-allow-credentials", AtomicString::ConstructFromLiteral)));
-    DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, allowSuboriginHeaderName, (new AtomicString("access-control-allow-suborigin", AtomicString::ConstructFromLiteral)));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, allowOriginHeaderName, (new AtomicString("access-control-allow-origin")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, allowCredentialsHeaderName, (new AtomicString("access-control-allow-credentials")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, allowSuboriginHeaderName, (new AtomicString("access-control-allow-suborigin")));
 
     int statusCode = response.httpStatusCode();
 
@@ -153,7 +156,7 @@ bool passesAccessControlCheck(const ResourceResponse& response, StoredCredential
     // which implies that all Suborigins are okay as well.
     if (securityOrigin->hasSuborigin() && allowOriginHeaderValue != starAtom) {
         const AtomicString& allowSuboriginHeaderValue = response.httpHeaderField(allowSuboriginHeaderName);
-        AtomicString atomicSuboriginName(securityOrigin->suboriginName());
+        AtomicString atomicSuboriginName(securityOrigin->suborigin()->name());
         if (allowSuboriginHeaderValue != starAtom && allowSuboriginHeaderValue != atomicSuboriginName) {
             errorDescription = buildAccessControlFailureMessage("The 'Access-Control-Allow-Suborigin' header has a value '" + allowSuboriginHeaderValue + "' that is not equal to the supplied suborigin.", securityOrigin);
             return false;
@@ -187,7 +190,7 @@ bool passesAccessControlCheck(const ResourceResponse& response, StoredCredential
         }
 
         String detail;
-        if (allowOriginHeaderValue.string().find(isOriginSeparator, 0) != kNotFound) {
+        if (allowOriginHeaderValue.getString().find(isOriginSeparator, 0) != kNotFound) {
             detail = "The 'Access-Control-Allow-Origin' header contains multiple values '" + allowOriginHeaderValue + "', but only one is allowed.";
         } else {
             KURL headerOrigin(KURL(), allowOriginHeaderValue);
@@ -229,6 +232,20 @@ bool passesPreflightStatusCheck(const ResourceResponse& response, String& errorD
     return true;
 }
 
+bool passesExternalPreflightCheck(const ResourceResponse& response, String& errorDescription)
+{
+    AtomicString result = response.httpHeaderField(HTTPNames::Access_Control_Allow_External);
+    if (result.isNull()) {
+        errorDescription = "No 'Access-Control-Allow-External' header was present in the preflight response for this external request (This is an experimental header which is defined in 'https://mikewest.github.io/cors-rfc1918/').";
+        return false;
+    }
+    if (!equalIgnoringCase(result, "true")) {
+        errorDescription = "The 'Access-Control-Allow-External' header in the preflight response for this external request had a value of '" + result + "',  not 'true' (This is an experimental header which is defined in 'https://mikewest.github.io/cors-rfc1918/').";
+        return false;
+    }
+    return true;
+}
+
 void parseAccessControlExposeHeadersAllowList(const String& headerValue, HTTPHeaderSet& headerSet)
 {
     Vector<String> headers;
@@ -240,16 +257,31 @@ void parseAccessControlExposeHeadersAllowList(const String& headerValue, HTTPHea
     }
 }
 
+void extractCorsExposedHeaderNamesList(const ResourceResponse& response, HTTPHeaderSet& headerSet)
+{
+    // If a response was fetched via a service worker, it will always have
+    // corsExposedHeaderNames set, either from the Access-Control-Expose-Headers
+    // header, or explicitly via foreign fetch. For requests that didn't come
+    // from a service worker, foreign fetch doesn't apply so just parse the CORS
+    // header.
+    if (response.wasFetchedViaServiceWorker()) {
+        for (const auto& header : response.corsExposedHeaderNames())
+            headerSet.add(header);
+        return;
+    }
+    parseAccessControlExposeHeadersAllowList(response.httpHeaderField(HTTPNames::Access_Control_Expose_Headers), headerSet);
+}
+
 bool CrossOriginAccessControl::isLegalRedirectLocation(const KURL& requestURL, String& errorDescription)
 {
     // CORS restrictions imposed on Location: URL -- http://www.w3.org/TR/cors/#redirect-steps (steps 2 + 3.)
     if (!SchemeRegistry::shouldTreatURLSchemeAsCORSEnabled(requestURL.protocol())) {
-        errorDescription = "The request was redirected to a URL ('" + requestURL.string() + "') which has a disallowed scheme for cross-origin requests.";
+        errorDescription = "The request was redirected to a URL ('" + requestURL.getString() + "') which has a disallowed scheme for cross-origin requests.";
         return false;
     }
 
     if (!(requestURL.user().isEmpty() && requestURL.pass().isEmpty())) {
-        errorDescription = "The request was redirected to a URL ('" + requestURL.string() + "') containing userinfo, which is disallowed for cross-origin requests.";
+        errorDescription = "The request was redirected to a URL ('" + requestURL.getString() + "') containing userinfo, which is disallowed for cross-origin requests.";
         return false;
     }
 

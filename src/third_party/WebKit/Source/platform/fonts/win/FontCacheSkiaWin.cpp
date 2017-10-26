@@ -33,12 +33,15 @@
 
 #include "SkFontMgr.h"
 #include "SkTypeface_win.h"
+#include "platform/Language.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/fonts/FontDescription.h"
 #include "platform/fonts/FontFaceCreationParams.h"
 #include "platform/fonts/FontPlatformData.h"
 #include "platform/fonts/SimpleFontData.h"
 #include "platform/fonts/win/FontFallbackWin.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -97,17 +100,9 @@ void FontCache::setStatusFontMetrics(const wchar_t* familyName, int32_t fontHeig
 FontCache::FontCache()
     : m_purgePreventCount(0)
 {
-    if (s_fontManager) {
-        m_fontManager = s_fontManager;
-    } else if (s_useDirectWrite) {
+    m_fontManager = s_fontManager;
+    if (!m_fontManager.get())
         m_fontManager = adoptRef(SkFontMgr_New_DirectWrite());
-    } else {
-        m_fontManager = adoptRef(SkFontMgr_New_GDI());
-    }
-
-    // Subpixel text positioning is only supported by the DirectWrite backend (not GDI).
-    s_useSubpixelPositioning = s_useDirectWrite;
-
     ASSERT(m_fontManager.get());
 }
 
@@ -115,11 +110,13 @@ FontCache::FontCache()
 // font that can be used to render the given range of characters.
 PassRefPtr<SimpleFontData> FontCache::fallbackFontForCharacter(
     const FontDescription& fontDescription, UChar32 character,
-    const SimpleFontData* originalFontData)
+    const SimpleFontData* originalFontData,
+    FontFallbackPriority fallbackPriority)
 {
     // First try the specified font with standard style & weight.
-    if (fontDescription.style() == FontStyleItalic
-        || fontDescription.weight() >= FontWeightBold) {
+    if (fallbackPriority != FontFallbackPriority::EmojiEmoji
+        && (fontDescription.style() == FontStyleItalic
+        || fontDescription.weight() >= FontWeightBold)) {
         RefPtr<SimpleFontData> fontData = fallbackOnStandardFontStyle(
             fontDescription, character);
         if (fontData)
@@ -132,11 +129,43 @@ PassRefPtr<SimpleFontData> FontCache::fallbackFontForCharacter(
         fontDescription.script(),
         fontDescription.locale(),
         &script,
+        fallbackPriority,
         m_fontManager.get());
     FontPlatformData* data = 0;
     if (family) {
         FontFaceCreationParams createByFamily(AtomicString(family, wcslen(family)));
         data = getFontPlatformData(fontDescription, createByFamily);
+    }
+
+    if ((!data || !data->fontContainsCharacter(character)) && s_useSkiaFontFallback) {
+        const char* bcp47Locale = nullptr;
+        int localeCount = 0;
+        CString fontLocale;
+        // If the font description has a locale, use that. Otherwise, Skia will
+        // fall back on the user's default locale.
+        // TODO(kulshin): extract locale fallback logic from
+        //   FontCacheAndroid.cpp and share that code
+        if (!fontDescription.locale().isEmpty()) {
+            fontLocale = toSkFontMgrLocale(fontDescription.locale());
+            bcp47Locale = fontLocale.data();
+            localeCount = 1;
+        }
+
+        CString familyName = fontDescription.family().family().utf8();
+
+        SkTypeface* typeface = m_fontManager->matchFamilyStyleCharacter(
+            familyName.data(),
+            fontDescription.skiaFontStyle(),
+            &bcp47Locale,
+            localeCount,
+            character);
+        if (typeface) {
+            SkString skiaFamily;
+            typeface->getFamilyName(&skiaFamily);
+            FontFaceCreationParams createByFamily(
+                AtomicString(skiaFamily.c_str()));
+            data = getFontPlatformData(fontDescription, createByFamily);
+        }
     }
 
     // Last resort font list : PanUnicode. CJK fonts have a pretty
@@ -279,7 +308,7 @@ static bool typefacesHasWeightSuffix(const AtomicString& family,
     for (size_t i = 0; i < numVariants; i++) {
         const FamilyWeightSuffix& entry = variantForSuffix[i];
         if (family.endsWith(entry.suffix, TextCaseInsensitive)) {
-            String familyName = family.string();
+            String familyName = family.getString();
             familyName.truncate(family.length() - entry.length);
             adjustedName = AtomicString(familyName);
             variantWeight = entry.weight;
@@ -317,7 +346,7 @@ static bool typefacesHasStretchSuffix(const AtomicString& family,
     for (size_t i = 0; i < numVariants; i++) {
         const FamilyStretchSuffix& entry = variantForSuffix[i];
         if (family.endsWith(entry.suffix, TextCaseInsensitive)) {
-            String familyName = family.string();
+            String familyName = family.getString();
             familyName.truncate(family.length() - entry.length);
             adjustedName = AtomicString(familyName);
             variantStretch = entry.stretch;
@@ -328,7 +357,7 @@ static bool typefacesHasStretchSuffix(const AtomicString& family,
     return false;
 }
 
-PassOwnPtr<FontPlatformData> FontCache::createFontPlatformData(const FontDescription& fontDescription,
+std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDescription& fontDescription,
     const FontFaceCreationParams& creationParams, float fontSize)
 {
     ASSERT(creationParams.creationType() == CreateFontByFamily);
@@ -366,13 +395,12 @@ PassOwnPtr<FontPlatformData> FontCache::createFontPlatformData(const FontDescrip
         }
     }
 
-    OwnPtr<FontPlatformData> result = adoptPtr(new FontPlatformData(tf,
+    std::unique_ptr<FontPlatformData> result = wrapUnique(new FontPlatformData(tf,
         name.data(),
         fontSize,
         (fontDescription.weight() >= FontWeight600 && !tf->isBold()) || fontDescription.isSyntheticBold(),
         ((fontDescription.style() == FontStyleItalic || fontDescription.style() == FontStyleOblique) && !tf->isItalic()) || fontDescription.isSyntheticItalic(),
-        fontDescription.orientation(),
-        s_useSubpixelPositioning));
+        fontDescription.orientation()));
 
     struct FamilyMinSize {
         const wchar_t* family;
@@ -422,7 +450,7 @@ PassOwnPtr<FontPlatformData> FontCache::createFontPlatformData(const FontDescrip
         }
     }
 
-    return result.release();
+    return result;
 }
 
 } // namespace blink

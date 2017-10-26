@@ -132,7 +132,7 @@ WebInspector.TempFile.prototype = {
      */
     write: function(strings, callback)
     {
-        var blob = new Blob(strings, {type: 'text/plain'});
+        var blob = new Blob(strings, {type: "text/plain"});
         this._writer.onerror = function(e)
         {
             WebInspector.console.error("Failed to write into a temp file: " + e.target.error.message);
@@ -199,14 +199,14 @@ WebInspector.TempFile.prototype = {
      * @param {!WebInspector.OutputStream} outputStream
      * @param {!WebInspector.OutputStreamDelegate} delegate
      */
-    writeToOutputSteam: function(outputStream, delegate)
+    copyToOutputStream: function(outputStream, delegate)
     {
         /**
          * @param {!File} file
          */
         function didGetFile(file)
         {
-            var reader = new WebInspector.ChunkedFileReader(file, 10*1000*1000, delegate);
+            var reader = new WebInspector.ChunkedFileReader(file, 10 * 1000 * 1000, delegate);
             reader.start(outputStream);
         }
 
@@ -233,7 +233,7 @@ WebInspector.TempFile.prototype = {
  */
 WebInspector.DeferredTempFile = function(dirPath, name)
 {
-    /** @type {!Array.<!{strings: !Array.<string>, callback: function(number)}>} */
+    /** @type {!Array.<!{strings: !Array.<string>, callback: ?function(number)}>} */
     this._chunks = [];
     this._tempFile = null;
     this._isWriting = false;
@@ -252,11 +252,9 @@ WebInspector.DeferredTempFile.prototype = {
      */
     write: function(strings, callback)
     {
-        if (!this._chunks)
-            return;
         if (this._finishCallback)
             throw new Error("No writes are allowed after close.");
-        this._chunks.push({strings: strings, callback: callback});
+        this._chunks.push({strings: strings, callback: callback || null});
         if (this._tempFile && !this._isWriting)
             this._writeNextChunk();
     },
@@ -367,14 +365,14 @@ WebInspector.DeferredTempFile.prototype = {
      * @param {!WebInspector.OutputStream} outputStream
      * @param {!WebInspector.OutputStreamDelegate} delegate
      */
-    writeToOutputStream: function(outputStream, delegate)
+    copyToOutputStream: function(outputStream, delegate)
     {
-        if (this._callsPendingOpen) {
-            this._callsPendingOpen.push(this.writeToOutputStream.bind(this, outputStream, delegate));
+        if (!this._finishedWriting) {
+            this._pendingReads.push(this.copyToOutputStream.bind(this, outputStream, delegate));
             return;
         }
         if (this._tempFile)
-            this._tempFile.writeToOutputSteam(outputStream, delegate);
+            this._tempFile.copyToOutputStream(outputStream, delegate);
     },
 
     remove: function()
@@ -420,10 +418,9 @@ WebInspector.TempFile._clearTempStorage = function(fulfill, reject)
     }
 
     try {
-        var worker = new WorkerRuntime.Worker("temp_storage_shared_worker", "TempStorageCleaner");
+        var worker = new WebInspector.Worker("temp_storage_shared_worker", "TempStorageCleaner");
         worker.onerror = handleError;
-        worker.port.onmessage = handleMessage;
-        worker.port.onerror = handleError;
+        worker.onmessage = handleMessage;
     } catch (e) {
         if (e.name === "URLMismatchError")
             console.log("Shared worker wasn't started due to url difference. " + e);
@@ -590,6 +587,6 @@ WebInspector.TempFileBackingStorage.prototype = {
      */
     writeToStream: function(outputStream, delegate)
     {
-        this._file.writeToOutputStream(outputStream, delegate);
+        this._file.copyToOutputStream(outputStream, delegate);
     }
 }

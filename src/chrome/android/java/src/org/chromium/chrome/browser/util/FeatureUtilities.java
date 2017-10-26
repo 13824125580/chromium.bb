@@ -17,16 +17,17 @@ import android.os.UserManager;
 import android.speech.RecognizerIntent;
 import android.text.TextUtils;
 
-import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CommandLine;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.FieldTrialList;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.browser.AppLinkHandler;
+import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
-import org.chromium.chrome.browser.preferences.DocumentModeManager;
+import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
 import org.chromium.sync.signin.AccountManagerHelper;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -113,19 +114,16 @@ public class FeatureUtilities {
      * @return Whether Chrome should be running on document mode.
      */
     public static boolean isDocumentMode(Context context) {
-        if (sDocumentModeDisabled == null && CommandLine.isInitialized()) {
-            initResetListener();
-            sDocumentModeDisabled = CommandLine.getInstance().hasSwitch(
-                    ChromeSwitches.DISABLE_DOCUMENT_MODE);
-        }
-        return isDocumentModeEligible(context)
-                && !DocumentModeManager.getInstance(context).isOptedOutOfDocumentMode()
-                && (sDocumentModeDisabled == null || !sDocumentModeDisabled.booleanValue());
+        return isDocumentModeEligible(context) && !DocumentModeAssassin.isOptedOutOfDocumentMode();
     }
 
     /**
-     * Whether the device could possibly run in Document mode (may return true even
-     * if the document mode is turned off).
+     * Whether the device could possibly run in Document mode (may return true even if the document
+     * mode is turned off).
+     *
+     * This function can't be changed to return false (even if document mode is deleted) because we
+     * need to know whether a user needs to be migrated away.
+     *
      * @param context The context to use for checking configuration.
      * @return Whether the device could possibly run in Document mode.
      */
@@ -148,6 +146,14 @@ public class FeatureUtilities {
      */
     public static void setCustomTabVisible(boolean visible) {
         nativeSetCustomTabVisible(visible);
+    }
+
+    /**
+     * Records whether the activity is in multi-window mode with native-side feature utilities.
+     * @param isInMultiWindowMode Whether the activity is in Android N multi-window mode.
+     */
+    public static void setIsInMultiWindowMode(boolean isInMultiWindowMode) {
+        nativeSetIsInMultiWindowMode(isInMultiWindowMode);
     }
 
     /**
@@ -174,21 +180,8 @@ public class FeatureUtilities {
                 ChromeSwitches.ENABLE_TAB_SWITCHER_IN_DOCUMENT_MODE);
     }
 
-    private static void initResetListener() {
-        if (sResetListener != null) return;
-
-        sResetListener = new CommandLine.ResetListener() {
-            @Override
-            public void onCommandLineReset() {
-                sDocumentModeDisabled = null;
-            }
-        };
-        CommandLine.addResetListener(sResetListener);
-    }
-
     private static boolean isHerbDisallowed(Context context) {
-        return isDocumentMode(context) || ChromeVersionInfo.isStableBuild()
-                || ChromeVersionInfo.isBetaBuild() || DeviceFormFactor.isTablet(context);
+        return isDocumentMode(context);
     }
 
     /**
@@ -196,7 +189,7 @@ public class FeatureUtilities {
      *         and its related switches.
      */
     public static String getHerbFlavor() {
-        Context context = ApplicationStatus.getApplicationContext();
+        Context context = ContextUtils.getApplicationContext();
         if (isHerbDisallowed(context)) return ChromeSwitches.HERB_FLAVOR_DISABLED;
 
         if (!sIsHerbFlavorCached) {
@@ -219,10 +212,19 @@ public class FeatureUtilities {
     }
 
     /**
+     * Caches flags that must take effect on startup but are set via native code.
+     */
+    public static void cacheNativeFlags(ChromeApplication application) {
+        cacheHerbFlavor();
+        AppLinkHandler.getInstance(application).cacheAppLinkEnabled(
+                application.getApplicationContext());
+    }
+
+    /**
      * Caches which flavor of Herb the user prefers from native.
      */
-    public static void cacheHerbFlavor() {
-        Context context = ApplicationStatus.getApplicationContext();
+    private static void cacheHerbFlavor() {
+        Context context = ContextUtils.getApplicationContext();
         if (isHerbDisallowed(context)) return;
 
         String oldFlavor = getHerbFlavor();
@@ -243,6 +245,8 @@ public class FeatureUtilities {
             newFlavor = ChromeSwitches.HERB_FLAVOR_CHIVE;
         } else if (newFlavor.startsWith(ChromeSwitches.HERB_FLAVOR_DILL)) {
             newFlavor = ChromeSwitches.HERB_FLAVOR_DILL;
+        } else if (newFlavor.startsWith(ChromeSwitches.HERB_FLAVOR_ELDERBERRY)) {
+            newFlavor = ChromeSwitches.HERB_FLAVOR_ELDERBERRY;
         }
 
         CommandLine instance = CommandLine.getInstance();
@@ -256,6 +260,8 @@ public class FeatureUtilities {
             newFlavor = ChromeSwitches.HERB_FLAVOR_CHIVE;
         } else if (instance.hasSwitch(ChromeSwitches.HERB_FLAVOR_DILL_SWITCH)) {
             newFlavor = ChromeSwitches.HERB_FLAVOR_DILL;
+        } else if (instance.hasSwitch(ChromeSwitches.HERB_FLAVOR_ELDERBERRY_SWITCH)) {
+            newFlavor = ChromeSwitches.HERB_FLAVOR_ELDERBERRY;
         }
 
         Log.d(TAG, "Caching flavor: " + newFlavor);
@@ -266,7 +272,15 @@ public class FeatureUtilities {
         }
     }
 
+    /**
+     * @return True if theme colors in the tab switcher are enabled.
+     */
+    public static boolean areTabSwitcherThemeColorsEnabled() {
+        return CommandLine.getInstance().hasSwitch(
+                ChromeSwitches.ENABLE_TAB_SWITCHER_THEME_COLORS);
+    }
+
     private static native void nativeSetDocumentModeEnabled(boolean enabled);
     private static native void nativeSetCustomTabVisible(boolean visible);
-    public static native void nativeSetSqlMmapDisabledByDefault();
+    private static native void nativeSetIsInMultiWindowMode(boolean isInMultiWindowMode);
 }

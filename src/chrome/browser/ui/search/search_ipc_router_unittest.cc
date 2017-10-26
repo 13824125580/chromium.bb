@@ -6,14 +6,15 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <tuple>
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/tuple.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -49,7 +50,6 @@ class MockSearchIPCRouterDelegate : public SearchIPCRouter::Delegate {
 
   MOCK_METHOD1(OnInstantSupportDetermined, void(bool supports_instant));
   MOCK_METHOD1(FocusOmnibox, void(OmniboxFocusState state));
-  MOCK_METHOD2(NavigateToURL, void(const GURL&, WindowOpenDisposition));
   MOCK_METHOD1(OnDeleteMostVisitedItem, void(const GURL& url));
   MOCK_METHOD1(OnUndoMostVisitedDeletion, void(const GURL& url));
   MOCK_METHOD0(OnUndoAllMostVisitedDeletions, void());
@@ -69,7 +69,6 @@ class MockSearchIPCRouterPolicy : public SearchIPCRouter::Policy {
   virtual ~MockSearchIPCRouterPolicy() {}
 
   MOCK_METHOD1(ShouldProcessFocusOmnibox, bool(bool));
-  MOCK_METHOD1(ShouldProcessNavigateToURL, bool(bool));
   MOCK_METHOD0(ShouldProcessDeleteMostVisitedItem, bool());
   MOCK_METHOD0(ShouldProcessUndoMostVisitedDeletion, bool());
   MOCK_METHOD0(ShouldProcessUndoAllMostVisitedDeletions, bool());
@@ -142,7 +141,7 @@ class SearchIPCRouterTest : public BrowserWithTestWindowTest {
     ASSERT_NE(static_cast<SearchTabHelper*>(NULL), search_tab_helper);
     search_tab_helper->ipc_router().set_delegate_for_testing(mock_delegate());
     search_tab_helper->ipc_router().set_policy_for_testing(
-        make_scoped_ptr(new MockSearchIPCRouterPolicy));
+        base::WrapUnique(new MockSearchIPCRouterPolicy));
   }
 
   bool MessageWasSent(uint32_t id) {
@@ -159,11 +158,11 @@ class SearchIPCRouterTest : public BrowserWithTestWindowTest {
     const IPC::Message* message = process()->sink().GetFirstMessageMatching(
         ChromeViewMsg_SearchBoxSetDisplayInstantResults::ID);
     EXPECT_NE(static_cast<const IPC::Message*>(NULL), message);
-    base::Tuple<bool> display_instant_results_param;
+    std::tuple<bool> display_instant_results_param;
     ChromeViewMsg_SearchBoxSetDisplayInstantResults::Read(
         message, &display_instant_results_param);
     EXPECT_EQ(expected_param_value,
-              base::get<0>(display_instant_results_param));
+              std::get<0>(display_instant_results_param));
   }
 
   MockSearchIPCRouterDelegate* mock_delegate() { return &delegate_; }
@@ -208,19 +207,17 @@ class SearchIPCRouterTest : public BrowserWithTestWindowTest {
 TEST_F(SearchIPCRouterTest, IgnoreMessagesFromNonInstantRenderers) {
   NavigateAndCommitActiveTab(GURL("file://foo/bar"));
   SetupMockDelegateAndPolicy();
-  GURL destination_url("www.foo.com");
-  EXPECT_CALL(*mock_delegate(),
-              NavigateToURL(destination_url, CURRENT_TAB)).Times(0);
+  EXPECT_CALL(*mock_delegate(), FocusOmnibox(OMNIBOX_FOCUS_VISIBLE)).Times(0);
   content::WebContents* contents = web_contents();
   bool is_active_tab = IsActiveTab(contents);
   EXPECT_TRUE(is_active_tab);
 
   MockSearchIPCRouterPolicy* policy = GetSearchIPCRouterPolicy();
-  EXPECT_CALL(*policy, ShouldProcessNavigateToURL(is_active_tab)).Times(0);
+  EXPECT_CALL(*policy, ShouldProcessFocusOmnibox(is_active_tab)).Times(0);
 
-  OnMessageReceived(ChromeViewHostMsg_SearchBoxNavigate(
-      contents->GetRoutingID(), GetSearchIPCRouterSeqNo(), destination_url,
-      CURRENT_TAB));
+  OnMessageReceived(ChromeViewHostMsg_FocusOmnibox(
+      contents->GetRoutingID(), GetSearchIPCRouterSeqNo(),
+      OMNIBOX_FOCUS_VISIBLE));
 }
 
 TEST_F(SearchIPCRouterTest, ProcessFocusOmniboxMsg) {
@@ -275,44 +272,6 @@ TEST_F(SearchIPCRouterTest, HandleTabChangedEvents) {
   EXPECT_EQ(browser()->tab_strip_model()->active_index(),
             browser()->tab_strip_model()->GetIndexOfWebContents(contents));
   EXPECT_TRUE(IsActiveTab(contents));
-}
-
-TEST_F(SearchIPCRouterTest, ProcessNavigateToURLMsg) {
-  NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
-  SetupMockDelegateAndPolicy();
-  GURL destination_url("www.foo.com");
-  EXPECT_CALL(*mock_delegate(),
-              NavigateToURL(destination_url, CURRENT_TAB)).Times(1);
-  content::WebContents* contents = web_contents();
-  bool is_active_tab = IsActiveTab(contents);
-  EXPECT_TRUE(is_active_tab);
-
-  MockSearchIPCRouterPolicy* policy = GetSearchIPCRouterPolicy();
-  EXPECT_CALL(*policy, ShouldProcessNavigateToURL(is_active_tab)).Times(1)
-      .WillOnce(testing::Return(true));
-
-  OnMessageReceived(ChromeViewHostMsg_SearchBoxNavigate(
-      contents->GetRoutingID(), GetSearchIPCRouterSeqNo(), destination_url,
-      CURRENT_TAB));
-}
-
-TEST_F(SearchIPCRouterTest, IgnoreNavigateToURLMsg) {
-  NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
-  SetupMockDelegateAndPolicy();
-  GURL destination_url("www.foo.com");
-  EXPECT_CALL(*mock_delegate(),
-              NavigateToURL(destination_url, CURRENT_TAB)).Times(0);
-  content::WebContents* contents = web_contents();
-  bool is_active_tab = IsActiveTab(contents);
-  EXPECT_TRUE(is_active_tab);
-
-  MockSearchIPCRouterPolicy* policy = GetSearchIPCRouterPolicy();
-  EXPECT_CALL(*policy, ShouldProcessNavigateToURL(is_active_tab)).Times(1)
-      .WillOnce(testing::Return(false));
-
-  OnMessageReceived(ChromeViewHostMsg_SearchBoxNavigate(
-      contents->GetRoutingID(), GetSearchIPCRouterSeqNo(), destination_url,
-      CURRENT_TAB));
 }
 
 TEST_F(SearchIPCRouterTest, ProcessLogEventMsg) {
@@ -522,14 +481,9 @@ TEST_F(SearchIPCRouterTest, IgnoreMessageIfThePageIsNotActive) {
   content::WebContents* contents = web_contents();
   bool is_active_tab = IsActiveTab(contents);
   GURL item_url("www.foo.com");
-  EXPECT_CALL(*mock_delegate(), NavigateToURL(item_url, CURRENT_TAB)).Times(0);
-  // At this point, in a real test, the navigation would cause the
-  // SearchIPCRouter's page sequence to advance. In this test it doesn't, so
-  // we'll decrement the sequence number on this side to simulate it.
-  --page_seq_no;
-  EXPECT_CALL(*policy, ShouldProcessNavigateToURL(is_active_tab)).Times(0);
-  OnMessageReceived(ChromeViewHostMsg_SearchBoxNavigate(
-      contents->GetRoutingID(), page_seq_no, item_url, CURRENT_TAB));
+
+  // Navigate away from the NTP. Afterwards, all messages should be ignored.
+  NavigateAndCommitActiveTab(item_url);
 
   EXPECT_CALL(*mock_delegate(), OnDeleteMostVisitedItem(item_url)).Times(0);
   EXPECT_CALL(*policy, ShouldProcessDeleteMostVisitedItem()).Times(0);

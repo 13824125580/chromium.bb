@@ -28,7 +28,6 @@
 #include <blpwtk2_profile.h>
 
 #include <base/memory/ref_counted.h>
-#include <base/memory/scoped_ptr.h>
 #include <content/public/browser/browser_context.h>
 
 namespace user_prefs {
@@ -84,19 +83,10 @@ class BrowserContextImpl : public content::BrowserContext,
 
     // ======== content::BrowserContext implementation =============
 
-    scoped_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
+    std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
         const base::FilePath& partition_path) override;
     base::FilePath GetPath() const override;
     bool IsOffTheRecord() const override;
-    net::URLRequestContextGetter* GetRequestContext() override;
-    net::URLRequestContextGetter* GetRequestContextForRenderProcess(
-        int rendererChildId) override;
-    net::URLRequestContextGetter* GetMediaRequestContext() override;
-    net::URLRequestContextGetter*
-    GetMediaRequestContextForRenderProcess(int rendererChildId) override;
-    net::URLRequestContextGetter*
-    GetMediaRequestContextForStoragePartition(
-        const base::FilePath& partitionPath, bool inMemory) override;
     content::ResourceContext* GetResourceContext() override;
     content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
     content::BrowserPluginGuestManager* GetGuestManager() override;
@@ -107,11 +97,29 @@ class BrowserContextImpl : public content::BrowserContext,
     content::PermissionManager* GetPermissionManager() override;
     content::BackgroundSyncController* GetBackgroundSyncController() override;
 
+    net::URLRequestContextGetter* CreateRequestContext(
+        content::ProtocolHandlerMap* protocol_handlers,
+        content::URLRequestInterceptorScopedVector request_interceptors) override;
+
+    net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
+        const base::FilePath& partition_path,
+        bool in_memory,
+        content::ProtocolHandlerMap* protocol_handlers,
+        content::URLRequestInterceptorScopedVector request_interceptors) override;
+
+    net::URLRequestContextGetter* CreateMediaRequestContext() override;
+
+    net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
+          const base::FilePath& partition_path,
+          bool in_memory) override;
+
+	content::FontCollection* GetFontCollection() override;
+
   private:
-    scoped_ptr<ResourceContextImpl> d_resourceContext;
+    std::unique_ptr<ResourceContextImpl> d_resourceContext;
     scoped_refptr<URLRequestContextGetterImpl> d_requestContextGetter;
     scoped_refptr<user_prefs::PrefRegistrySyncable> d_prefRegistry;
-    scoped_ptr<PrefService> d_prefService;
+    std::unique_ptr<PrefService> d_prefService;
     scoped_refptr<PrefStore> d_userPrefs;
     int d_numWebViews;
     bool d_isIncognito;

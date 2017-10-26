@@ -8,6 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <memory>
 #include <utility>
 
 #include "webrtc/p2p/base/dtlstransportchannel.h"
@@ -35,6 +36,13 @@ static const size_t kMaxPendingPackets = 1;
 static bool IsDtlsPacket(const char* data, size_t len) {
   const uint8_t* u = reinterpret_cast<const uint8_t*>(data);
   return (len >= kDtlsRecordHeaderLen && (u[0] > 19 && u[0] < 64));
+}
+static bool IsDtlsClientHelloPacket(const char* data, size_t len) {
+  if (!IsDtlsPacket(data, len)) {
+    return false;
+  }
+  const uint8_t* u = reinterpret_cast<const uint8_t*>(data);
+  return len > 17 && u[0] == 22 && u[13] == 1;
 }
 static bool IsRtpPacket(const char* data, size_t len) {
   const uint8_t* u = reinterpret_cast<const uint8_t*>(data);
@@ -113,12 +121,16 @@ DtlsTransportChannelWrapper::DtlsTransportChannelWrapper(
       this, &DtlsTransportChannelWrapper::OnGatheringState);
   channel_->SignalCandidateGathered.connect(
       this, &DtlsTransportChannelWrapper::OnCandidateGathered);
+  channel_->SignalCandidatesRemoved.connect(
+      this, &DtlsTransportChannelWrapper::OnCandidatesRemoved);
   channel_->SignalRoleConflict.connect(this,
       &DtlsTransportChannelWrapper::OnRoleConflict);
   channel_->SignalRouteChange.connect(this,
       &DtlsTransportChannelWrapper::OnRouteChange);
-  channel_->SignalConnectionRemoved.connect(this,
-      &DtlsTransportChannelWrapper::OnConnectionRemoved);
+  channel_->SignalSelectedCandidatePairChanged.connect(
+      this, &DtlsTransportChannelWrapper::OnSelectedCandidatePairChanged);
+  channel_->SignalStateChanged.connect(
+      this, &DtlsTransportChannelWrapper::OnChannelStateChanged);
   channel_->SignalReceivingState.connect(this,
       &DtlsTransportChannelWrapper::OnReceivingState);
 }
@@ -232,7 +244,7 @@ bool DtlsTransportChannelWrapper::SetRemoteFingerprint(
   remote_fingerprint_value_ = std::move(remote_fingerprint_value);
   remote_fingerprint_algorithm_ = digest_alg;
 
-  bool reconnect = dtls_;
+  bool reconnect = (dtls_ != nullptr);
 
   if (!SetupDtls()) {
     set_dtls_state(DTLS_TRANSPORT_FAILED);
@@ -246,13 +258,13 @@ bool DtlsTransportChannelWrapper::SetRemoteFingerprint(
   return true;
 }
 
-bool DtlsTransportChannelWrapper::GetRemoteSSLCertificate(
-    rtc::SSLCertificate** cert) const {
+std::unique_ptr<rtc::SSLCertificate>
+DtlsTransportChannelWrapper::GetRemoteSSLCertificate() const {
   if (!dtls_) {
-    return false;
+    return nullptr;
   }
 
-  return dtls_->GetPeerCertificate(cert);
+  return dtls_->GetPeerCertificate();
 }
 
 bool DtlsTransportChannelWrapper::SetupDtls() {
@@ -465,15 +477,18 @@ void DtlsTransportChannelWrapper::OnReadPacket(
   switch (dtls_state()) {
     case DTLS_TRANSPORT_NEW:
       if (dtls_) {
-        // Drop packets received before DTLS has actually started.
-        LOG_J(LS_INFO, this) << "Dropping packet received before DTLS started.";
+        LOG_J(LS_INFO, this) << "Packet received before DTLS started.";
       } else {
-        // Currently drop the packet, but we might in future
-        // decide to take this as evidence that the other
-        // side is ready to do DTLS and start the handshake
-        // on our end.
-        LOG_J(LS_WARNING, this) << "Received packet before we know if we are "
-                                << "doing DTLS or not; dropping.";
+        LOG_J(LS_WARNING, this) << "Packet received before we know if we are "
+                                << "doing DTLS or not.";
+      }
+      // Cache a client hello packet received before DTLS has actually started.
+      if (IsDtlsClientHelloPacket(data, size)) {
+        LOG_J(LS_INFO, this) << "Caching DTLS ClientHello packet until DTLS is "
+                             << "started.";
+        cached_client_hello_.SetData(data, size);
+      } else {
+        LOG_J(LS_INFO, this) << "Not a DTLS ClientHello packet; dropping.";
       }
       break;
 
@@ -572,6 +587,21 @@ bool DtlsTransportChannelWrapper::MaybeStartDtls() {
     LOG_J(LS_INFO, this)
       << "DtlsTransportChannelWrapper: Started DTLS handshake";
     set_dtls_state(DTLS_TRANSPORT_CONNECTING);
+    // Now that the handshake has started, we can process a cached ClientHello
+    // (if one exists).
+    if (cached_client_hello_.size()) {
+      if (ssl_role_ == rtc::SSL_SERVER) {
+        LOG_J(LS_INFO, this) << "Handling cached DTLS ClientHello packet.";
+        if (!HandleDtlsPacket(cached_client_hello_.data<char>(),
+                              cached_client_hello_.size())) {
+          LOG_J(LS_ERROR, this) << "Failed to handle DTLS packet.";
+        }
+      } else {
+        LOG_J(LS_WARNING, this) << "Discarding cached DTLS ClientHello packet "
+                                << "because we don't have the server role.";
+      }
+      cached_client_hello_.Clear();
+    }
   }
   return true;
 }
@@ -613,6 +643,13 @@ void DtlsTransportChannelWrapper::OnCandidateGathered(
   SignalCandidateGathered(this, c);
 }
 
+void DtlsTransportChannelWrapper::OnCandidatesRemoved(
+    TransportChannelImpl* channel,
+    const Candidates& candidates) {
+  ASSERT(channel == channel_);
+  SignalCandidatesRemoved(this, candidates);
+}
+
 void DtlsTransportChannelWrapper::OnRoleConflict(
     TransportChannelImpl* channel) {
   ASSERT(channel == channel_);
@@ -625,10 +662,20 @@ void DtlsTransportChannelWrapper::OnRouteChange(
   SignalRouteChange(this, candidate);
 }
 
-void DtlsTransportChannelWrapper::OnConnectionRemoved(
+void DtlsTransportChannelWrapper::OnSelectedCandidatePairChanged(
+    TransportChannel* channel,
+    CandidatePairInterface* selected_candidate_pair,
+    int last_sent_packet_id,
+    bool ready_to_send) {
+  ASSERT(channel == channel_);
+  SignalSelectedCandidatePairChanged(this, selected_candidate_pair,
+                                     last_sent_packet_id, ready_to_send);
+}
+
+void DtlsTransportChannelWrapper::OnChannelStateChanged(
     TransportChannelImpl* channel) {
   ASSERT(channel == channel_);
-  SignalConnectionRemoved(this);
+  SignalStateChanged(this);
 }
 
 void DtlsTransportChannelWrapper::Reconnect() {

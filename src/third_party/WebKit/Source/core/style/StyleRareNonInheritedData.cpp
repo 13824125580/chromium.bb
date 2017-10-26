@@ -21,6 +21,8 @@
 
 #include "core/style/StyleRareNonInheritedData.h"
 
+#include "core/animation/css/CSSAnimationData.h"
+#include "core/animation/css/CSSTransitionData.h"
 #include "core/style/ContentData.h"
 #include "core/style/DataEquivalency.h"
 #include "core/style/ComputedStyle.h"
@@ -40,14 +42,12 @@ public:
     LineClampValue lineClamps;
     DraggableRegionMode draggableRegions;
 
-    void* dataRefs[10];
+    void* dataRefs[8];
+    DataPersistent<void*> dataPersistents[2];
     void* ownPtrs[4];
-#if ENABLE(OILPAN)
     Persistent<void*> persistentHandles[2];
     void* refPtrs[2];
-#else
-    void* refPtrs[4];
-#endif
+    void* uniquePtrs[1];
 
     FillLayer fillLayers;
     NinePieceImage ninePieces;
@@ -99,8 +99,8 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , m_backfaceVisibility(ComputedStyle::initialBackfaceVisibility())
     , userDrag(ComputedStyle::initialUserDrag())
     , textOverflow(ComputedStyle::initialTextOverflow())
-    , marginBeforeCollapse(MCOLLAPSE)
-    , marginAfterCollapse(MCOLLAPSE)
+    , marginBeforeCollapse(MarginCollapseCollapse)
+    , marginAfterCollapse(MarginCollapseCollapse)
     , m_appearance(ComputedStyle::initialAppearance())
     , m_textDecorationStyle(ComputedStyle::initialTextDecorationStyle())
     , m_wrapFlow(ComputedStyle::initialWrapFlow())
@@ -213,15 +213,6 @@ StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonInherited
 
 StyleRareNonInheritedData::~StyleRareNonInheritedData()
 {
-#if !ENABLE(OILPAN)
-    const FilterOperations& filterOperations = m_filter->m_operations;
-    for (unsigned i = 0; i < filterOperations.size(); ++i)
-        ReferenceFilterBuilder::clearDocumentResourceReference(filterOperations.at(i));
-
-    const FilterOperations& backdropFilterOperations = m_backdropFilter->m_operations;
-    for (unsigned i = 0; i < backdropFilterOperations.size(); ++i)
-        ReferenceFilterBuilder::clearDocumentResourceReference(backdropFilterOperations.at(i));
-#endif
 }
 
 bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) const

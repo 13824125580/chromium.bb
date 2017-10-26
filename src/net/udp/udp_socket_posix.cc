@@ -20,7 +20,9 @@
 #include "base/metrics/sparse_histogram.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/rand_util.h"
+#include "base/trace_event/trace_event.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_activity_monitor.h"
@@ -30,6 +32,9 @@
 #include "net/udp/udp_net_log_parameters.h"
 
 #if defined(OS_ANDROID)
+#include <dlfcn.h>
+// This was added in Lollipop to dlfcn.h
+#define RTLD_NOLOAD 4
 #include "base/android/build_info.h"
 #include "base/native_library.h"
 #include "base/strings/utf_string_conversions.h"
@@ -83,7 +88,8 @@ UDPSocketPosix::UDPSocketPosix(DatagramSocket::BindType bind_type,
       read_buf_len_(0),
       recv_from_address_(NULL),
       write_buf_len_(0),
-      net_log_(BoundNetLog::Make(net_log, NetLog::SOURCE_UDP_SOCKET)) {
+      net_log_(BoundNetLog::Make(net_log, NetLog::SOURCE_UDP_SOCKET)),
+      bound_network_(NetworkChangeNotifier::kInvalidNetworkHandle) {
   net_log_.BeginEvent(NetLog::TYPE_SOCKET_ALIVE,
                       source.ToEventParametersCallback());
   if (bind_type == DatagramSocket::RANDOM_BIND)
@@ -149,7 +155,7 @@ int UDPSocketPosix::GetPeerAddress(IPEndPoint* address) const {
     SockaddrStorage storage;
     if (getpeername(socket_, storage.addr, &storage.addr_len))
       return MapSystemError(errno);
-    scoped_ptr<IPEndPoint> address(new IPEndPoint());
+    std::unique_ptr<IPEndPoint> address(new IPEndPoint());
     if (!address->FromSockAddr(storage.addr, storage.addr_len))
       return ERR_ADDRESS_INVALID;
     remote_address_.reset(address.release());
@@ -169,12 +175,13 @@ int UDPSocketPosix::GetLocalAddress(IPEndPoint* address) const {
     SockaddrStorage storage;
     if (getsockname(socket_, storage.addr, &storage.addr_len))
       return MapSystemError(errno);
-    scoped_ptr<IPEndPoint> address(new IPEndPoint());
+    std::unique_ptr<IPEndPoint> address(new IPEndPoint());
     if (!address->FromSockAddr(storage.addr, storage.addr_len))
       return ERR_ADDRESS_INVALID;
     local_address_.reset(address.release());
-    net_log_.AddEvent(NetLog::TYPE_UDP_LOCAL_ADDRESS,
-                      CreateNetLogUDPConnectCallback(local_address_.get()));
+    net_log_.AddEvent(
+        NetLog::TYPE_UDP_LOCAL_ADDRESS,
+        CreateNetLogUDPConnectCallback(local_address_.get(), bound_network_));
   }
 
   *address = *local_address_;
@@ -267,7 +274,7 @@ int UDPSocketPosix::SendToOrWrite(IOBuffer* buf,
 int UDPSocketPosix::Connect(const IPEndPoint& address) {
   DCHECK_NE(socket_, kInvalidSocket);
   net_log_.BeginEvent(NetLog::TYPE_UDP_CONNECT,
-                      CreateNetLogUDPConnectCallback(&address));
+                      CreateNetLogUDPConnectCallback(&address, bound_network_));
   int rv = InternalConnect(address);
   net_log_.EndEventWithNetErrorCode(NetLog::TYPE_UDP_CONNECT, rv);
   is_connected_ = (rv == OK);
@@ -281,12 +288,12 @@ int UDPSocketPosix::InternalConnect(const IPEndPoint& address) {
 
   int rv = 0;
   if (bind_type_ == DatagramSocket::RANDOM_BIND) {
-    // Construct IPAddressNumber of appropriate size (IPv4 or IPv6) of 0s,
+    // Construct IPAddress of appropriate size (IPv4 or IPv6) of 0s,
     // representing INADDR_ANY or in6addr_any.
-    size_t addr_size = address.GetSockAddrFamily() == AF_INET ?
-        kIPv4AddressSize : kIPv6AddressSize;
-    IPAddressNumber addr_any(addr_size);
-    rv = RandomBind(addr_any);
+    size_t addr_size = address.GetSockAddrFamily() == AF_INET
+                           ? IPAddress::kIPv4AddressSize
+                           : IPAddress::kIPv6AddressSize;
+    rv = RandomBind(IPAddress::AllZeros(addr_size));
   }
   // else connect() does the DatagramSocket::DEFAULT_BIND
 
@@ -345,16 +352,19 @@ int UDPSocketPosix::BindToNetwork(
   static SetNetworkForSocket setNetworkForSocket;
   // This is racy, but all racers should come out with the same answer so it
   // shouldn't matter.
-  if (setNetworkForSocket == nullptr) {
+  if (!setNetworkForSocket) {
     // Android's netd client library should always be loaded in our address
-    // space as it shims libc functions like connect().
-    base::FilePath file(base::FilePath::FromUTF16Unsafe(
-        base::GetNativeLibraryName(base::ASCIIToUTF16("netd_client"))));
-    base::NativeLibrary lib = base::LoadNativeLibrary(file, nullptr);
-    setNetworkForSocket = reinterpret_cast<SetNetworkForSocket>(
-        base::GetFunctionPointerFromNativeLibrary(lib, "setNetworkForSocket"));
+    // space as it shims socket() which was used to create |socket_|.
+    base::FilePath file(base::GetNativeLibraryName("netd_client"));
+    // Use RTLD_NOW to match Android's prior loading of the library:
+    // http://androidxref.com/6.0.0_r5/xref/bionic/libc/bionic/NetdClient.cpp#37
+    // Use RTLD_NOLOAD to assert that the library is already loaded and
+    // avoid doing any disk IO.
+    void* dl = dlopen(file.value().c_str(), RTLD_NOW | RTLD_NOLOAD);
+    setNetworkForSocket =
+        reinterpret_cast<SetNetworkForSocket>(dlsym(dl, "setNetworkForSocket"));
   }
-  if (setNetworkForSocket == nullptr)
+  if (!setNetworkForSocket)
     return ERR_NOT_IMPLEMENTED;
   int rv = setNetworkForSocket(network, socket_);
   // If |network| has since disconnected, |rv| will be ENONET.  Surface this as
@@ -362,6 +372,8 @@ int UDPSocketPosix::BindToNetwork(
   // the less descriptive ERR_FAILED.
   if (rv == ENONET)
     return ERR_NETWORK_CHANGED;
+  if (rv == 0)
+    bound_network_ = network;
   return MapSystemError(rv);
 #else
   NOTIMPLEMENTED();
@@ -412,6 +424,8 @@ int UDPSocketPosix::SetBroadcast(bool broadcast) {
 }
 
 void UDPSocketPosix::ReadWatcher::OnFileCanReadWithoutBlocking(int) {
+  TRACE_EVENT0("net",
+               "UDPSocketPosix::ReadWatcher::OnFileCanReadWithoutBlocking");
   if (!socket_->read_callback_.is_null())
     socket_->DidCompleteRead();
 }
@@ -652,7 +666,7 @@ int UDPSocketPosix::DoBind(const IPEndPoint& address) {
   return MapSystemError(last_error);
 }
 
-int UDPSocketPosix::RandomBind(const IPAddressNumber& address) {
+int UDPSocketPosix::RandomBind(const IPAddress& address) {
   DCHECK(bind_type_ == DatagramSocket::RANDOM_BIND && !rand_int_cb_.is_null());
 
   for (int i = 0; i < kBindRetries; ++i) {
@@ -664,13 +678,13 @@ int UDPSocketPosix::RandomBind(const IPAddressNumber& address) {
   return DoBind(IPEndPoint(address, 0));
 }
 
-int UDPSocketPosix::JoinGroup(const IPAddressNumber& group_address) const {
+int UDPSocketPosix::JoinGroup(const IPAddress& group_address) const {
   DCHECK(CalledOnValidThread());
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
 
   switch (group_address.size()) {
-    case kIPv4AddressSize: {
+    case IPAddress::kIPv4AddressSize: {
       if (addr_family_ != AF_INET)
         return ERR_ADDRESS_INVALID;
 
@@ -681,23 +695,25 @@ int UDPSocketPosix::JoinGroup(const IPAddressNumber& group_address) const {
 #else
       ip_mreq mreq;
       int error = GetIPv4AddressFromIndex(socket_, multicast_interface_,
-                                            &mreq.imr_interface.s_addr);
+                                          &mreq.imr_interface.s_addr);
       if (error != OK)
         return error;
 #endif
-      memcpy(&mreq.imr_multiaddr, &group_address[0], kIPv4AddressSize);
+      memcpy(&mreq.imr_multiaddr, group_address.bytes().data(),
+             IPAddress::kIPv4AddressSize);
       int rv = setsockopt(socket_, IPPROTO_IP, IP_ADD_MEMBERSHIP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
         return MapSystemError(errno);
       return OK;
     }
-    case kIPv6AddressSize: {
+    case IPAddress::kIPv6AddressSize: {
       if (addr_family_ != AF_INET6)
         return ERR_ADDRESS_INVALID;
       ipv6_mreq mreq;
       mreq.ipv6mr_interface = multicast_interface_;
-      memcpy(&mreq.ipv6mr_multiaddr, &group_address[0], kIPv6AddressSize);
+      memcpy(&mreq.ipv6mr_multiaddr, group_address.bytes().data(),
+             IPAddress::kIPv6AddressSize);
       int rv = setsockopt(socket_, IPPROTO_IPV6, IPV6_JOIN_GROUP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
@@ -710,31 +726,33 @@ int UDPSocketPosix::JoinGroup(const IPAddressNumber& group_address) const {
   }
 }
 
-int UDPSocketPosix::LeaveGroup(const IPAddressNumber& group_address) const {
+int UDPSocketPosix::LeaveGroup(const IPAddress& group_address) const {
   DCHECK(CalledOnValidThread());
 
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
 
   switch (group_address.size()) {
-    case kIPv4AddressSize: {
+    case IPAddress::kIPv4AddressSize: {
       if (addr_family_ != AF_INET)
         return ERR_ADDRESS_INVALID;
       ip_mreq mreq;
       mreq.imr_interface.s_addr = INADDR_ANY;
-      memcpy(&mreq.imr_multiaddr, &group_address[0], kIPv4AddressSize);
+      memcpy(&mreq.imr_multiaddr, group_address.bytes().data(),
+             IPAddress::kIPv4AddressSize);
       int rv = setsockopt(socket_, IPPROTO_IP, IP_DROP_MEMBERSHIP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
         return MapSystemError(errno);
       return OK;
     }
-    case kIPv6AddressSize: {
+    case IPAddress::kIPv6AddressSize: {
       if (addr_family_ != AF_INET6)
         return ERR_ADDRESS_INVALID;
       ipv6_mreq mreq;
       mreq.ipv6mr_interface = 0;  // 0 indicates default multicast interface.
-      memcpy(&mreq.ipv6mr_multiaddr, &group_address[0], kIPv6AddressSize);
+      memcpy(&mreq.ipv6mr_multiaddr, group_address.bytes().data(),
+             IPAddress::kIPv6AddressSize);
       int rv = setsockopt(socket_, IPPROTO_IPV6, IPV6_LEAVE_GROUP,
                           &mreq, sizeof(mreq));
       if (rv < 0)

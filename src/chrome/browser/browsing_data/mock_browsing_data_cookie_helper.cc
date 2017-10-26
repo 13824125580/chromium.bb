@@ -4,9 +4,12 @@
 
 #include "chrome/browser/browsing_data/mock_browsing_data_cookie_helper.h"
 
+#include <memory>
+
 #include "base/logging.h"
 #include "base/stl_util.h"
-#include "net/cookies/parsed_cookie.h"
+#include "base/time/time.h"
+#include "net/cookies/cookie_options.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 MockBrowsingDataCookieHelper::MockBrowsingDataCookieHelper(
@@ -34,8 +37,8 @@ void MockBrowsingDataCookieHelper::DeleteCookie(
 
 void MockBrowsingDataCookieHelper::AddCookieSamples(
     const GURL& url, const std::string& cookie_line) {
-  net::ParsedCookie pc(cookie_line);
-  scoped_ptr<net::CanonicalCookie> cc(new net::CanonicalCookie(url, pc));
+  std::unique_ptr<net::CanonicalCookie> cc(net::CanonicalCookie::Create(
+      url, cookie_line, base::Time::Now(), net::CookieOptions()));
 
   if (cc.get()) {
     for (const auto& cookie : cookie_list_) {

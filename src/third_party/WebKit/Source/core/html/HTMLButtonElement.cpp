@@ -44,9 +44,9 @@ inline HTMLButtonElement::HTMLButtonElement(Document& document, HTMLFormElement*
 {
 }
 
-PassRefPtrWillBeRawPtr<HTMLButtonElement> HTMLButtonElement::create(Document& document, HTMLFormElement* form)
+HTMLButtonElement* HTMLButtonElement::create(Document& document, HTMLFormElement* form)
 {
-    return adoptRefWillBeNoop(new HTMLButtonElement(document, form));
+    return new HTMLButtonElement(document, form);
 }
 
 void HTMLButtonElement::setType(const AtomicString& type)
@@ -63,15 +63,15 @@ const AtomicString& HTMLButtonElement::formControlType() const
 {
     switch (m_type) {
     case SUBMIT: {
-        DEFINE_STATIC_LOCAL(const AtomicString, submit, ("submit", AtomicString::ConstructFromLiteral));
+        DEFINE_STATIC_LOCAL(const AtomicString, submit, ("submit"));
         return submit;
     }
     case BUTTON: {
-        DEFINE_STATIC_LOCAL(const AtomicString, button, ("button", AtomicString::ConstructFromLiteral));
+        DEFINE_STATIC_LOCAL(const AtomicString, button, ("button"));
         return button;
     }
     case RESET: {
-        DEFINE_STATIC_LOCAL(const AtomicString, reset, ("reset", AtomicString::ConstructFromLiteral));
+        DEFINE_STATIC_LOCAL(const AtomicString, reset, ("reset"));
         return reset;
     }
     }
@@ -101,6 +101,8 @@ void HTMLButtonElement::parseAttribute(const QualifiedName& name, const AtomicSt
         else
             m_type = SUBMIT;
         setNeedsWillValidateCheck();
+        if (formOwner() && inShadowIncludingDocument())
+            formOwner()->invalidateDefaultButtonStyle();
     } else {
         if (name == formactionAttr)
             logUpdateAttributeIfIsolatedWorldAndInDocument("button", formactionAttr, oldValue, value);
@@ -124,7 +126,7 @@ void HTMLButtonElement::defaultEventHandler(Event* event)
     }
 
     if (event->isKeyboardEvent()) {
-        if (event->type() == EventTypeNames::keydown && toKeyboardEvent(event)->keyIdentifier() == "U+0020") {
+        if (event->type() == EventTypeNames::keydown && toKeyboardEvent(event)->key() == " ") {
             setActive(true);
             // No setDefaultHandled() - IE dispatches a keypress in this case.
             return;
@@ -141,7 +143,7 @@ void HTMLButtonElement::defaultEventHandler(Event* event)
                 return;
             }
         }
-        if (event->type() == EventTypeNames::keyup && toKeyboardEvent(event)->keyIdentifier() == "U+0020") {
+        if (event->type() == EventTypeNames::keyup && toKeyboardEvent(event)->key() == " ") {
             if (active())
                 dispatchSimulatedClick(event);
             event->setDefaultHandled();
@@ -210,6 +212,13 @@ bool HTMLButtonElement::isInteractiveContent() const
 bool HTMLButtonElement::supportsAutofocus() const
 {
     return true;
+}
+
+bool HTMLButtonElement::matchesDefaultPseudoClass() const
+{
+    // HTMLFormElement::findDefaultButton() traverses the tree. So we check
+    // canBeSuccessfulSubmitButton() first for early return.
+    return canBeSuccessfulSubmitButton() && form() && form()->findDefaultButton() == this;
 }
 
 Node::InsertionNotificationRequest HTMLButtonElement::insertedInto(ContainerNode* insertionPoint)

@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/webui/interstitials/interstitial_ui.h"
 
-#include "base/macros.h"
+#include "base/atomic_sequence_num.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_blocking_page.h"
@@ -20,13 +21,15 @@
 #include "content/public/browser/interstitial_page_delegate.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "crypto/rsa_private_key.h"
 #include "net/base/net_errors.h"
 #include "net/base/url_util.h"
 #include "net/cert/x509_certificate.h"
+#include "net/cert/x509_util.h"
 #include "net/ssl/ssl_info.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -35,6 +38,27 @@
 #endif
 
 namespace {
+
+// NSS requires that serial numbers be unique even for the same issuer;
+// as all fake certificates will contain the same issuer name, it's
+// necessary to ensure the serial number is unique, as otherwise
+// NSS will fail to parse.
+base::StaticAtomicSequenceNumber g_serial_number;
+
+scoped_refptr<net::X509Certificate> CreateFakeCert() {
+  std::unique_ptr<crypto::RSAPrivateKey> unused_key;
+  std::string cert_der;
+  if (!net::x509_util::CreateKeyAndSelfSignedCert(
+          "CN=Error", static_cast<uint32_t>(g_serial_number.GetNext()),
+          base::Time::Now() - base::TimeDelta::FromMinutes(5),
+          base::Time::Now() + base::TimeDelta::FromMinutes(5), &unused_key,
+          &cert_der)) {
+    return nullptr;
+  }
+
+  return net::X509Certificate::CreateFromBytes(cert_der.data(),
+                                               cert_der.size());
+}
 
 // Implementation of chrome://interstitials demonstration pages. This code is
 // not used in displaying any real interstitials.
@@ -46,7 +70,9 @@ class InterstitialHTMLSource : public content::URLDataSource {
   // content::URLDataSource:
   std::string GetMimeType(const std::string& mime_type) const override;
   std::string GetSource() const override;
-  bool ShouldAddContentSecurityPolicy() const override;
+  std::string GetContentSecurityPolicyScriptSrc() const override;
+  std::string GetContentSecurityPolicyStyleSrc() const override;
+  std::string GetContentSecurityPolicyImgSrc() const override;
   void StartDataRequest(
       const std::string& path,
       int render_process_id,
@@ -119,8 +145,7 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents) {
     strict_enforcement = strict_enforcement_param == "1";
   }
   net::SSLInfo ssl_info;
-  ssl_info.cert = new net::X509Certificate(
-      request_url.host(), "CA", base::Time::Max(), base::Time::Max());
+  ssl_info.cert = ssl_info.unverified_cert = CreateFakeCert();
   // This delegate doesn't create an interstitial.
   int options_mask = 0;
   if (overridable)
@@ -156,19 +181,19 @@ BadClockBlockingPage* CreateBadClockBlockingPage(
   }
 
   // Determine whether to change the clock to be ahead or behind.
-  base::Time time_triggered_ = base::Time::NowFromSystemTime();
   std::string clock_manipulation_param;
+  ssl_errors::ClockState clock_state = ssl_errors::CLOCK_STATE_PAST;
   if (net::GetValueForKeyInQuery(web_contents->GetURL(), "clock_manipulation",
                                  &clock_manipulation_param)) {
     int time_offset;
-    if (!base::StringToInt(clock_manipulation_param, &time_offset))
-      time_offset = 2;
-    time_triggered_ += base::TimeDelta::FromDays(365 * time_offset);
+    if (base::StringToInt(clock_manipulation_param, &time_offset)) {
+      clock_state = time_offset > 0 ? ssl_errors::CLOCK_STATE_FUTURE
+                                    : ssl_errors::CLOCK_STATE_PAST;
+    }
   }
 
   net::SSLInfo ssl_info;
-  ssl_info.cert = new net::X509Certificate(
-      request_url.host(), "CA", base::Time::Max(), base::Time::Max());
+  ssl_info.cert = ssl_info.unverified_cert = CreateFakeCert();
   // This delegate doesn't create an interstitial.
   int options_mask = 0;
   if (overridable)
@@ -176,8 +201,8 @@ BadClockBlockingPage* CreateBadClockBlockingPage(
   if (strict_enforcement)
     options_mask |= security_interstitials::SSLErrorUI::STRICT_ENFORCEMENT;
   return new BadClockBlockingPage(web_contents, cert_error, ssl_info,
-                                  request_url, time_triggered_, nullptr,
-                                  base::Callback<void(bool)>());
+                                  request_url, base::Time::Now(), clock_state,
+                                  nullptr, base::Callback<void(bool)>());
 }
 
 safe_browsing::SafeBrowsingBlockingPage* CreateSafeBrowsingBlockingPage(
@@ -217,7 +242,7 @@ safe_browsing::SafeBrowsingBlockingPage* CreateSafeBrowsingBlockingPage(
   resource.threat_type = threat_type;
   resource.render_process_host_id =
       web_contents->GetRenderProcessHost()->GetID();
-  resource.render_frame_id = web_contents->GetFocusedFrame()->GetRoutingID();
+  resource.render_frame_id = web_contents->GetMainFrame()->GetRoutingID();
   resource.threat_source = safe_browsing::ThreatSource::LOCAL_PVER3;
 
   // Normally safebrowsing interstitial types which block the main page load
@@ -265,8 +290,7 @@ CaptivePortalBlockingPage* CreateCaptivePortalBlockingPage(
     wifi_ssid = wifi_ssid_param;
   }
   net::SSLInfo ssl_info;
-  ssl_info.cert = new net::X509Certificate(
-      request_url.host(), "CA", base::Time::Max(), base::Time::Max());
+  ssl_info.cert = ssl_info.unverified_cert = CreateFakeCert();
   CaptivePortalBlockingPage* blocking_page =
       new CaptivePortalBlockingPageWithNetInfo(
           web_contents, request_url, landing_url, ssl_info,
@@ -279,7 +303,7 @@ CaptivePortalBlockingPage* CreateCaptivePortalBlockingPage(
 
 InterstitialUI::InterstitialUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  scoped_ptr<InterstitialHTMLSource> html_source(
+  std::unique_ptr<InterstitialHTMLSource> html_source(
       new InterstitialHTMLSource(web_ui->GetWebContents()));
   Profile* profile = Profile::FromWebUI(web_ui);
   content::URLDataSource::Add(profile, html_source.release());
@@ -307,9 +331,17 @@ std::string InterstitialHTMLSource::GetSource() const {
   return chrome::kChromeUIInterstitialHost;
 }
 
-bool InterstitialHTMLSource::ShouldAddContentSecurityPolicy()
-    const {
-  return false;
+std::string InterstitialHTMLSource::GetContentSecurityPolicyScriptSrc() const {
+  // 'unsafe-inline' is added to script-src.
+  return "script-src chrome://resources 'self' 'unsafe-eval' 'unsafe-inline';";
+}
+
+std::string InterstitialHTMLSource::GetContentSecurityPolicyStyleSrc() const {
+  return "style-src 'self' 'unsafe-inline';";
+}
+
+std::string InterstitialHTMLSource::GetContentSecurityPolicyImgSrc() const {
+  return "img-src data:;";
 }
 
 void InterstitialHTMLSource::StartDataRequest(
@@ -317,7 +349,7 @@ void InterstitialHTMLSource::StartDataRequest(
     int render_process_id,
     int render_frame_id,
     const content::URLDataSource::GotDataCallback& callback) {
-  scoped_ptr<content::InterstitialPageDelegate> interstitial_delegate;
+  std::unique_ptr<content::InterstitialPageDelegate> interstitial_delegate;
   if (base::StartsWith(path, "ssl", base::CompareCase::SENSITIVE)) {
     interstitial_delegate.reset(CreateSSLBlockingPage(web_contents_));
   } else if (base::StartsWith(path, "safebrowsing",

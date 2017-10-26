@@ -6,7 +6,6 @@
   'variables': {
     'chromium_code': 1,  # Use higher warning level.
     'chromium_enable_vtune_jit_for_v8%': 0,  # enable the vtune support for V8 engine.
-    'directxsdk_exists': '<!pymod_do_main(dir_exists ../third_party/directxsdk)',
   },
   'target_defaults': {
     'defines': ['CONTENT_IMPLEMENTATION'],
@@ -58,6 +57,68 @@
         'public/common/feature_h264_with_openh264_ffmpeg.h',
       ],
     },
+    {
+      # GN version: //content/public/app:browser_manifest
+      'target_name': 'content_app_browser_manifest',
+      'type': 'none',
+      'variables': {
+        'application_type': 'exe',
+        'application_name': 'content_browser',
+        'packaged_manifests': [
+          '<(PRODUCT_DIR)/Mojo Applications/user/manifest.json',
+        ],
+        'source_manifest': '<(DEPTH)/content/public/app/mojo/content_browser_manifest.json',
+      },
+      'includes': [
+        '../mojo/public/mojo_application_manifest.gypi',
+      ],
+      'dependencies': [
+        '../services/user/user.gyp:user_app_manifest',
+      ],
+      'hard_dependency': 1,
+    },
+    {
+      # GN version: //content/public/app:gpu_manifest
+      'target_name': 'content_app_gpu_manifest',
+      'type': 'none',
+      'variables': {
+        'application_type': 'exe',
+        'application_name': 'content_gpu',
+        'source_manifest': '<(DEPTH)/content/public/app/mojo/content_gpu_manifest.json',
+      },
+      'includes': [
+        '../mojo/public/mojo_application_manifest.gypi',
+      ],
+      'hard_dependency': 1,
+    },
+    {
+      # GN version: //content/public/app:renderer_manifest
+      'target_name': 'content_app_renderer_manifest',
+      'type': 'none',
+      'variables': {
+        'application_type': 'exe',
+        'application_name': 'content_renderer',
+        'source_manifest': '<(DEPTH)/content/public/app/mojo/content_renderer_manifest.json',
+      },
+      'includes': [
+        '../mojo/public/mojo_application_manifest.gypi',
+      ],
+      'hard_dependency': 1,
+    },
+    {
+      # GN version: //content/public/app:utility_manifest
+      'target_name': 'content_app_utility_manifest',
+      'type': 'none',
+      'variables': {
+        'application_type': 'exe',
+        'application_name': 'content_utility',
+        'source_manifest': '<(DEPTH)/content/public/app/mojo/content_utility_manifest.json',
+      },
+      'includes': [
+        '../mojo/public/mojo_application_manifest.gypi',
+      ],
+      'hard_dependency': 1,
+    },
   ],
   'includes': [
     '../build/win_precompile.gypi',
@@ -103,7 +164,6 @@
             'content_child',
             'content_common',
             'content_gpu',
-            'content_plugin',
             'content_ppapi_plugin',
             'content_renderer',
             'content_utility',
@@ -184,6 +244,7 @@
           ],
           'dependencies': [
             'content_common',
+            'content_gpu',
             'content_resources',
           ],
           'export_dependent_settings': [
@@ -197,9 +258,13 @@
             }],
             ['OS=="android"', {
               'dependencies': [
-                'content_gpu',
                 'content_utility',
               ],
+            }],
+            # Shard this target into parts to work around linker limitations
+            # on link time code generation builds. See crbug.com/616946
+            ['OS=="win" and buildtype=="Official"', {
+              'msvs_shard': 5,
             }],
           ],
         },
@@ -245,19 +310,6 @@
           ],
         },
         {
-          # GN version: //content/plugin and //content/public/plugin
-          'target_name': 'content_plugin',
-          'type': 'static_library',
-          'variables': { 'enable_wexit_time_destructors': 1, },
-          'includes': [
-            'content_plugin.gypi',
-          ],
-          'dependencies': [
-            'content_child',
-            'content_common',
-          ],
-        },
-        {
           # GN version: //content/ppapi_plugin
           'target_name': 'content_ppapi_plugin',
           'type': 'static_library',
@@ -275,12 +327,13 @@
           'variables': { 'enable_wexit_time_destructors': 1, },
           'includes': [
             'content_renderer.gypi',
+            '../third_party/webrtc/build/common.gypi',
           ],
           'dependencies': [
-            '../third_party/webrtc/modules/modules.gyp:webrtc_h264',
             'common_features',
             'content_child',
             'content_common',
+            'content_gpu',
             'content_resources',
           ],
           'export_dependent_settings': [
@@ -290,6 +343,12 @@
             ['chromium_enable_vtune_jit_for_v8==1', {
               'dependencies': [
                 '../v8/src/third_party/vtune/v8vtune.gyp:v8_vtune',
+              ],
+            }],
+            ['rtc_use_h264==1', {
+              'dependencies': [
+                  '../third_party/openh264/openh264.gyp:openh264_encoder',
+                  '../third_party/webrtc/modules/modules.gyp:webrtc_h264',
               ],
             }],
           ],
@@ -318,7 +377,6 @@
           'type': 'shared_library',
           'variables': { 'enable_wexit_time_destructors': 1, },
           'dependencies': [
-            '../third_party/webrtc/modules/modules.gyp:webrtc_h264',
             'common_features',
             'content_resources',
           ],
@@ -328,6 +386,12 @@
                 '../v8/src/third_party/vtune/v8vtune.gyp:v8_vtune',
               ],
             }],
+            ['rtc_use_h264==1', {
+              'dependencies': [
+                  '../third_party/openh264/openh264.gyp:openh264_encoder',
+                  '../third_party/webrtc/modules/modules.gyp:webrtc_h264',
+              ],
+            }],
           ],
           'includes': [
             'content_app.gypi',
@@ -335,10 +399,10 @@
             'content_child.gypi',
             'content_common.gypi',
             'content_gpu.gypi',
-            'content_plugin.gypi',
             'content_ppapi_plugin.gypi',
             'content_renderer.gypi',
             'content_utility.gypi',
+            '../third_party/webrtc/build/common.gypi',
           ],
           'msvs_settings': {
             'VCLinkerTool': {
@@ -380,7 +444,10 @@
           # GN version: //content/common and //content/public/common
           'target_name': 'content_common',
           'type': 'none',
-          'dependencies': ['content', 'content_resources'],
+          'dependencies': [
+            'content',
+            'content_resources'
+          ],
           # Disable c4267 warnings until we fix size_t to int truncations.
           'msvs_disabled_warnings': [ 4267, ],
           'export_dependent_settings': ['content'],
@@ -394,12 +461,6 @@
         {
           # GN version: //content/gpu
           'target_name': 'content_gpu',
-          'type': 'none',
-          'dependencies': ['content'],
-        },
-        {
-          # GN version: //content/plugin
-          'target_name': 'content_plugin',
           'type': 'none',
           'dependencies': ['content'],
         },
@@ -452,17 +513,16 @@
             '../device/usb/usb.gyp:device_usb_java',
             '../device/vibration/vibration.gyp:device_vibration_java',
             '../media/media.gyp:media_java',
-            '../mojo/mojo_base.gyp:mojo_application_bindings',
             '../mojo/mojo_base.gyp:mojo_system_java',
             '../mojo/mojo_public.gyp:mojo_bindings_java',
             '../net/net.gyp:net',
             '../skia/skia.gyp:skia_mojo',
-            '../ui/android/ui_android.gyp:ui_java',
-            '../ui/touch_selection/ui_touch_selection.gyp:selection_event_type_java',
-            '../ui/touch_selection/ui_touch_selection.gyp:touch_handle_orientation_java',
             '../third_party/android_tools/android_tools.gyp:android_support_v13_javalib',
             '../third_party/WebKit/public/blink_headers.gyp:blink_headers_java',
-            '../ui/mojo/geometry/mojo_bindings.gyp:mojo_geometry_bindings',
+            '../ui/android/ui_android.gyp:ui_java',
+            '../ui/gfx/gfx.gyp:mojo_geometry_bindings',
+            '../ui/touch_selection/ui_touch_selection.gyp:selection_event_type_java',
+            '../ui/touch_selection/ui_touch_selection.gyp:touch_handle_orientation_java',
             'common_aidl',
             'console_message_level_java',
             'content_common',
@@ -648,7 +708,7 @@
             'src_files': ['<(PRODUCT_DIR)/content_shell.pak'],
             'conditions': [
               ['v8_use_external_startup_data==1', {
-                'dependencies': ['<(DEPTH)/v8/tools/gyp/v8.gyp:v8_external_snapshot'],
+                'dependencies': ['<(DEPTH)/v8/src/v8.gyp:v8_external_snapshot'],
                 'renaming_sources': [
                   '<(PRODUCT_DIR)/natives_blob.bin',
                   '<(PRODUCT_DIR)/snapshot_blob.bin',

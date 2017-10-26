@@ -7,15 +7,24 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/single_thread_task_runner.h"
-#include "media/base/fake_output_device.h"
 
 namespace media {
 
 FakeAudioRendererSink::FakeAudioRendererSink()
+    : FakeAudioRendererSink(
+          AudioParameters(AudioParameters::AUDIO_FAKE,
+                          CHANNEL_LAYOUT_STEREO,
+                          AudioParameters::kTelephoneSampleRate,
+                          16,
+                          1)) {}
+
+FakeAudioRendererSink::FakeAudioRendererSink(
+    const AudioParameters& hardware_params)
     : state_(kUninitialized),
-      callback_(NULL),
-      output_device_(new FakeOutputDevice) {}
+      callback_(nullptr),
+      output_device_info_(std::string(),
+                          OUTPUT_DEVICE_STATUS_OK,
+                          hardware_params) {}
 
 FakeAudioRendererSink::~FakeAudioRendererSink() {
   DCHECK(!callback_);
@@ -56,17 +65,22 @@ bool FakeAudioRendererSink::SetVolume(double volume) {
   return true;
 }
 
-OutputDevice* FakeAudioRendererSink::GetOutputDevice() {
-  return output_device_.get();
+OutputDeviceInfo FakeAudioRendererSink::GetOutputDeviceInfo() {
+  return output_device_info_;
+}
+
+bool FakeAudioRendererSink::CurrentThreadIsRenderingThread() {
+  NOTIMPLEMENTED();
+  return false;
 }
 
 bool FakeAudioRendererSink::Render(AudioBus* dest,
-                                   uint32_t audio_delay_milliseconds,
+                                   uint32_t frames_delayed,
                                    int* frames_written) {
   if (state_ != kPlaying)
     return false;
 
-  *frames_written = callback_->Render(dest, audio_delay_milliseconds, 0);
+  *frames_written = callback_->Render(dest, frames_delayed, 0);
   return true;
 }
 

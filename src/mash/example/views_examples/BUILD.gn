@@ -18,17 +18,17 @@ mojo_native_application("views_examples") {
   ]
 
   deps = [
-    ":manifest",
     "//base",
     "//components/mus/public/interfaces",
-    "//mojo/converters/geometry",
+    "//mash/public/interfaces",
     "//mojo/public/cpp/bindings",
-    "//mojo/services/tracing/public/cpp",
-    "//mojo/shell/public/cpp",
-    "//mojo/shell/public/cpp:sources",
+    "//services/shell/public/cpp",
+    "//services/shell/public/cpp:sources",
+    "//services/tracing/public/cpp",
     "//skia",
     "//ui/gfx",
     "//ui/gfx/geometry",
+    "//ui/gfx/geometry/mojo",
     "//ui/views",
     "//ui/views/examples:views_examples_lib",
     "//ui/views/mus:for_mojo_application",
@@ -37,6 +37,7 @@ mojo_native_application("views_examples") {
   resources = [ "$root_out_dir/views_mus_resources.pak" ]
 
   data_deps = [
+    ":manifest",
     "//components/mus",
   ]
 }

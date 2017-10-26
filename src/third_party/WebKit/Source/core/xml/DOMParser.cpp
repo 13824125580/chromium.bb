@@ -19,16 +19,16 @@
 #include "core/xml/DOMParser.h"
 
 #include "core/dom/DOMImplementation.h"
-#include "core/dom/ExceptionCode.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<Document> DOMParser::parseFromString(const String& str, const String& type)
+Document* DOMParser::parseFromString(const String& str, const String& type)
 {
-    RefPtrWillBeRawPtr<Document> doc = DOMImplementation::createDocument(type, DocumentInit(KURL(), nullptr, m_contextDocument), false);
+    Document* doc = DOMImplementation::createDocument(type, DocumentInit(KURL(), nullptr, m_contextDocument), false);
     doc->setContent(str);
-    return doc.release();
+    doc->setSecurityOrigin(m_contextDocument->getSecurityOrigin());
+    return doc;
 }
 
 DOMParser::DOMParser(Document& document)

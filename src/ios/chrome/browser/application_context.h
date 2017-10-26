@@ -53,10 +53,6 @@ namespace variations {
 class VariationsService;
 }
 
-namespace web_resource {
-class PromoResourceService;
-}
-
 class ApplicationContext;
 class CRLSetFetcher;
 class IOSChromeIOThread;
@@ -121,18 +117,12 @@ class ApplicationContext {
   // Gets the GCMDriver.
   virtual gcm::GCMDriver* GetGCMDriver() = 0;
 
-  // Gets the PromoResourceService.
-  virtual web_resource::PromoResourceService* GetPromoResourceService() = 0;
-
   // Gets the ComponentUpdateService.
   virtual component_updater::ComponentUpdateService*
   GetComponentUpdateService() = 0;
 
   // Gets the CRLSetFetcher.
   virtual CRLSetFetcher* GetCRLSetFetcher() = 0;
-
-  // Gets the SafeBrowsingService.
-  virtual safe_browsing::SafeBrowsingService* GetSafeBrowsingService() = 0;
 
  protected:
   // Sets the global ApplicationContext instance.

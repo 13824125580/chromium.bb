@@ -24,6 +24,7 @@ public class PeerConnectionFactory {
 
   private static final String TAG = "PeerConnectionFactory";
   private final long nativeFactory;
+  private static Thread networkThread;
   private static Thread workerThread;
   private static Thread signalingThread;
   private EglBase localEglbase;
@@ -114,8 +115,10 @@ public class PeerConnectionFactory {
   // manually after this.
   public VideoSource createVideoSource(
       VideoCapturer capturer, MediaConstraints constraints) {
-    return new VideoSource(nativeCreateVideoSource(
-        nativeFactory, capturer, constraints));
+    final EglBase.Context eglContext =
+        localEglbase == null ? null : localEglbase.getEglBaseContext();
+    return new VideoSource(nativeCreateVideoSource(nativeFactory,
+        eglContext, capturer, constraints));
   }
 
   public VideoTrack createVideoTrack(String id, VideoSource source) {
@@ -149,12 +152,21 @@ public class PeerConnectionFactory {
   // the native code. If an RTC event log is already being recorded, it will be
   // stopped and a new one will start using the provided file.
   public boolean startRtcEventLog(int file_descriptor) {
-    return nativeStartRtcEventLog(nativeFactory, file_descriptor);
+    return startRtcEventLog(file_descriptor, -1);
+  }
+
+  // Same as above, but allows setting an upper limit to the size of the
+  // generated logfile.
+  public boolean startRtcEventLog(int file_descriptor,
+                                  int filesize_limit_bytes) {
+    return nativeStartRtcEventLog(nativeFactory,
+                                  file_descriptor,
+                                  filesize_limit_bytes);
   }
 
   // Stops recording an RTC event log. If no RTC event log is currently being
   // recorded, this call will have no effect.
-  public void StopRtcEventLog() {
+  public void stopRtcEventLog() {
     nativeStopRtcEventLog(nativeFactory);
   }
 
@@ -187,8 +199,9 @@ public class PeerConnectionFactory {
 
   public void dispose() {
     nativeFreeFactory(nativeFactory);
-    signalingThread = null;
+    networkThread = null;
     workerThread = null;
+    signalingThread = null;
     if (localEglbase != null)
       localEglbase.release();
     if (remoteEglbase != null)
@@ -212,8 +225,14 @@ public class PeerConnectionFactory {
   }
 
   public static void printStackTraces() {
+    printStackTrace(networkThread, "Network thread");
     printStackTrace(workerThread, "Worker thread");
     printStackTrace(signalingThread, "Signaling thread");
+  }
+
+  private static void onNetworkThreadReady() {
+    networkThread = Thread.currentThread();
+    Logging.d(TAG, "onNetworkThreadReady");
   }
 
   private static void onWorkerThreadReady() {
@@ -239,7 +258,8 @@ public class PeerConnectionFactory {
       long nativeFactory, String label);
 
   private static native long nativeCreateVideoSource(
-      long nativeFactory, VideoCapturer videoCapturer, MediaConstraints constraints);
+      long nativeFactory, EglBase.Context eglContext, VideoCapturer videoCapturer,
+      MediaConstraints constraints);
 
   private static native long nativeCreateVideoTrack(
       long nativeFactory, String id, long nativeVideoSource);
@@ -255,7 +275,9 @@ public class PeerConnectionFactory {
 
   private static native void nativeStopAecDump(long nativeFactory);
 
-  private static native boolean nativeStartRtcEventLog(long nativeFactory, int file_descriptor);
+  private static native boolean nativeStartRtcEventLog(long nativeFactory,
+                                                       int file_descriptor,
+                                                       int filesize_limit_bytes);
 
   private static native void nativeStopRtcEventLog(long nativeFactory);
 

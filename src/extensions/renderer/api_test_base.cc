@@ -7,7 +7,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/location.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/process_info_native_handler.h"
@@ -48,7 +51,7 @@ class TestNatives : public gin::Wrappable<TestNatives> {
   }
 
   void FinishTesting() {
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_closure_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_closure_);
   }
 
   static gin::WrapperInfo kWrapperInfo;
@@ -128,15 +131,10 @@ void ApiTestEnvironment::RegisterModules() {
                                      NULL,
                                      v8_schema_registry_.get());
   env()->module_system()->RegisterNativeHandler(
-      "process",
-      scoped_ptr<NativeHandler>(new ProcessInfoNativeHandler(
-          env()->context(),
-          env()->context()->GetExtensionID(),
-          env()->context()->GetContextTypeDescription(),
-          false,
-          false,
-          2,
-          false)));
+      "process", std::unique_ptr<NativeHandler>(new ProcessInfoNativeHandler(
+                     env()->context(), env()->context()->GetExtensionID(),
+                     env()->context()->GetContextTypeDescription(), false,
+                     false, 2, false)));
   env()->RegisterTestFile("test_environment_specific_bindings",
                           "unit_test_environment_specific_bindings.js");
 
@@ -165,7 +163,7 @@ void ApiTestEnvironment::RegisterModules() {
   service_provider_ = service_provider.get();
   gin::ModuleRegistry::From(env()->context()->v8_context())
       ->AddBuiltinModule(env()->isolate(),
-                         "content/public/renderer/service_provider",
+                         "content/public/renderer/frame_service_registry",
                          service_provider.ToV8());
 }
 
@@ -191,11 +189,11 @@ void ApiTestEnvironment::RunTest(const std::string& file_name,
       env()->isolate(),
       "testNatives",
       TestNatives::Create(env()->isolate(), run_loop.QuitClosure()).ToV8());
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&ApiTestEnvironment::RunTestInner, base::Unretained(this),
                  test_name, run_loop.QuitClosure()));
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&ApiTestEnvironment::RunPromisesAgain,
                             base::Unretained(this)));
   run_loop.Run();
@@ -208,14 +206,14 @@ void ApiTestEnvironment::RunTestInner(const std::string& test_name,
   v8::Local<v8::Value> result =
       env()->module_system()->CallModuleMethod("testBody", test_name);
   if (!result->IsTrue()) {
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_closure);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_closure);
     FAIL() << "Failed to run test \"" << test_name << "\"";
   }
 }
 
 void ApiTestEnvironment::RunPromisesAgain() {
-  env()->isolate()->RunMicrotasks();
-  base::MessageLoop::current()->PostTask(
+  v8::MicrotasksScope::PerformCheckpoint(env()->isolate());
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&ApiTestEnvironment::RunPromisesAgain,
                             base::Unretained(this)));
 }

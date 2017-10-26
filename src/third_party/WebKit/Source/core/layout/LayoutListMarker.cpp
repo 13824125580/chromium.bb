@@ -30,12 +30,16 @@
 #include "core/layout/ListMarkerText.h"
 #include "core/layout/api/LineLayoutBlockFlow.h"
 #include "core/paint/ListMarkerPainter.h"
-#include "core/paint/PaintLayer.h"
 #include "platform/fonts/Font.h"
 
 namespace blink {
 
 const int cMarkerPaddingPx = 7;
+
+// TODO(glebl): Move to WebKit/Source/core/css/html.css after
+// Blink starts to support ::marker crbug.com/457718
+// Recommended UA margin for list markers.
+const int cUAMarkerMarginEm = 1;
 
 LayoutListMarker::LayoutListMarker(LayoutListItem* item)
     : LayoutBox(nullptr)
@@ -71,9 +75,8 @@ LayoutSize LayoutListMarker::imageBulletSize() const
     // FIXME: This is a somewhat arbitrary default width. Generated images for markers really won't
     // become particularly useful until we support the CSS3 marker pseudoclass to allow control over
     // the width and height of the marker box.
-    LayoutUnit bulletWidth = style()->fontMetrics().ascent() / LayoutUnit(2);
-    LayoutSize defaultBulletSize(bulletWidth, bulletWidth);
-    return calculateImageIntrinsicDimensions(m_image.get(), defaultBulletSize, DoNotScaleByEffectiveZoom);
+    LayoutUnit bulletWidth = style()->getFontMetrics().ascent() / LayoutUnit(2);
+    return m_image->imageSize(*this, style()->effectiveZoom(), LayoutSize(bulletWidth, bulletWidth));
 }
 
 void LayoutListMarker::styleWillChange(StyleDifference diff, const ComputedStyle& newStyle)
@@ -141,7 +144,7 @@ void LayoutListMarker::layout()
         setHeight(imageSize.height());
     } else {
         setLogicalWidth(minPreferredLogicalWidth());
-        setLogicalHeight(LayoutUnit(style()->fontMetrics().height()));
+        setLogicalHeight(LayoutUnit(style()->getFontMetrics().height()));
     }
 
     setMarginStart(LayoutUnit());
@@ -188,7 +191,7 @@ void LayoutListMarker::updateContent()
     if (isImage())
         return;
 
-    switch (listStyleCategory()) {
+    switch (getListStyleCategory()) {
     case ListStyleCategory::None:
         break;
     case ListStyleCategory::Symbol:
@@ -205,7 +208,7 @@ LayoutUnit LayoutListMarker::getWidthOfTextWithSuffix() const
     if (m_text.isEmpty())
         return LayoutUnit();
     const Font& font = style()->font();
-    LayoutUnit itemWidth = LayoutUnit(font.width(m_text));
+    LayoutUnit itemWidth = LayoutUnit(font.width(TextRun(m_text)));
     // TODO(wkorman): Look into constructing a text run for both text and suffix
     // and painting them together.
     UChar suffix[1] = { ListMarkerText::suffix(style()->listStyleType(), m_listItem->value()) };
@@ -232,11 +235,11 @@ void LayoutListMarker::computePreferredLogicalWidths()
     const Font& font = style()->font();
 
     LayoutUnit logicalWidth;
-    switch (listStyleCategory()) {
+    switch (getListStyleCategory()) {
     case ListStyleCategory::None:
         break;
     case ListStyleCategory::Symbol:
-        logicalWidth = LayoutUnit((font.fontMetrics().ascent() * 2 / 3 + 1) / 2 + 2);
+        logicalWidth = LayoutUnit((font.getFontMetrics().ascent() * 2 / 3 + 1) / 2 + 2);
         logicalWidth += cMarkerPaddingPx;
         break;
     case ListStyleCategory::Language:
@@ -258,7 +261,7 @@ void LayoutListMarker::computePreferredLogicalWidths()
 void LayoutListMarker::updateMargins()
 {
 #if 0
-    const FontMetrics& fontMetrics = style()->fontMetrics();
+    const FontMetrics& fontMetrics = style()->getFontMetrics();
 #endif
 
     LayoutUnit marginStart;
@@ -269,10 +272,10 @@ void LayoutListMarker::updateMargins()
         if (isImage()) {
             marginEnd = LayoutUnit(cMarkerPaddingPx);
         } else {
-            switch (listStyleCategory()) {
+            switch (getListStyleCategory()) {
             case ListStyleCategory::Symbol:
                 marginStart = LayoutUnit(-1);
-                marginEnd = fontMetrics.ascent() - minPreferredLogicalWidth() + 1;
+                marginEnd = fontMetrics.ascent() - minPreferredLogicalWidth() + 1 + LayoutUnit(cUAMarkerMarginEm * style()->computedFontSize());
                 break;
             default:
                 break;
@@ -286,7 +289,7 @@ void LayoutListMarker::updateMargins()
                 marginStart = -minPreferredLogicalWidth() - cMarkerPaddingPx;
             } else {
                 int offset = fontMetrics.ascent() * 2 / 3;
-                switch (listStyleCategory()) {
+                switch (getListStyleCategory()) {
                 case ListStyleCategory::None:
                     break;
                 case ListStyleCategory::Symbol:
@@ -302,7 +305,7 @@ void LayoutListMarker::updateMargins()
                 marginEnd = LayoutUnit(cMarkerPaddingPx);
             } else {
                 int offset = fontMetrics.ascent() * 2 / 3;
-                switch (listStyleCategory()) {
+                switch (getListStyleCategory()) {
                 case ListStyleCategory::None:
                     break;
                 case ListStyleCategory::Symbol:
@@ -338,7 +341,7 @@ int LayoutListMarker::baselinePosition(FontBaseline baselineType, bool firstLine
     return LayoutBox::baselinePosition(baselineType, firstLine, direction, linePositionMode);
 }
 
-LayoutListMarker::ListStyleCategory LayoutListMarker::listStyleCategory() const
+LayoutListMarker::ListStyleCategory LayoutListMarker::getListStyleCategory() const
 {
     switch (style()->listStyleType()) {
     case NoneListStyle:
@@ -408,7 +411,7 @@ LayoutListMarker::ListStyleCategory LayoutListMarker::listStyleCategory() const
 
 bool LayoutListMarker::isInside() const
 {
-    return m_listItem->notInList() || style()->listStylePosition() == INSIDE;
+    return m_listItem->notInList() || style()->listStylePosition() == ListStylePositionInside;
 }
 
 IntRect LayoutListMarker::getRelativeMarkerRect() const
@@ -424,20 +427,20 @@ IntRect LayoutListMarker::getRelativeMarkerRect() const
         return relativeRect;
     }
 
-    switch (listStyleCategory()) {
+    switch (getListStyleCategory()) {
     case ListStyleCategory::None:
         return IntRect();
     case ListStyleCategory::Symbol: {
         // TODO(wkorman): Review and clean up/document the calculations below.
         // http://crbug.com/543193
-        const FontMetrics& fontMetrics = style()->fontMetrics();
+        const FontMetrics& fontMetrics = style()->getFontMetrics();
         int ascent = fontMetrics.ascent();
         int bulletWidth = (ascent * 2 / 3 + 1) / 2;
         relativeRect = IntRect(1, 3 * (ascent - ascent * 2 / 3) / 2, bulletWidth, bulletWidth);
         }
         break;
     case ListStyleCategory::Language:
-        relativeRect = IntRect(0, 0, getWidthOfTextWithSuffix(), style()->font().fontMetrics().height());
+        relativeRect = IntRect(0, 0, getWidthOfTextWithSuffix(), style()->font().getFontMetrics().height());
         break;
     }
 
@@ -460,22 +463,6 @@ void LayoutListMarker::setSelectionState(SelectionState state)
 
     if (inlineBoxWrapper() && canUpdateSelectionOnRootLineBoxes())
         inlineBoxWrapper()->root().setHasSelectedChildren(state != SelectionNone);
-}
-
-LayoutRect LayoutListMarker::selectionRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer) const
-{
-    ASSERT(!needsLayout());
-
-    if (getSelectionState() == SelectionNone || !inlineBoxWrapper())
-        return LayoutRect();
-
-    RootInlineBox& root = inlineBoxWrapper()->root();
-    LayoutRect rect(LayoutUnit(), root.selectionTop() - location().y(), size().width(), root.selectionHeight());
-    mapToVisibleRectInAncestorSpace(paintInvalidationContainer, rect, nullptr);
-    // FIXME: groupedMapping() leaks the squashing abstraction.
-    if (paintInvalidationContainer->layer()->groupedMapping())
-        PaintLayer::mapRectToPaintBackingCoordinates(paintInvalidationContainer, rect);
-    return rect;
 }
 
 void LayoutListMarker::listItemStyleDidChange()

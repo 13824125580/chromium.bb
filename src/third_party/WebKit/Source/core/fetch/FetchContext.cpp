@@ -29,14 +29,14 @@
  */
 
 #include "core/fetch/FetchContext.h"
-
+#include "public/platform/WebCachePolicy.h"
 
 namespace blink {
 
 FetchContext& FetchContext::nullInstance()
 {
-    DEFINE_STATIC_LOCAL(Persistent<FetchContext>, instance, (new FetchContext));
-    return *instance;
+    DEFINE_STATIC_LOCAL(FetchContext, instance, (new FetchContext));
+    return instance;
 }
 
 void FetchContext::dispatchDidChangeResourcePriority(unsigned long, ResourceLoadPriority, int)
@@ -56,20 +56,20 @@ CachePolicy FetchContext::getCachePolicy() const
     return CachePolicyVerify;
 }
 
-ResourceRequestCachePolicy FetchContext::resourceRequestCachePolicy(const ResourceRequest&, Resource::Type) const
+WebCachePolicy FetchContext::resourceRequestCachePolicy(const ResourceRequest&, Resource::Type, FetchRequest::DeferOption defer) const
 {
-    return UseProtocolCachePolicy;
+    return WebCachePolicy::UseProtocolCachePolicy;
 }
 
 void FetchContext::dispatchWillSendRequest(unsigned long, ResourceRequest&, const ResourceResponse&, const FetchInitiatorInfo&)
 {
 }
 
-void FetchContext::dispatchDidLoadResourceFromMemoryCache(const Resource*, WebURLRequest::FrameType, WebURLRequest::RequestContext)
+void FetchContext::dispatchDidLoadResourceFromMemoryCache(unsigned long, Resource*, WebURLRequest::FrameType, WebURLRequest::RequestContext)
 {
 }
 
-void FetchContext::dispatchDidReceiveResponse(unsigned long, const ResourceResponse&, WebURLRequest::FrameType, WebURLRequest::RequestContext, ResourceLoader*)
+void FetchContext::dispatchDidReceiveResponse(unsigned long, const ResourceResponse&, WebURLRequest::FrameType, WebURLRequest::RequestContext, Resource*)
 {
 }
 
@@ -89,7 +89,7 @@ void FetchContext::dispatchDidFail(unsigned long, const ResourceError&, bool)
 {
 }
 
-void FetchContext::willStartLoadingResource(ResourceRequest&)
+void FetchContext::willStartLoadingResource(unsigned long, ResourceRequest&, Resource::Type)
 {
 }
 

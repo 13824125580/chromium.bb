@@ -10,12 +10,12 @@
 #ifndef NET_URL_REQUEST_URL_REQUEST_CONTEXT_H_
 #define NET_URL_REQUEST_URL_REQUEST_CONTEXT_H_
 
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "net/base/net_export.h"
@@ -31,6 +31,7 @@ namespace net {
 class CertVerifier;
 class ChannelIDService;
 class CookieStore;
+class CTPolicyEnforcer;
 class CTVerifier;
 class HostResolver;
 class HttpAuthHandlerFactory;
@@ -62,9 +63,10 @@ class NET_EXPORT URLRequestContext
   // session.
   const HttpNetworkSession::Params* GetNetworkSessionParams() const;
 
-  scoped_ptr<URLRequest> CreateRequest(const GURL& url,
-                                       RequestPriority priority,
-                                       URLRequest::Delegate* delegate) const;
+  std::unique_ptr<URLRequest> CreateRequest(
+      const GURL& url,
+      RequestPriority priority,
+      URLRequest::Delegate* delegate) const;
 
   NetLog* net_log() const {
     return net_log_;
@@ -136,16 +138,16 @@ class NET_EXPORT URLRequestContext
   NetworkDelegate* network_delegate() const { return network_delegate_; }
 
   void set_http_server_properties(
-      const base::WeakPtr<HttpServerProperties>& http_server_properties) {
+      HttpServerProperties* http_server_properties) {
     http_server_properties_ = http_server_properties;
   }
-  base::WeakPtr<HttpServerProperties> http_server_properties() const {
+  HttpServerProperties* http_server_properties() const {
     return http_server_properties_;
   }
 
   // Gets the cookie store for this context (may be null, in which case
   // cookies are not stored).
-  CookieStore* cookie_store() const { return cookie_store_.get(); }
+  CookieStore* cookie_store() const { return cookie_store_; }
   void set_cookie_store(CookieStore* cookie_store);
 
   TransportSecurityState* transport_security_state() const {
@@ -161,6 +163,11 @@ class NET_EXPORT URLRequestContext
   }
   void set_cert_transparency_verifier(CTVerifier* verifier) {
     cert_transparency_verifier_ = verifier;
+  }
+
+  CTPolicyEnforcer* ct_policy_enforcer() const { return ct_policy_enforcer_; }
+  void set_ct_policy_enforcer(CTPolicyEnforcer* enforcer) {
+    ct_policy_enforcer_ = enforcer;
   }
 
   const URLRequestJobFactory* job_factory() const { return job_factory_; }
@@ -219,6 +226,18 @@ class NET_EXPORT URLRequestContext
     network_quality_estimator_ = network_quality_estimator;
   }
 
+  void set_enable_brotli(bool enable_brotli) { enable_brotli_ = enable_brotli; }
+
+  bool enable_brotli() const { return enable_brotli_; }
+
+  void set_enable_referrer_policy_header(bool enable_referrer_policy_header) {
+    enable_referrer_policy_header_ = enable_referrer_policy_header;
+  }
+
+  bool enable_referrer_policy_header() const {
+    return enable_referrer_policy_header_;
+  }
+
  private:
   // ---------------------------------------------------------------------------
   // Important: When adding any new members below, consider whether they need to
@@ -235,11 +254,12 @@ class NET_EXPORT URLRequestContext
   ProxyService* proxy_service_;
   scoped_refptr<SSLConfigService> ssl_config_service_;
   NetworkDelegate* network_delegate_;
-  base::WeakPtr<HttpServerProperties> http_server_properties_;
+  HttpServerProperties* http_server_properties_;
   HttpUserAgentSettings* http_user_agent_settings_;
-  scoped_refptr<CookieStore> cookie_store_;
+  CookieStore* cookie_store_;
   TransportSecurityState* transport_security_state_;
   CTVerifier* cert_transparency_verifier_;
+  CTPolicyEnforcer* ct_policy_enforcer_;
   HttpTransactionFactory* http_transaction_factory_;
   const URLRequestJobFactory* job_factory_;
   URLRequestThrottlerManager* throttler_manager_;
@@ -252,7 +272,15 @@ class NET_EXPORT URLRequestContext
   // be added to CopyFrom.
   // ---------------------------------------------------------------------------
 
-  scoped_ptr<std::set<const URLRequest*> > url_requests_;
+  std::unique_ptr<std::set<const URLRequest*>> url_requests_;
+
+  // Enables Brotli Content-Encoding support.
+  bool enable_brotli_;
+
+  // Enables parsing and applying the Referrer-Policy header when
+  // following redirects. TODO(estark): remove this flag once
+  // Referrer-Policy ships (https://crbug.com/619228).
+  bool enable_referrer_policy_header_;
 
   DISALLOW_COPY_AND_ASSIGN(URLRequestContext);
 };

@@ -6,8 +6,9 @@
 
 #include <stddef.h>
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -16,10 +17,10 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_request_options.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
-
 #include "net/http/http_network_session.h"
 #include "net/log/net_log.h"
 #include "net/proxy/proxy_info.h"
@@ -97,10 +98,11 @@ class DataReductionProxyIODataTest : public testing::Test {
 };
 
 TEST_F(DataReductionProxyIODataTest, TestConstruction) {
-  scoped_ptr<DataReductionProxyIOData> io_data(new DataReductionProxyIOData(
-      Client::UNKNOWN, DataReductionProxyParams::kAllowed, net_log(),
-      task_runner(), task_runner(), false /* enabled */,
-      false /* enable_quic */, std::string() /* user_agent */));
+  std::unique_ptr<DataReductionProxyIOData> io_data(
+      new DataReductionProxyIOData(
+          Client::UNKNOWN, DataReductionProxyParams::kAllowed, net_log(),
+          task_runner(), task_runner(), false /* enabled */,
+          std::string() /* user_agent */, std::string() /* channel */));
 
   // Check that the SimpleURLRequestContextGetter uses vanilla HTTP.
   net::URLRequestContext* request_context =
@@ -109,27 +111,24 @@ TEST_F(DataReductionProxyIODataTest, TestConstruction) {
       request_context->GetNetworkSessionParams();
   EXPECT_FALSE(http_params->enable_spdy31);
   EXPECT_FALSE(http_params->enable_http2);
-  EXPECT_FALSE(http_params->parse_alternative_services);
-  EXPECT_FALSE(http_params->enable_alternative_service_with_different_host);
   EXPECT_FALSE(http_params->enable_quic);
 
   // Check that io_data creates an interceptor. Such an interceptor is
   // thoroughly tested by DataReductionProxyInterceptoTest.
-  scoped_ptr<net::URLRequestInterceptor> interceptor =
+  std::unique_ptr<net::URLRequestInterceptor> interceptor =
       io_data->CreateInterceptor();
   EXPECT_NE(nullptr, interceptor.get());
 
   // When creating a network delegate, expect that it properly wraps a
   // network delegate. Such a network delegate is thoroughly tested by
   // DataReductionProxyNetworkDelegateTest.
-   scoped_ptr<net::URLRequest> fake_request =
-       context().CreateRequest(
-           GURL("http://www.foo.com/"), net::IDLE, delegate());
+  std::unique_ptr<net::URLRequest> fake_request = context().CreateRequest(
+      GURL("http://www.foo.com/"), net::IDLE, delegate());
   CountingNetworkDelegate* wrapped_network_delegate =
       new CountingNetworkDelegate();
-  scoped_ptr<DataReductionProxyNetworkDelegate> network_delegate =
-      io_data->CreateNetworkDelegate(
-          make_scoped_ptr(wrapped_network_delegate), false);
+  std::unique_ptr<DataReductionProxyNetworkDelegate> network_delegate =
+      io_data->CreateNetworkDelegate(base::WrapUnique(wrapped_network_delegate),
+                                     false);
   network_delegate->NotifyBeforeURLRequest(
       fake_request.get(),
       base::Bind(&DataReductionProxyIODataTest::RequestCallback,
@@ -139,8 +138,8 @@ TEST_F(DataReductionProxyIODataTest, TestConstruction) {
 
   // Creating a second delegate with bypass statistics tracking should result
   // in usage stats being created.
-  io_data->CreateNetworkDelegate(make_scoped_ptr(new CountingNetworkDelegate()),
-                                 true);
+  io_data->CreateNetworkDelegate(
+      base::WrapUnique(new CountingNetworkDelegate()), true);
   EXPECT_NE(nullptr, io_data->bypass_stats());
 
   io_data->ShutdownOnUIThread();
@@ -148,13 +147,12 @@ TEST_F(DataReductionProxyIODataTest, TestConstruction) {
 
 TEST_F(DataReductionProxyIODataTest, TestResetBadProxyListOnDisableDataSaver) {
   net::TestURLRequestContext context(false);
-  scoped_ptr<DataReductionProxyTestContext> drp_test_context =
+  std::unique_ptr<DataReductionProxyTestContext> drp_test_context =
       DataReductionProxyTestContext::Builder()
           .WithParamsFlags(DataReductionProxyParams::kAllowed |
                            DataReductionProxyParams::kFallbackAllowed |
                            DataReductionProxyParams::kPromoAllowed)
           .WithURLRequestContext(&context)
-          .WithTestConfigurator()
           .SkipSettingsInitialization()
           .Build();
 
@@ -187,6 +185,23 @@ TEST_F(DataReductionProxyIODataTest, TestResetBadProxyListOnDisableDataSaver) {
 
   // Verify that bad proxy list is empty.
   EXPECT_EQ(0UL, bad_proxy_list.size());
+}
+
+TEST_F(DataReductionProxyIODataTest, HoldbackConfiguresProxies) {
+  net::TestURLRequestContext context(false);
+  std::unique_ptr<DataReductionProxyTestContext> drp_test_context =
+      DataReductionProxyTestContext::Builder()
+          .WithParamsFlags(DataReductionProxyParams::kAllowed |
+                           DataReductionProxyParams::kFallbackAllowed |
+                           DataReductionProxyParams::kPromoAllowed |
+                           DataReductionProxyParams::kHoldback)
+          .WithURLRequestContext(&context)
+          .SkipSettingsInitialization()
+          .Build();
+
+  EXPECT_TRUE(drp_test_context->test_params()->proxies_for_http().size() > 0);
+  EXPECT_FALSE(
+      drp_test_context->test_params()->proxies_for_http().front().is_direct());
 }
 
 }  // namespace data_reduction_proxy

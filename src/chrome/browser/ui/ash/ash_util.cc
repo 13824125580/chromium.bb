@@ -8,52 +8,31 @@
 #include "ash/shell.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/ash/ash_init.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "ui/aura/window_event_dispatcher.h"
 
 #if defined(MOJO_SHELL_CLIENT)
-#include "content/public/common/mojo_shell_connection.h"
+#include "services/shell/runner/common/client_util.h"
 #endif
 
 namespace chrome {
 
 bool ShouldOpenAshOnStartup() {
-#if defined(OS_CHROMEOS) && defined(MOJO_SHELL_CLIENT)
-  return !content::MojoShellConnection::Get() ||
-         !content::MojoShellConnection::Get()->UsingExternalShell();
-#elif defined(OS_CHROMEOS)
-  return true;
+  return !IsRunningInMash();
+}
+
+bool IsRunningInMash() {
+#if defined(MOJO_SHELL_CLIENT)
+  return shell::ShellIsRemote();
 #else
   return false;
 #endif
 }
 
-bool IsNativeViewInAsh(gfx::NativeView native_view) {
-#if defined(OS_CHROMEOS)
-  // Optimization. There is only ash on ChromeOS.
-  return true;
-#endif
-
-  if (!ash::Shell::HasInstance())
+bool IsAcceleratorDeprecated(const ui::Accelerator& accelerator) {
+  // When running in mash the browser doesn't handle ash accelerators.
+  if (chrome::IsRunningInMash())
     return false;
 
-  aura::Window::Windows root_windows =
-      ash::Shell::GetInstance()->GetAllRootWindows();
-
-  for (aura::Window::Windows::const_iterator it = root_windows.begin();
-       it != root_windows.end(); ++it) {
-    if ((*it)->Contains(native_view))
-      return true;
-  }
-
-  return false;
-}
-
-bool IsNativeWindowInAsh(gfx::NativeWindow native_window) {
-  return IsNativeViewInAsh(native_window);
-}
-
-bool IsAcceleratorDeprecated(const ui::Accelerator& accelerator) {
   ash::AcceleratorController* controller =
       ash::Shell::GetInstance()->accelerator_controller();
   return controller->IsDeprecated(accelerator);

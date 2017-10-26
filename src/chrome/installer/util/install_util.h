@@ -72,9 +72,9 @@ class InstallUtil {
   // This function checks if the current OS is supported for Chromium.
   static bool IsOSSupported();
 
-  // Adds work items to |install_list|, which should be a
-  // NoRollbackWorkItemList, to set installer error information in the registry
-  // for consumption by Google Update.  |state_key| must be the full path to an
+  // Adds work items to |install_list| to set installer error information in the
+  // registry for consumption by Google Update. |install_list| must be best-
+  // effort with rollback disabled. |state_key| must be the full path to an
   // app's ClientState key.  See InstallerState::WriteInstallerResult for more
   // details.
   static void AddInstallerResultItems(bool system_install,
@@ -183,25 +183,56 @@ class InstallUtil {
   // Returns a string in the form YYYYMMDD of the current date.
   static base::string16 GetCurrentDate();
 
+  // Returns the highest Chrome version that was installed prior to a downgrade,
+  // or an invalid Version if Chrome was not previously downgraded from a newer
+  // version.
+  static base::Version GetDowngradeVersion(bool system_install,
+                                           const BrowserDistribution* dist);
+
+  // Adds or removes downgrade version registry value. This function should only
+  // be used for Chrome install.
+  static void AddUpdateDowngradeVersionItem(
+      bool system_install,
+      const base::Version* current_version,
+      const base::Version& new_version,
+      const BrowserDistribution* dist,
+      WorkItemList* list);
+
   // A predicate that compares the program portion of a command line with a
   // given file path.  First, the file paths are compared directly.  If they do
   // not match, the filesystem is consulted to determine if the paths reference
   // the same file.
   class ProgramCompare : public RegistryValuePredicate {
    public:
+    enum class ComparisonType {
+      // Evaluation compares existing files.
+      FILE,
+      // Evaluation compares existing files or directories.
+      FILE_OR_DIRECTORY,
+    };
+
+    // Constructs a ProgramCompare with FILE as ComparisonType.
     explicit ProgramCompare(const base::FilePath& path_to_match);
+
+    // Constructs a ProgramCompare with |comparison_type| as ComparisonType.
+    ProgramCompare(const base::FilePath& path_to_match,
+                   ComparisonType comparison_type);
+
     ~ProgramCompare() override;
     bool Evaluate(const base::string16& value) const override;
     bool EvaluatePath(const base::FilePath& path) const;
 
    protected:
-    static bool OpenForInfo(const base::FilePath& path, base::File* file);
+    static bool OpenForInfo(const base::FilePath& path,
+                            base::File* file,
+                            ComparisonType comparison_type);
     static bool GetInfo(const base::File& file,
                         BY_HANDLE_FILE_INFORMATION* info);
 
     base::FilePath path_to_match_;
     base::File file_;
     BY_HANDLE_FILE_INFORMATION file_info_;
+    ComparisonType comparison_type_;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ProgramCompare);

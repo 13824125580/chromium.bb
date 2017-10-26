@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "cc/debug/rendering_stats_instrumentation.h"
+
 #include <stdint.h>
 
-#include "cc/debug/rendering_stats_instrumentation.h"
+#include "base/memory/ptr_util.h"
 
 namespace cc {
 
 // static
-scoped_ptr<RenderingStatsInstrumentation>
-    RenderingStatsInstrumentation::Create() {
-  return make_scoped_ptr(new RenderingStatsInstrumentation());
+std::unique_ptr<RenderingStatsInstrumentation>
+RenderingStatsInstrumentation::Create() {
+  return base::WrapUnique(new RenderingStatsInstrumentation());
 }
 
 RenderingStatsInstrumentation::RenderingStatsInstrumentation()
@@ -104,16 +106,13 @@ void RenderingStatsInstrumentation::AddDrawDuration(
 }
 
 void RenderingStatsInstrumentation::AddBeginMainFrameToCommitDuration(
-    base::TimeDelta begin_main_frame_to_commit_duration,
-    base::TimeDelta begin_main_frame_to_commit_duration_estimate) {
+    base::TimeDelta begin_main_frame_to_commit_duration) {
   if (!record_rendering_stats_)
     return;
 
   base::AutoLock scoped_lock(lock_);
   impl_thread_rendering_stats_.begin_main_frame_to_commit_duration.Append(
       begin_main_frame_to_commit_duration);
-  impl_thread_rendering_stats_.begin_main_frame_to_commit_duration_estimate
-      .Append(begin_main_frame_to_commit_duration_estimate);
 }
 
 void RenderingStatsInstrumentation::AddCommitToActivateDuration(

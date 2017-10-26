@@ -5,14 +5,15 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_FILE_SYSTEM_FILE_SYSTEM_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_FILE_SYSTEM_FILE_SYSTEM_API_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
@@ -44,8 +45,6 @@ base::FilePath GetLastChooseEntryDirectory(const ExtensionPrefs* prefs,
 void SetLastChooseEntryDirectory(ExtensionPrefs* prefs,
                                  const std::string& extension_id,
                                  const base::FilePath& path);
-
-std::vector<base::FilePath> GetGrayListedDirectories();
 
 #if defined(OS_CHROMEOS)
 // Dispatches an event about a mounted on unmounted volume in the system to
@@ -172,12 +171,13 @@ class FileSystemEntryFunction : public ChromeAsyncExtensionFunction {
   void RegisterFileSystemsAndSendResponse(
       const std::vector<base::FilePath>& path);
 
-  // Creates a response dictionary and sets it as the response to be sent.
-  void CreateResponse();
+  // Creates a result dictionary.
+  std::unique_ptr<base::DictionaryValue> CreateResult();
 
-  // Adds an entry to the response dictionary.
-  void AddEntryToResponse(const base::FilePath& path,
-                          const std::string& id_override);
+  // Adds an entry to the result dictionary.
+  void AddEntryToResult(const base::FilePath& path,
+                        const std::string& id_override,
+                        base::DictionaryValue* result);
 
   // called on the UI thread if there is a problem checking a writable file.
   void HandleWritableFileError(const base::FilePath& error_path);
@@ -187,9 +187,6 @@ class FileSystemEntryFunction : public ChromeAsyncExtensionFunction {
 
   // Whether a directory has been requested.
   bool is_directory_;
-
-  // The dictionary to send as the response.
-  base::DictionaryValue* response_;
 };
 
 class FileSystemGetWritableEntryFunction : public FileSystemEntryFunction {
@@ -239,7 +236,7 @@ class FileSystemChooseEntryFunction : public FileSystemEntryFunction {
                                                     const base::FilePath& path);
   DECLARE_EXTENSION_FUNCTION("fileSystem.chooseEntry", FILESYSTEM_CHOOSEENTRY)
 
-  typedef std::vector<linked_ptr<api::file_system::AcceptOption>> AcceptOptions;
+  typedef std::vector<api::file_system::AcceptOption> AcceptOptions;
 
   static void BuildFileTypeInfo(
       ui::SelectFileDialog::FileTypeInfo* file_type_info,
@@ -299,7 +296,7 @@ class FileSystemRetainEntryFunction : public ChromeAsyncExtensionFunction {
   // be obtained.
   void RetainFileEntry(const std::string& entry_id,
                        const base::FilePath& path,
-                       scoped_ptr<base::File::Info> file_info);
+                       std::unique_ptr<base::File::Info> file_info);
 };
 
 class FileSystemIsRestorableFunction : public ChromeSyncExtensionFunction {

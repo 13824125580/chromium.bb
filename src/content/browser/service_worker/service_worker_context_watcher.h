@@ -17,6 +17,7 @@
 namespace content {
 
 class ServiceWorkerContextWrapper;
+enum class EmbeddedWorkerStatus;
 
 // Used to monitor the status change of the ServiceWorker registrations and
 // versions in the ServiceWorkerContext from UI thread.
@@ -54,7 +55,7 @@ class ServiceWorkerContextWatcher
   void StoreRegistrationInfo(
       const ServiceWorkerRegistrationInfo& registration,
       base::ScopedPtrHashMap<int64_t,
-                             scoped_ptr<ServiceWorkerRegistrationInfo>>*
+                             std::unique_ptr<ServiceWorkerRegistrationInfo>>*
           info_map);
   void StoreVersionInfo(const ServiceWorkerVersionInfo& version);
 
@@ -72,7 +73,7 @@ class ServiceWorkerContextWatcher
                         const GURL& script_url) override;
   void OnRunningStateChanged(
       int64_t version_id,
-      content::ServiceWorkerVersion::RunningStatus running_status) override;
+      content::EmbeddedWorkerStatus running_status) override;
   void OnVersionStateChanged(
       int64_t version_id,
       content::ServiceWorkerVersion::Status status) override;
@@ -99,10 +100,8 @@ class ServiceWorkerContextWatcher
                             const GURL& pattern) override;
   void OnRegistrationDeleted(int64_t registration_id,
                              const GURL& pattern) override;
-  void OnForceUpdateOnPageLoadChanged(int64_t registration_id,
-                                      bool force_update_on_page_load) override;
 
-  base::ScopedPtrHashMap<int64_t, scoped_ptr<ServiceWorkerVersionInfo>>
+  base::ScopedPtrHashMap<int64_t, std::unique_ptr<ServiceWorkerVersionInfo>>
       version_info_map_;
   scoped_refptr<ServiceWorkerContextWrapper> context_;
   WorkerRegistrationUpdatedCallback registration_callback_;

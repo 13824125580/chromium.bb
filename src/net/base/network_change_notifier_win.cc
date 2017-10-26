@@ -8,16 +8,17 @@
 #include <winsock2.h>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/winsock_init.h"
 #include "net/base/winsock_util.h"
 #include "net/dns/dns_config_service.h"
-
-#pragma comment(lib, "iphlpapi.lib")
 
 namespace net {
 
@@ -44,7 +45,7 @@ class NetworkChangeNotifierWin::DnsConfigServiceThread : public base::Thread {
   void CleanUp() override { service_.reset(); }
 
  private:
-  scoped_ptr<DnsConfigService> service_;
+  std::unique_ptr<DnsConfigService> service_;
 
   DISALLOW_COPY_AND_ASSIGN(DnsConfigServiceThread);
 };
@@ -261,10 +262,9 @@ void NetworkChangeNotifierWin::WatchForAddressChange() {
                                  sequential_failures_);
     }
 
-    base::MessageLoop::current()->PostDelayedTask(
-        FROM_HERE,
-        base::Bind(&NetworkChangeNotifierWin::WatchForAddressChange,
-                   weak_factory_.GetWeakPtr()),
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, base::Bind(&NetworkChangeNotifierWin::WatchForAddressChange,
+                              weak_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(
             kWatchForAddressChangeRetryIntervalMs));
     return;

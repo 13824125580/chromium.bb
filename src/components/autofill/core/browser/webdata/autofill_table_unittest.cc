@@ -4,6 +4,9 @@
 
 #include <stddef.h>
 
+#include <map>
+#include <set>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -27,10 +30,11 @@
 #include "components/autofill/core/browser/webdata/autofill_change.h"
 #include "components/autofill/core/browser/webdata/autofill_entry.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
+#include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/os_crypt_mocker.h"
 #include "components/webdata/common/web_database.h"
 #include "sql/statement.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -122,9 +126,7 @@ class AutofillTableTest : public testing::Test {
 
  protected:
   void SetUp() override {
-#if defined(OS_MACOSX)
-    OSCrypt::UseMockKeychain(true);
-#endif
+    OSCryptMocker::SetUpWithSingleton();
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     file_ = temp_dir_.path().AppendASCII("TestWebDatabase");
 
@@ -134,10 +136,12 @@ class AutofillTableTest : public testing::Test {
     ASSERT_EQ(sql::INIT_OK, db_->Init(file_));
   }
 
+  void TearDown() override { OSCryptMocker::TearDown(); }
+
   base::FilePath file_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<AutofillTable> table_;
-  scoped_ptr<WebDatabase> db_;
+  std::unique_ptr<AutofillTable> table_;
+  std::unique_ptr<WebDatabase> db_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AutofillTableTest);
@@ -729,7 +733,7 @@ TEST_F(AutofillTableTest, AutofillProfile) {
   Time post_creation_time = Time::Now();
 
   // Get the 'Home' profile.
-  scoped_ptr<AutofillProfile> db_profile =
+  std::unique_ptr<AutofillProfile> db_profile =
       table_->GetAutofillProfile(home_profile.guid());
   ASSERT_TRUE(db_profile);
   EXPECT_EQ(home_profile, *db_profile);
@@ -788,7 +792,7 @@ TEST_F(AutofillTableTest, AutofillProfile) {
   EXPECT_FALSE(s_billing_updated.Step());
 
   // Update the 'Billing' profile.
-  billing_profile.set_origin("Chrome settings");
+  billing_profile.set_origin(kSettingsOrigin);
   billing_profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Janice"));
   billing_profile.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("C."));
   billing_profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Joplin"));
@@ -868,7 +872,7 @@ TEST_F(AutofillTableTest, AutofillProfileTrashInteraction) {
   // adding it.
   EXPECT_TRUE(table_->AddAutofillGUIDToTrash(profile.guid()));
   EXPECT_TRUE(table_->AddAutofillProfile(profile));
-  scoped_ptr<AutofillProfile> added_profile =
+  std::unique_ptr<AutofillProfile> added_profile =
       table_->GetAutofillProfile(profile.guid());
   EXPECT_FALSE(added_profile);
 
@@ -886,7 +890,7 @@ TEST_F(AutofillTableTest, AutofillProfileTrashInteraction) {
   EXPECT_TRUE(table_->AddAutofillGUIDToTrash(profile.guid()));
   profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Jane"));
   EXPECT_TRUE(table_->UpdateAutofillProfile(profile));
-  scoped_ptr<AutofillProfile> updated_profile =
+  std::unique_ptr<AutofillProfile> updated_profile =
       table_->GetAutofillProfile(profile.guid());
   EXPECT_TRUE(updated_profile);
   EXPECT_EQ(ASCIIToUTF16("John"), updated_profile->GetRawInfo(NAME_FIRST));
@@ -898,7 +902,7 @@ TEST_F(AutofillTableTest, AutofillProfileTrashInteraction) {
   // other clients remove it (via Sync say) then it is gone and doesn't need to
   // be processed further by |WebDataService|.
   EXPECT_TRUE(table_->RemoveAutofillProfile(profile.guid()));
-  scoped_ptr<AutofillProfile> removed_profile =
+  std::unique_ptr<AutofillProfile> removed_profile =
       table_->GetAutofillProfile(profile.guid());
   EXPECT_TRUE(removed_profile);
   EXPECT_FALSE(table_->IsAutofillGUIDInTrash(profile.guid()));
@@ -914,7 +918,8 @@ TEST_F(AutofillTableTest, CreditCard) {
   // Add a 'Work' credit card.
   CreditCard work_creditcard;
   work_creditcard.set_origin("https://www.example.com/");
-  work_creditcard.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Jack Torrance"));
+  work_creditcard.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                             ASCIIToUTF16("Jack Torrance"));
   work_creditcard.SetRawInfo(CREDIT_CARD_NUMBER,
                              ASCIIToUTF16("1234567890123456"));
   work_creditcard.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("04"));
@@ -926,7 +931,7 @@ TEST_F(AutofillTableTest, CreditCard) {
   Time post_creation_time = Time::Now();
 
   // Get the 'Work' credit card.
-  scoped_ptr<CreditCard> db_creditcard =
+  std::unique_ptr<CreditCard> db_creditcard =
       table_->GetCreditCard(work_creditcard.guid());
   ASSERT_TRUE(db_creditcard);
   EXPECT_EQ(work_creditcard, *db_creditcard);
@@ -944,7 +949,8 @@ TEST_F(AutofillTableTest, CreditCard) {
   // Add a 'Target' credit card.
   CreditCard target_creditcard;
   target_creditcard.set_origin(std::string());
-  target_creditcard.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Jack Torrance"));
+  target_creditcard.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                               ASCIIToUTF16("Jack Torrance"));
   target_creditcard.SetRawInfo(CREDIT_CARD_NUMBER,
                                ASCIIToUTF16("1111222233334444"));
   target_creditcard.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("06"));
@@ -970,7 +976,8 @@ TEST_F(AutofillTableTest, CreditCard) {
 
   // Update the 'Target' credit card.
   target_creditcard.set_origin("Interactive Autofill dialog");
-  target_creditcard.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Charles Grady"));
+  target_creditcard.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                               ASCIIToUTF16("Charles Grady"));
   Time pre_modification_time = Time::Now();
   EXPECT_TRUE(table_->UpdateCreditCard(target_creditcard));
   Time post_modification_time = Time::Now();
@@ -1022,7 +1029,7 @@ TEST_F(AutofillTableTest, UpdateAutofillProfile) {
   ASSERT_TRUE(s_mock_creation_date.Run());
 
   // Get the profile.
-  scoped_ptr<AutofillProfile> db_profile =
+  std::unique_ptr<AutofillProfile> db_profile =
       table_->GetAutofillProfile(profile.guid());
   ASSERT_TRUE(db_profile);
   EXPECT_EQ(profile, *db_profile);
@@ -1077,7 +1084,7 @@ TEST_F(AutofillTableTest, UpdateAutofillProfile) {
 TEST_F(AutofillTableTest, UpdateCreditCard) {
   // Add a credit card to the db.
   CreditCard credit_card;
-  credit_card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Jack Torrance"));
+  credit_card.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Jack Torrance"));
   credit_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1234567890123456"));
   credit_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("04"));
   credit_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2013"));
@@ -1093,7 +1100,7 @@ TEST_F(AutofillTableTest, UpdateCreditCard) {
   ASSERT_TRUE(s_mock_creation_date.Run());
 
   // Get the credit card.
-  scoped_ptr<CreditCard> db_credit_card =
+  std::unique_ptr<CreditCard> db_credit_card =
       table_->GetCreditCard(credit_card.guid());
   ASSERT_TRUE(db_credit_card);
   EXPECT_EQ(credit_card, *db_credit_card);
@@ -1172,7 +1179,7 @@ TEST_F(AutofillTableTest, UpdateProfileOriginOnly) {
   ASSERT_TRUE(s_mock_creation_date.Run());
 
   // Get the profile.
-  scoped_ptr<AutofillProfile> db_profile =
+  std::unique_ptr<AutofillProfile> db_profile =
       table_->GetAutofillProfile(profile.guid());
   ASSERT_TRUE(db_profile);
   EXPECT_EQ(profile, *db_profile);
@@ -1203,7 +1210,7 @@ TEST_F(AutofillTableTest, UpdateProfileOriginOnly) {
 TEST_F(AutofillTableTest, UpdateCreditCardOriginOnly) {
   // Add a credit card to the db.
   CreditCard credit_card;
-  credit_card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Jack Torrance"));
+  credit_card.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Jack Torrance"));
   credit_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1234567890123456"));
   credit_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("04"));
   credit_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2013"));
@@ -1219,7 +1226,7 @@ TEST_F(AutofillTableTest, UpdateCreditCardOriginOnly) {
   ASSERT_TRUE(s_mock_creation_date.Run());
 
   // Get the credit card.
-  scoped_ptr<CreditCard> db_credit_card =
+  std::unique_ptr<CreditCard> db_credit_card =
       table_->GetCreditCard(credit_card.guid());
   ASSERT_TRUE(db_credit_card);
   EXPECT_EQ(credit_card, *db_credit_card);
@@ -1398,7 +1405,7 @@ TEST_F(AutofillTableTest, RemoveOriginURLsModifiedBetween) {
   EXPECT_EQ(std::string(), s_autofill_profiles_bounded.ColumnString(1));
   ASSERT_TRUE(s_autofill_profiles_bounded.Step());
   EXPECT_EQ(31, s_autofill_profiles_bounded.ColumnInt64(0));
-  EXPECT_EQ("Chrome settings", s_autofill_profiles_bounded.ColumnString(1));
+  EXPECT_EQ(kSettingsOrigin, s_autofill_profiles_bounded.ColumnString(1));
   sql::Statement s_credit_cards_bounded(
       db_->GetSQLConnection()->GetUniqueStatement(
           "SELECT date_modified, origin FROM credit_cards"));
@@ -1412,7 +1419,7 @@ TEST_F(AutofillTableTest, RemoveOriginURLsModifiedBetween) {
             s_credit_cards_bounded.ColumnString(1));
   ASSERT_TRUE(s_credit_cards_bounded.Step());
   EXPECT_EQ(37, s_credit_cards_bounded.ColumnInt64(0));
-  EXPECT_EQ("Chrome settings", s_credit_cards_bounded.ColumnString(1));
+  EXPECT_EQ(kSettingsOrigin, s_credit_cards_bounded.ColumnString(1));
 
   // Remove all origin URLS.
   profiles.clear();
@@ -1430,7 +1437,7 @@ TEST_F(AutofillTableTest, RemoveOriginURLsModifiedBetween) {
   EXPECT_EQ(std::string(), s_autofill_profiles_all.ColumnString(1));
   ASSERT_TRUE(s_autofill_profiles_all.Step());
   EXPECT_EQ(31, s_autofill_profiles_all.ColumnInt64(0));
-  EXPECT_EQ("Chrome settings", s_autofill_profiles_all.ColumnString(1));
+  EXPECT_EQ(kSettingsOrigin, s_autofill_profiles_all.ColumnString(1));
   sql::Statement s_credit_cards_all(
       db_->GetSQLConnection()->GetUniqueStatement(
           "SELECT date_modified, origin FROM credit_cards"));
@@ -1443,7 +1450,7 @@ TEST_F(AutofillTableTest, RemoveOriginURLsModifiedBetween) {
   EXPECT_EQ(std::string(), s_credit_cards_all.ColumnString(1));
   ASSERT_TRUE(s_credit_cards_all.Step());
   EXPECT_EQ(37, s_credit_cards_all.ColumnInt64(0));
-  EXPECT_EQ("Chrome settings", s_credit_cards_all.ColumnString(1));
+  EXPECT_EQ(kSettingsOrigin, s_credit_cards_all.ColumnString(1));
 }
 
 TEST_F(AutofillTableTest, Autofill_GetAllAutofillEntries_NoResults) {
@@ -1563,14 +1570,14 @@ TEST_F(AutofillTableTest, Autofill_GetAllAutofillEntries_TwoSame) {
 TEST_F(AutofillTableTest, SetGetServerCards) {
   std::vector<CreditCard> inputs;
   inputs.push_back(CreditCard(CreditCard::FULL_SERVER_CARD, "a123"));
-  inputs[0].SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Paul F. Tompkins"));
+  inputs[0].SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Paul F. Tompkins"));
   inputs[0].SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   inputs[0].SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   inputs[0].SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("4111111111111111"));
 
   inputs.push_back(
       CreditCard(CreditCard::MASKED_SERVER_CARD, "b456"));
-  inputs[1].SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Rick Roman"));
+  inputs[1].SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Rick Roman"));
   inputs[1].SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
   inputs[1].SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("1997"));
   inputs[1].SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
@@ -1608,7 +1615,7 @@ TEST_F(AutofillTableTest, MaskUnmaskServerCards) {
   base::string16 masked_number(ASCIIToUTF16("1111"));
   std::vector<CreditCard> inputs;
   inputs.push_back(CreditCard(CreditCard::MASKED_SERVER_CARD, "a123"));
-  inputs[0].SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Jay Johnson"));
+  inputs[0].SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Jay Johnson"));
   inputs[0].SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   inputs[0].SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   inputs[0].SetRawInfo(CREDIT_CARD_NUMBER, masked_number);
@@ -1645,7 +1652,8 @@ TEST_F(AutofillTableTest, MaskUnmaskServerCards) {
 TEST_F(AutofillTableTest, SetServerCardModify) {
   // Add a masked card.
   CreditCard masked_card(CreditCard::MASKED_SERVER_CARD, "a123");
-  masked_card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Paul F. Tompkins"));
+  masked_card.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                         ASCIIToUTF16("Paul F. Tompkins"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   masked_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
@@ -1684,7 +1692,7 @@ TEST_F(AutofillTableTest, SetServerCardModify) {
 
   // Set inputs that do not include our old card.
   CreditCard random_card(CreditCard::MASKED_SERVER_CARD, "b456");
-  random_card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Rick Roman"));
+  random_card.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Rick Roman"));
   random_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
   random_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("1997"));
   random_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("2222"));
@@ -1719,7 +1727,8 @@ TEST_F(AutofillTableTest, SetServerCardModify) {
 TEST_F(AutofillTableTest, SetServerCardUpdateUsageStats) {
   // Add a masked card.
   CreditCard masked_card(CreditCard::MASKED_SERVER_CARD, "a123");
-  masked_card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Paul F. Tompkins"));
+  masked_card.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                         ASCIIToUTF16("Paul F. Tompkins"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   masked_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
@@ -1733,19 +1742,23 @@ TEST_F(AutofillTableTest, SetServerCardUpdateUsageStats) {
   table_->GetServerCreditCards(&outputs.get());
   ASSERT_EQ(1u, outputs.size());
   EXPECT_EQ(masked_card.server_id(), outputs[0]->server_id());
-  EXPECT_EQ(0U, outputs[0]->use_count());
-  EXPECT_EQ(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(1U, outputs[0]->use_count());
+  EXPECT_NE(base::Time(), outputs[0]->use_date());
+  // We don't track modification date for server cards. It should always be
+  // base::Time().
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 
   // Update the usage stats; make sure they're reflected in GetServerProfiles.
   inputs.back().set_use_count(4U);
-  inputs.back().set_use_date(base::Time::Now());
+  inputs.back().set_use_date(base::Time());
   table_->UpdateServerCardUsageStats(inputs.back());
   table_->GetServerCreditCards(&outputs.get());
   ASSERT_EQ(1u, outputs.size());
   EXPECT_EQ(masked_card.server_id(), outputs[0]->server_id());
   EXPECT_EQ(4U, outputs[0]->use_count());
-  EXPECT_NE(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 
   // Setting the cards again shouldn't delete the usage stats.
@@ -1754,7 +1767,8 @@ TEST_F(AutofillTableTest, SetServerCardUpdateUsageStats) {
   ASSERT_EQ(1u, outputs.size());
   EXPECT_EQ(masked_card.server_id(), outputs[0]->server_id());
   EXPECT_EQ(4U, outputs[0]->use_count());
-  EXPECT_NE(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 
   // Set a card list where the card is missing --- this should clear metadata.
@@ -1768,9 +1782,37 @@ TEST_F(AutofillTableTest, SetServerCardUpdateUsageStats) {
   table_->GetServerCreditCards(&outputs.get());
   ASSERT_EQ(1u, outputs.size());
   EXPECT_EQ(masked_card.server_id(), outputs[0]->server_id());
-  EXPECT_EQ(0U, outputs[0]->use_count());
-  EXPECT_EQ(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(1U, outputs[0]->use_count());
+  EXPECT_NE(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
+}
+
+TEST_F(AutofillTableTest, UpdateServerCardBillingAddress) {
+  // Add a masked card.
+  CreditCard masked_card(CreditCard::MASKED_SERVER_CARD, "a123");
+  masked_card.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                         ASCIIToUTF16("Paul F. Tompkins"));
+  masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
+  masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
+  masked_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
+  masked_card.set_billing_address_id("billing-address-id-1");
+  masked_card.SetTypeForMaskedCard(kVisaCard);
+  test::SetServerCreditCards(table_.get(),
+                             std::vector<CreditCard>(1, masked_card));
+  ScopedVector<CreditCard> outputs;
+  table_->GetServerCreditCards(&outputs.get());
+  ASSERT_EQ(1u, outputs.size());
+
+  EXPECT_EQ("billing-address-id-1", outputs[0]->billing_address_id());
+
+  masked_card.set_billing_address_id("billing-address-id-2");
+  table_->UpdateServerCardBillingAddress(masked_card);
+  outputs.clear();
+  table_->GetServerCreditCards(&outputs.get());
+  ASSERT_EQ(1u, outputs.size());
+
+  EXPECT_EQ("billing-address-id-2", outputs[0]->billing_address_id());
 }
 
 TEST_F(AutofillTableTest, SetServerProfile) {
@@ -1813,6 +1855,9 @@ TEST_F(AutofillTableTest, SetServerProfileUpdateUsageStats) {
   EXPECT_EQ(one.server_id(), outputs[0]->server_id());
   EXPECT_EQ(0U, outputs[0]->use_count());
   EXPECT_EQ(base::Time(), outputs[0]->use_date());
+  // We don't track modification date for server profiles. It should always be
+  // base::Time().
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 
   // Update the usage stats; make sure they're reflected in GetServerProfiles.
@@ -1824,6 +1869,7 @@ TEST_F(AutofillTableTest, SetServerProfileUpdateUsageStats) {
   EXPECT_EQ(one.server_id(), outputs[0]->server_id());
   EXPECT_EQ(4U, outputs[0]->use_count());
   EXPECT_NE(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 
   // Setting the profiles again shouldn't delete the usage stats.
@@ -1833,6 +1879,7 @@ TEST_F(AutofillTableTest, SetServerProfileUpdateUsageStats) {
   EXPECT_EQ(one.server_id(), outputs[0]->server_id());
   EXPECT_EQ(4U, outputs[0]->use_count());
   EXPECT_NE(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 
   // Set a null profile list --- this should clear metadata.
@@ -1844,6 +1891,7 @@ TEST_F(AutofillTableTest, SetServerProfileUpdateUsageStats) {
   EXPECT_EQ(one.server_id(), outputs[0]->server_id());
   EXPECT_EQ(0U, outputs[0]->use_count());
   EXPECT_EQ(base::Time(), outputs[0]->use_date());
+  EXPECT_EQ(base::Time(), outputs[0]->modification_date());
   outputs.clear();
 }
 
@@ -1857,7 +1905,8 @@ TEST_F(AutofillTableTest, DeleteUnmaskedCard) {
   // Add a masked card.
   base::string16 masked_number = ASCIIToUTF16("1111");
   CreditCard masked_card(CreditCard::MASKED_SERVER_CARD, "a123");
-  masked_card.SetRawInfo(CREDIT_CARD_NAME, ASCIIToUTF16("Paul F. Tompkins"));
+  masked_card.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                         ASCIIToUTF16("Paul F. Tompkins"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   masked_card.SetRawInfo(CREDIT_CARD_NUMBER, masked_number);

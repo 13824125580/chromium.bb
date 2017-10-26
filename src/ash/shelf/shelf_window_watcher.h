@@ -10,10 +10,9 @@
 #include "ash/shelf/scoped_observer_with_duplicated_sources.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/scoped_observer.h"
 #include "ui/aura/window_observer.h"
-#include "ui/gfx/display_observer.h"
+#include "ui/display/display_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
 
 namespace aura {
@@ -30,12 +29,13 @@ namespace ash {
 
 class ShelfModel;
 class ShelfItemDelegateManager;
+class WmWindow;
 
 // ShelfWindowWatcher creates and handles a ShelfItem for windows that have
 // a ShelfItemDetails property in the default container.
 class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
                            public aura::WindowObserver,
-                           public gfx::DisplayObserver {
+                           public display::DisplayObserver {
  public:
   ShelfWindowWatcher(ShelfModel* model,
                      ShelfItemDelegateManager* item_delegate_manager);
@@ -82,8 +82,9 @@ class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
   // Removes a ShelfItem for |window|.
   void RemoveShelfItem(aura::Window* window);
 
-  // Adds observer to default container and ActivationClient of |root_window|.
-  void OnRootWindowAdded(aura::Window* root_window);
+  // Adds observer to default container and ActivationClient of
+  // |root_window_wm|.
+  void OnRootWindowAdded(WmWindow* root_window_wm);
 
   // Removes observer from ActivationClient of |root_window|.
   void OnRootWindowRemoved(aura::Window* root_window);
@@ -118,10 +119,10 @@ class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
                                const void* key,
                                intptr_t old) override;
 
-  // gfx::DisplayObserver overrides:
-  void OnDisplayAdded(const gfx::Display& display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  // display::DisplayObserver overrides:
+  void OnDisplayAdded(const display::Display& display) override;
+  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
   // Owned by Shell.
@@ -143,7 +144,8 @@ class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
 
   // Holds all observed activation clients.
   ScopedObserverWithDuplicatedSources<aura::client::ActivationClient,
-      aura::client::ActivationChangeObserver> observed_activation_clients_;
+                                      aura::client::ActivationChangeObserver>
+      observed_activation_clients_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfWindowWatcher);
 };

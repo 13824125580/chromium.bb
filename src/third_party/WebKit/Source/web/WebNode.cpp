@@ -30,7 +30,7 @@
 
 #include "public/web/WebNode.h"
 
-#include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/Node.h"
@@ -38,6 +38,7 @@
 #include "core/dom/StaticNodeList.h"
 #include "core/dom/TagCollection.h"
 #include "core/editing/serializers/Serialization.h"
+#include "core/events/EventQueue.h"
 #include "core/events/Event.h"
 #include "core/html/HTMLCollection.h"
 #include "core/html/HTMLElement.h"
@@ -57,6 +58,7 @@
 #include "web/FrameLoaderClientImpl.h"
 #include "web/WebLocalFrameImpl.h"
 #include "web/WebPluginContainerImpl.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
@@ -187,7 +189,7 @@ bool WebNode::isFocusable() const
 {
     if (!m_private->isElementNode())
         return false;
-    m_private->document().updateLayoutIgnorePendingStylesheets();
+    m_private->document().updateStyleAndLayoutIgnorePendingStylesheets();
     return toElement(m_private.get())->isFocusable();
 }
 
@@ -218,13 +220,16 @@ bool WebNode::isDocumentTypeNode() const
 
 void WebNode::dispatchEvent(const WebDOMEvent& event)
 {
-    if (!event.isNull() && m_private->executionContext())
-        m_private->executionContext()->postSuspendableTask(adoptPtr(new NodeDispatchEventTask(m_private, event)));
+    if (!event.isNull() && m_private->getExecutionContext()) {
+        //static_cast<Event*>(event)->setTarget(this);
+        //m_private->getExecutionContext()->getEventQueue()->enqueueEvent(event);
+        m_private->getExecutionContext()->postSuspendableTask(wrapUnique(new NodeDispatchEventTask(m_private, event)));
+    }
 }
 
 void WebNode::simulateClick()
 {
-    m_private->executionContext()->postSuspendableTask(adoptPtr(new NodeDispatchSimulatedClickTask(m_private)));
+    m_private->getExecutionContext()->postSuspendableTask(wrapUnique(new NodeDispatchSimulatedClickTask(m_private)));
 }
 
 WebElementCollection WebNode::getElementsByHTMLTagName(const WebString& tag) const
@@ -234,45 +239,11 @@ WebElementCollection WebNode::getElementsByHTMLTagName(const WebString& tag) con
     return WebElementCollection();
 }
 
-WebElement WebNode::querySelector(const WebString& selector, WebExceptionCode& ec) const
+WebElement WebNode::querySelector(const WebString& selector) const
 {
     if (!m_private->isContainerNode())
         return WebElement();
-    TrackExceptionState exceptionState;
-    WebElement element = toContainerNode(m_private.get())->querySelector(selector, exceptionState);
-    ec = exceptionState.code();
-    return element;
-}
-
-WebElement WebNode::querySelector(const WebString& selector) const
-{
-    WebExceptionCode ec = 0;
-    WebElement element = querySelector(selector, ec);
-    ASSERT(!ec);
-    return element;
-}
-
-void WebNode::querySelectorAll(const WebString& selector, WebVector<WebElement>& results, WebExceptionCode& ec) const
-{
-    if (!m_private->isContainerNode())
-        return;
-    TrackExceptionState exceptionState;
-    RefPtrWillBeRawPtr<StaticElementList> elements = toContainerNode(m_private.get())->querySelectorAll(selector, exceptionState);
-    ec = exceptionState.code();
-    if (exceptionState.hadException())
-        return;
-    Vector<WebElement> temp;
-    temp.reserveCapacity(elements->length());
-    for (unsigned i = 0; i < elements->length(); ++i)
-        temp.append(WebElement(elements->item(i)));
-    results.assign(temp);
-}
-
-void WebNode::querySelectorAll(const WebString& selector, WebVector<WebElement>& results) const
-{
-    WebExceptionCode ec = 0;
-    querySelectorAll(selector, results, ec);
-    ASSERT(!ec);
+    return toContainerNode(m_private.get())->querySelector(selector, IGNORE_EXCEPTION);
 }
 
 bool WebNode::focused() const
@@ -280,20 +251,27 @@ bool WebNode::focused() const
     return m_private->focused();
 }
 
-WebPluginContainer* WebNode::pluginContainer() const
+WebPluginContainer* WebNode::pluginContainerFromNode(const Node* node)
 {
-    if (isNull())
-        return 0;
-    const Node& coreNode = *constUnwrap<Node>();
-    if (isHTMLObjectElement(coreNode) || isHTMLEmbedElement(coreNode)) {
-        LayoutObject* object = coreNode.layoutObject();
+    if (!node)
+        return nullptr;
+
+    if (!isHTMLObjectElement(node) && !isHTMLEmbedElement(node))
+        return nullptr;
+
+    LayoutObject* object = node->layoutObject();
         if (object && object->isLayoutPart()) {
             Widget* widget = toLayoutPart(object)->widget();
             if (widget && widget->isPluginContainer())
                 return toWebPluginContainerImpl(widget);
         }
-    }
-    return 0;
+
+    return nullptr;
+}
+
+WebPluginContainer* WebNode::pluginContainer() const
+{
+    return pluginContainerFromNode(constUnwrap<Node>());
 }
 
 WebAXObject WebNode::accessibilityObject()
@@ -305,18 +283,18 @@ WebAXObject WebNode::accessibilityObject()
     return cache ? WebAXObject(cache->get(node)) : WebAXObject();
 }
 
-WebNode::WebNode(const PassRefPtrWillBeRawPtr<Node>& node)
+WebNode::WebNode(Node* node)
     : m_private(node)
 {
 }
 
-WebNode& WebNode::operator=(const PassRefPtrWillBeRawPtr<Node>& node)
+WebNode& WebNode::operator=(Node* node)
 {
     m_private = node;
     return *this;
 }
 
-WebNode::operator PassRefPtrWillBeRawPtr<Node>() const
+WebNode::operator Node*() const
 {
     return m_private.get();
 }

@@ -5,8 +5,11 @@
 #ifndef COMPONENTS_SYNC_DRIVER_FAKE_SYNC_CLIENT_H_
 #define COMPONENTS_SYNC_DRIVER_FAKE_SYNC_CLIENT_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "components/sync_driver/sync_client.h"
+#include "components/syncable_prefs/testing_pref_service_syncable.h"
 
 namespace sync_driver {
 class FakeSyncService;
@@ -35,16 +38,20 @@ class FakeSyncClient : public SyncClient {
   sync_sessions::SyncSessionsClient* GetSyncSessionsClient() override;
   base::WeakPtr<syncer::SyncableService> GetSyncableServiceForType(
       syncer::ModelType type) override;
-  base::WeakPtr<syncer_v2::ModelTypeService> GetModelTypeServiceForType(
+  syncer_v2::ModelTypeService* GetModelTypeServiceForType(
       syncer::ModelType type) override;
   scoped_refptr<syncer::ModelSafeWorker> CreateModelWorkerForGroup(
       syncer::ModelSafeGroup group,
       syncer::WorkerLoopDestructionObserver* observer) override;
   SyncApiComponentFactory* GetSyncApiComponentFactory() override;
 
+  void SetModelTypeService(syncer_v2::ModelTypeService* model_type_service);
+
  private:
+  syncable_prefs::TestingPrefServiceSyncable pref_service_;
+  syncer_v2::ModelTypeService* model_type_service_;
   SyncApiComponentFactory* factory_;
-  scoped_ptr<FakeSyncService> sync_service_;
+  std::unique_ptr<FakeSyncService> sync_service_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeSyncClient);
 };

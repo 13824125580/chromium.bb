@@ -4,13 +4,13 @@
 
 package org.chromium.android_webview.test;
 
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
+
 import android.app.Instrumentation;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Build;
 import android.util.Log;
-
-import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
 import org.chromium.android_webview.AwBrowserContext;
 import org.chromium.android_webview.AwBrowserProcess;
@@ -31,11 +31,11 @@ import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
-import org.chromium.content.common.ContentSwitches;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -63,8 +63,7 @@ import java.util.concurrent.TimeUnit;
                                 arguments = {
                                     @Parameter.Argument(
                                         name = CommandLineFlags.Parameter.ADD_ARG,
-                                        stringArray = {AwSwitches.WEBVIEW_SANDBOXED_RENDERER,
-                                                ContentSwitches.IPC_SYNC_COMPOSITING})
+                                        stringArray = {AwSwitches.WEBVIEW_SANDBOXED_RENDERER})
             })})})
 public class AwTestBase
         extends BaseActivityInstrumentationTestCase<AwTestRunnerActivity> {
@@ -81,8 +80,8 @@ public class AwTestBase
 
     @Override
     protected void setUp() throws Exception {
-        mBrowserContext = new AwBrowserContext(
-                new InMemorySharedPreferences(), getInstrumentation().getTargetContext());
+        Context appContext = getInstrumentation().getTargetContext().getApplicationContext();
+        mBrowserContext = new AwBrowserContext(new InMemorySharedPreferences(), appContext);
 
         super.setUp();
         if (needsBrowserProcessStarted()) {
@@ -91,17 +90,20 @@ public class AwTestBase
     }
 
     protected void startBrowserProcess() throws Exception {
-        final Context context = getActivity();
+        // The activity must be launched in order for proper webview statics to be setup.
+        getActivity();
         getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
-                AwBrowserProcess.start(context);
+                AwBrowserProcess.start();
             }
         });
     }
 
-    /* Override this to return false if the test doesn't want the browser startup sequence to
+    /**
+     * Override this to return false if the test doesn't want the browser startup sequence to
      * be run automatically.
+     * @return Whether the instrumentation test requires the browser process to already be started.
      */
     protected boolean needsBrowserProcessStarted() {
         return true;
@@ -341,7 +343,7 @@ public class AwTestBase
     // as visual state callback only indicates that *something* has appeared in WebView.
     public void waitForPixelColorAtCenterOfView(final AwContents awContents,
             final AwTestContainerView testContainerView, final int expectedColor) throws Exception {
-        pollOnUiThread(new Callable<Boolean>() {
+        pollUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 Bitmap bitmap = GraphicsTestUtils.drawAwContents(awContents, 2, 2,
@@ -366,7 +368,10 @@ public class AwTestBase
             return false;
         }
 
-        return method.isAnnotationPresent(clazz);
+        // Cast to AnnotatedElement to work around a compilation failure.
+        // Method.isAnnotationPresent() was removed in Java 8 (which is used by the Android N SDK),
+        // so compilation with Java 7 fails. See crbug.com/608792.
+        return ((AnnotatedElement) method).isAnnotationPresent(clazz);
     }
 
     /**
@@ -381,7 +386,9 @@ public class AwTestBase
             return new AwTestContainerView(activity, allowHardwareAcceleration);
         }
         public AwSettings createAwSettings(Context context, boolean supportsLegacyQuirks) {
-            return new AwSettings(context, false, supportsLegacyQuirks);
+            return new AwSettings(context, false /* isAccessFromFileURLsGrantedByDefault */,
+                    supportsLegacyQuirks, false /* allowEmptyDocumentPersistence */,
+                    true /* allowGeolocationOnInsecureOrigins */);
         }
     }
 
@@ -423,11 +430,10 @@ public class AwTestBase
 
         AwSettings awSettings = testDependencyFactory.createAwSettings(getActivity(),
                 supportsLegacyQuirks);
-        testContainerView.initialize(new AwContents(
-                mBrowserContext, testContainerView, testContainerView.getContext(),
-                testContainerView.getInternalAccessDelegate(),
-                testContainerView.getNativeGLDelegate(), awContentsClient,
-                awSettings, testDependencyFactory));
+        testContainerView.initialize(new AwContents(mBrowserContext, testContainerView,
+                testContainerView.getContext(), testContainerView.getInternalAccessDelegate(),
+                testContainerView.getNativeDrawGLFunctorFactory(), awContentsClient, awSettings,
+                testDependencyFactory));
         return testContainerView;
     }
 
@@ -491,11 +497,12 @@ public class AwTestBase
     }
 
     /**
-     * Wrapper around CriteriaHelper.pollForCriteria. This uses AwTestBase-specifc timeouts and
-     * treats timeouts and exceptions as test failures automatically.
+     * Wrapper around CriteriaHelper.pollInstrumentationThread. This uses AwTestBase-specifc
+     * timeouts and treats timeouts and exceptions as test failures automatically.
      */
-    public static void poll(final Callable<Boolean> callable) throws Exception {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+    public static void pollInstrumentationThread(final Callable<Boolean> callable)
+            throws Exception {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 try {
@@ -511,8 +518,8 @@ public class AwTestBase
     /**
      * Wrapper around {@link AwTestBase#poll()} but runs the callable on the UI thread.
      */
-    public void pollOnUiThread(final Callable<Boolean> callable) throws Exception {
-        poll(new Callable<Boolean>() {
+    public void pollUiThread(final Callable<Boolean> callable) throws Exception {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return runTestOnUiThreadAndGetResult(callable);
@@ -652,8 +659,15 @@ public class AwTestBase
         });
 
         OnPageFinishedHelper onPageFinishedHelper = popupContentsClient.getOnPageFinishedHelper();
-        int callCount = onPageFinishedHelper.getCallCount();
-        onPageFinishedHelper.waitForCallback(callCount, 1, WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        int finishCallCount = onPageFinishedHelper.getCallCount();
+        TestAwContentsClient.OnReceivedTitleHelper onReceivedTitleHelper =
+                popupContentsClient.getOnReceivedTitleHelper();
+        int titleCallCount = onReceivedTitleHelper.getCallCount();
+
+        onPageFinishedHelper.waitForCallback(finishCallCount, 1, WAIT_TIMEOUT_MS,
+                TimeUnit.MILLISECONDS);
+        onReceivedTitleHelper.waitForCallback(titleCallCount, 1, WAIT_TIMEOUT_MS,
+                TimeUnit.MILLISECONDS);
 
         return new PopupInfo(popupContentsClient, popupContainerView, popupContents);
     }

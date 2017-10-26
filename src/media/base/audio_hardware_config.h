@@ -8,7 +8,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/synchronization/lock.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
 
@@ -41,13 +41,6 @@ class MEDIA_EXPORT AudioHardwareConfig {
   // any thread.
   void UpdateInputConfig(const media::AudioParameters& input_params);
   void UpdateOutputConfig(const media::AudioParameters& output_params);
-
-  // For clients which don't need low latency, a larger buffer size should be
-  // used to save power and CPU resources.
-  int GetHighLatencyBufferSize() const;
-
-  // |buffer_size| should be set to 0 if a client has no preference.
-  static int GetHighLatencyBufferSize(int sample_rate, int buffer_size);
 
  private:
   // Cached values; access is protected by |config_lock_|.

@@ -26,7 +26,7 @@
 #ifndef LayoutTableCol_h
 #define LayoutTableCol_h
 
-#include "core/layout/LayoutBox.h"
+#include "core/layout/LayoutTableBoxComponent.h"
 
 namespace blink {
 
@@ -57,18 +57,9 @@ class LayoutTableCell;
 // Because table columns and column groups are placeholder elements (see
 // previous paragraph), they are never laid out and layout() should not be
 // called on them.
-class LayoutTableCol final : public LayoutBox {
+class LayoutTableCol final : public LayoutTableBoxComponent {
 public:
     explicit LayoutTableCol(Element*);
-
-    LayoutObject* firstChild() const { ASSERT(children() == virtualChildren()); return children()->firstChild(); }
-
-    // If you have a LayoutTableCol, use firstChild or lastChild instead.
-    void slowFirstChild() const = delete;
-    void slowLastChild() const = delete;
-
-    const LayoutObjectChildList* children() const { return &m_children; }
-    LayoutObjectChildList* children() { return &m_children; }
 
     void clearPreferredLogicalWidthsDirtyBits();
 
@@ -93,9 +84,6 @@ public:
     const char* name() const override { return "LayoutTableCol"; }
 
 private:
-    LayoutObjectChildList* virtualChildren() override { return children(); }
-    const LayoutObjectChildList* virtualChildren() const override { return children(); }
-
     bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectLayoutTableCol || LayoutBox::isOfType(type); }
     void updateFromElement() override;
     void computePreferredLogicalWidths() override { ASSERT_NOT_REACHED(); }
@@ -107,14 +95,12 @@ private:
     bool canHaveChildren() const override;
     PaintLayerType layerTypeRequired() const override { return NoPaintLayer; }
 
-    LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* = nullptr) const override;
-    void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
+    LayoutRect localOverflowRectForPaintInvalidation() const override;
 
     void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) override;
 
     LayoutTable* table() const;
 
-    LayoutObjectChildList m_children;
     unsigned m_span;
 };
 

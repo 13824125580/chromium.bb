@@ -13,12 +13,15 @@ source_set("browser") {
   deps = [
     "//base",
     "//components/prefs",
-    "//components/web_cache/common",
+    "//components/web_cache/public/interfaces",
     "//content/public/browser",
+    "//content/public/common",
+    "//services/shell/public/cpp",
     "//third_party/WebKit/public:blink_headers",
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -31,3 +34,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

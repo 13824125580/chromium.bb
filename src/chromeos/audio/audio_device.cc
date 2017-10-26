@@ -35,7 +35,7 @@ uint8_t GetDevicePriority(AudioDeviceType type, bool is_input) {
     case AUDIO_TYPE_INTERNAL_MIC:
       return 1;
     case AUDIO_TYPE_KEYBOARD_MIC:
-    case AUDIO_TYPE_AOKR:
+    case AUDIO_TYPE_HOTWORD:
     case AUDIO_TYPE_POST_MIX_LOOPBACK:
     case AUDIO_TYPE_POST_DSP_LOOPBACK:
     case AUDIO_TYPE_OTHER:
@@ -65,8 +65,8 @@ std::string AudioDevice::GetTypeString(AudioDeviceType type) {
       return "INTERNAL_MIC";
     case AUDIO_TYPE_KEYBOARD_MIC:
       return "KEYBOARD_MIC";
-    case AUDIO_TYPE_AOKR:
-      return "AOKR";
+    case AUDIO_TYPE_HOTWORD:
+      return "HOTWORD";
     case AUDIO_TYPE_POST_MIX_LOOPBACK:
       return "POST_MIX_LOOPBACK";
     case AUDIO_TYPE_POST_DSP_LOOPBACK:
@@ -96,8 +96,12 @@ AudioDeviceType AudioDevice::GetAudioType(
     return AUDIO_TYPE_HDMI;
   else if (node_type.find("INTERNAL_SPEAKER") != std::string::npos)
     return AUDIO_TYPE_INTERNAL_SPEAKER;
+  // TODO(hychao): Remove the 'AOKR' matching line after CRAS switches
+  // node type naming to 'HOTWORD'.
   else if (node_type.find("AOKR") != std::string::npos)
-    return AUDIO_TYPE_AOKR;
+    return AUDIO_TYPE_HOTWORD;
+  else if (node_type.find("HOTWORD") != std::string::npos)
+    return AUDIO_TYPE_HOTWORD;
   else if (node_type.find("POST_MIX_LOOPBACK") != std::string::npos)
     return AUDIO_TYPE_POST_MIX_LOOPBACK;
   else if (node_type.find("POST_DSP_LOOPBACK") != std::string::npos)
@@ -109,16 +113,17 @@ AudioDeviceType AudioDevice::GetAudioType(
 AudioDevice::AudioDevice()
     : is_input(false),
       id(0),
+      stable_device_id(0),
       display_name(""),
       type(AUDIO_TYPE_OTHER),
       priority(0),
       active(false),
-      plugged_time(0) {
-}
+      plugged_time(0) {}
 
 AudioDevice::AudioDevice(const AudioNode& node) {
   is_input = node.is_input;
   id = node.id;
+  stable_device_id = node.stable_device_id;
   type = GetAudioType(node.type);
   if (!node.name.empty() && node.name != "(default)")
     display_name = node.name;
@@ -131,6 +136,8 @@ AudioDevice::AudioDevice(const AudioNode& node) {
   plugged_time = node.plugged_time;
 }
 
+AudioDevice::AudioDevice(const AudioDevice& other) = default;
+
 std::string AudioDevice::ToString() const {
   std::string result;
   base::StringAppendF(&result,
@@ -139,6 +146,9 @@ std::string AudioDevice::ToString() const {
   base::StringAppendF(&result,
                       "id = 0x%" PRIx64 " ",
                       id);
+  base::StringAppendF(&result,
+                      "stable_device_id = 0x%" PRIx64 " ",
+                      stable_device_id);
   base::StringAppendF(&result,
                       "display_name = %s ",
                       display_name.c_str());

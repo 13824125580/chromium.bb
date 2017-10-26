@@ -6,6 +6,7 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/debug/debugger.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -15,11 +16,12 @@
 #include "base/profiler/scoped_profile.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/time/time.h"
+#include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 #include "base/trace_event/trace_event.h"
 #include "base/tracked_objects.h"
 #include "build/build_config.h"
-#include "components/tracing/trace_config_file.h"
-#include "components/tracing/tracing_switches.h"
+#include "components/tracing/browser/trace_config_file.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/browser_shutdown_profile_dumper.h"
 #include "content/browser/notification_service_impl.h"
@@ -44,6 +46,7 @@ namespace content {
 namespace {
 
 bool g_exited_main_message_loop = false;
+const char kMainThreadName[] = "CrBrowserMain";
 
 }  // namespace
 
@@ -63,7 +66,9 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
     // TODO(vadimt, yiyaoliu): Remove all tracked_objects references below once
     // crbug.com/453640 is fixed.
-    tracked_objects::ThreadData::InitializeThreadContext("CrBrowserMain");
+    tracked_objects::ThreadData::InitializeThreadContext(kMainThreadName);
+    base::trace_event::AllocationContextTracker::SetCurrentThreadName(
+        kMainThreadName);
     TRACK_SCOPED_REGION(
         "Startup", "BrowserMainRunnerImpl::Initialize");
     TRACE_EVENT0("startup", "BrowserMainRunnerImpl::Initialize");
@@ -79,10 +84,8 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
       SkGraphics::Init();
 
-#if !defined(OS_IOS)
       if (parameters.command_line.HasSwitch(switches::kWaitForDebugger))
         base::debug::WaitForDebugger(60, true);
-#endif
 
 #if defined(OS_WIN)
       if (base::win::GetVersion() < base::win::VERSION_VISTA) {
@@ -170,7 +173,7 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
     // There are two cases:
     // 1. Startup duration is not reached.
     // 2. Or startup duration is not specified for --trace-config-file flag.
-    scoped_ptr<BrowserShutdownProfileDumper> startup_profiler;
+    std::unique_ptr<BrowserShutdownProfileDumper> startup_profiler;
     if (main_loop_->is_tracing_startup_for_duration()) {
       main_loop_->StopStartupTracingTimer();
       if (main_loop_->startup_trace_file() !=
@@ -194,7 +197,7 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
     // which will dump the traces to disc when it gets destroyed.
     const base::CommandLine& command_line =
         *base::CommandLine::ForCurrentProcess();
-    scoped_ptr<BrowserShutdownProfileDumper> shutdown_profiler;
+    std::unique_ptr<BrowserShutdownProfileDumper> shutdown_profiler;
     if (command_line.HasSwitch(switches::kTraceShutdown)) {
       shutdown_profiler.reset(new BrowserShutdownProfileDumper(
           BrowserShutdownProfileDumper::GetShutdownProfileFileName()));
@@ -233,10 +236,10 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
   // True if the runner has been shut down.
   bool is_shutdown_;
 
-  scoped_ptr<NotificationServiceImpl> notification_service_;
-  scoped_ptr<BrowserMainLoop> main_loop_;
+  std::unique_ptr<NotificationServiceImpl> notification_service_;
+  std::unique_ptr<BrowserMainLoop> main_loop_;
 #if defined(OS_WIN)
-  scoped_ptr<ui::ScopedOleInitializer> ole_initializer_;
+  std::unique_ptr<ui::ScopedOleInitializer> ole_initializer_;
 #endif
 
  private:

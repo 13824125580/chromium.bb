@@ -30,8 +30,6 @@
 
 #include "core/layout/LayoutRubyBase.h"
 
-#include "core/layout/LayoutRubyRun.h"
-
 namespace blink {
 
 LayoutRubyBase::LayoutRubyBase()
@@ -60,7 +58,7 @@ void LayoutRubyBase::moveChildren(LayoutRubyBase* toBase, LayoutObject* beforeCh
 {
     // This function removes all children that are before (!) beforeChild
     // and appends them to toBase.
-    ASSERT_ARG(toBase, toBase);
+    DCHECK(toBase);
     // Callers should have handled the percent height descendant map.
     ASSERT(!hasPercentHeightDescendants());
 
@@ -79,7 +77,7 @@ void LayoutRubyBase::moveChildren(LayoutRubyBase* toBase, LayoutObject* beforeCh
 void LayoutRubyBase::moveInlineChildren(LayoutRubyBase* toBase, LayoutObject* beforeChild)
 {
     ASSERT(childrenInline());
-    ASSERT_ARG(toBase, toBase);
+    DCHECK(toBase);
 
     if (!firstChild())
         return;
@@ -106,7 +104,7 @@ void LayoutRubyBase::moveInlineChildren(LayoutRubyBase* toBase, LayoutObject* be
 void LayoutRubyBase::moveBlockChildren(LayoutRubyBase* toBase, LayoutObject* beforeChild)
 {
     ASSERT(!childrenInline());
-    ASSERT_ARG(toBase, toBase);
+    DCHECK(toBase);
 
     if (!firstChild())
         return;
@@ -119,8 +117,8 @@ void LayoutRubyBase::moveBlockChildren(LayoutRubyBase* toBase, LayoutObject* bef
     LayoutObject* lastChildThere = toBase->lastChild();
     if (firstChildHere->isAnonymousBlock() && firstChildHere->childrenInline()
         && lastChildThere && lastChildThere->isAnonymousBlock() && lastChildThere->childrenInline()) {
-        LayoutBlock* anonBlockHere = toLayoutBlock(firstChildHere);
-        LayoutBlock* anonBlockThere = toLayoutBlock(lastChildThere);
+        LayoutBlockFlow* anonBlockHere = toLayoutBlockFlow(firstChildHere);
+        LayoutBlockFlow* anonBlockThere = toLayoutBlockFlow(lastChildThere);
         anonBlockHere->moveAllChildrenTo(anonBlockThere, anonBlockThere->children());
         anonBlockHere->deleteLineBoxTree();
         anonBlockHere->destroy();

@@ -31,6 +31,8 @@
 #include "platform/graphics/paint/PaintController.h"
 #include "platform/graphics/paint/SkPictureBuilder.h"
 #include "third_party/skia/include/core/SkPicture.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -44,9 +46,7 @@ public:
 LayoutSVGResourcePattern::LayoutSVGResourcePattern(SVGPatternElement* node)
     : LayoutSVGResourcePaintServer(node)
     , m_shouldCollectPatternAttributes(true)
-#if ENABLE(OILPAN)
     , m_attributesWrapper(PatternAttributesWrapper::create())
-#endif
 {
 }
 
@@ -77,7 +77,7 @@ PatternData* LayoutSVGResourcePattern::patternForLayoutObject(const LayoutObject
     return m_patternMap.set(&object, buildPatternData(object)).storedValue->value.get();
 }
 
-PassOwnPtr<PatternData> LayoutSVGResourcePattern::buildPatternData(const LayoutObject& object)
+std::unique_ptr<PatternData> LayoutSVGResourcePattern::buildPatternData(const LayoutObject& object)
 {
     // If we couldn't determine the pattern content element root, stop here.
     const PatternAttributes& attributes = this->attributes();
@@ -109,14 +109,14 @@ PassOwnPtr<PatternData> LayoutSVGResourcePattern::buildPatternData(const LayoutO
             tileTransform.scale(clientBoundingBox.width(), clientBoundingBox.height());
     }
 
-    OwnPtr<PatternData> patternData = adoptPtr(new PatternData);
+    std::unique_ptr<PatternData> patternData = wrapUnique(new PatternData);
     patternData->pattern = Pattern::createPicturePattern(asPicture(tileBounds, tileTransform));
 
     // Compute pattern space transformation.
     patternData->transform.translate(tileBounds.x(), tileBounds.y());
     patternData->transform.preMultiply(attributes.patternTransform());
 
-    return patternData.release();
+    return patternData;
 }
 
 SVGPaintServer LayoutSVGResourcePattern::preparePaintServer(const LayoutObject& object)
@@ -130,11 +130,7 @@ SVGPaintServer LayoutSVGResourcePattern::preparePaintServer(const LayoutObject& 
     if (m_shouldCollectPatternAttributes) {
         patternElement->synchronizeAnimatedSVGAttribute(anyQName());
 
-#if ENABLE(OILPAN)
         m_attributesWrapper->set(PatternAttributes());
-#else
-        m_attributes = PatternAttributes();
-#endif
         patternElement->collectPatternAttributes(mutableAttributes());
         m_shouldCollectPatternAttributes = false;
     }
@@ -149,9 +145,7 @@ SVGPaintServer LayoutSVGResourcePattern::preparePaintServer(const LayoutObject& 
     if (!patternData || !patternData->pattern)
         return SVGPaintServer::invalid();
 
-    patternData->pattern->setPatternSpaceTransform(patternData->transform);
-
-    return SVGPaintServer(patternData->pattern);
+    return SVGPaintServer(patternData->pattern, patternData->transform);
 }
 
 const LayoutSVGResourceContainer* LayoutSVGResourcePattern::resolveContentElement() const
@@ -179,7 +173,7 @@ const LayoutSVGResourceContainer* LayoutSVGResourcePattern::resolveContentElemen
     return this;
 }
 
-PassRefPtr<const SkPicture> LayoutSVGResourcePattern::asPicture(const FloatRect& tileBounds,
+PassRefPtr<SkPicture> LayoutSVGResourcePattern::asPicture(const FloatRect& tileBounds,
     const AffineTransform& tileTransform) const
 {
     ASSERT(!m_shouldCollectPatternAttributes);

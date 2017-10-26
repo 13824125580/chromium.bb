@@ -30,6 +30,7 @@
 #include "core/css/CSSStyleSheet.h"
 #include "core/css/resolver/StyleResolver.h"
 #include "core/dom/Element.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/dom/StyleEngine.h"
 #include "core/dom/StyleSheetCandidate.h"
 #include "core/dom/shadow/ShadowRoot.h"
@@ -48,7 +49,7 @@ void ShadowTreeStyleSheetCollection::collectStyleSheets(StyleEngine& engine, Sty
 {
     for (Node* n : m_styleSheetCandidateNodes) {
         StyleSheetCandidate candidate(*n);
-        ASSERT(!candidate.isXSL());
+        DCHECK(!candidate.isXSL());
 
         if (!candidate.isCSSStyle())
             continue;
@@ -83,7 +84,7 @@ void ShadowTreeStyleSheetCollection::updateActiveStyleSheets(StyleEngine& engine
         }
     }
     if (change.requiresFullStyleRecalc)
-        toShadowRoot(treeScope().rootNode()).host()->setNeedsStyleRecalc(SubtreeStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::ActiveStylesheetsUpdate));
+        toShadowRoot(treeScope().rootNode()).host().setNeedsStyleRecalc(SubtreeStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::ActiveStylesheetsUpdate));
 
     collection.swap(*this);
 }

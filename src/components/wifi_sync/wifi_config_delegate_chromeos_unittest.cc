@@ -6,8 +6,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chromeos/network/managed_network_configuration_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
@@ -24,7 +27,7 @@ const char kUserHash[] = "fake-user-hash";
 
 using chromeos::network_handler::DictionaryResultCallback;
 using chromeos::network_handler::ErrorCallback;
-using chromeos::network_handler::StringResultCallback;
+using chromeos::network_handler::ServiceResultCallback;
 
 class FakeManagedNetworkConfigurationHandler
     : public chromeos::ManagedNetworkConfigurationHandler {
@@ -61,11 +64,10 @@ class FakeManagedNetworkConfigurationHandler
       const ErrorCallback& error_callback) override {
     NOTIMPLEMENTED();
   }
-  void CreateConfiguration(
-      const std::string& userhash,
-      const base::DictionaryValue& properties,
-      const StringResultCallback& callback,
-      const ErrorCallback& error_callback) const override {
+  void CreateConfiguration(const std::string& userhash,
+                           const base::DictionaryValue& properties,
+                           const ServiceResultCallback& callback,
+                           const ErrorCallback& error_callback) const override {
     EXPECT_FALSE(create_configuration_called_);
     create_configuration_called_ = true;
     create_configuration_success_callback_ = callback;
@@ -115,7 +117,7 @@ class FakeManagedNetworkConfigurationHandler
   bool create_configuration_called() const {
     return create_configuration_called_;
   }
-  const StringResultCallback& create_configuration_success_callback() const {
+  const ServiceResultCallback& create_configuration_success_callback() const {
     return create_configuration_success_callback_;
   }
   const ErrorCallback& create_configuration_error_callback() const {
@@ -126,7 +128,7 @@ class FakeManagedNetworkConfigurationHandler
   // Whether or not CreateConfiguration has been called on this fake.
   mutable bool create_configuration_called_;
   // The last |callback| passed to CreateConfiguration.
-  mutable StringResultCallback create_configuration_success_callback_;
+  mutable ServiceResultCallback create_configuration_success_callback_;
   // The last |error_callback| passed to CreateConfiguration.
   mutable ErrorCallback create_configuration_error_callback_;
 };
@@ -151,11 +153,8 @@ class WifiConfigDelegateChromeOsTest : public testing::Test {
   WifiCredential MakeCredential(const std::string& ssid,
                                 WifiSecurityClass security_class,
                                 const std::string& passphrase) {
-    scoped_ptr<WifiCredential> credential =
-        WifiCredential::Create(
-            WifiCredential::MakeSsidBytesForTest(ssid),
-            security_class,
-            passphrase);
+    std::unique_ptr<WifiCredential> credential = WifiCredential::Create(
+        WifiCredential::MakeSsidBytesForTest(ssid), security_class, passphrase);
     CHECK(credential);
     return *credential;
   }
@@ -164,11 +163,11 @@ class WifiConfigDelegateChromeOsTest : public testing::Test {
   // that |callback| is null.
   void RunCreateConfigurationSuccessCallback() {
     const char new_service_path[] = "/service/0";
-    const StringResultCallback callback =
+    const ServiceResultCallback callback =
         fake_managed_network_configuration_handler_
-        ->create_configuration_success_callback();
+            ->create_configuration_success_callback();
     if (!callback.is_null())
-      callback.Run(new_service_path);
+      callback.Run(new_service_path, nullptr);
   }
 
   // Returns whether or not CreateConfiguration has been called
@@ -186,9 +185,9 @@ class WifiConfigDelegateChromeOsTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<WifiConfigDelegateChromeOs> config_delegate_;
-  scoped_ptr<FakeManagedNetworkConfigurationHandler>
-    fake_managed_network_configuration_handler_;
+  std::unique_ptr<WifiConfigDelegateChromeOs> config_delegate_;
+  std::unique_ptr<FakeManagedNetworkConfigurationHandler>
+      fake_managed_network_configuration_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(WifiConfigDelegateChromeOsTest);
 };
@@ -225,7 +224,7 @@ TEST_F(WifiConfigDelegateChromeOsTest,
   if (!create_configuration_error_callback().is_null()) {
     create_configuration_error_callback().Run(
         "Config.CreateConfiguration Failed",
-        make_scoped_ptr(new base::DictionaryValue()));
+        base::WrapUnique(new base::DictionaryValue()));
   }
 }
 

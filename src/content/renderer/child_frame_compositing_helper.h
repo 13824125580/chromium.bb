@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/surfaces/surface_id.h"
@@ -93,26 +93,25 @@ class CONTENT_EXPORT ChildFrameCompositingHelper
                                          cc::Layer* layer);
   static void SatisfyCallback(scoped_refptr<ThreadSafeSender> sender,
                               int host_routing_id,
-                              cc::SurfaceSequence sequence);
+                              const cc::SurfaceSequence& sequence);
   static void SatisfyCallbackBrowserPlugin(
       scoped_refptr<ThreadSafeSender> sender,
       int host_routing_id,
       int browser_plugin_instance_id,
-      cc::SurfaceSequence sequence);
+      const cc::SurfaceSequence& sequence);
   static void RequireCallback(scoped_refptr<ThreadSafeSender> sender,
                               int host_routing_id,
-                              cc::SurfaceId id,
-                              cc::SurfaceSequence sequence);
+                              const cc::SurfaceId& id,
+                              const cc::SurfaceSequence& sequence);
   static void RequireCallbackBrowserPlugin(
       scoped_refptr<ThreadSafeSender> sender,
       int host_routing_id,
       int browser_plugin_instance_id,
-      cc::SurfaceId id,
-      cc::SurfaceSequence sequence);
+      const cc::SurfaceId& id,
+      const cc::SurfaceSequence& sequence);
   void UpdateWebLayer(blink::WebLayer* layer);
 
   int host_routing_id_;
-  bool opaque_;
 
   gfx::Size buffer_size_;
 
@@ -122,7 +121,7 @@ class CONTENT_EXPORT ChildFrameCompositingHelper
   base::WeakPtr<BrowserPlugin> browser_plugin_;
   RenderFrameProxy* render_frame_proxy_;
 
-  scoped_ptr<blink::WebLayer> web_layer_;
+  std::unique_ptr<blink::WebLayer> web_layer_;
   cc::SurfaceId surface_id_;
   blink::WebFrame* frame_;
 

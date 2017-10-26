@@ -6,18 +6,19 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -128,7 +129,8 @@ void PluginPrefs::EnablePluginGroupInternal(
 
   // Update the state for all plugins in the group.
   for (size_t i = 0; i < plugins.size(); ++i) {
-    scoped_ptr<PluginMetadata> plugin(finder->GetPluginMetadata(plugins[i]));
+    std::unique_ptr<PluginMetadata> plugin(
+        finder->GetPluginMetadata(plugins[i]));
     if (group_name != plugin->name())
       continue;
     plugin_state_.Set(plugins[i].path, enabled);
@@ -147,7 +149,7 @@ void PluginPrefs::EnablePlugin(
   content::WebPluginInfo plugin;
   bool can_enable = true;
   if (PluginService::GetInstance()->GetPluginInfoByPath(path, &plugin)) {
-    scoped_ptr<PluginMetadata> plugin_metadata(
+    std::unique_ptr<PluginMetadata> plugin_metadata(
         finder->GetPluginMetadata(plugin));
     PolicyStatus plugin_status = PolicyStatusForPlugin(plugin.name);
     PolicyStatus group_status = PolicyStatusForPlugin(plugin_metadata->name());
@@ -188,7 +190,7 @@ void PluginPrefs::EnablePluginInternal(
   base::string16 group_name;
   for (size_t i = 0; i < plugins.size(); ++i) {
     if (plugins[i].path == path) {
-      scoped_ptr<PluginMetadata> plugin_metadata(
+      std::unique_ptr<PluginMetadata> plugin_metadata(
           plugin_finder->GetPluginMetadata(plugins[i]));
       // set the group name for this plugin.
       group_name = plugin_metadata->name();
@@ -199,7 +201,7 @@ void PluginPrefs::EnablePluginInternal(
 
   bool all_disabled = true;
   for (size_t i = 0; i < plugins.size(); ++i) {
-    scoped_ptr<PluginMetadata> plugin_metadata(
+    std::unique_ptr<PluginMetadata> plugin_metadata(
         plugin_finder->GetPluginMetadata(plugins[i]));
     DCHECK(!plugin_metadata->name().empty());
     if (group_name == plugin_metadata->name()) {
@@ -235,7 +237,7 @@ PluginPrefs::PolicyStatus PluginPrefs::PolicyStatusForPlugin(
 }
 
 bool PluginPrefs::IsPluginEnabled(const content::WebPluginInfo& plugin) const {
-  scoped_ptr<PluginMetadata> plugin_metadata(
+  std::unique_ptr<PluginMetadata> plugin_metadata(
       PluginFinder::GetInstance()->GetPluginMetadata(plugin));
   base::string16 group_name = plugin_metadata->name();
 
@@ -332,14 +334,13 @@ void PluginPrefs::SetPrefs(PrefService* prefs) {
     ListPrefUpdate update(prefs_, prefs::kPluginsPluginsList);
     base::ListValue* saved_plugins_list = update.Get();
     if (saved_plugins_list && !saved_plugins_list->empty()) {
-      for (base::Value* plugin_value : *saved_plugins_list) {
-        if (!plugin_value->IsType(base::Value::TYPE_DICTIONARY)) {
+      for (const auto& plugin_value : *saved_plugins_list) {
+        base::DictionaryValue* plugin;
+        if (!plugin_value->GetAsDictionary(&plugin)) {
           LOG(WARNING) << "Invalid entry in " << prefs::kPluginsPluginsList;
           continue;  // Oops, don't know what to do with this item.
         }
 
-        base::DictionaryValue* plugin =
-            static_cast<base::DictionaryValue*>(plugin_value);
         base::string16 group_name;
         bool enabled;
         if (!plugin->GetBoolean("enabled", &enabled))
@@ -481,16 +482,16 @@ void PluginPrefs::OnUpdatePreferences(
   // Add the plugin files.
   std::set<base::string16> group_names;
   for (size_t i = 0; i < plugins.size(); ++i) {
-    base::DictionaryValue* summary = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> summary(new base::DictionaryValue());
     summary->SetString("path", plugins[i].path.value());
     summary->SetString("name", plugins[i].name);
     summary->SetString("version", plugins[i].version);
     bool enabled = true;
     plugin_state_.Get(plugins[i].path, &enabled);
     summary->SetBoolean("enabled", enabled);
-    plugins_list->Append(summary);
+    plugins_list->Append(std::move(summary));
 
-    scoped_ptr<PluginMetadata> plugin_metadata(
+    std::unique_ptr<PluginMetadata> plugin_metadata(
         finder->GetPluginMetadata(plugins[i]));
     // Insert into a set of all group names.
     group_names.insert(plugin_metadata->name());
@@ -499,7 +500,7 @@ void PluginPrefs::OnUpdatePreferences(
   // Add the plugin groups.
   for (std::set<base::string16>::const_iterator it = group_names.begin();
       it != group_names.end(); ++it) {
-    base::DictionaryValue* summary = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> summary(new base::DictionaryValue());
     summary->SetString("name", *it);
     bool enabled = true;
     std::map<base::string16, bool>::iterator gstate_it =
@@ -507,7 +508,7 @@ void PluginPrefs::OnUpdatePreferences(
     if (gstate_it != plugin_group_state_.end())
       enabled = gstate_it->second;
     summary->SetBoolean("enabled", enabled);
-    plugins_list->Append(summary);
+    plugins_list->Append(std::move(summary));
   }
 }
 

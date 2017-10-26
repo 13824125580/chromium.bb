@@ -31,19 +31,15 @@
 
 namespace blink {
 
-class SelectionEditor final : public NoBaseWillBeGarbageCollectedFinalized<SelectionEditor>, public VisibleSelectionChangeObserver {
+// TODO(yosin): We will rename |SelectionEditor| to appropriate name since
+// it is no longer have a changing selection functionality, it was moved to
+// |SelectionModifier| class.
+class SelectionEditor final : public GarbageCollectedFinalized<SelectionEditor> {
     WTF_MAKE_NONCOPYABLE(SelectionEditor);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(SelectionEditor);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SelectionEditor);
 public:
-    // TODO(yosin) We should move |EAlteration| and |VerticalDirection| out
-    // from |FrameSelection| class like |EUserTriggered|.
-    typedef FrameSelection::EAlteration EAlteration;
-    typedef FrameSelection::VerticalDirection VerticalDirection;
-
-    static PassOwnPtrWillBeRawPtr<SelectionEditor> create(FrameSelection& frameSelection)
+    static SelectionEditor* create(FrameSelection& frameSelection)
     {
-        return adoptPtrWillBeNoop(new SelectionEditor(frameSelection));
+        return new SelectionEditor(frameSelection);
     }
     virtual ~SelectionEditor();
     void dispose();
@@ -54,28 +50,24 @@ public:
 
     bool setSelectedRange(const EphemeralRange&, TextAffinity, SelectionDirectionalMode, FrameSelection::SetSelectionOptions);
 
-    bool modify(EAlteration, SelectionDirection, TextGranularity, EUserTriggered);
-    bool modify(EAlteration, unsigned verticalDistance, VerticalDirection, EUserTriggered, CursorAlignOnScroll);
-
     template <typename Strategy>
     const VisibleSelectionTemplate<Strategy>& visibleSelection() const;
     void setVisibleSelection(const VisibleSelection&, FrameSelection::SetSelectionOptions);
     void setVisibleSelection(const VisibleSelectionInFlatTree&, FrameSelection::SetSelectionOptions);
 
-    void setIsDirectional(bool);
     void setWithoutValidation(const Position& base, const Position& extent);
 
-    void resetXPosForVerticalArrowNavigation();
-
-    void willBeModified(EAlteration, SelectionDirection);
+    void documentAttached(Document*);
+    void documentDetached(const Document&);
 
     // If this FrameSelection has a logical range which is still valid, this
     // function return its clone. Otherwise, the return value from underlying
     // |VisibleSelection|'s |firstRange()| is returned.
-    PassRefPtrWillBeRawPtr<Range> firstRange() const;
+    Range* firstRange() const;
 
-    // VisibleSelectionChangeObserver interface.
-    void didChangeVisibleSelection() override;
+    // There functions are exposed for |FrameSelection|.
+    void resetLogicalRange();
+    void setLogicalRange(Range*);
 
     // Updates |m_selection| and |m_selectionInFlatTree| with up-to-date
     // layout if needed.
@@ -86,37 +78,15 @@ public:
 private:
     explicit SelectionEditor(FrameSelection&);
 
-    // TODO(yosin) We should use capitalized name for |EPositionType|.
-    enum EPositionType { START, END, BASE, EXTENT }; // NOLINT
-
+    const Document& document() const;
     LocalFrame* frame() const;
 
-    TextDirection directionOfEnclosingBlock();
-    TextDirection directionOfSelection();
+    void clearVisibleSelection();
+    bool shouldAlwaysUseDirectionalSelection() const;
 
-    VisiblePosition positionForPlatform(bool isGetStart) const;
-    VisiblePosition startForPlatform() const;
-    VisiblePosition endForPlatform() const;
-    VisiblePosition nextWordPositionForPlatform(const VisiblePosition&);
+    Member<Document> m_document;
+    Member<FrameSelection> m_frameSelection;
 
-    VisiblePosition modifyExtendingRight(TextGranularity);
-    VisiblePosition modifyExtendingForward(TextGranularity);
-    VisiblePosition modifyMovingRight(TextGranularity);
-    VisiblePosition modifyMovingForward(TextGranularity);
-    VisiblePosition modifyExtendingLeft(TextGranularity);
-    VisiblePosition modifyExtendingBackward(TextGranularity);
-    VisiblePosition modifyMovingLeft(TextGranularity);
-    VisiblePosition modifyMovingBackward(TextGranularity);
-
-    void startObservingVisibleSelectionChange();
-    void stopObservingVisibleSelectionChangeIfNecessary();
-
-    LayoutUnit lineDirectionPointForBlockDirectionNavigation(EPositionType);
-    DispatchEventResult dispatchSelectStart();
-
-    RawPtrWillBeMember<FrameSelection> m_frameSelection;
-
-    LayoutUnit m_xPosForVerticalArrowNavigation;
     VisibleSelection m_selection;
     VisibleSelectionInFlatTree m_selectionInFlatTree;
     bool m_observingVisibleSelection;
@@ -125,7 +95,7 @@ private:
     // (hence "logical"). This will be invalidated if the underlying
     // |VisibleSelection| changes. If that happens, this variable will
     // become |nullptr|, in which case logical positions == visible positions.
-    RefPtrWillBeMember<Range> m_logicalRange;
+    Member<Range> m_logicalRange;
 };
 
 } // namespace blink

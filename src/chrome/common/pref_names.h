@@ -17,7 +17,12 @@ namespace prefs {
 // Profile prefs. Please add Local State prefs below instead.
 #if defined(OS_CHROMEOS) && defined(ENABLE_APP_LIST)
 extern const char kArcApps[];
+extern const char kArcBackupRestoreEnabled[];
 extern const char kArcEnabled[];
+extern const char kArcLocationServiceEnabled[];
+extern const char kArcPackages[];
+extern const char kArcSetNotificationsEnabledDeferred[];
+extern const char kArcSignedIn[];
 #endif
 extern const char kChildAccountStatusKnown[];
 extern const char kDefaultApps[];
@@ -32,6 +37,8 @@ extern const char kProfileIconVersion[];
 extern const char kRestoreOnStartup[];
 extern const char kSessionExitedCleanly[];
 extern const char kSessionExitType[];
+extern const char kSiteEngagementLastUpdateTime[];
+extern const char kSupervisedUserApprovedExtensions[];
 extern const char kSupervisedUserCustodianEmail[];
 extern const char kSupervisedUserCustodianName[];
 extern const char kSupervisedUserCustodianProfileImageURL[];
@@ -47,9 +54,10 @@ extern const char kSupervisedUserSharedSettings[];
 extern const char kSupervisedUserWhitelists[];
 extern const char kURLsToRestoreOnStartup[];
 
-// For OS_CHROMEOS we maintain kApplicationLocale property in both local state
-// and user's profile.  Global property determines locale of login screen,
-// while user's profile determines his personal locale preference.
+// For OS_CHROMEOS we maintain the kApplicationLocale property in both local
+// state and the user's profile.  The global property determines the locale of
+// the login screen, while the user's profile determines their personal locale
+// preference.
 extern const char kApplicationLocale[];
 #if defined(OS_CHROMEOS)
 extern const char kApplicationLocaleBackup[];
@@ -156,6 +164,7 @@ extern const char kContextualSearchEnabled[];
 #if defined(OS_MACOSX)
 extern const char kConfirmToQuitEnabled[];
 extern const char kHideFullscreenToolbar[];
+extern const char kShowFullscreenToolbar[];
 #endif
 extern const char kPromptForDownload[];
 extern const char kAlternateErrorPagesEnabled[];
@@ -203,6 +212,9 @@ extern const char kLanguageSendFunctionKeys[];
 extern const char kLanguageXkbAutoRepeatEnabled[];
 extern const char kLanguageXkbAutoRepeatDelay[];
 extern const char kLanguageXkbAutoRepeatInterval[];
+
+// TODO(dmazzoni): move accessibility prefs out of chrome/.
+// http://crbug.com/594887
 extern const char kAccessibilityLargeCursorEnabled[];
 extern const char kAccessibilityStickyKeysEnabled[];
 extern const char kAccessibilitySpokenFeedbackEnabled[];
@@ -212,9 +224,16 @@ extern const char kAccessibilityScreenMagnifierEnabled[];
 extern const char kAccessibilityScreenMagnifierType[];
 extern const char kAccessibilityScreenMagnifierScale[];
 extern const char kAccessibilityVirtualKeyboardEnabled[];
+extern const char kAccessibilityMonoAudioEnabled[];
 extern const char kAccessibilityAutoclickEnabled[];
 extern const char kAccessibilityAutoclickDelayMs[];
+extern const char kAccessibilityCaretHighlightEnabled[];
+extern const char kAccessibilityCursorHighlightEnabled[];
+extern const char kAccessibilityFocusHighlightEnabled[];
+extern const char kAccessibilitySelectToSpeakEnabled[];
+extern const char kAccessibilitySwitchAccessEnabled[];
 extern const char kShouldAlwaysShowAccessibilityMenu[];
+
 extern const char kLabsAdvancedFilesystemEnabled[];
 extern const char kLabsMediaplayerEnabled[];
 extern const char kEnableAutoScreenLock[];
@@ -275,6 +294,12 @@ extern const char kCaptivePortalAuthenticationIgnoresProxy[];
 extern const char kForceMaximizeOnFirstRun[];
 extern const char kPlatformKeys[];
 extern const char kUnifiedDesktopEnabledByDefault[];
+extern const char kAllowScreenLock[];
+extern const char kHatsLastInteractionTimestamp[];
+extern const char kQuickUnlockPinSalt[];
+extern const char kQuickUnlockPinSecret[];
+extern const char kEolStatus[];
+extern const char kEolNotificationDismissed[];
 #endif  // defined(OS_CHROMEOS)
 extern const char kShowHomeButton[];
 extern const char kRecentlySelectedEncoding[];
@@ -285,7 +310,7 @@ extern const char kDeleteCookies[];
 extern const char kDeletePasswords[];
 extern const char kDeleteFormData[];
 extern const char kDeleteHostedAppsData[];
-extern const char kDeauthorizeContentLicenses[];
+extern const char kDeleteMediaLicenses[];
 extern const char kEnableContinuousSpellcheck[];
 extern const char kSpeechRecognitionFilterProfanities[];
 extern const char kEnableAutoSpellCorrect[];
@@ -293,9 +318,11 @@ extern const char kSavingBrowserHistoryDisabled[];
 extern const char kAllowDeletingBrowserHistory[];
 extern const char kForceGoogleSafeSearch[];
 extern const char kForceYouTubeSafetyMode[];
-extern const char kRecordHistory[];
+extern const char kForceSessionSync[];
+extern const char kAllowedDomainsForApps[];
 extern const char kDeleteTimePeriod[];
 extern const char kLastClearBrowsingDataTime[];
+extern const char kClearBrowsingDataHistoryNoticeShownTimes[];
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 extern const char kUsesSystemTheme[];
 #endif
@@ -313,7 +340,6 @@ extern const char kPluginsPluginsList[];
 extern const char kPluginsDisabledPlugins[];
 extern const char kPluginsDisabledPluginsExceptions[];
 extern const char kPluginsEnabledPlugins[];
-extern const char kNpapiFlashMigratedToPepperFlash[];
 #if defined(ENABLE_PLUGINS)
 extern const char kPluginsShowDetails[];
 #endif
@@ -323,27 +349,19 @@ extern const char kPluginsAlwaysAuthorize[];
 extern const char kPluginsMetadata[];
 extern const char kPluginsResourceCacheUpdate[];
 #endif
-extern const char kCheckDefaultBrowser[];
+extern const char kDefaultBrowserLastDeclined[];
 extern const char kResetCheckDefaultBrowser[];
 extern const char kDefaultBrowserSettingEnabled[];
 #if defined(OS_MACOSX)
 extern const char kShowUpdatePromotionInfoBar[];
 #endif
 extern const char kUseCustomChromeFrame[];
+extern const char kBackShortcutBubbleShownCount[];
 #if defined(ENABLE_PLUGINS)
 extern const char kContentSettingsPluginWhitelist[];
 #endif
 extern const char kPartitionDefaultZoomLevel[];
 extern const char kPartitionPerHostZoomLevels[];
-extern const char kAutofillDialogAutofillDefault[];
-extern const char kAutofillDialogPayWithoutWallet[];
-extern const char kAutofillDialogWalletLocationAcceptance[];
-extern const char kAutofillDialogSaveData[];
-extern const char kAutofillDialogWalletShippingSameAsBilling[];
-extern const char kAutofillGeneratedCardBubbleTimesShown[];
-#if BUILDFLAG(ANDROID_JAVA_UI)
-extern const char kAutofillDialogDefaults[];
-#endif
 
 #if !defined(OS_ANDROID)
 extern const char kPinnedTabs[];
@@ -397,7 +415,12 @@ extern const char kFullscreenAllowed[];
 
 extern const char kLocalDiscoveryNotificationsEnabled[];
 
+#if defined(OS_ANDROID)
+extern const char kNotificationsVibrateEnabled[];
+#endif
+
 extern const char kPushMessagingAppIdentifierMap[];
+extern const char kBackgroundBudgetMap[];
 
 extern const char kEasyUnlockAllowed[];
 extern const char kEasyUnlockEnabled[];
@@ -460,6 +483,7 @@ extern const char kBrowserWindowPlacement[];
 extern const char kBrowserWindowPlacementPopup[];
 extern const char kTaskManagerWindowPlacement[];
 extern const char kTaskManagerColumnVisibility[];
+extern const char kTaskManagerEndProcessEnabled[];
 extern const char kAppWindowPlacement[];
 
 extern const char kDownloadDefaultDirectory[];
@@ -478,9 +502,6 @@ extern const char kDefaultTasksBySuffix[];
 
 extern const char kSelectFileLastDirectory[];
 
-extern const char kHungPluginDetectFrequency[];
-extern const char kPluginMessageResponseTimeout[];
-
 extern const char kSpellCheckDictionaries[];
 extern const char kSpellCheckDictionary[];
 extern const char kSpellCheckUseSpellingService[];
@@ -498,11 +519,8 @@ extern const char kShutdownNumProcessesSlow[];
 
 extern const char kRestartLastSessionOnShutdown[];
 #if !defined(OS_ANDROID)
+extern const char kSuppressUnsupportedOSWarning[];
 extern const char kWasRestarted[];
-#endif
-
-#if defined(OS_WIN)
-extern const char kRelaunchMode[];
 #endif
 
 extern const char kDisableExtensions[];
@@ -519,10 +537,6 @@ extern const char kNtpCollapsedSnapshotDocument[];
 extern const char kNtpCollapsedSyncPromo[];
 #endif
 extern const char kNtpShownPage[];
-#if BUILDFLAG(ANDROID_JAVA_UI)
-extern const char kNTPSuggestionsURL[];
-extern const char kNTPSuggestionsIsPersonal[];
-#endif
 
 extern const char kDevToolsAdbKey[];
 extern const char kDevToolsDisabled[];
@@ -561,9 +575,6 @@ extern const char kWebAppCreateInQuickLaunchBar[];
 
 extern const char kGeolocationAccessToken[];
 
-#if BUILDFLAG(ENABLE_GOOGLE_NOW)
-extern const char kGoogleGeolocationAccessEnabled[];
-#endif
 extern const char kGoogleNowLauncherEnabled[];
 
 extern const char kDefaultAudioCaptureDevice[];
@@ -689,17 +700,21 @@ extern const char kDebuggingFeaturesRequested[];
 
 #if defined(OS_CHROMEOS)
 extern const char kResolveDeviceTimezoneByGeolocation[];
+extern const char kSystemTimezoneAutomaticDetectionPolicy[];
 #endif  // defined(OS_CHROMEOS)
+
+#if defined(ENABLE_MEDIA_ROUTER)
+extern const char kEnableMediaRouter[];
+#endif  // defined(ENABLE_MEDIA_ROUTER)
 
 #if !defined(OS_ANDROID)
 extern const char kAttemptedToEnableAutoupdate[];
 
 extern const char kMediaGalleriesUniqueId[];
 extern const char kMediaGalleriesRememberedGalleries[];
-extern const char kMediaGalleriesLastScanTime[];
 #endif  // !defined(OS_ANDROID)
 
-#if defined(USE_ASH)
+#if defined(USE_AURA)
 extern const char kShelfAlignment[];
 extern const char kShelfAlignmentLocal[];
 extern const char kShelfAutoHideBehavior[];
@@ -711,9 +726,7 @@ extern const char kLogoutDialogDurationMs[];
 extern const char kPinnedLauncherApps[];
 extern const char kPolicyPinnedLauncherApps[];
 extern const char kShowLogoutButtonInTray[];
-#endif
 
-#if defined(USE_AURA)
 extern const char kMaxSeparationForGestureTouchesInPixels[];
 extern const char kSemiLongPressTimeInMs[];
 extern const char kTabScrubActivationDelayInMs[];
@@ -774,6 +787,7 @@ extern const char kPartnerBookmarkMappings[];
 #endif
 
 extern const char kQuickCheckEnabled[];
+extern const char kPacHttpsUrlStrippingEnabled[];
 extern const char kBrowserGuestModeEnabled[];
 extern const char kBrowserAddPersonEnabled[];
 
@@ -796,6 +810,7 @@ extern const char kAllowDinosaurEasterEgg[];
 
 #if defined(OS_ANDROID)
 extern const char kClickedUpdateMenuItem[];
+extern const char kLatestVersionWhenClickedUpdateMenuItem[];
 #endif
 
 #if defined(ENABLE_MEDIA_ROUTER)
@@ -805,6 +820,9 @@ extern const char kMediaRouterEnableCloudServices[];
 #endif  // defined(GOOGLE_CHROME_BUILD)
 extern const char kMediaRouterFirstRunFlowAcknowledged[];
 #endif
+
+extern const char kOriginTrialPublicKey[];
+extern const char kOriginTrialDisabledFeatures[];
 
 }  // namespace prefs
 

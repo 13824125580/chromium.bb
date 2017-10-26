@@ -27,7 +27,6 @@
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/LayoutPart.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/svg/LayoutSVGText.h"
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/SVGResourcesCache.h"
@@ -44,6 +43,7 @@ LayoutSVGRoot::LayoutSVGRoot(SVGElement* node)
     : LayoutReplaced(node)
     , m_objectBoundingBoxValid(false)
     , m_isLayoutSizeChanged(false)
+    , m_didScreenScaleFactorChange(false)
     , m_needsBoundariesOrTransformUpdate(true)
     , m_hasBoxDecorationBackground(false)
     , m_hasNonIsolatedBlendingDescendants(false)
@@ -122,7 +122,7 @@ LayoutUnit LayoutSVGRoot::computeReplacedLogicalWidth(ShouldComputePreferred sho
     return LayoutReplaced::computeReplacedLogicalWidth(shouldComputePreferred);
 }
 
-LayoutUnit LayoutSVGRoot::computeReplacedLogicalHeight() const
+LayoutUnit LayoutSVGRoot::computeReplacedLogicalHeight(LayoutUnit estimatedUsedWidth) const
 {
     // When we're embedded through SVGImage (border-image/background-image/<html:img>/...) we're forced to resize to a specific size.
     if (!m_containerSize.isEmpty())
@@ -131,7 +131,7 @@ LayoutUnit LayoutSVGRoot::computeReplacedLogicalHeight() const
     if (isEmbeddedThroughFrameContainingSVGDocument())
         return containingBlock()->availableLogicalHeight(IncludeMarginBorderPadding);
 
-    return LayoutReplaced::computeReplacedLogicalHeight();
+    return LayoutReplaced::computeReplacedLogicalHeight(estimatedUsedWidth);
 }
 
 void LayoutSVGRoot::layout()
@@ -139,32 +139,38 @@ void LayoutSVGRoot::layout()
     ASSERT(needsLayout());
     LayoutAnalyzer::Scope analyzer(*this);
 
-    bool needsLayout = selfNeedsLayout();
-
     LayoutSize oldSize = size();
     updateLogicalWidth();
     updateLogicalHeight();
+
     buildLocalToBorderBoxTransform();
+    // TODO(fs): Temporarily, needing a layout implies that the local transform
+    // has changed. This should be updated to be more precise and factor in the
+    // actual (relevant) changes to the computed user-space transform.
+    m_didScreenScaleFactorChange = selfNeedsLayout();
 
     SVGLayoutSupport::layoutResourcesIfNeeded(this);
 
     SVGSVGElement* svg = toSVGSVGElement(node());
     ASSERT(svg);
-    m_isLayoutSizeChanged = needsLayout || (svg->hasRelativeLengths() && oldSize != size());
-    SVGLayoutSupport::layoutChildren(this, needsLayout || SVGLayoutSupport::filtersForceContainerLayout(this));
+    // When hasRelativeLengths() is false, no descendants have relative lengths
+    // (hence no one is interested in viewport size changes).
+    m_isLayoutSizeChanged = svg->hasRelativeLengths() && (selfNeedsLayout() || oldSize != size());
+
+    SVGLayoutSupport::layoutChildren(firstChild(), false, m_didScreenScaleFactorChange, m_isLayoutSizeChanged);
 
     if (m_needsBoundariesOrTransformUpdate) {
         updateCachedBoundaries();
         m_needsBoundariesOrTransformUpdate = false;
     }
 
-    m_overflow.clear();
+    m_overflow.reset();
     addVisualEffectOverflow();
 
     if (!shouldApplyViewportClip()) {
-        FloatRect contentPaintInvalidationRect = paintInvalidationRectInLocalCoordinates();
+        FloatRect contentPaintInvalidationRect = paintInvalidationRectInLocalSVGCoordinates();
         contentPaintInvalidationRect = m_localToBorderBoxTransform.mapRect(contentPaintInvalidationRect);
-        addVisualOverflow(enclosingLayoutRect(contentPaintInvalidationRect));
+        addContentsVisualOverflow(enclosingLayoutRect(contentPaintInvalidationRect));
     }
 
     updateLayerTransformAfterLayout();
@@ -179,10 +185,18 @@ bool LayoutSVGRoot::shouldApplyViewportClip() const
     // the outermost svg is clipped if auto, and svg document roots are always clipped
     // When the svg is stand-alone (isDocumentElement() == true) the viewport clipping should always
     // be applied, noting that the window scrollbars should be hidden if overflow=hidden.
-    return style()->overflowX() == OHIDDEN
-        || style()->overflowX() == OAUTO
-        || style()->overflowX() == OSCROLL
+    return style()->overflowX() == OverflowHidden
+        || style()->overflowX() == OverflowAuto
+        || style()->overflowX() == OverflowScroll
         || this->isDocumentElement();
+}
+
+LayoutRect LayoutSVGRoot::visualOverflowRect() const
+{
+    LayoutRect rect = LayoutReplaced::selfVisualOverflowRect();
+    if (!shouldApplyViewportClip())
+        rect.unite(contentsVisualOverflowRect());
+    return rect;
 }
 
 void LayoutSVGRoot::paintReplaced(const PaintInfo& paintInfo, const LayoutPoint& paintOffset) const
@@ -278,13 +292,13 @@ PositionWithAffinity LayoutSVGRoot::positionForPoint(const LayoutPoint& point)
         return LayoutReplaced::positionForPoint(point);
 
     LayoutObject* layoutObject = closestDescendant;
-    AffineTransform transform = layoutObject->localToParentTransform();
+    AffineTransform transform = layoutObject->localToSVGParentTransform();
     transform.translate(toLayoutSVGText(layoutObject)->location().x(), toLayoutSVGText(layoutObject)->location().y());
     while (layoutObject) {
         layoutObject = layoutObject->parent();
         if (layoutObject->isSVGRoot())
             break;
-        transform = layoutObject->localToParentTransform() * transform;
+        transform = layoutObject->localToSVGParentTransform() * transform;
     }
 
     absolutePoint = transform.inverse().mapPoint(absolutePoint);
@@ -304,10 +318,11 @@ void LayoutSVGRoot::buildLocalToBorderBoxTransform()
     m_localToBorderBoxTransform = svg->viewBoxToViewTransform(contentWidth() / scale, contentHeight() / scale);
 
     AffineTransform viewToBorderBoxTransform(scale, 0, 0, scale, borderAndPadding.width() + translate.x(), borderAndPadding.height() + translate.y());
+    viewToBorderBoxTransform.scale(svg->currentScale());
     m_localToBorderBoxTransform.preMultiply(viewToBorderBoxTransform);
 }
 
-const AffineTransform& LayoutSVGRoot::localToParentTransform() const
+const AffineTransform& LayoutSVGRoot::localToSVGParentTransform() const
 {
     // Slightly optimized version of m_localToParentTransform = AffineTransform::translation(x(), y()) * m_localToBorderBoxTransform;
     m_localToParentTransform = m_localToBorderBoxTransform;
@@ -318,19 +333,19 @@ const AffineTransform& LayoutSVGRoot::localToParentTransform() const
     return m_localToParentTransform;
 }
 
-LayoutRect LayoutSVGRoot::clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* paintInvalidationState) const
+LayoutRect LayoutSVGRoot::localOverflowRectForPaintInvalidation() const
 {
-    // This is an open-coded aggregate of SVGLayoutSupport::clippedOverflowRectForPaintInvalidation,
-    // LayoutSVGRoot::mapToVisibleRectInAncestorSpace and LayoutReplaced::clippedOverflowRectForPaintInvalidation.
+    // This is an open-coded aggregate of SVGLayoutSupport::localOverflowRectForPaintInvalidation,
+    // and LayoutReplaced::localOverflowRectForPaintInvalidation.
     // The reason for this is to optimize/minimize the paint invalidation rect when the box is not "decorated"
-    // (does not have background/border/etc.)
+    // (does not have background/border/etc., see LayoutSVGRootTest.OverflowRectMappingWithViewportClipWithoutBorder).
 
     // Return early for any cases where we don't actually paint.
     if (style()->visibility() != VISIBLE && !enclosingLayer()->hasVisibleContent())
         return LayoutRect();
 
     // Compute the paint invalidation rect of the content of the SVG in the border-box coordinate space.
-    FloatRect contentPaintInvalidationRect = paintInvalidationRectInLocalCoordinates();
+    FloatRect contentPaintInvalidationRect = paintInvalidationRectInLocalSVGCoordinates();
     contentPaintInvalidationRect = m_localToBorderBoxTransform.mapRect(contentPaintInvalidationRect);
 
     // Apply initial viewport clip, overflow:visible content is added to visualOverflow
@@ -346,32 +361,15 @@ LayoutRect LayoutSVGRoot::clippedOverflowRectForPaintInvalidation(const LayoutBo
         paintInvalidationRect.unite(decoratedPaintInvalidationRect);
     }
 
-    // Compute the paint invalidation rect in the parent coordinate space.
-    LayoutRect rect(enclosingIntRect(paintInvalidationRect));
-    LayoutReplaced::mapToVisibleRectInAncestorSpace(paintInvalidationContainer, rect, paintInvalidationState);
-    return rect;
-}
-
-void LayoutSVGRoot::mapToVisibleRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect& rect, const PaintInvalidationState* paintInvalidationState) const
-{
-    // Note that we don't apply the border-box transform here - it's assumed
-    // that whoever called us has done that already.
-
-    // Apply initial viewport clip
-    if (shouldApplyViewportClip())
-        rect.intersect(LayoutRect(pixelSnappedBorderBoxRect()));
-
-    LayoutReplaced::mapToVisibleRectInAncestorSpace(ancestor, rect, paintInvalidationState);
+    return LayoutRect(enclosingIntRect(paintInvalidationRect));
 }
 
 // This method expects local CSS box coordinates.
 // Callers with local SVG viewport coordinates should first apply the localToBorderBoxTransform
 // to convert from SVG viewport coordinates to local CSS box coordinates.
-void LayoutSVGRoot::mapLocalToAncestor(const LayoutBoxModelObject* ancestor, TransformState& transformState, MapCoordinatesFlags mode, bool* wasFixed, const PaintInvalidationState* paintInvalidationState) const
+void LayoutSVGRoot::mapLocalToAncestor(const LayoutBoxModelObject* ancestor, TransformState& transformState, MapCoordinatesFlags mode) const
 {
-    ASSERT(!(mode & IsFixed)); // We should have no fixed content in the SVG layout tree.
-
-    LayoutReplaced::mapLocalToAncestor(ancestor, transformState, mode | ApplyContainerFlip, wasFixed, paintInvalidationState);
+    LayoutReplaced::mapLocalToAncestor(ancestor, transformState, mode | ApplyContainerFlip);
 }
 
 const LayoutObject* LayoutSVGRoot::pushMappingToContainer(const LayoutBoxModelObject* ancestorToStopAt, LayoutGeometryMap& geometryMap) const
@@ -394,7 +392,7 @@ bool LayoutSVGRoot::nodeAtPoint(HitTestResult& result, const HitTestLocation& lo
     // don't clip to the viewport, the visual overflow rect.
     // FIXME: This should be an intersection when rect-based hit tests are supported by nodeAtFloatPoint.
     if (contentBoxRect().contains(pointInBorderBox) || (!shouldApplyViewportClip() && visualOverflowRect().contains(pointInBorderBox))) {
-        const AffineTransform& localToParentTransform = this->localToParentTransform();
+        const AffineTransform& localToParentTransform = this->localToSVGParentTransform();
         if (localToParentTransform.isInvertible()) {
             FloatPoint localPoint = localToParentTransform.inverse().mapPoint(FloatPoint(pointInParent));
 

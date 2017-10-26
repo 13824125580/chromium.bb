@@ -41,7 +41,7 @@ enum SVGTransformType {
     SVG_TRANSFORM_SKEWY = 6
 };
 
-class SVGTransform : public SVGPropertyBase {
+class SVGTransform final : public SVGPropertyBase {
 public:
     typedef SVGTransformTearOff TearOffType;
 
@@ -50,25 +50,25 @@ public:
         ConstructZeroTransform
     };
 
-    static PassRefPtrWillBeRawPtr<SVGTransform> create()
+    static SVGTransform* create()
     {
-        return adoptRefWillBeNoop(new SVGTransform());
+        return new SVGTransform();
     }
 
-    static PassRefPtrWillBeRawPtr<SVGTransform> create(SVGTransformType type, ConstructionMode mode = ConstructIdentityTransform)
+    static SVGTransform* create(SVGTransformType type, ConstructionMode mode = ConstructIdentityTransform)
     {
-        return adoptRefWillBeNoop(new SVGTransform(type, mode));
+        return new SVGTransform(type, mode);
     }
 
-    static PassRefPtrWillBeRawPtr<SVGTransform> create(const AffineTransform& affineTransform)
+    static SVGTransform* create(const AffineTransform& affineTransform)
     {
-        return adoptRefWillBeNoop(new SVGTransform(affineTransform));
+        return new SVGTransform(affineTransform);
     }
 
     ~SVGTransform() override;
 
-    PassRefPtrWillBeRawPtr<SVGTransform> clone() const;
-    PassRefPtrWillBeRawPtr<SVGPropertyBase> cloneForAnimation(const String&) const override;
+    SVGTransform* clone() const;
+    SVGPropertyBase* cloneForAnimation(const String&) const override;
 
     SVGTransformType transformType() const { return m_transformType; }
 
@@ -94,11 +94,12 @@ public:
 
     String valueAsString() const override;
 
-    void add(PassRefPtrWillBeRawPtr<SVGPropertyBase>, SVGElement*) override;
-    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> from, PassRefPtrWillBeRawPtr<SVGPropertyBase> to, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDurationValue, SVGElement* contextElement) override;
-    float calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> to, SVGElement* contextElement) override;
+    void add(SVGPropertyBase*, SVGElement*) override;
+    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, SVGPropertyBase* from, SVGPropertyBase* to, SVGPropertyBase* toAtEndOfDurationValue, SVGElement* contextElement) override;
+    float calculateDistance(SVGPropertyBase* to, SVGElement* contextElement) override;
 
     static AnimatedPropertyType classType() { return AnimatedTransform; }
+    AnimatedPropertyType type() const override { return classType(); }
 
 private:
     SVGTransform();

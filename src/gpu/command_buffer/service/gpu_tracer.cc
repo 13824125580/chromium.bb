@@ -14,7 +14,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -42,6 +42,8 @@ TraceMarker::TraceMarker(const std::string& category, const std::string& name)
       name_(name),
       trace_(NULL) {
 }
+
+TraceMarker::TraceMarker(const TraceMarker& other) = default;
 
 TraceMarker::~TraceMarker() {
 }
@@ -123,7 +125,7 @@ void TraceOutputter::TraceServiceEnd(GpuTracerSource source,
 }
 
 GPUTrace::GPUTrace(scoped_refptr<Outputter> outputter,
-                   gfx::GPUTimingClient* gpu_timing_client,
+                   gl::GPUTimingClient* gpu_timing_client,
                    const GpuTracerSource source,
                    const std::string& category,
                    const std::string& name,
@@ -188,11 +190,11 @@ GPUTracer::GPUTracer(gles2::GLES2Decoder* decoder)
           TRACE_DISABLED_BY_DEFAULT("gpu.device"))),
       decoder_(decoder) {
   DCHECK(decoder_);
-  gfx::GLContext* context = decoder_->GetGLContext();
+  gl::GLContext* context = decoder_->GetGLContext();
   if (context) {
     gpu_timing_client_ = context->CreateGPUTimingClient();
   } else {
-    gpu_timing_client_ = new gfx::GPUTimingClient();
+    gpu_timing_client_ = new gl::GPUTimingClient();
   }
 
   disjoint_time_ = gpu_timing_client_->GetCurrentCPUTime();

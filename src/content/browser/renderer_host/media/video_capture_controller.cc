@@ -12,15 +12,16 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
+#include "components/display_compositor/gl_helper.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_buffer_pool.h"
 #include "content/browser/renderer_host/media/video_capture_device_client.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
-#include "content/common/gpu/client/gl_helper.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "media/base/video_frame.h"
@@ -46,7 +47,8 @@ static const int kInfiniteRatio = 99999;
 
 class SyncTokenClientImpl : public VideoFrame::SyncTokenClient {
  public:
-  explicit SyncTokenClientImpl(GLHelper* gl_helper) : gl_helper_(gl_helper) {}
+  explicit SyncTokenClientImpl(display_compositor::GLHelper* gl_helper)
+      : gl_helper_(gl_helper) {}
   ~SyncTokenClientImpl() override {}
   void GenerateSyncToken(gpu::SyncToken* sync_token) override {
     gl_helper_->GenerateSyncToken(sync_token);
@@ -56,7 +58,7 @@ class SyncTokenClientImpl : public VideoFrame::SyncTokenClient {
   }
 
  private:
-  GLHelper* gl_helper_;
+  display_compositor::GLHelper* gl_helper_;
 };
 
 void ReturnVideoFrame(const scoped_refptr<VideoFrame>& video_frame,
@@ -65,7 +67,8 @@ void ReturnVideoFrame(const scoped_refptr<VideoFrame>& video_frame,
 #if defined(OS_ANDROID)
   NOTREACHED();
 #else
-  GLHelper* gl_helper = ImageTransportFactory::GetInstance()->GetGLHelper();
+  display_compositor::GLHelper* gl_helper =
+      ImageTransportFactory::GetInstance()->GetGLHelper();
   // UpdateReleaseSyncToken() creates a new sync_token using |gl_helper|, so
   // wait the given |sync_token| using |gl_helper|.
   if (gl_helper) {
@@ -141,10 +144,10 @@ VideoCaptureController::GetWeakPtrForIOThread() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-scoped_ptr<media::VideoCaptureDevice::Client>
+std::unique_ptr<media::VideoCaptureDevice::Client>
 VideoCaptureController::NewDeviceClient() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return make_scoped_ptr(new VideoCaptureDeviceClient(
+  return base::WrapUnique(new VideoCaptureDeviceClient(
       this->GetWeakPtrForIOThread(), buffer_pool_));
 }
 
@@ -260,14 +263,22 @@ int VideoCaptureController::GetClientCount() const {
   return controller_clients_.size();
 }
 
-int VideoCaptureController::GetActiveClientCount() const {
+bool VideoCaptureController::HasActiveClient() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  int active_client_count = 0;
   for (ControllerClient* client : controller_clients_) {
     if (!client->paused)
-      ++active_client_count;
+      return true;
   }
-  return active_client_count;
+  return false;
+}
+
+bool VideoCaptureController::HasPausedClient() const {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  for (ControllerClient* client : controller_clients_) {
+    if (client->paused)
+      return true;
+  }
+  return false;
 }
 
 void VideoCaptureController::StopSession(int session_id) {
@@ -344,9 +355,8 @@ VideoCaptureController::~VideoCaptureController() {
 }
 
 void VideoCaptureController::DoIncomingCapturedVideoFrameOnIOThread(
-    scoped_ptr<media::VideoCaptureDevice::Client::Buffer> buffer,
-    const scoped_refptr<VideoFrame>& frame,
-    const base::TimeTicks& timestamp) {
+    std::unique_ptr<media::VideoCaptureDevice::Client::Buffer> buffer,
+    const scoped_refptr<VideoFrame>& frame) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   const int buffer_id = buffer->id();
   DCHECK_NE(buffer_id, VideoCaptureBufferPool::kInvalidId);
@@ -357,7 +367,8 @@ void VideoCaptureController::DoIncomingCapturedVideoFrameOnIOThread(
       frame->metadata()->SetDouble(VideoFrameMetadata::FRAME_RATE,
                                    video_capture_format_.frame_rate);
     }
-    scoped_ptr<base::DictionaryValue> metadata(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> metadata(
+        new base::DictionaryValue());
     frame->metadata()->MergeInternalValuesInto(metadata.get());
 
     // Only I420 pixel format is currently supported.
@@ -384,10 +395,8 @@ void VideoCaptureController::DoIncomingCapturedVideoFrameOnIOThread(
       if (is_new_buffer)
         DoNewBufferOnIOThread(client, buffer.get(), frame);
 
-      client->event_handler->OnBufferReady(client->controller_id,
-                                           buffer_id,
-                                           frame,
-                                           timestamp);
+      client->event_handler->OnBufferReady(client->controller_id, buffer_id,
+                                           frame);
       const bool inserted =
           client->active_buffers.insert(std::make_pair(buffer_id, frame))
               .second;

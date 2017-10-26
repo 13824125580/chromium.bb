@@ -17,10 +17,17 @@ namespace features {
 // All features in alphabetical order. The features should be documented
 // alongside the definition of their values in the .cc file.
 
+extern const base::Feature kAffiliationBasedMatching;
+extern const base::Feature kDropSyncCredential;
 extern const base::Feature kEnableAutomaticPasswordSaving;
 extern const base::Feature kEnableManualPasswordGeneration;
 extern const base::Feature kEnablePasswordChangeSupport;
 extern const base::Feature kEnablePasswordForceSaving;
+extern const base::Feature kProtectSyncCredential;
+extern const base::Feature kProtectSyncCredentialOnReauth;
+extern const base::Feature kPasswordImportExport;
+extern const base::Feature kViewPasswords;
+extern const base::Feature kFillOnAccountSelect;
 
 }  // namespace features
 

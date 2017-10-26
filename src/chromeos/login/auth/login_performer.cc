@@ -5,13 +5,15 @@
 #include "chromeos/login/auth/login_performer.h"
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/login/user_names.h"
@@ -81,7 +83,7 @@ void LoginPerformer::OnAuthSuccess(const UserContext& user_context) {
   DCHECK(delegate_);
   // After delegate_->OnAuthSuccess(...) is called, delegate_ releases
   // LoginPerformer ownership. LP now manages it's lifetime on its own.
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
   delegate_->OnAuthSuccess(user_context);
 }
 
@@ -228,14 +230,13 @@ void LoginPerformer::LoginOffTheRecord() {
       base::Bind(&Authenticator::LoginOffTheRecord, authenticator_.get()));
 }
 
-void LoginPerformer::LoginAsKioskAccount(const std::string& app_user_id,
+void LoginPerformer::LoginAsKioskAccount(const AccountId& app_account_id,
                                          bool use_guest_mount) {
   EnsureAuthenticator();
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&Authenticator::LoginAsKioskAccount,
-                                    authenticator_.get(),
-                                    app_user_id,
-                                    use_guest_mount));
+  task_runner_->PostTask(
+      FROM_HERE,
+      base::Bind(&Authenticator::LoginAsKioskAccount, authenticator_.get(),
+                 app_account_id, use_guest_mount));
 }
 
 void LoginPerformer::RecoverEncryptedData(const std::string& old_password) {

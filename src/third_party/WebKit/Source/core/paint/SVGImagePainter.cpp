@@ -7,13 +7,12 @@
 #include "core/layout/ImageQualityController.h"
 #include "core/layout/LayoutImageResource.h"
 #include "core/layout/svg/LayoutSVGImage.h"
-#include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
 #include "core/paint/ObjectPainter.h"
 #include "core/paint/PaintInfo.h"
 #include "core/paint/SVGPaintContext.h"
-#include "core/paint/TransformRecorder.h"
 #include "core/svg/SVGImageElement.h"
+#include "core/svg/graphics/SVGImage.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "third_party/skia/include/core/SkPicture.h"
 
@@ -22,21 +21,21 @@ namespace blink {
 void SVGImagePainter::paint(const PaintInfo& paintInfo)
 {
     if (paintInfo.phase != PaintPhaseForeground
-        || m_layoutSVGImage.style()->visibility() == HIDDEN
+        || m_layoutSVGImage.style()->visibility() != VISIBLE
         || !m_layoutSVGImage.imageResource()->hasImage())
         return;
 
-    FloatRect boundingBox = m_layoutSVGImage.paintInvalidationRectInLocalCoordinates();
-    if (!paintInfo.cullRect().intersectsCullRect(m_layoutSVGImage.localToParentTransform(), boundingBox))
+    FloatRect boundingBox = m_layoutSVGImage.paintInvalidationRectInLocalSVGCoordinates();
+    if (!paintInfo.cullRect().intersectsCullRect(m_layoutSVGImage.localToSVGParentTransform(), boundingBox))
         return;
 
     PaintInfo paintInfoBeforeFiltering(paintInfo);
     // Images cannot have children so do not call updateCullRect.
-    TransformRecorder transformRecorder(paintInfoBeforeFiltering.context, m_layoutSVGImage, m_layoutSVGImage.localToParentTransform());
+    SVGTransformContext transformContext(paintInfoBeforeFiltering.context, m_layoutSVGImage, m_layoutSVGImage.localToSVGParentTransform());
     {
         SVGPaintContext paintContext(m_layoutSVGImage, paintInfoBeforeFiltering);
-        if (paintContext.applyClipMaskAndFilterIfNecessary() && !LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintContext.paintInfo().context, m_layoutSVGImage, paintContext.paintInfo().phase, LayoutPoint())) {
-            LayoutObjectDrawingRecorder recorder(paintContext.paintInfo().context, m_layoutSVGImage, paintContext.paintInfo().phase, boundingBox, LayoutPoint());
+        if (paintContext.applyClipMaskAndFilterIfNecessary() && !LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintContext.paintInfo().context, m_layoutSVGImage, paintContext.paintInfo().phase)) {
+            LayoutObjectDrawingRecorder recorder(paintContext.paintInfo().context, m_layoutSVGImage, paintContext.paintInfo().phase, boundingBox);
             paintForeground(paintContext.paintInfo());
         }
     }
@@ -67,7 +66,7 @@ void SVGImagePainter::paintForeground(const PaintInfo& paintInfo)
 
     InterpolationQuality previousInterpolationQuality = paintInfo.context.imageInterpolationQuality();
     paintInfo.context.setImageInterpolationQuality(interpolationQuality);
-    paintInfo.context.drawImage(image.get(), destRect, srcRect, SkXfermode::kSrcOver_Mode);
+    paintInfo.context.drawImage(image.get(), destRect, &srcRect);
     paintInfo.context.setImageInterpolationQuality(previousInterpolationQuality);
 }
 
@@ -80,14 +79,20 @@ FloatSize SVGImagePainter::computeImageViewportSize() const
 
     ImageResource* cachedImage = m_layoutSVGImage.imageResource()->cachedImage();
 
-    // Images with preserveAspectRatio=none should force non-uniform
-    // scaling. This can be achieved by setting the image's container size to
-    // its viewport size (i.e. if a viewBox is available - use that - else use intrinsic size.)
-    // See: http://www.w3.org/TR/SVG/single-page.html, 7.8 The 'preserveAspectRatio' attribute.
-    FloatSize intrinsicSize;
-    FloatSize intrinsicRatio;
-    cachedImage->computeIntrinsicDimensions(intrinsicSize, intrinsicRatio);
-    return intrinsicRatio;
+    // Images with preserveAspectRatio=none should force non-uniform scaling. This can be achieved
+    // by setting the image's container size to its viewport size (i.e. concrete object size
+    // returned by the default sizing algorithm.)  See
+    // https://www.w3.org/TR/SVG/single-page.html#coords-PreserveAspectRatioAttribute and
+    // https://drafts.csswg.org/css-images-3/#default-sizing.
+
+    // Avoid returning the size of the broken image.
+    if (cachedImage->errorOccurred())
+        return FloatSize();
+
+    if (cachedImage->getImage()->isSVGImage())
+        return toSVGImage(cachedImage->getImage())->concreteObjectSize(m_layoutSVGImage.objectBoundingBox().size());
+
+    return FloatSize(cachedImage->getImage()->size());
 }
 
 } // namespace blink

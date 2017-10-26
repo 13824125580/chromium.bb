@@ -9,18 +9,18 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/signin/core/account_id/account_id.h"
@@ -57,7 +57,8 @@ class WALLPAPER_EXPORT MovableOnDestroyCallback {
   base::Closure callback_;
 };
 
-typedef scoped_ptr<MovableOnDestroyCallback> MovableOnDestroyCallbackHolder;
+using MovableOnDestroyCallbackHolder =
+    std::unique_ptr<MovableOnDestroyCallback>;
 
 struct WALLPAPER_EXPORT WallpaperInfo {
   WallpaperInfo();
@@ -68,7 +69,7 @@ struct WALLPAPER_EXPORT WallpaperInfo {
   ~WallpaperInfo();
 
   // Either file name of migrated wallpaper including first directory level
-  // (corresponding to user id hash) or online wallpaper URL.
+  // (corresponding to user wallpaper_files_id) or online wallpaper URL.
   std::string location;
   WallpaperLayout layout;
   user_manager::User::WallpaperType type;
@@ -118,6 +119,8 @@ WALLPAPER_EXPORT extern const char kUserWallpapers[];
 
 // A dictionary pref that maps usernames to wallpaper properties.
 WALLPAPER_EXPORT extern const char kUserWallpapersProperties[];
+
+class WallpaperFilesId;
 
 // This singleton class maintains wallpapers for users.
 class WALLPAPER_EXPORT WallpaperManagerBase {
@@ -224,11 +227,13 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
                                      int preferred_height,
                                      gfx::ImageSkia* output_skia);
 
-  // Returns custom wallpaper path. Append |sub_dir|, |user_id_hash| and |file|
+  // Returns custom wallpaper path. Append |sub_dir|, |wallpaper_files_id| and
+  // |file|
   // to custom wallpaper directory.
-  static base::FilePath GetCustomWallpaperPath(const char* sub_dir,
-                                               const std::string& user_id_hash,
-                                               const std::string& file);
+  static base::FilePath GetCustomWallpaperPath(
+      const char* sub_dir,
+      const WallpaperFilesId& wallpaper_files_id,
+      const std::string& file);
 
   WallpaperManagerBase();
   virtual ~WallpaperManagerBase();
@@ -260,7 +265,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
   // local state preferences. If |update_wallpaper| is false, don't change
   // wallpaper but only update cache.
   virtual void SetCustomWallpaper(const AccountId& account_id,
-                                  const std::string& user_id_hash,
+                                  const WallpaperFilesId& wallpaper_files_id,
                                   const std::string& file,
                                   WallpaperLayout layout,
                                   user_manager::User::WallpaperType type,
@@ -274,9 +279,9 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
   // |large_wallpaper_image| depending on GetAppropriateResolution().
   virtual void SetDefaultWallpaperPath(
       const base::FilePath& customized_default_wallpaper_file_small,
-      scoped_ptr<gfx::ImageSkia> small_wallpaper_image,
+      std::unique_ptr<gfx::ImageSkia> small_wallpaper_image,
       const base::FilePath& customized_default_wallpaper_file_large,
-      scoped_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
+      std::unique_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
 
   // Sets wallpaper to default wallpaper (asynchronously with zero delay).
   virtual void SetDefaultWallpaperNow(const AccountId& account_id) = 0;
@@ -329,7 +334,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
   // of the JPEG |data| with a callback to SetPolicyControlledWallpaper().
   virtual void OnPolicyFetched(const std::string& policy,
                                const AccountId& account_id,
-                               scoped_ptr<std::string> data) = 0;
+                               std::unique_ptr<std::string> data) = 0;
 
   // This is called from CustomizationDocument.
   // |resized_directory| is the directory where resized versions are stored and
@@ -341,6 +346,9 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
 
   // Returns queue size.
   virtual size_t GetPendingListSizeForTesting() const = 0;
+
+  // Ruturns files identifier for the |account_id|.
+  virtual WallpaperFilesId GetFilesId(const AccountId& account_id) const = 0;
 
  protected:
   friend class TestApi;
@@ -356,16 +364,16 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
 
   // Saves original custom wallpaper to |path| (absolute path) on filesystem
   // and starts resizing operation of the custom wallpaper if necessary.
-  static void SaveCustomWallpaper(const std::string& user_id_hash,
+  static void SaveCustomWallpaper(const WallpaperFilesId& wallpaper_files_id,
                                   const base::FilePath& path,
                                   WallpaperLayout layout,
-                                  scoped_ptr<gfx::ImageSkia> image);
+                                  std::unique_ptr<gfx::ImageSkia> image);
 
-  // Moves custom wallpapers from user email directory to |user_id_hash|
-  // directory.
+  // Moves custom wallpapers from user email directory to
+  // |wallpaper_files_id| directory.
   static void MoveCustomWallpapersOnWorker(
       const AccountId& account_id,
-      const std::string& user_id_hash,
+      const WallpaperFilesId& wallpaper_files_id,
       const scoped_refptr<base::SingleThreadTaskRunner>& reply_task_runner,
       base::WeakPtr<WallpaperManagerBase> weak_ptr);
 
@@ -383,8 +391,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
 
   // Resize and save customized default wallpaper.
   static void ResizeCustomizedDefaultWallpaper(
-      scoped_ptr<gfx::ImageSkia> image,
-      const user_manager::UserImage::RawImage& raw_image,
+      std::unique_ptr<gfx::ImageSkia> image,
       const CustomizedWallpaperRescaledFiles* rescaled_files,
       bool* success,
       gfx::ImageSkia* small_wallpaper_image,
@@ -445,14 +452,14 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
 
   // Called when the original custom wallpaper is moved to the new place.
   // Updates the corresponding user wallpaper info.
-  virtual void MoveCustomWallpapersSuccess(const AccountId& account_id,
-                                           const std::string& user_id_hash);
+  virtual void MoveCustomWallpapersSuccess(
+      const AccountId& account_id,
+      const wallpaper::WallpaperFilesId& wallpaper_files_id);
 
   // Moves custom wallpaper to a new place. Email address was used as directory
   // name in the old system, this is not safe. New directory system uses
-  // user_id_hash instead of account_id. This must be called after user_id_hash
-  // is
-  // ready.
+  // wallpaper_files_id instead of e-mail. This must be called after
+  // wallpaper_files_id is ready.
   virtual void MoveLoggedInUserCustomWallpaper();
 
   // Gets wallpaper information of |account_id| from Local State or memory.
@@ -469,7 +476,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
       WallpaperLayout layout,
       bool update_wallpaper,
       MovableOnDestroyCallbackHolder on_finish,
-      const user_manager::UserImage& user_image) = 0;
+      std::unique_ptr<user_manager::UserImage> user_image) = 0;
 
   // Creates new PendingWallpaper request (or updates currently pending).
   virtual void ScheduleSetUserWallpaper(const AccountId& account_id,
@@ -505,22 +512,22 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
   virtual void SetCustomizedDefaultWallpaperAfterCheck(
       const GURL& wallpaper_url,
       const base::FilePath& downloaded_file,
-      scoped_ptr<CustomizedWallpaperRescaledFiles> rescaled_files) = 0;
+      std::unique_ptr<CustomizedWallpaperRescaledFiles> rescaled_files) = 0;
 
   // Starts rescaling of customized wallpaper.
   virtual void OnCustomizedDefaultWallpaperDecoded(
       const GURL& wallpaper_url,
-      scoped_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
-      const user_manager::UserImage& user_image);
+      std::unique_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
+      std::unique_ptr<user_manager::UserImage> user_image);
 
   // Check the result of ResizeCustomizedDefaultWallpaper and finally
   // apply Customized Default Wallpaper.
   virtual void OnCustomizedDefaultWallpaperResized(
       const GURL& wallpaper_url,
-      scoped_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
-      scoped_ptr<bool> success,
-      scoped_ptr<gfx::ImageSkia> small_wallpaper_image,
-      scoped_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
+      std::unique_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
+      std::unique_ptr<bool> success,
+      std::unique_ptr<gfx::ImageSkia> small_wallpaper_image,
+      std::unique_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
 
   // Init |*default_*_wallpaper_file_| from given command line and
   // clear |default_wallpaper_image_|.
@@ -531,16 +538,16 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
   virtual void OnDefaultWallpaperDecoded(
       const base::FilePath& path,
       const WallpaperLayout layout,
-      scoped_ptr<user_manager::UserImage>* result,
+      std::unique_ptr<user_manager::UserImage>* result,
       MovableOnDestroyCallbackHolder on_finish,
-      const user_manager::UserImage& user_image) = 0;
+      std::unique_ptr<user_manager::UserImage> user_image) = 0;
 
   // Start decoding given default wallpaper.
   virtual void StartLoadAndSetDefaultWallpaper(
       const base::FilePath& path,
       const WallpaperLayout layout,
       MovableOnDestroyCallbackHolder on_finish,
-      scoped_ptr<user_manager::UserImage>* result_out) = 0;
+      std::unique_ptr<user_manager::UserImage>* result_out) = 0;
 
   // Returns wallpaper subdirectory name for current resolution.
   virtual const char* GetCustomWallpaperSubdirForCurrentResolution();
@@ -593,7 +600,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase {
   base::FilePath child_large_wallpaper_file_;
 
   // Current decoded default image is stored in cache.
-  scoped_ptr<user_manager::UserImage> default_wallpaper_image_;
+  std::unique_ptr<user_manager::UserImage> default_wallpaper_image_;
 
   base::WeakPtrFactory<WallpaperManagerBase> weak_factory_;
 

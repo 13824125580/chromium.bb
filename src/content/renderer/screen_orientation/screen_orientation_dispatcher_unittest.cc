@@ -5,9 +5,10 @@
 #include "content/renderer/screen_orientation/screen_orientation_dispatcher.h"
 
 #include <list>
+#include <memory>
+#include <tuple>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/screen_orientation_messages.h"
 #include "content/public/test/test_utils.h"
 #include "ipc/ipc_test_sink.h"
@@ -72,9 +73,9 @@ class ScreenOrientationDispatcherTest : public testing::Test {
         ScreenOrientationHostMsg_LockRequest::ID);
     EXPECT_TRUE(msg != NULL);
 
-    base::Tuple<blink::WebScreenOrientationLockType, int> params;
+    std::tuple<blink::WebScreenOrientationLockType, int> params;
     ScreenOrientationHostMsg_LockRequest::Read(msg, &params);
-    return base::get<1>(params);
+    return std::get<1>(params);
   }
 
   IPC::TestSink& sink() {
@@ -100,7 +101,7 @@ class ScreenOrientationDispatcherTest : public testing::Test {
   }
 
   IPC::TestSink sink_;
-  scoped_ptr<ScreenOrientationDispatcher> dispatcher_;
+  std::unique_ptr<ScreenOrientationDispatcher> dispatcher_;
 };
 
 // Test that calling lockOrientation() followed by unlockOrientation() cancel

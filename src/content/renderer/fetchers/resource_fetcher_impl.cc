@@ -69,15 +69,15 @@ void ResourceFetcherImpl::SetHeader(const std::string& header,
   }
 }
 
-void ResourceFetcherImpl::SetSkipServiceWorker(bool skip_service_worker) {
+void ResourceFetcherImpl::SetSkipServiceWorker(
+    blink::WebURLRequest::SkipServiceWorker skip_service_worker) {
   DCHECK(!request_.isNull());
   DCHECK(!loader_);
 
   request_.setSkipServiceWorker(skip_service_worker);
 }
 
-void ResourceFetcherImpl::SetCachePolicy(
-    blink::WebURLRequest::CachePolicy policy) {
+void ResourceFetcherImpl::SetCachePolicy(blink::WebCachePolicy policy) {
   DCHECK(!request_.isNull());
   DCHECK(!loader_);
 

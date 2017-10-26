@@ -5,30 +5,32 @@
 #ifndef COMPONENTS_OFFLINE_PAGES_OFFLINE_PAGE_FEATURE_H_
 #define COMPONENTS_OFFLINE_PAGES_OFFLINE_PAGE_FEATURE_H_
 
+#include "base/feature_list.h"
 #include "build/build_config.h"
-
-#if defined(OS_ANDROID)
 
 namespace offline_pages {
 
-// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.offlinepages
-enum class FeatureMode {
-  // Offline pages feature is disabled.
-  DISABLED,
-  // Offline pages feature is enabled, showing bookmarks in UI strings.
-  ENABLED_AS_BOOKMARKS,
-  // Offline pages feature is enabled, showing saved pages in UI strings.
-  ENABLED_AS_SAVED_PAGES
-};
+extern const base::Feature kOfflineBookmarksFeature;
+extern const base::Feature kOffliningRecentPagesFeature;
+extern const base::Feature kOfflinePagesBackgroundLoadingFeature;
+extern const base::Feature kOfflinePagesCTFeature;
 
-// Returns the mode where Offline Pages feature is running.
-FeatureMode GetOfflinePageFeatureMode();
-
-// Returns true if offline pages is enabled.
+// Returns true if offline pages, as result of one or more offline features
+// being enabled, is enabled.
 bool IsOfflinePagesEnabled();
 
-}  // namespace offline_pages
+// Returns true if saving bookmarked pages for offline viewing is enabled.
+bool IsOfflineBookmarksEnabled();
 
-#endif  // defined(OS_ANDROID)
+// Returns true if offlining of recent pages (aka 'Last N pages') is enabled.
+bool IsOffliningRecentPagesEnabled();
+
+// Returns true if saving offline pages in the background is enabled.
+bool IsOfflinePagesBackgroundLoadingEnabled();
+
+// Returns true if offline CT features are enabled.  See crbug.com/620421.
+bool IsOfflinePagesCTEnabled();
+
+}  // namespace offline_pages
 
 #endif  // COMPONENTS_OFFLINE_PAGES_OFFLINE_PAGE_FEATURE_H_

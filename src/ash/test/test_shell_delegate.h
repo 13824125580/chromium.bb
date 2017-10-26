@@ -5,15 +5,19 @@
 #ifndef ASH_TEST_TEST_SHELL_DELEGATE_H_
 #define ASH_TEST_TEST_SHELL_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
-#include "ash/media_delegate.h"
+#include "ash/common/media_delegate.h"
 #include "ash/shell_delegate.h"
 #include "ash/test/test_session_state_delegate.h"
-#include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
+
+namespace app_list {
+class AppListPresenterDelegateFactory;
+class AppListPresenterImpl;
+}
 
 namespace keyboard {
 class KeyboardUI;
@@ -36,7 +40,7 @@ class TestShellDelegate : public ShellDelegate {
   bool IsIncognitoAllowed() const override;
   bool IsMultiProfilesEnabled() const override;
   bool IsRunningInForcedAppMode() const override;
-  bool CanShowWindowForUser(aura::Window* window) const override;
+  bool CanShowWindowForUser(WmWindow* window) const override;
   bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
@@ -47,7 +51,8 @@ class TestShellDelegate : public ShellDelegate {
       VirtualKeyboardStateObserver* observer) override;
   void RemoveVirtualKeyboardStateObserver(
       VirtualKeyboardStateObserver* observer) override;
-  app_list::AppListViewDelegate* GetAppListViewDelegate() override;
+  void OpenUrlFromArc(const GURL& url) override;
+  app_list::AppListPresenter* GetAppListPresenter() override;
   ShelfDelegate* CreateShelfDelegate(ShelfModel* model) override;
   SystemTrayDelegate* CreateSystemTrayDelegate() override;
   UserWallpaperDelegate* CreateUserWallpaperDelegate() override;
@@ -55,14 +60,19 @@ class TestShellDelegate : public ShellDelegate {
   AccessibilityDelegate* CreateAccessibilityDelegate() override;
   NewWindowDelegate* CreateNewWindowDelegate() override;
   MediaDelegate* CreateMediaDelegate() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root,
-                                   ash::ShelfItemDelegate* item_delegate,
-                                   ash::ShelfItem* item) override;
+  std::unique_ptr<PointerWatcherDelegate> CreatePointerWatcherDelegate()
+      override;
+  ui::MenuModel* CreateContextMenu(WmShelf* wm_shelf,
+                                   const ShelfItem* item) override;
   GPUSupport* CreateGPUSupport() override;
   base::string16 GetProductName() const override;
   gfx::Image GetDeprecatedAcceleratorImage() const override;
 
   int num_exit_requests() const { return num_exit_requests_; }
+
+  app_list::AppListPresenterImpl* app_list_presenter() {
+    return app_list_presenter_.get();
+  }
 
   void SetMediaCaptureState(MediaCaptureState state);
   void SetForceMaximizeOnFirstRun(bool maximize) {
@@ -74,7 +84,9 @@ class TestShellDelegate : public ShellDelegate {
   bool multi_profiles_enabled_;
   bool force_maximize_on_first_run_;
 
-  scoped_ptr<app_list::AppListViewDelegate> app_list_view_delegate_;
+  std::unique_ptr<app_list::AppListPresenterDelegateFactory>
+      app_list_presenter_delegate_factory_;
+  std::unique_ptr<app_list::AppListPresenterImpl> app_list_presenter_;
 
   base::ObserverList<ash::VirtualKeyboardStateObserver>
       keyboard_state_observer_list_;

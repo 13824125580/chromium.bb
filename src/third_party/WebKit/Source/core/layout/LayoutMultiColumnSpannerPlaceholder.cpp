@@ -4,6 +4,8 @@
 
 #include "core/layout/LayoutMultiColumnSpannerPlaceholder.h"
 
+#include "core/layout/LayoutMultiColumnFlowThread.h"
+
 namespace blink {
 
 static void copyMarginProperties(ComputedStyle& placeholderStyle, const ComputedStyle& spannerStyle)
@@ -59,6 +61,14 @@ void LayoutMultiColumnSpannerPlaceholder::updateMarginProperties()
     setStyle(newStyle);
 }
 
+void LayoutMultiColumnSpannerPlaceholder::insertedIntoTree()
+{
+    LayoutBox::insertedIntoTree();
+    // The object may previously have been laid out as a non-spanner, but since it's a spanner now,
+    // it needs to be relaid out.
+    m_layoutObjectInFlowThread->setNeedsLayoutAndPrefWidthsRecalc(LayoutInvalidationReason::ColumnsChanged);
+}
+
 void LayoutMultiColumnSpannerPlaceholder::willBeRemovedFromTree()
 {
     if (m_layoutObjectInFlowThread) {
@@ -104,8 +114,8 @@ void LayoutMultiColumnSpannerPlaceholder::layout()
 
     // Take the overflow from the spanner, so that it gets
     // propagated to the multicol container and beyond.
-    m_overflow.clear();
-    addVisualOverflow(m_layoutObjectInFlowThread->visualOverflowRect());
+    m_overflow.reset();
+    addContentsVisualOverflow(m_layoutObjectInFlowThread->visualOverflowRect());
     addLayoutOverflow(m_layoutObjectInFlowThread->layoutOverflowRect());
 
     clearNeedsLayout();
@@ -119,11 +129,10 @@ void LayoutMultiColumnSpannerPlaceholder::computeLogicalHeight(LayoutUnit, Layou
     computedValues.m_margins.m_after = marginAfter();
 }
 
-void LayoutMultiColumnSpannerPlaceholder::invalidateTreeIfNeeded(PaintInvalidationState& paintInvalidationState)
+void LayoutMultiColumnSpannerPlaceholder::invalidatePaintOfSubtreesIfNeeded(const PaintInvalidationState& childPaintInvalidationState)
 {
-    PaintInvalidationState newPaintInvalidationState(paintInvalidationState, *this, paintInvalidationState.paintInvalidationContainer());
-    m_layoutObjectInFlowThread->invalidateTreeIfNeeded(newPaintInvalidationState);
-    LayoutBox::invalidateTreeIfNeeded(paintInvalidationState);
+    m_layoutObjectInFlowThread->invalidateTreeIfNeeded(childPaintInvalidationState);
+    LayoutBox::invalidatePaintOfSubtreesIfNeeded(childPaintInvalidationState);
 }
 
 void LayoutMultiColumnSpannerPlaceholder::paint(const PaintInfo& paintInfo, const LayoutPoint& paintOffset) const

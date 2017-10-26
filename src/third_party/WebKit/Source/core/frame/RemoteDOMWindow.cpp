@@ -8,10 +8,12 @@
 #include "core/css/CSSRuleList.h"
 #include "core/css/CSSStyleDeclaration.h"
 #include "core/css/MediaQueryList.h"
+#include "core/dom/Document.h"
+#include "core/frame/RemoteFrameClient.h"
 
 namespace blink {
 
-ExecutionContext* RemoteDOMWindow::executionContext() const
+ExecutionContext* RemoteDOMWindow::getExecutionContext() const
 {
     return nullptr;
 }
@@ -203,12 +205,6 @@ int RemoteDOMWindow::orientation() const
     return 0;
 }
 
-Console* RemoteDOMWindow::console() const
-{
-    ASSERT_NOT_REACHED();
-    return 0;
-}
-
 DOMSelection* RemoteDOMWindow::getSelection()
 {
     ASSERT_NOT_REACHED();
@@ -220,7 +216,7 @@ void RemoteDOMWindow::blur()
     // FIXME: Implement.
 }
 
-void RemoteDOMWindow::print()
+void RemoteDOMWindow::print(ScriptState*)
 {
     ASSERT_NOT_REACHED();
 }
@@ -230,18 +226,18 @@ void RemoteDOMWindow::stop()
     // FIXME: Implement.
 }
 
-void RemoteDOMWindow::alert(const String& message)
+void RemoteDOMWindow::alert(ScriptState*, const String& message)
 {
     ASSERT_NOT_REACHED();
 }
 
-bool RemoteDOMWindow::confirm(const String& message)
+bool RemoteDOMWindow::confirm(ScriptState*, const String& message)
 {
     ASSERT_NOT_REACHED();
     return false;
 }
 
-String RemoteDOMWindow::prompt(const String& message, const String& defaultValue)
+String RemoteDOMWindow::prompt(ScriptState*, const String& message, const String& defaultValue)
 {
     ASSERT_NOT_REACHED();
     return String();
@@ -293,19 +289,19 @@ void RemoteDOMWindow::resizeTo(int width, int height) const
     ASSERT_NOT_REACHED();
 }
 
-PassRefPtrWillBeRawPtr<MediaQueryList> RemoteDOMWindow::matchMedia(const String&)
+MediaQueryList* RemoteDOMWindow::matchMedia(const String&)
 {
     ASSERT_NOT_REACHED();
     return nullptr;
 }
 
-PassRefPtrWillBeRawPtr<CSSStyleDeclaration> RemoteDOMWindow::getComputedStyle(Element*, const String& pseudoElt) const
+CSSStyleDeclaration* RemoteDOMWindow::getComputedStyle(Element*, const String& pseudoElt) const
 {
     ASSERT_NOT_REACHED();
     return nullptr;
 }
 
-PassRefPtrWillBeRawPtr<CSSRuleList> RemoteDOMWindow::getMatchedCSSRules(Element*, const String& pseudoElt) const
+CSSRuleList* RemoteDOMWindow::getMatchedCSSRules(Element*, const String& pseudoElt) const
 {
     ASSERT_NOT_REACHED();
     return nullptr;
@@ -339,6 +335,12 @@ void RemoteDOMWindow::cancelIdleCallback(int id)
     ASSERT_NOT_REACHED();
 }
 
+CustomElementsRegistry* RemoteDOMWindow::customElements(ScriptState*) const
+{
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
 RemoteDOMWindow::RemoteDOMWindow(RemoteFrame& frame)
     : m_frame(&frame)
 {
@@ -347,6 +349,11 @@ RemoteDOMWindow::RemoteDOMWindow(RemoteFrame& frame)
 void RemoteDOMWindow::frameDetached()
 {
     m_frame = nullptr;
+}
+
+void RemoteDOMWindow::schedulePostMessage(MessageEvent* event, PassRefPtr<SecurityOrigin> target, Document* source)
+{
+    m_frame->client()->forwardPostMessage(event, target, source->frame());
 }
 
 } // namespace blink

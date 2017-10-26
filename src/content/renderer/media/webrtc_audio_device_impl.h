@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,14 +17,10 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
-#include "content/renderer/media/webrtc_audio_capturer.h"
 #include "content/renderer/media/webrtc_audio_device_not_impl.h"
 #include "ipc/ipc_platform_file.h"
-#include "media/base/audio_capturer_source.h"
-#include "media/base/audio_renderer_sink.h"
 
 // A WebRtcAudioDeviceImpl instance implements the abstract interface
 // webrtc::AudioDeviceModule which makes it possible for a user (e.g. webrtc::
@@ -181,9 +179,13 @@
 //    transferring maximum levels between the renderer and the browser.
 //
 
+namespace media {
+class AudioBus;
+}
+
 namespace content {
 
-class WebRtcAudioCapturer;
+class ProcessedLocalAudioSource;
 class WebRtcAudioRenderer;
 
 // TODO(xians): Move the following two interfaces to webrtc so that
@@ -217,7 +219,7 @@ class WebRtcPlayoutDataSource {
   class Sink {
    public:
     // Callback to get the playout data.
-    // Called on the render audio thread.
+    // Called on the audio render thread.
     virtual void OnPlayoutData(media::AudioBus* audio_bus,
                                int sample_rate,
                                int audio_delay_milliseconds) = 0;
@@ -225,6 +227,11 @@ class WebRtcPlayoutDataSource {
     // Callback to notify the sink that the source has changed.
     // Called on the main render thread.
     virtual void OnPlayoutDataSourceChanged() = 0;
+
+    // Called to notify that the audio render thread has changed, and
+    // OnPlayoutData() will from now on be called on the new thread.
+    // Called on the new audio render thread.
+    virtual void OnRenderThreadChanged() = 0;
 
    protected:
     virtual ~Sink() {}
@@ -306,15 +313,12 @@ class CONTENT_EXPORT WebRtcAudioDeviceImpl
   // Called on the main renderer thread.
   bool SetAudioRenderer(WebRtcAudioRenderer* renderer);
 
-  // Adds/Removes the capturer to the ADM.
+  // Adds/Removes the |capturer| to the ADM.  Does NOT take ownership.
+  // Capturers must remain valid until RemoveAudioCapturer() is called.
   // TODO(xians): Remove these two methods once the ADM does not need to pass
   // hardware information up to WebRtc.
-  void AddAudioCapturer(const scoped_refptr<WebRtcAudioCapturer>& capturer);
-  void RemoveAudioCapturer(const scoped_refptr<WebRtcAudioCapturer>& capturer);
-
-  // Gets the default capturer, which is the last capturer in |capturers_|.
-  // The method can be called by both Libjingle thread and main render thread.
-  scoped_refptr<WebRtcAudioCapturer> GetDefaultCapturer() const;
+  void AddAudioCapturer(ProcessedLocalAudioSource* capturer);
+  void RemoveAudioCapturer(ProcessedLocalAudioSource* capturer);
 
   // Gets paired device information of the capture device for the audio
   // renderer. This is used to pass on a session id, sample rate and buffer
@@ -331,7 +335,7 @@ class CONTENT_EXPORT WebRtcAudioDeviceImpl
   }
 
  private:
-  typedef std::list<scoped_refptr<WebRtcAudioCapturer> > CapturerList;
+  typedef std::list<ProcessedLocalAudioSource*> CapturerList;
   typedef std::list<WebRtcPlayoutDataSource::Sink*> PlayoutDataSinkList;
   class RenderBuffer;
 
@@ -364,7 +368,9 @@ class CONTENT_EXPORT WebRtcAudioDeviceImpl
   mutable int ref_count_;
 
   // List of captures which provides access to the native audio input layer
-  // in the browser process.
+  // in the browser process.  The last capturer in this list is considered the
+  // "default capturer" by the methods implementing the
+  // webrtc::AudioDeviceModule interface.
   CapturerList capturers_;
 
   // Provides access to the audio renderer in the browser process.
@@ -380,9 +386,6 @@ class CONTENT_EXPORT WebRtcAudioDeviceImpl
   // RegisterAudioCallback().
   webrtc::AudioTransport* audio_transport_callback_;
 
-  // Cached value of the current audio delay on the input/capture side.
-  int input_delay_ms_;
-
   // Cached value of the current audio delay on the output/renderer side.
   int output_delay_ms_;
 
@@ -397,10 +400,6 @@ class CONTENT_EXPORT WebRtcAudioDeviceImpl
   bool initialized_;
   bool playing_;
   bool recording_;
-
-  // Stores latest microphone volume received in a CaptureData() callback.
-  // Range is [0, 255].
-  uint32_t microphone_volume_;
 
   // Buffer used for temporary storage during render callback.
   // It is only accessed by the audio render thread.

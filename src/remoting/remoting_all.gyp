@@ -12,7 +12,6 @@
       'target_name': 'remoting_all',
       'type': 'none',
       'dependencies': [
-        '../remoting/app_remoting_webapp.gyp:ar_sample_app',
         '../remoting/remoting.gyp:ar_sample_test_driver',
         '../remoting/remoting.gyp:chromoting_test_driver',
         '../remoting/remoting.gyp:remoting_base',
@@ -40,18 +39,6 @@
             '../remoting/remoting.gyp:remoting_windows_resources',
           ],
         }],
-        ['OS=="android"', {
-          'dependencies': [
-            '../remoting/remoting.gyp:remoting_android_client_java',
-            '../remoting/remoting.gyp:remoting_android_resources',
-            '../remoting/remoting.gyp:remoting_apk',
-            '../remoting/remoting.gyp:remoting_apk_manifest',
-            '../remoting/remoting.gyp:remoting_client_jni',
-            '../remoting/remoting.gyp:remoting_jni_headers',
-            '../remoting/remoting.gyp:remoting_test_apk',
-            '../remoting/remoting.gyp:remoting_unittests_apk',
-          ],
-        }],
         ['enable_remoting_host==1', {
           'dependencies': [
             '../remoting/remoting.gyp:remoting_infoplist_strings',
@@ -73,12 +60,10 @@
             '../remoting/remoting.gyp:remoting_me2me_native_messaging_host',
           ],
         }],
-        # TODO(GYP) Depends on crbug.com/471924 being fixed for PNaCl.
         ['disable_nacl==0 and disable_nacl_untrusted==0', {
           'dependencies': [
              '../remoting/remoting.gyp:remoting_key_tester',
              '../remoting/remoting.gyp:remoting_webapp_browser_test',
-             '../remoting/app_remoting_shared_module.gyp:ar_shared_module',
           ],
         }],
       ],

@@ -81,7 +81,8 @@ TreeView::TreeView()
       controller_(NULL),
       root_shown_(true),
       row_height_(font_list_.GetHeight() + kTextVerticalPadding * 2) {
-  SetFocusable(true);
+  // Always focusable, even on Mac (consistent with NSOutlineView).
+  SetFocusBehavior(FocusBehavior::ALWAYS);
   closed_icon_ = *ui::ResourceBundle::GetSharedInstance().GetImageNamed(
       (base::i18n::IsRTL() ? IDR_FOLDER_CLOSED_RTL
                            : IDR_FOLDER_CLOSED)).ToImageSkia();
@@ -487,6 +488,9 @@ void TreeView::ContentsChanged(Textfield* sender,
 
 bool TreeView::HandleKeyEvent(Textfield* sender,
                               const ui::KeyEvent& key_event) {
+  if (key_event.type() != ui::ET_KEY_PRESSED)
+    return false;
+
   switch (key_event.key_code()) {
     case ui::VKEY_RETURN:
       CommitEdit();

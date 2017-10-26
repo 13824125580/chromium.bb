@@ -28,6 +28,7 @@
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/features/behavior_feature.h"
+#include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_provider.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_handlers/app_isolation_info.h"
@@ -35,6 +36,10 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/grit/extensions_browser_resources.h"
 #include "ui/base/resource/resource_bundle.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/file_manager/app_id.h"
+#endif
 
 namespace extensions {
 namespace util {
@@ -53,12 +58,15 @@ const char kExtensionAllowedOnAllUrlsPrefName[] =
 // allowed on all urls" pref.
 const char kHasSetScriptOnAllUrlsPrefName[] = "has_set_script_all_urls";
 
+// The entry into the prefs used to flag an extension as installed by custodian.
+// It is relevant only for supervised users.
+const char kWasInstalledByCustodianPrefName[] = "was_installed_by_custodian";
+
 // Returns true if |extension| should always be enabled in incognito mode.
 bool IsWhitelistedForIncognito(const Extension* extension) {
-  return FeatureProvider::GetBehaviorFeature(
-             BehaviorFeature::kWhitelistedForIncognito)
-      ->IsAvailableToExtension(extension)
-      .is_available();
+  const Feature* feature = FeatureProvider::GetBehaviorFeature(
+      BehaviorFeature::kWhitelistedForIncognito);
+  return feature && feature->IsAvailableToExtension(extension).is_available();
 }
 
 // Returns |extension_id|. See note below.
@@ -126,8 +134,10 @@ bool IsIncognitoEnabled(const std::string& extension_id,
       return false;
     // If this is an existing component extension we always allow it to
     // work in incognito mode.
-    if (extension->location() == Manifest::COMPONENT)
+    if (extension->location() == Manifest::COMPONENT ||
+        extension->location() == Manifest::EXTERNAL_COMPONENT) {
       return true;
+    }
     if (IsWhitelistedForIncognito(extension))
       return true;
   }
@@ -151,7 +161,14 @@ void SetIsIncognitoEnabled(const std::string& extension_id,
       // This shouldn't be called for component extensions unless it is called
       // by sync, for syncable component extensions.
       // See http://crbug.com/112290 and associated CLs for the sordid history.
-      DCHECK(sync_helper::IsSyncableComponentExtension(extension));
+      bool syncable = sync_helper::IsSyncableComponentExtension(extension);
+#if defined(OS_CHROMEOS)
+      // For some users, the file manager app somehow ended up being synced even
+      // though it's supposed to be unsyncable; see crbug.com/576964. If the bad
+      // data ever gets cleaned up, this hack should be removed.
+      syncable = syncable || extension->id() == file_manager::kFileManagerAppId;
+#endif
+      DCHECK(syncable);
 
       // If we are here, make sure the we aren't trying to change the value.
       DCHECK_EQ(enabled, IsIncognitoEnabled(extension_id, context));
@@ -218,6 +235,47 @@ void SetAllowFileAccess(const std::string& extension_id,
   ExtensionPrefs::Get(context)->SetAllowFileAccess(extension_id, allow);
 
   ReloadExtensionIfEnabled(extension_id, context);
+}
+
+void SetWasInstalledByCustodian(const std::string& extension_id,
+                                content::BrowserContext* context,
+                                bool installed_by_custodian) {
+  if (installed_by_custodian == WasInstalledByCustodian(extension_id, context))
+    return;
+
+  ExtensionPrefs::Get(context)->UpdateExtensionPref(
+      extension_id, kWasInstalledByCustodianPrefName,
+      installed_by_custodian ? new base::FundamentalValue(true) : nullptr);
+  ExtensionService* service =
+      ExtensionSystem::Get(context)->extension_service();
+
+  if (!installed_by_custodian) {
+    // If installed_by_custodian changes to false, the extension may need to
+    // be unloaded now.
+    service->ReloadExtension(extension_id);
+    return;
+  }
+
+  ExtensionRegistry* registry = ExtensionRegistry::Get(context);
+  // If it is already enabled, do nothing.
+  if (registry->enabled_extensions().Contains(extension_id))
+    return;
+
+  // If the extension is not loaded, it may need to be reloaded.
+  // Example is a pre-installed extension that was unloaded when a
+  // supervised user flag has been received.
+  if (!registry->GetInstalledExtension(extension_id)) {
+    service->ReloadExtension(extension_id);
+  }
+}
+
+bool WasInstalledByCustodian(const std::string& extension_id,
+                             content::BrowserContext* context) {
+  bool installed_by_custodian = false;
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(context);
+  prefs->ReadPrefAsBoolean(extension_id, kWasInstalledByCustodianPrefName,
+                           &installed_by_custodian);
+  return installed_by_custodian;
 }
 
 bool AllowedScriptingOnAllUrls(const std::string& extension_id,
@@ -294,7 +352,7 @@ bool IsExtensionIdle(const std::string& extension_id,
     SharedModuleService* service = ExtensionSystem::Get(context)
                                        ->extension_service()
                                        ->shared_module_service();
-    scoped_ptr<ExtensionSet> dependents =
+    std::unique_ptr<ExtensionSet> dependents =
         service->GetDependentExtensions(extension);
     for (ExtensionSet::const_iterator i = dependents->begin();
          i != dependents->end();
@@ -330,9 +388,10 @@ GURL GetSiteForExtensionId(const std::string& extension_id,
       context, Extension::GetBaseURLFromExtensionId(extension_id));
 }
 
-scoped_ptr<base::DictionaryValue> GetExtensionInfo(const Extension* extension) {
+std::unique_ptr<base::DictionaryValue> GetExtensionInfo(
+    const Extension* extension) {
   DCHECK(extension);
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
 
   dict->SetString("id", extension->id());
   dict->SetString("name", extension->name());
@@ -377,8 +436,9 @@ bool CanHostedAppsOpenInWindows() {
 #endif
 }
 
-bool IsExtensionSupervised(const Extension* extension, const Profile* profile) {
-  return extension->was_installed_by_custodian() && profile->IsSupervised();
+bool IsExtensionSupervised(const Extension* extension, Profile* profile) {
+  return WasInstalledByCustodian(extension->id(), profile) &&
+         profile->IsSupervised();
 }
 
 bool NeedCustodianApprovalForPermissionIncrease(const Profile* profile) {

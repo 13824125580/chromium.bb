@@ -251,11 +251,6 @@ enum NotificationType {
 
   // Non-history storage services --------------------------------------------
 
-  // The state of a web resource has been changed. A resource may have been
-  // added, removed, or altered. Source is WebResourceService, and the
-  // details are NoDetails.
-  NOTIFICATION_PROMO_RESOURCE_STATE_CHANGED,
-
   // A safe browsing database update completed.  Source is the
   // SafeBrowsingService and the details are a bool indicating whether the
   // update was successful.
@@ -307,7 +302,7 @@ enum NotificationType {
 
   // Sent when Chrome is done scanning the module list and when the user has
   // acknowledged the module incompatibility. No details are expected.
-  NOTIFICATION_MODULE_INCOMPATIBILITY_BADGE_CHANGE,
+  NOTIFICATION_MODULE_INCOMPATIBILITY_ICON_CHANGE,
 
   // Content Settings --------------------------------------------------------
 

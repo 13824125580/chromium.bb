@@ -28,17 +28,21 @@ class KeepAliveTest : public ExtensionsTest {
     message_loop_.reset(new base::MessageLoop);
     extension_ =
         ExtensionBuilder()
-            .SetManifest(std::move(
+            .SetManifest(
                 DictionaryBuilder()
                     .Set("name", "app")
                     .Set("version", "1")
                     .Set("manifest_version", 2)
-                    .Set("app",
-                         std::move(DictionaryBuilder().Set(
-                             "background",
-                             std::move(DictionaryBuilder().Set(
-                                 "scripts", std::move(ListBuilder().Append(
-                                                "background.js")))))))))
+                    .Set("app", DictionaryBuilder()
+                                    .Set("background",
+                                         DictionaryBuilder()
+                                             .Set("scripts",
+                                                  ListBuilder()
+                                                      .Append("background.js")
+                                                      .Build())
+                                             .Build())
+                                    .Build())
+                    .Build())
             .SetID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .Build();
   }
@@ -68,8 +72,8 @@ class KeepAliveTest : public ExtensionsTest {
   }
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
-  scoped_ptr<content::NotificationService> notification_service_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<content::NotificationService> notification_service_;
   scoped_refptr<const Extension> extension_;
 
   DISALLOW_COPY_AND_ASSIGN(KeepAliveTest);
@@ -110,16 +114,21 @@ TEST_F(KeepAliveTest, UnloadExtension) {
 
   scoped_refptr<const Extension> other_extension =
       ExtensionBuilder()
-          .SetManifest(std::move(
+          .SetManifest(
               DictionaryBuilder()
                   .Set("name", "app")
                   .Set("version", "1")
                   .Set("manifest_version", 2)
-                  .Set("app", std::move(DictionaryBuilder().Set(
-                                  "background",
-                                  std::move(DictionaryBuilder().Set(
-                                      "scripts", std::move(ListBuilder().Append(
-                                                     "background.js")))))))))
+                  .Set("app",
+                       DictionaryBuilder()
+                           .Set("background",
+                                DictionaryBuilder()
+                                    .Set("scripts", ListBuilder()
+                                                        .Append("background.js")
+                                                        .Build())
+                                    .Build())
+                           .Build())
+                  .Build())
           .SetID("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
           .Build();
 

@@ -82,6 +82,10 @@ component("keyboard_with_content") {
     "//ui/wm",
     "//url",
   ]
+
+  data_deps = [
+    ":resources",
+  ]
 }
 
 grit("resources_grit") {
@@ -132,10 +136,11 @@ mojom("mojom") {
     "keyboard.mojom",
   ]
   deps = [
-    "//ui/mojo/geometry:interfaces",
+    "//ui/gfx/geometry/mojo",
   ]
 }
 
+if (false) {
 test("keyboard_unittests") {
   sources = [
     "keyboard_controller_unittest.cc",
@@ -161,3 +166,5 @@ test("keyboard_unittests") {
     "//ui/wm",
   ]
 }
+}
+

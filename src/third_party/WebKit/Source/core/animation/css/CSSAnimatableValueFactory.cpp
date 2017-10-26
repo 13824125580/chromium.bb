@@ -81,10 +81,10 @@ static PassRefPtr<AnimatableValue> createFromLengthWithZoom(const Length& length
     case ExtendToZoom: // Does not apply to elements.
     case DeviceWidth:
     case DeviceHeight:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return nullptr;
     }
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return nullptr;
 }
 
@@ -177,8 +177,8 @@ inline static PassRefPtr<AnimatableValue> createFromLengthSize(const LengthSize&
 inline static PassRefPtr<AnimatableValue> createFromStyleImage(StyleImage* image)
 {
     if (image) {
-        if (RefPtrWillBeRawPtr<CSSValue> cssValue = image->cssValue())
-            return AnimatableImage::create(cssValue.release());
+        if (CSSValue* cssValue = image->cssValue())
+            return AnimatableImage::create(cssValue);
     }
     return AnimatableUnknown::create(CSSValueNone);
 }
@@ -193,7 +193,7 @@ inline static PassRefPtr<AnimatableValue> createFromFillSize(const FillSize& fil
     case SizeNone:
         return AnimatableUnknown::create(CSSPrimitiveValue::create(fillSize.type));
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return nullptr;
     }
 }
@@ -227,7 +227,7 @@ inline static PassRefPtr<AnimatableValue> createFromFillLayers(const FillLayer& 
                 break;
             values.append(createFromFillSize(fillLayer->size(), style));
         } else {
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
         }
     }
     return AnimatableRepeatable::create(values);
@@ -292,7 +292,7 @@ static double fontWeightToDouble(FontWeight fontWeight)
         return 900;
     }
 
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return 400;
 }
 
@@ -502,7 +502,7 @@ PassRefPtr<AnimatableValue> CSSAnimatableValueFactory::create(CSSPropertyID prop
         if (style.hasAutoColumnWidth())
             return AnimatableUnknown::create(CSSValueAuto);
         return createFromDouble(style.columnWidth());
-    case CSSPropertyWebkitFilter:
+    case CSSPropertyFilter:
         return AnimatableFilterOperations::create(style.filter());
     case CSSPropertyBackdropFilter:
         return AnimatableFilterOperations::create(style.backdropFilter());
@@ -573,8 +573,8 @@ PassRefPtr<AnimatableValue> CSSAnimatableValueFactory::create(CSSPropertyID prop
     case CSSPropertyWordSpacing:
         return createFromDouble(style.wordSpacing());
     case CSSPropertyVerticalAlign:
-        if (style.verticalAlign() == LENGTH)
-            return createFromLength(style.verticalAlignLength(), style);
+        if (style.verticalAlign() == VerticalAlignLength)
+            return createFromLength(style.getVerticalAlignLength(), style);
         return AnimatableUnknown::create(CSSPrimitiveValue::create(style.verticalAlign()));
     case CSSPropertyVisibility:
         return AnimatableVisibility::create(style.visibility());
@@ -599,7 +599,7 @@ PassRefPtr<AnimatableValue> CSSAnimatableValueFactory::create(CSSPropertyID prop
             return AnimatableUnknown::create(CSSValueAuto);
         return createFromDouble(style.zIndex());
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return nullptr;
     }
 }

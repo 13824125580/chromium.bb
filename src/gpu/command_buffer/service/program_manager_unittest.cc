@@ -8,15 +8,16 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/common_decoder.h"
 #include "gpu/command_buffer/service/feature_info.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/mocks.h"
@@ -59,11 +60,12 @@ class ProgramManagerTestBase : public GpuServiceTest {
   virtual void SetupProgramManager() {
     manager_.reset(new ProgramManager(nullptr, kMaxVaryingVectors,
                                       kMaxDualSourceDrawBuffers,
+                                      gpu_preferences_,
                                       feature_info_.get()));
   }
   void SetUpBase(const char* gl_version,
                  const char* gl_extensions,
-                 FeatureInfo* feature_info = NULL) {
+                 FeatureInfo* feature_info = nullptr) {
     GpuServiceTest::SetUpWithGLVersion(gl_version, gl_extensions);
     TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
         gl_.get(), gl_extensions, "", gl_version);
@@ -84,7 +86,8 @@ class ProgramManagerTestBase : public GpuServiceTest {
     GpuServiceTest::TearDown();
   }
 
-  scoped_ptr<ProgramManager> manager_;
+  std::unique_ptr<ProgramManager> manager_;
+  GpuPreferences gpu_preferences_;
   scoped_refptr<FeatureInfo> feature_info_;
 };
 
@@ -641,8 +644,9 @@ TEST_F(ProgramManagerWithShaderTest, AttachDetachShader) {
   EXPECT_FALSE(program->CanLink());
   TestHelper::SetShaderStates(gl_.get(), fshader, true);
   EXPECT_TRUE(program->CanLink());
-  EXPECT_TRUE(program->DetachShader(&shader_manager_, fshader));
-  EXPECT_FALSE(program->DetachShader(&shader_manager_, fshader));
+  EXPECT_TRUE(program->IsShaderAttached(fshader));
+  program->DetachShader(&shader_manager_, fshader);
+  EXPECT_FALSE(program->IsShaderAttached(fshader));
 }
 
 TEST_F(ProgramManagerWithShaderTest, GetUniformFakeLocation) {
@@ -1948,6 +1952,7 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
   void SetupProgramManager() override {
     manager_.reset(new ProgramManager(cache_.get(), kMaxVaryingVectors,
                                       kMaxDualSourceDrawBuffers,
+                                      gpu_preferences_,
                                       feature_info_.get()));
   }
 
@@ -2071,7 +2076,7 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
   void SetExpectationsForProgramLink(GLuint service_program_id) {
     TestHelper::SetupShaderExpectations(gl_.get(), feature_info_.get(), nullptr,
                                         0, nullptr, 0, service_program_id);
-    if (gfx::g_driver_gl.ext.b_GL_ARB_get_program_binary) {
+    if (gl::g_driver_gl.ext.b_GL_ARB_get_program_binary) {
       EXPECT_CALL(*gl_.get(),
                   ProgramParameteri(service_program_id,
                                     PROGRAM_BINARY_RETRIEVABLE_HINT,
@@ -2114,7 +2119,7 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
         .Times(1);
   }
 
-  scoped_ptr<MockProgramCache> cache_;
+  std::unique_ptr<MockProgramCache> cache_;
 
   Shader* vertex_shader_;
   Shader* fragment_shader_;
@@ -2160,11 +2165,7 @@ class ProgramManagerWithPathRenderingTest
           testing::tuple<const char*, const char*>> {
  protected:
   void SetUp() override {
-    base::CommandLine command_line(*base::CommandLine::ForCurrentProcess());
-    command_line.AppendSwitch(switches::kEnableGLPathRendering);
-    FeatureInfo* feature_info = new FeatureInfo(command_line);
-    SetUpBase(testing::get<0>(GetParam()), testing::get<1>(GetParam()),
-              feature_info);
+    SetUpBase(testing::get<0>(GetParam()), testing::get<1>(GetParam()));
   }
   static const char* kFragmentInput1Name;
   static const char* kFragmentInput2Name;
@@ -2351,7 +2352,7 @@ TEST_P(ProgramManagerDualSourceBlendingES2Test, UseSecondaryFragCoord) {
       SetupProgramForVariables(nullptr, 0, kFragmentVaryings,
                                arraysize(kFragmentVaryings), &shader_version);
 
-  const gfx::GLVersionInfo& gl_version = feature_info_->gl_version_info();
+  const gl::GLVersionInfo& gl_version = feature_info_->gl_version_info();
   if (!gl_version.is_es) {
     // The call is expected only for OpenGL. OpenGL ES expects to
     // output GLES SL 1.00, which does not bind.
@@ -2378,7 +2379,7 @@ TEST_P(ProgramManagerDualSourceBlendingES2Test, UseSecondaryFragData) {
       SetupProgramForVariables(nullptr, 0, kFragmentVaryings,
                                arraysize(kFragmentVaryings), &shader_version);
 
-  const gfx::GLVersionInfo& gl_version = feature_info_->gl_version_info();
+  const gl::GLVersionInfo& gl_version = feature_info_->gl_version_info();
   if (!gl_version.is_es) {
     // The call is expected only for OpenGL. OpenGL ES expects to
     // output GLES SL 1.00, which does not bind.

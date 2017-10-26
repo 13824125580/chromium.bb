@@ -16,9 +16,6 @@
 #include "core/inspector/InspectorCSSAgent.h"
 #include "core/inspector/InspectorDOMAgent.h"
 #include "core/inspector/InspectorHighlight.h"
-#include "core/layout/LayoutBox.h"
-#include "core/layout/LayoutInline.h"
-#include "core/layout/LayoutObject.h"
 #include "core/style/ComputedStyle.h"
 #include "platform/ScriptForbiddenScope.h"
 #include "platform/inspector_protocol/Values.h"
@@ -27,31 +24,31 @@ namespace blink {
 
 namespace {
 
-PassRefPtr<protocol::DictionaryValue> createAnchor(const String& type, const String& propertyName, PassRefPtr<protocol::DictionaryValue> valueDescription)
+std::unique_ptr<protocol::DictionaryValue> createAnchor(const String& type, const String& propertyName, std::unique_ptr<protocol::DictionaryValue> valueDescription)
 {
-    RefPtr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
+    std::unique_ptr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
     object->setString("type", type);
     object->setString("propertyName", propertyName);
-    object->setObject("propertyValue", valueDescription);
-    return object.release();
+    object->setObject("propertyValue", std::move(valueDescription));
+    return object;
 }
 
-PassRefPtr<protocol::DictionaryValue> pointToJSON(FloatPoint point)
+std::unique_ptr<protocol::DictionaryValue> pointToJSON(FloatPoint point)
 {
-    RefPtr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
+    std::unique_ptr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
     object->setNumber("x", point.x());
     object->setNumber("y", point.y());
-    return object.release();
+    return object;
 }
 
-PassRefPtr<protocol::DictionaryValue> quadToJSON(FloatQuad& quad)
+std::unique_ptr<protocol::DictionaryValue> quadToJSON(FloatQuad& quad)
 {
-    RefPtr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
+    std::unique_ptr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
     object->setObject("p1", pointToJSON(quad.p1()));
     object->setObject("p2", pointToJSON(quad.p2()));
     object->setObject("p3", pointToJSON(quad.p3()));
     object->setObject("p4", pointToJSON(quad.p4()));
-    return object.release();
+    return object;
 }
 
 bool isMutableUnitType(CSSPrimitiveValue::UnitType unitType)
@@ -165,8 +162,8 @@ DEFINE_TRACE(LayoutEditor)
 
 void LayoutEditor::rebuild()
 {
-    RefPtr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
-    RefPtr<protocol::ListValue> anchors = protocol::ListValue::create();
+    std::unique_ptr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
+    std::unique_ptr<protocol::ListValue> anchors = protocol::ListValue::create();
 
     appendAnchorFor(anchors.get(), "padding", "padding-top");
     appendAnchorFor(anchors.get(), "padding", "padding-right");
@@ -178,7 +175,7 @@ void LayoutEditor::rebuild()
     appendAnchorFor(anchors.get(), "margin", "margin-bottom");
     appendAnchorFor(anchors.get(), "margin", "margin-left");
 
-    object->setArray("anchors", anchors.release());
+    object->setArray("anchors", std::move(anchors));
 
     FloatQuad content, padding, border, margin;
     InspectorHighlight::buildNodeQuads(m_element.get(), &content, &padding, &border, &margin);
@@ -186,24 +183,24 @@ void LayoutEditor::rebuild()
     object->setObject("paddingQuad", quadToJSON(padding));
     object->setObject("marginQuad", quadToJSON(margin));
     object->setObject("borderQuad", quadToJSON(border));
-    evaluateInOverlay("showLayoutEditor", object.release());
+    evaluateInOverlay("showLayoutEditor", std::move(object));
     editableSelectorUpdated(false);
 }
 
-RefPtrWillBeRawPtr<CSSPrimitiveValue> LayoutEditor::getPropertyCSSValue(CSSPropertyID property) const
+const CSSPrimitiveValue* LayoutEditor::getPropertyCSSValue(CSSPropertyID property) const
 {
-    RefPtrWillBeRawPtr<CSSStyleDeclaration> style = m_cssAgent->findEffectiveDeclaration(property, m_matchedStyles);
+    CSSStyleDeclaration* style = m_cssAgent->findEffectiveDeclaration(property, m_matchedStyles);
     if (!style)
         return nullptr;
 
-    RefPtrWillBeRawPtr<CSSValue> cssValue = style->getPropertyCSSValueInternal(property);
+    const CSSValue* cssValue = style->getPropertyCSSValueInternal(property);
     if (!cssValue || !cssValue->isPrimitiveValue())
         return nullptr;
 
-    return toCSSPrimitiveValue(cssValue.get());
+    return toCSSPrimitiveValue(cssValue);
 }
 
-bool LayoutEditor::growInside(String propertyName, CSSPrimitiveValue* value)
+bool LayoutEditor::growInside(String propertyName, const CSSPrimitiveValue* value)
 {
     FloatQuad content1, padding1, border1, margin1;
     InspectorHighlight::buildNodeQuads(m_element.get(), &content1, &padding1, &border1, &margin1);
@@ -222,13 +219,13 @@ bool LayoutEditor::growInside(String propertyName, CSSPrimitiveValue* value)
 
     TrackExceptionState exceptionState;
     elementStyle->setProperty(propertyName, newValue, "important", exceptionState);
-    m_element->ownerDocument()->updateLayout();
+    m_element->ownerDocument()->updateStyleAndLayout();
 
     FloatQuad content2, padding2, border2, margin2;
     InspectorHighlight::buildNodeQuads(m_element.get(), &content2, &padding2, &border2, &margin2);
 
     elementStyle->setProperty(propertyName, initialValue, initialPriority, exceptionState);
-    m_element->ownerDocument()->updateLayout();
+    m_element->ownerDocument()->updateStyleAndLayout();
 
     float eps = 0.0001;
     FloatRect boundingBox1, boundingBox2;
@@ -255,30 +252,30 @@ bool LayoutEditor::growInside(String propertyName, CSSPrimitiveValue* value)
     return false;
 }
 
-PassRefPtr<protocol::DictionaryValue> LayoutEditor::createValueDescription(const String& propertyName)
+std::unique_ptr<protocol::DictionaryValue> LayoutEditor::createValueDescription(const String& propertyName)
 {
-    RefPtrWillBeRawPtr<CSSPrimitiveValue> cssValue = getPropertyCSSValue(cssPropertyID(propertyName));
+    const CSSPrimitiveValue* cssValue = getPropertyCSSValue(cssPropertyID(propertyName));
     if (cssValue && !(cssValue->isLength() || cssValue->isPercentage()))
         return nullptr;
 
-    RefPtr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
+    std::unique_ptr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
     object->setNumber("value", cssValue ? cssValue->getFloatValue() : 0);
     CSSPrimitiveValue::UnitType unitType = cssValue ? cssValue->typeWithCalcResolved() : CSSPrimitiveValue::UnitType::Pixels;
     object->setString("unit", CSSPrimitiveValue::unitTypeToString(unitType));
     object->setBoolean("mutable", isMutableUnitType(unitType));
 
     if (!m_growsInside.contains(propertyName))
-        m_growsInside.set(propertyName, growInside(propertyName, cssValue.get()));
+        m_growsInside.set(propertyName, growInside(propertyName, cssValue));
 
     object->setBoolean("growInside", m_growsInside.get(propertyName));
-    return object.release();
+    return object;
 }
 
 void LayoutEditor::appendAnchorFor(protocol::ListValue* anchors, const String& type, const String& propertyName)
 {
-    RefPtr<protocol::DictionaryValue> description = createValueDescription(propertyName);
+    std::unique_ptr<protocol::DictionaryValue> description = createValueDescription(propertyName);
     if (description)
-        anchors->pushValue(createAnchor(type, propertyName, description.release()));
+        anchors->pushValue(createAnchor(type, propertyName, std::move(description)));
 }
 
 void LayoutEditor::overlayStartedPropertyChange(const String& anchorName)
@@ -287,7 +284,7 @@ void LayoutEditor::overlayStartedPropertyChange(const String& anchorName)
     if (!m_changingProperty)
         return;
 
-    RefPtrWillBeRawPtr<CSSPrimitiveValue> cssValue = getPropertyCSSValue(m_changingProperty);
+    const CSSPrimitiveValue* cssValue = getPropertyCSSValue(m_changingProperty);
     m_valueUnitType = cssValue ? cssValue->typeWithCalcResolved() : CSSPrimitiveValue::UnitType::Pixels;
     if (!isMutableUnitType(m_valueUnitType))
         return;
@@ -366,32 +363,32 @@ void LayoutEditor::editableSelectorUpdated(bool hasChanged) const
         m_cssAgent->layoutEditorItemSelected(m_element.get(), style);
 }
 
-PassRefPtr<protocol::DictionaryValue> LayoutEditor::currentSelectorInfo(CSSStyleDeclaration* style) const
+std::unique_ptr<protocol::DictionaryValue> LayoutEditor::currentSelectorInfo(CSSStyleDeclaration* style) const
 {
-    RefPtr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
+    std::unique_ptr<protocol::DictionaryValue> object = protocol::DictionaryValue::create();
     CSSStyleRule* rule = style->parentRule() ? toCSSStyleRule(style->parentRule()) : nullptr;
     String currentSelectorText = rule ? rule->selectorText() : "element.style";
     object->setString("selector", currentSelectorText);
 
     Document* ownerDocument = m_element->ownerDocument();
     if (!ownerDocument->isActive() || !rule)
-        return object.release();
+        return object;
 
     Vector<String> medias;
     buildMediaListChain(rule, medias);
-    RefPtr<protocol::ListValue> mediaListValue = protocol::ListValue::create();
+    std::unique_ptr<protocol::ListValue> mediaListValue = protocol::ListValue::create();
     for (size_t i = 0; i < medias.size(); ++i)
         mediaListValue->pushValue(protocol::StringValue::create(medias[i]));
 
-    object->setArray("medias", mediaListValue.release());
+    object->setArray("medias", std::move(mediaListValue));
 
     TrackExceptionState exceptionState;
-    RefPtrWillBeRawPtr<StaticElementList> elements = ownerDocument->querySelectorAll(AtomicString(currentSelectorText), exceptionState);
+    StaticElementList* elements = ownerDocument->querySelectorAll(AtomicString(currentSelectorText), exceptionState);
 
     if (!elements || exceptionState.hadException())
-        return object.release();
+        return object;
 
-    RefPtr<protocol::ListValue> highlights = protocol::ListValue::create();
+    std::unique_ptr<protocol::ListValue> highlights = protocol::ListValue::create();
     InspectorHighlightConfig config = affectedNodesHighlightConfig();
     for (unsigned i = 0; i < elements->length(); ++i) {
         Element* element = elements->item(i);
@@ -402,23 +399,23 @@ PassRefPtr<protocol::DictionaryValue> LayoutEditor::currentSelectorInfo(CSSStyle
         highlights->pushValue(highlight.asProtocolValue());
     }
 
-    object->setArray("nodes", highlights.release());
-    return object.release();
+    object->setArray("nodes", std::move(highlights));
+    return object;
 }
 
 bool LayoutEditor::setCSSPropertyValueInCurrentRule(const String& value)
 {
-    String errorString;
+    ErrorString errorString;
     m_cssAgent->setLayoutEditorValue(&errorString, m_element.get(), m_matchedStyles.at(m_currentRuleIndex), m_changingProperty, value, false);
     return errorString.isEmpty();
 }
 
-void LayoutEditor::evaluateInOverlay(const String& method, PassRefPtr<protocol::Value> argument) const
+void LayoutEditor::evaluateInOverlay(const String& method, std::unique_ptr<protocol::Value> argument) const
 {
     ScriptForbiddenScope::AllowUserAgentScript allowScript;
-    RefPtr<protocol::ListValue> command = protocol::ListValue::create();
+    std::unique_ptr<protocol::ListValue> command = protocol::ListValue::create();
     command->pushValue(protocol::StringValue::create(method));
-    command->pushValue(argument);
+    command->pushValue(std::move(argument));
     m_scriptController->executeScriptInMainWorld("dispatch(" + command->toJSONString() + ")", ScriptController::ExecuteScriptWhenScriptsDisabled);
 }
 

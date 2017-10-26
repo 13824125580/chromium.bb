@@ -30,42 +30,30 @@
 
 #include "public/web/WebKit.h"
 
-#include "bindings/core/v8/ScriptStreamerThread.h"
+#include "bindings/core/v8/Microtask.h"
 #include "bindings/core/v8/V8Binding.h"
 #include "bindings/core/v8/V8GCController.h"
 #include "bindings/core/v8/V8Initializer.h"
-#include "core/Init.h"
 #include "core/animation/AnimationClock.h"
-#include "core/dom/Microtask.h"
-#include "core/fetch/WebCacheMemoryDumpProvider.h"
 #include "core/frame/DOMTimer.h"
-#include "core/frame/Settings.h"
 #include "core/page/Page.h"
 #include "core/layout/LayoutTheme.h"
-#include "core/workers/WorkerGlobalScopeProxy.h"
+#include "core/workers/WorkerBackingThread.h"
 // commented out due to the duplicate include of trace_event_common.h from LayoutTheme.h
-// #include "gin/public/v8_platform.h"
-#include "modules/InitModules.h"
-#include "platform/Histogram.h"
+//#include "gin/public/v8_platform.h"
+#include "modules/ModulesInitializer.h"
 #include "platform/LayoutTestSupport.h"
 #include "platform/Logging.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/ThreadSafeFunctional.h"
-#include "platform/fonts/FontCacheMemoryDumpProvider.h"
-#include "platform/graphics/ImageDecodingStore.h"
-#include "platform/heap/GCTaskRunner.h"
 #include "platform/heap/Heap.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebPrerenderingSupport.h"
 #include "public/platform/WebThread.h"
-#include "web/IndexedDBClientImpl.h"
 #include "wtf/Assertions.h"
-#include "wtf/CryptographicallyRandomNumber.h"
-#include "wtf/MainThread.h"
-#include "wtf/Partitions.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/WTF.h"
+#include "wtf/allocator/Partitions.h"
 #include "wtf/text/AtomicString.h"
 #include "wtf/text/TextEncoding.h"
+#include <memory>
 #include <v8.h>
 
 namespace blink {
@@ -81,7 +69,6 @@ public:
     void didProcessTask() override
     {
         Microtask::performCheckpoint(mainThreadIsolate());
-        V8GCController::reportDOMMemoryUsageToV8(mainThreadIsolate());
         V8Initializer::reportRejectedPromisesOnMainThread();
     }
 };
@@ -89,149 +76,52 @@ public:
 } // namespace
 
 static WebThread::TaskObserver* s_endOfTaskRunner = nullptr;
-static GCTaskRunner* s_gcTaskRunner = nullptr;
 
-// Make sure we are not re-initialized in the same address space.
-// Doing so may cause hard to reproduce crashes.
-static bool s_webKitInitialized = false;
+static ModulesInitializer& modulesInitializer()
+{
+    DEFINE_STATIC_LOCAL(std::unique_ptr<ModulesInitializer>, initializer, (wrapUnique(new ModulesInitializer)));
+    return *initializer;
+}
 
 void initialize(Platform* platform)
 {
-    initializeWithoutV8(platform);
+    Platform::initialize(platform);
 
-    V8Initializer::initializeMainThreadIfNeeded();
+    V8Initializer::initializeMainThread();
 
-    OwnPtr<V8IsolateInterruptor> interruptor = adoptPtr(new V8IsolateInterruptor(V8PerIsolateData::mainThreadIsolate()));
-    ThreadState::current()->addInterruptor(interruptor.release());
-    ThreadState::current()->registerTraceDOMWrappers(V8PerIsolateData::mainThreadIsolate(), V8GCController::traceDOMWrappers);
+    modulesInitializer().initialize();
 
     // currentThread is null if we are running on a thread without a message loop.
     if (WebThread* currentThread = platform->currentThread()) {
-        ASSERT(!s_endOfTaskRunner);
+        DCHECK(!s_endOfTaskRunner);
         s_endOfTaskRunner = new EndOfTaskRunner;
         currentThread->addTaskObserver(s_endOfTaskRunner);
-
-        // Register web cache dump provider for tracing.
-        platform->registerMemoryDumpProvider(WebCacheMemoryDumpProvider::instance(), "MemoryCache");
-        platform->registerMemoryDumpProvider(FontCacheMemoryDumpProvider::instance(), "FontCaches");
     }
-}
-
-v8::Isolate* mainThreadIsolate()
-{
-    return V8PerIsolateData::mainThreadIsolate();
-}
-
-static void maxObservedSizeFunction(size_t sizeInMB)
-{
-    const size_t supportedMaxSizeInMB = 4 * 1024;
-    if (sizeInMB >= supportedMaxSizeInMB)
-        sizeInMB = supportedMaxSizeInMB - 1;
-
-    // Send a UseCounter only when we see the highest memory usage
-    // we've ever seen.
-    DEFINE_STATIC_LOCAL(EnumerationHistogram, committedSizeHistogram, ("PartitionAlloc.CommittedSize", supportedMaxSizeInMB));
-    committedSizeHistogram.count(sizeInMB);
-}
-
-static void callOnMainThreadFunction(WTF::MainThreadFunction function, void* context)
-{
-    Platform::current()->mainThread()->taskRunner()->postTask(BLINK_FROM_HERE, threadSafeBind(function, AllowCrossThreadAccess(context)));
-}
-
-static void adjustAmountOfExternalAllocatedMemory(int size)
-{
-    v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(size);
-}
-
-void initializeWithoutV8(Platform* platform)
-{
-    ASSERT(!s_webKitInitialized);
-    s_webKitInitialized = true;
-
-    WTF::Partitions::initialize(maxObservedSizeFunction);
-    ASSERT(platform);
-    Platform::initialize(platform);
-
-    WTF::initialize(adjustAmountOfExternalAllocatedMemory);
-    WTF::initializeMainThread(callOnMainThreadFunction);
-    Heap::init();
-
-    ThreadState::attachMainThread();
-    // currentThread() is null if we are running on a thread without a message loop.
-    if (WebThread* currentThread = platform->currentThread()) {
-        ASSERT(!s_gcTaskRunner);
-        s_gcTaskRunner = new GCTaskRunner(currentThread);
-    }
-
-    DEFINE_STATIC_LOCAL(ModulesInitializer, initializer, ());
-    initializer.init();
-
-    setIndexedDBClientCreateFunction(IndexedDBClientImpl::create);
 }
 
 void shutdown()
 {
-#if defined(LEAK_SANITIZER)
-    // If LSan is about to perform leak detection, release all the registered
-    // static Persistent<> root references to global caches that Blink keeps,
-    // followed by GCs to clear out all they referred to. A full v8 GC cycle
-    // is needed to flush out all garbage.
-    //
-    // This is not needed for caches over non-Oilpan objects, as they're
-    // not scanned by LSan due to being held in non-global storage
-    // ("static" references inside functions/methods.)
-    if (ThreadState* threadState = ThreadState::current()) {
-        threadState->releaseStaticPersistentNodes();
-        Heap::collectAllGarbage();
-    }
-#endif
+    ThreadState::current()->cleanupMainThread();
 
     // currentThread() is null if we are running on a thread without a message loop.
     if (Platform::current()->currentThread()) {
-        Platform::current()->unregisterMemoryDumpProvider(WebCacheMemoryDumpProvider::instance());
-        Platform::current()->unregisterMemoryDumpProvider(FontCacheMemoryDumpProvider::instance());
-
         // We don't need to (cannot) remove s_endOfTaskRunner from the current
         // message loop, because the message loop is already destructed before
         // the shutdown() is called.
         delete s_endOfTaskRunner;
         s_endOfTaskRunner = nullptr;
-
-        ASSERT(s_gcTaskRunner);
-        delete s_gcTaskRunner;
-        s_gcTaskRunner = nullptr;
     }
 
-    // Shutdown V8-related background threads before V8 is ramped down. Note
-    // that this will wait the thread to stop its operations.
-    ScriptStreamerThread::shutdown();
+    modulesInitializer().shutdown();
 
-    v8::Isolate* isolate = V8PerIsolateData::mainThreadIsolate();
-    V8PerIsolateData::willBeDestroyed(isolate);
+    V8Initializer::shutdownMainThread();
 
-    CoreInitializer::terminateThreads();
-
-    ModulesInitializer::terminateThreads();
-
-    // Detach the main thread before starting the shutdown sequence
-    // so that the main thread won't get involved in a GC during the shutdown.
-    ThreadState::detachMainThread();
-
-    V8PerIsolateData::destroy(isolate);
-
-    shutdownWithoutV8();
+    Platform::shutdown();
 }
 
-void shutdownWithoutV8()
+v8::Isolate* mainThreadIsolate()
 {
-    ASSERT(!s_endOfTaskRunner);
-    CoreInitializer::shutdown();
-    Heap::shutdown();
-    WTF::shutdown();
-    Platform::shutdown();
-    WebPrerenderingSupport::shutdown();
-    WTF::Partitions::shutdown();
+    return V8PerIsolateData::mainThreadIsolate();
 }
 
 // TODO(tkent): The following functions to wrap LayoutTestSupport should be
@@ -299,13 +189,25 @@ void enableLogChannel(const char* name)
 
 void resetPluginCache(bool reloadPages)
 {
-    ASSERT(!reloadPages);
+    DCHECK(!reloadPages);
     Page::refreshPlugins();
 }
 
 void decommitFreeableMemory()
 {
     WTF::Partitions::decommitFreeableMemory();
+}
+
+void MemoryPressureNotificationToWorkerThreadIsolates(
+    v8::MemoryPressureLevel level)
+{
+    WorkerBackingThread::
+        MemoryPressureNotificationToWorkerThreadIsolates(level);
+}
+
+void setRAILModeOnWorkerThreadIsolates(v8::RAILMode railMode)
+{
+    WorkerBackingThread::setRAILModeOnWorkerThreadIsolates(railMode);
 }
 
 } // namespace blink

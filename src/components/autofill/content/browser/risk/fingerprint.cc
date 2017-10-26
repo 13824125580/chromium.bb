@@ -42,8 +42,9 @@
 #include "gpu/config/gpu_info.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebScreenInfo.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 
 using blink::WebScreenInfo;
 
@@ -126,10 +127,10 @@ void AddAcceptLanguagesToFingerprint(
 // into the |machine|.
 void AddScreenInfoToFingerprint(const WebScreenInfo& screen_info,
                                 Fingerprint::MachineCharacteristics* machine) {
-  machine->set_screen_count(gfx::Screen::GetScreen()->GetNumDisplays());
+  machine->set_screen_count(display::Screen::GetScreen()->GetNumDisplays());
 
   const gfx::Size screen_size =
-      gfx::Screen::GetScreen()->GetPrimaryDisplay().GetSizeInPixel();
+      display::Screen::GetScreen()->GetPrimaryDisplay().GetSizeInPixel();
   machine->mutable_screen_size()->set_width(screen_size.width());
   machine->mutable_screen_size()->set_height(screen_size.height());
 
@@ -184,7 +185,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
       const std::string& app_locale,
       const std::string& user_agent,
       const base::TimeDelta& timeout,
-      const base::Callback<void(scoped_ptr<Fingerprint>)>& callback);
+      const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback);
 
  private:
   ~FingerprintDataLoader() override {}
@@ -193,7 +194,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   void OnGpuInfoUpdate() override;
 
   // Callbacks for asynchronously loaded data.
-  void OnGotFonts(scoped_ptr<base::ListValue> fonts);
+  void OnGotFonts(std::unique_ptr<base::ListValue> fonts);
   void OnGotPlugins(const std::vector<content::WebPluginInfo>& plugins);
   void OnGotGeoposition(const content::Geoposition& geoposition);
 
@@ -226,7 +227,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   const base::Time install_time_;
 
   // Data that will be loaded asynchronously.
-  scoped_ptr<base::ListValue> fonts_;
+  std::unique_ptr<base::ListValue> fonts_;
   std::vector<content::WebPluginInfo> plugins_;
   bool waiting_on_plugins_;
   content::Geoposition geoposition_;
@@ -236,10 +237,10 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   base::OneShotTimer timeout_timer_;
 
   // The callback that will be called once all the data is available.
-  base::Callback<void(scoped_ptr<Fingerprint>)> callback_;
+  base::Callback<void(std::unique_ptr<Fingerprint>)> callback_;
 
   // The callback used as an "observer" of the GeolocationProvider.
-  scoped_ptr<content::GeolocationProvider::Subscription>
+  std::unique_ptr<content::GeolocationProvider::Subscription>
       geolocation_subscription_;
 
   // For invalidating asynchronous callbacks that might arrive after |this|
@@ -261,7 +262,7 @@ FingerprintDataLoader::FingerprintDataLoader(
     const std::string& app_locale,
     const std::string& user_agent,
     const base::TimeDelta& timeout,
-    const base::Callback<void(scoped_ptr<Fingerprint>)>& callback)
+    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback)
     : gpu_data_manager_(content::GpuDataManager::GetInstance()),
       gpu_observer_(this),
       obfuscated_gaia_id_(obfuscated_gaia_id),
@@ -320,7 +321,7 @@ void FingerprintDataLoader::OnGpuInfoUpdate() {
   MaybeFillFingerprint();
 }
 
-void FingerprintDataLoader::OnGotFonts(scoped_ptr<base::ListValue> fonts) {
+void FingerprintDataLoader::OnGotFonts(std::unique_ptr<base::ListValue> fonts) {
   DCHECK(!fonts_);
   fonts_.reset(fonts.release());
   MaybeFillFingerprint();
@@ -362,7 +363,7 @@ void FingerprintDataLoader::MaybeFillFingerprint() {
 }
 
 void FingerprintDataLoader::FillFingerprint() {
-  scoped_ptr<Fingerprint> fingerprint(new Fingerprint);
+  std::unique_ptr<Fingerprint> fingerprint(new Fingerprint);
   Fingerprint::MachineCharacteristics* machine =
       fingerprint->mutable_machine_characteristics();
 
@@ -441,7 +442,7 @@ void GetFingerprintInternal(
     const std::string& app_locale,
     const std::string& user_agent,
     const base::TimeDelta& timeout,
-    const base::Callback<void(scoped_ptr<Fingerprint>)>& callback) {
+    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback) {
   // Begin loading all of the data that we need to load asynchronously.
   // This class is responsible for freeing its own memory.
   new FingerprintDataLoader(obfuscated_gaia_id, window_bounds, content_bounds,
@@ -462,7 +463,7 @@ void GetFingerprint(
     const base::Time& install_time,
     const std::string& app_locale,
     const std::string& user_agent,
-    const base::Callback<void(scoped_ptr<Fingerprint>)>& callback) {
+    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback) {
   gfx::Rect content_bounds = web_contents->GetContainerBounds();
 
   blink::WebScreenInfo screen_info;

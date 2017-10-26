@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <set>
+#include <tuple>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -430,7 +431,7 @@ void SandboxedUnpacker::OnUnpackExtensionSucceeded(
   got_response_ = true;
   utility_wrapper_ = nullptr;
 
-  scoped_ptr<base::DictionaryValue> final_manifest(
+  std::unique_ptr<base::DictionaryValue> final_manifest(
       RewriteManifestFile(manifest));
   if (!final_manifest)
     return;
@@ -682,7 +683,7 @@ base::DictionaryValue* SandboxedUnpacker::RewriteManifestFile(
   // the original manifest. We do this to ensure the manifest doesn't contain an
   // exploitable bug that could be used to compromise the browser.
   DCHECK(!public_key_.empty());
-  scoped_ptr<base::DictionaryValue> final_manifest(manifest.DeepCopy());
+  std::unique_ptr<base::DictionaryValue> final_manifest(manifest.DeepCopy());
   final_manifest->SetString(manifest_keys::kPublicKey, public_key_);
 
   std::string manifest_json;
@@ -775,8 +776,8 @@ bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
       return false;
     }
 
-    const SkBitmap& image = base::get<0>(images[i]);
-    base::FilePath path_suffix = base::get<1>(images[i]);
+    const SkBitmap& image = std::get<0>(images[i]);
+    base::FilePath path_suffix = std::get<1>(images[i]);
     if (path_suffix.MaybeAsASCII() == install_icon_path)
       *install_icon = image;
 

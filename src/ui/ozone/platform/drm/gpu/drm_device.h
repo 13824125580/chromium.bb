@@ -160,9 +160,11 @@ class DrmDevice : public base::RefCountedThreadSafe<DrmDevice> {
                                 uint32_t crtc_count,
                                 const PageFlipCallback& callback);
 
-  // Set the gamma ramp for |crtc_id| to reflect the ramps in |lut|.
-  virtual bool SetGammaRamp(uint32_t crtc_id,
-                            const std::vector<GammaRampRGBEntry>& lut);
+  virtual bool SetColorCorrection(
+      uint32_t crtc_id,
+      const std::vector<GammaRampRGBEntry>& degamma_lut,
+      const std::vector<GammaRampRGBEntry>& gamma_lut,
+      const std::vector<float>& correction_matrix);
 
   virtual bool SetCapability(uint64_t capability, uint64_t value);
 
@@ -181,11 +183,14 @@ class DrmDevice : public base::RefCountedThreadSafe<DrmDevice> {
 
   virtual ~DrmDevice();
 
-  scoped_ptr<HardwareDisplayPlaneManager> plane_manager_;
+  std::unique_ptr<HardwareDisplayPlaneManager> plane_manager_;
 
  private:
   class IOWatcher;
   class PageFlipManager;
+
+  bool SetGammaRamp(uint32_t crtc_id,
+                    const std::vector<GammaRampRGBEntry>& lut);
 
   // Path to the DRM device (in sysfs).
   const base::FilePath device_path_;
@@ -193,10 +198,10 @@ class DrmDevice : public base::RefCountedThreadSafe<DrmDevice> {
   // DRM device.
   base::File file_;
 
-  scoped_ptr<PageFlipManager> page_flip_manager_;
+  std::unique_ptr<PageFlipManager> page_flip_manager_;
 
   // Watcher for |fd_| listening for page flip events.
-  scoped_ptr<IOWatcher> watcher_;
+  std::unique_ptr<IOWatcher> watcher_;
 
   bool is_primary_device_;
 

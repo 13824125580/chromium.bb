@@ -4,11 +4,13 @@
 
 #include "net/quic/crypto/quic_crypto_client_config.h"
 
+#include <memory>
+
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "net/quic/crypto/cert_compressor.h"
-#include "net/quic/crypto/chacha20_poly1305_rfc7539_encrypter.h"
+#include "net/quic/crypto/chacha20_poly1305_encrypter.h"
 #include "net/quic/crypto/channel_id.h"
 #include "net/quic/crypto/common_cert_set.h"
 #include "net/quic/crypto/crypto_framer.h"
@@ -147,7 +149,7 @@ QuicCryptoClientConfig::CachedState::SetServerConfig(StringPiece server_config,
 
   // Even if the new server config matches the existing one, we still wish to
   // reject it if it has expired.
-  scoped_ptr<CryptoHandshakeMessage> new_scfg_storage;
+  std::unique_ptr<CryptoHandshakeMessage> new_scfg_storage;
   const CryptoHandshakeMessage* new_scfg;
 
   if (!matches_existing) {
@@ -191,9 +193,10 @@ void QuicCryptoClientConfig::CachedState::InvalidateServerConfig() {
 
 void QuicCryptoClientConfig::CachedState::SetProof(const vector<string>& certs,
                                                    StringPiece cert_sct,
+                                                   StringPiece chlo_hash,
                                                    StringPiece signature) {
-  bool has_changed =
-      signature != server_config_sig_ || certs_.size() != certs.size();
+  bool has_changed = signature != server_config_sig_ ||
+                     chlo_hash != chlo_hash_ || certs_.size() != certs.size();
 
   if (!has_changed) {
     for (size_t i = 0; i < certs_.size(); i++) {
@@ -212,6 +215,7 @@ void QuicCryptoClientConfig::CachedState::SetProof(const vector<string>& certs,
   SetProofInvalid();
   certs_ = certs;
   cert_sct_ = cert_sct.as_string();
+  chlo_hash_ = chlo_hash.as_string();
   server_config_sig_ = signature.as_string();
 }
 
@@ -220,6 +224,7 @@ void QuicCryptoClientConfig::CachedState::Clear() {
   source_address_token_.clear();
   certs_.clear();
   cert_sct_.clear();
+  chlo_hash_.clear();
   server_config_sig_.clear();
   server_config_valid_ = false;
   proof_verify_details_.reset();
@@ -233,6 +238,7 @@ void QuicCryptoClientConfig::CachedState::ClearProof() {
   SetProofInvalid();
   certs_.clear();
   cert_sct_.clear();
+  chlo_hash_.clear();
   server_config_sig_.clear();
 }
 
@@ -249,7 +255,8 @@ bool QuicCryptoClientConfig::CachedState::Initialize(
     StringPiece server_config,
     StringPiece source_address_token,
     const vector<string>& certs,
-    const string& cert_sct,
+    StringPiece cert_sct,
+    StringPiece chlo_hash,
     StringPiece signature,
     QuicWallTime now) {
   DCHECK(server_config_.empty());
@@ -269,8 +276,9 @@ bool QuicCryptoClientConfig::CachedState::Initialize(
 
   signature.CopyToString(&server_config_sig_);
   source_address_token.CopyToString(&source_address_token_);
+  cert_sct.CopyToString(&cert_sct_);
+  chlo_hash.CopyToString(&chlo_hash_);
   certs_ = certs;
-  cert_sct_ = cert_sct;
   return true;
 }
 
@@ -289,6 +297,10 @@ const vector<string>& QuicCryptoClientConfig::CachedState::certs() const {
 
 const string& QuicCryptoClientConfig::CachedState::cert_sct() const {
   return cert_sct_;
+}
+
+const string& QuicCryptoClientConfig::CachedState::chlo_hash() const {
+  return chlo_hash_;
 }
 
 const string& QuicCryptoClientConfig::CachedState::signature() const {
@@ -330,6 +342,7 @@ void QuicCryptoClientConfig::CachedState::InitializeFrom(
   source_address_token_ = other.source_address_token_;
   certs_ = other.certs_;
   cert_sct_ = other.cert_sct_;
+  chlo_hash_ = other.chlo_hash_;
   server_config_sig_ = other.server_config_sig_;
   server_config_valid_ = other.server_config_valid_;
   server_designated_connection_ids_ = other.server_designated_connection_ids_;
@@ -364,17 +377,10 @@ string QuicCryptoClientConfig::CachedState::GetNextServerNonce() {
 
 void QuicCryptoClientConfig::SetDefaults() {
   // Key exchange methods.
-  kexs.resize(2);
-  kexs[0] = kC255;
-  kexs[1] = kP256;
+  kexs = {kC255, kP256};
 
   // Authenticated encryption algorithms. Prefer RFC 7539 ChaCha20 by default.
-  aead.clear();
-  if (ChaCha20Poly1305Rfc7539Encrypter::IsSupported()) {
-    aead.push_back(kCC20);
-  }
-  aead.push_back(kCC12);
-  aead.push_back(kAESG);
+  aead = {kCC20, kAESG};
 
   disable_ecdsa_ = false;
 }
@@ -442,9 +448,9 @@ void QuicCryptoClientConfig::FillInchoateClientHello(
   }
 
   if (disable_ecdsa_) {
-    out->SetTaglist(kPDMD, kX59R, 0);
+    out->SetVector(kPDMD, QuicTagVector{kX59R});
   } else {
-    out->SetTaglist(kPDMD, kX509, 0);
+    out->SetVector(kPDMD, QuicTagVector{kX509});
   }
 
   if (common_cert_sets) {
@@ -475,6 +481,7 @@ void QuicCryptoClientConfig::FillInchoateClientHello(
 QuicErrorCode QuicCryptoClientConfig::FillClientHello(
     const QuicServerId& server_id,
     QuicConnectionId connection_id,
+    const QuicVersion actual_version,
     const QuicVersion preferred_version,
     const CachedState* cached,
     QuicWallTime now,
@@ -534,8 +541,8 @@ QuicErrorCode QuicCryptoClientConfig::FillClientHello(
     *error_details = "Unsupported AEAD or KEXS";
     return QUIC_CRYPTO_NO_SUPPORT;
   }
-  out->SetTaglist(kAEAD, out_params->aead, 0);
-  out->SetTaglist(kKEXS, out_params->key_exchange, 0);
+  out->SetVector(kAEAD, QuicTagVector{out_params->aead});
+  out->SetVector(kKEXS, QuicTagVector{out_params->key_exchange});
 
   if (!tb_key_params.empty()) {
     const QuicTag* their_tbkps;
@@ -548,7 +555,8 @@ QuicErrorCode QuicCryptoClientConfig::FillClientHello(
                                      num_their_tbkps, QuicUtils::LOCAL_PRIORITY,
                                      &out_params->token_binding_key_param,
                                      nullptr)) {
-          out->SetTaglist(kTBKP, out_params->token_binding_key_param, 0);
+          out->SetVector(kTBKP,
+                         QuicTagVector{out_params->token_binding_key_param});
         }
         break;
       default:
@@ -641,7 +649,8 @@ QuicErrorCode QuicCryptoClientConfig::FillClientHello(
     if (!CryptoUtils::DeriveKeys(
             out_params->initial_premaster_secret, out_params->aead,
             out_params->client_nonce, out_params->server_nonce, hkdf_input,
-            Perspective::IS_CLIENT, &crypters, nullptr /* subkey secret */)) {
+            Perspective::IS_CLIENT, CryptoUtils::Diversification::Never(),
+            &crypters, nullptr /* subkey secret */)) {
       *error_details = "Symmetric key setup failed";
       return QUIC_CRYPTO_SYMMETRIC_KEY_SETUP_FAILED;
     }
@@ -649,7 +658,7 @@ QuicErrorCode QuicCryptoClientConfig::FillClientHello(
     const QuicData& cetv_plaintext = cetv.GetSerialized();
     const size_t encrypted_len =
         crypters.encrypter->GetCiphertextSize(cetv_plaintext.length());
-    scoped_ptr<char[]> output(new char[encrypted_len]);
+    std::unique_ptr<char[]> output(new char[encrypted_len]);
     size_t output_size = 0;
     if (!crypters.encrypter->EncryptPacket(
             kDefaultPathId /* path id */, 0 /* packet number */,
@@ -690,14 +699,18 @@ QuicErrorCode QuicCryptoClientConfig::FillClientHello(
   hkdf_input.append(QuicCryptoConfig::kInitialLabel, label_len);
   hkdf_input.append(out_params->hkdf_input_suffix);
 
-  string* subkey_secret = nullptr;
-  if (FLAGS_quic_save_initial_subkey_secret) {
-    subkey_secret = &out_params->initial_subkey_secret;
-  }
+  string* subkey_secret = &out_params->initial_subkey_secret;
+
+  // Only perform key diversification for QUIC versions 33 and later.
+  // TODO(rch): remove the |actual_version| argument to this method when
+  // QUIC_VERSION_32 is removed.
+  CryptoUtils::Diversification diversification =
+      actual_version > QUIC_VERSION_32 ? CryptoUtils::Diversification::Pending()
+                                       : CryptoUtils::Diversification::Never();
   if (!CryptoUtils::DeriveKeys(out_params->initial_premaster_secret,
                                out_params->aead, out_params->client_nonce,
                                out_params->server_nonce, hkdf_input,
-                               Perspective::IS_CLIENT,
+                               Perspective::IS_CLIENT, diversification,
                                &out_params->initial_crypters, subkey_secret)) {
     *error_details = "Symmetric key setup failed";
     return QUIC_CRYPTO_SYMMETRIC_KEY_SETUP_FAILED;
@@ -709,7 +722,8 @@ QuicErrorCode QuicCryptoClientConfig::FillClientHello(
 QuicErrorCode QuicCryptoClientConfig::CacheNewServerConfig(
     const CryptoHandshakeMessage& message,
     QuicWallTime now,
-    const QuicVersion version,
+    QuicVersion version,
+    StringPiece chlo_hash,
     const vector<string>& cached_certs,
     CachedState* cached,
     string* error_details) {
@@ -751,7 +765,7 @@ QuicErrorCode QuicCryptoClientConfig::CacheNewServerConfig(
     if (version > QUIC_VERSION_29) {
       message.GetStringPiece(kCertificateSCTTag, &cert_sct);
     }
-    cached->SetProof(certs, cert_sct, proof);
+    cached->SetProof(certs, cert_sct, chlo_hash, proof);
   } else {
     // Secure QUIC: clear existing proof as we have been sent a new SCFG
     // without matching proof/certs.
@@ -775,6 +789,7 @@ QuicErrorCode QuicCryptoClientConfig::ProcessRejection(
     const CryptoHandshakeMessage& rej,
     QuicWallTime now,
     const QuicVersion version,
+    StringPiece chlo_hash,
     CachedState* cached,
     QuicCryptoNegotiatedParameters* out_params,
     string* error_details) {
@@ -785,8 +800,9 @@ QuicErrorCode QuicCryptoClientConfig::ProcessRejection(
     return QUIC_CRYPTO_INTERNAL_ERROR;
   }
 
-  QuicErrorCode error = CacheNewServerConfig(
-      rej, now, version, out_params->cached_certs, cached, error_details);
+  QuicErrorCode error =
+      CacheNewServerConfig(rej, now, version, chlo_hash,
+                           out_params->cached_certs, cached, error_details);
   if (error != QUIC_NO_ERROR) {
     return error;
   }
@@ -867,6 +883,7 @@ QuicErrorCode QuicCryptoClientConfig::ProcessServerHello(
           out_params->client_nonce,
           shlo_nonce.empty() ? out_params->server_nonce : shlo_nonce,
           hkdf_input, Perspective::IS_CLIENT,
+          CryptoUtils::Diversification::Never(),
           &out_params->forward_secure_crypters, &out_params->subkey_secret)) {
     *error_details = "Symmetric key setup failed";
     return QUIC_CRYPTO_SYMMETRIC_KEY_SETUP_FAILED;
@@ -879,6 +896,7 @@ QuicErrorCode QuicCryptoClientConfig::ProcessServerConfigUpdate(
     const CryptoHandshakeMessage& server_config_update,
     QuicWallTime now,
     const QuicVersion version,
+    StringPiece chlo_hash,
     CachedState* cached,
     QuicCryptoNegotiatedParameters* out_params,
     string* error_details) {
@@ -888,7 +906,7 @@ QuicErrorCode QuicCryptoClientConfig::ProcessServerConfigUpdate(
     *error_details = "ServerConfigUpdate must have kSCUP tag.";
     return QUIC_INVALID_CRYPTO_MESSAGE_TYPE;
   }
-  return CacheNewServerConfig(server_config_update, now, version,
+  return CacheNewServerConfig(server_config_update, now, version, chlo_hash,
                               out_params->cached_certs, cached, error_details);
 }
 

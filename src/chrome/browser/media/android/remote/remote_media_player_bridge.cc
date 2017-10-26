@@ -17,6 +17,7 @@
 #include "media/base/android/media_common_android.h"
 #include "media/base/android/media_resource_getter.h"
 #include "media/base/timestamp_constants.h"
+#include "net/base/escape.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/android/java_bitmap.h"
 
@@ -41,15 +42,18 @@ namespace remote_media {
 RemoteMediaPlayerBridge::RemoteMediaPlayerBridge(
     int player_id,
     const std::string& user_agent,
-    bool hide_url_log,
     RemoteMediaPlayerManager* manager)
-    : MediaPlayerAndroid(player_id,
-                         manager,
-                         base::Bind(&DoNothing),
-                         manager->GetLocalPlayer(player_id)->frame_url()),
+    : MediaPlayerAndroid(
+          player_id,
+          manager,
+          base::Bind(&DoNothing),
+          manager->GetLocalPlayer(player_id)->frame_url(),
+          // TODO(davve): Media session interaction with remote
+          // playback not defined. Use invalid session id for now.
+          // https://github.com/whatwg/mediasession/issues/123
+          media::kInvalidMediaSessionId),
       width_(0),
       height_(0),
-      hide_url_log_(hide_url_log),
       url_(manager->GetLocalPlayer(player_id)->GetUrl()),
       first_party_for_cookies_(
           manager->GetLocalPlayer(player_id)->GetFirstPartyForCookies()),
@@ -60,8 +64,11 @@ RemoteMediaPlayerBridge::RemoteMediaPlayerBridge(
   CHECK(env);
   ScopedJavaLocalRef<jstring> j_url_string;
   if (url_.is_valid()) {
+    // Escape the URL to make it safe to use. Don't escape existing escape
+    // sequences though.
+    std::string escaped_url = net::EscapeExternalHandlerValue(url_.spec());
     // Create a Java String for the URL.
-    j_url_string = ConvertUTF8ToJavaString(env, url_.spec());
+    j_url_string = ConvertUTF8ToJavaString(env, escaped_url);
   }
   ScopedJavaLocalRef<jstring> j_frame_url_string;
   GURL frameUrl = GetLocalPlayer()->frame_url();
@@ -202,7 +209,7 @@ void RemoteMediaPlayerBridge::Pause(bool is_media_related_action) {
   }
 }
 
-void RemoteMediaPlayerBridge::SetVideoSurface(gfx::ScopedJavaSurface surface) {
+void RemoteMediaPlayerBridge::SetVideoSurface(gl::ScopedJavaSurface surface) {
   // The surface is reset whenever the fullscreen view is destroyed or created.
   // Since the remote player doesn't use it, we forward it to the local player
   // for the time when user disconnects and resumes local playback
@@ -456,6 +463,12 @@ void RemoteMediaPlayerBridge::OnError(
       // playback. None of the existing MediaPlayerAndroid codes are
       // relevant for remote playback.
       manager()->OnError(player_id(), MEDIA_ERROR_INVALID_CODE);
+}
+
+void RemoteMediaPlayerBridge::OnCancelledRemotePlaybackRequest(
+    JNIEnv* env, const base::android::JavaParamRef<jobject>& obj) {
+  static_cast<RemoteMediaPlayerManager*>(manager())
+      ->OnCancelledRemotePlaybackRequest(player_id());
 }
 
 

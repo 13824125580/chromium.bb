@@ -7,8 +7,9 @@
 
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
-
+#include "wtf/Noncopyable.h"
+#include "wtf/text/WTFString.h"
+#include <memory>
 #include <v8.h>
 
 namespace blink {
@@ -28,7 +29,7 @@ class WebTaskRunner;
 // streaming. It is possible, though, that Document and the PendingScript are
 // destroyed while the streaming is in progress, and ScriptStreamer handles it
 // gracefully.
-class CORE_EXPORT ScriptStreamer final : public RefCountedWillBeRefCountedGarbageCollected<ScriptStreamer> {
+class CORE_EXPORT ScriptStreamer final : public GarbageCollectedFinalized<ScriptStreamer> {
     WTF_MAKE_NONCOPYABLE(ScriptStreamer);
 public:
     enum Type {
@@ -82,6 +83,9 @@ public:
 
     v8::ScriptCompiler::StreamedSource::Encoding encoding() const { return m_encoding; }
 
+    const String& scriptURLString() const { return m_scriptURLString; }
+    unsigned long scriptResourceIdentifier() const { return m_scriptResourceIdentifier; }
+
     static void setSmallScriptThresholdForTesting(size_t threshold)
     {
         s_smallScriptThreshold = threshold;
@@ -94,9 +98,9 @@ private:
     // streamed. Non-const for testing.
     static size_t s_smallScriptThreshold;
 
-    static PassRefPtrWillBeRawPtr<ScriptStreamer> create(PendingScript* script, Type scriptType, ScriptState* scriptState, v8::ScriptCompiler::CompileOptions compileOptions, WebTaskRunner* loadingTaskRunner)
+    static ScriptStreamer* create(PendingScript* script, Type scriptType, ScriptState* scriptState, v8::ScriptCompiler::CompileOptions compileOptions, WebTaskRunner* loadingTaskRunner)
     {
-        return adoptRefWillBeNoop(new ScriptStreamer(script, scriptType, scriptState, compileOptions, loadingTaskRunner));
+        return new ScriptStreamer(script, scriptType, scriptState, compileOptions, loadingTaskRunner);
     }
     ScriptStreamer(PendingScript*, Type, ScriptState*, v8::ScriptCompiler::CompileOptions, WebTaskRunner*);
 
@@ -105,18 +109,18 @@ private:
 
     static bool startStreamingInternal(PendingScript*, Type, Settings*, ScriptState*, WebTaskRunner*);
 
-    RawPtrWillBeMember<PendingScript> m_pendingScript;
+    Member<PendingScript> m_pendingScript;
     // This pointer is weak. If PendingScript and its Resource are deleted
     // before ScriptStreamer, PendingScript will notify ScriptStreamer of its
     // deletion by calling cancel().
-    RawPtrWillBeMember<ScriptResource> m_resource;
+    Member<ScriptResource> m_resource;
     // Whether ScriptStreamer is detached from the Resource. In those cases, the
     // script data is not needed any more, and the client won't get notified
     // when the loading and streaming are done.
     bool m_detached;
 
     SourceStream* m_stream;
-    OwnPtr<v8::ScriptCompiler::StreamedSource> m_source;
+    std::unique_ptr<v8::ScriptCompiler::StreamedSource> m_source;
     bool m_loadingFinished; // Whether loading from the network is done.
     // Whether the V8 side processing is done. Will be used by the main thread
     // and the streamer thread; guarded by m_mutex.
@@ -136,12 +140,18 @@ private:
     // For recording metrics for different types of scripts separately.
     Type m_scriptType;
 
+    // Keep the script URL string for event tracing.
+    const String m_scriptURLString;
+
+    // Keep the script resource dentifier for event tracing.
+    const unsigned long m_scriptResourceIdentifier;
+
     mutable Mutex m_mutex;
 
     // Encoding of the streamed script. Saved for sanity checking purposes.
     v8::ScriptCompiler::StreamedSource::Encoding m_encoding;
 
-    OwnPtr<WebTaskRunner> m_loadingTaskRunner;
+    std::unique_ptr<WebTaskRunner> m_loadingTaskRunner;
 };
 
 } // namespace blink

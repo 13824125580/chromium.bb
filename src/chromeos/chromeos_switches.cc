@@ -4,6 +4,8 @@
 
 #include "chromeos/chromeos_switches.h"
 
+#include <string>
+
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
 
@@ -12,6 +14,13 @@
 
 namespace chromeos {
 namespace switches {
+
+// If this flag is set, enable data roaming in the cellular network by default
+// upon system start if it's an unmanaged device. This flag is used by Rialto
+// device to obtain device policy during OOBE since the Rialto device has no
+// display and and only connects over cell.
+const char kAllowDataRoamingByDefault[] = "allow-data-roaming-by-default";
+
 // If this flag is passed, failed policy fetches will not cause profile
 // initialization to fail. This is useful for tests because it means that
 // tests don't have to mock out the policy infrastructure.
@@ -56,10 +65,10 @@ const char kDefaultWallpaperIsOem[] = "default-wallpaper-is-oem";
 const char kDefaultWallpaperLarge[] = "default-wallpaper-large";
 const char kDefaultWallpaperSmall[] = "default-wallpaper-small";
 
-// Time before a machine at OOBE is considered derelict.
+// Time in seconds before a machine at OOBE is considered derelict.
 const char kDerelictDetectionTimeout[] = "derelict-detection-timeout";
 
-// Time before a derelict machines starts demo mode.
+// Time in seconds before a derelict machines starts demo mode.
 const char kDerelictIdleTimeout[] = "derelict-idle-timeout";
 
 // Disables ARC Opt-in verification process and ARC is enabled by default.
@@ -73,6 +82,9 @@ const char kDisableCloudImport[] = "disable-cloud-import";
 
 // Disables the ChromeOS demo.
 const char kDisableDemoMode[] = "disable-demo-mode";
+
+// Disables quick view in Files app.
+const char kDisableFilesQuickView[] = "disable-files-quick-view";
 
 // Disable HID-detection OOBE screen.
 const char kDisableHIDDetectionOnOOBE[] = "disable-hid-detection-on-oobe";
@@ -98,6 +110,9 @@ const char kDisableOfficeEditingComponentApp[] =
 // Disables rollback option on reset screen.
 const char kDisableRollbackOption[] = "disable-rollback-option";
 
+// Disables experimental storage manager to manage local storage.
+const char kDisableStorageManager[] = "disable-storage-manager";
+
 // Disables volume adjust sound.
 const char kDisableVolumeAdjustSound[] = "disable-volume-adjust-sound";
 
@@ -119,6 +134,15 @@ const char kEnableArc[] = "enable-arc";
 // locate the device.
 const char kEnableConsumerManagement[] = "enable-consumer-management";
 
+// Enables details panel in Files app.
+const char kEnableFilesDetailsPanel[] = "enable-files-details-panel";
+
+// Enables quick view in Files app.
+const char kEnableFilesQuickView[] = "enable-files-quick-view";
+
+// Disables notification when device is in end of life status.
+const char kDisableEolNotification[] = "disable-eol-notification";
+
 // If this switch is set, the device cannot be remotely disabled by its owner.
 const char kDisableDeviceDisabling[] = "disable-device-disabling";
 
@@ -129,6 +153,9 @@ const char kDisableNewKoreanIme[] = "disable-new-korean-ime";
 // Disables mtp write support.
 const char kDisableMtpWriteSupport[] = "disable-mtp-write-support";
 
+// Enable the multiple display layout UI.
+const char kDisableMultiDisplayLayout[] = "disable-multi-display-layout";
+
 // If this switch is set, the options for suggestions as typing on physical
 // keyboard will be enabled.
 const char kEnablePhysicalKeyboardAutocorrect[] =
@@ -138,6 +165,11 @@ const char kEnablePhysicalKeyboardAutocorrect[] =
 // keyboard will be disabled.
 const char kDisablePhysicalKeyboardAutocorrect[] =
     "disable-physical-keyboard-autocorrect";
+
+// Shows additional checkboxes in Settings to enable Chrome OS accessibility
+// features that haven't launched yet.
+const char kEnableExperimentalAccessibilityFeatures[] =
+    "enable-experimental-accessibility-features";
 
 // Enabled sharing assets for installed default apps.
 const char kEnableExtensionAssetsSharing[]  = "enable-extension-assets-sharing";
@@ -154,15 +186,18 @@ const char kEnableTouchpadThreeFingerClick[]
 const char kEnableScreenshotTestingWithMode[] =
     "enable-screenshot-testing-with-mode";
 
+// Enables experimental storage manager to manage local storage.
+const char kEnableStorageManager[] = "enable-storage-manager";
+
 // Enable Kiosk mode for ChromeOS. Note this switch refers to retail mode rather
 // than the kiosk app mode.
 const char kEnableKioskMode[] = "enable-kiosk-mode";
 
-// Enable the multiple display layout UI.
-const char kEnableMultiDisplayLayout[] = "enable-multi-display-layout";
-
 // Enables request of tablet site (via user agent override).
 const char kEnableRequestTabletSite[] = "enable-request-tablet-site";
+
+// Disables ARC for managed accounts.
+const char kEnterpriseDisableArc[] = "enterprise-disable-arc";
 
 // Whether to enable forced enterprise re-enrollment.
 const char kEnterpriseEnableForcedReEnrollment[] =
@@ -177,6 +212,10 @@ const char kEnterpriseEnrollmentInitialModulus[] =
 // auto-enrollment client.
 const char kEnterpriseEnrollmentModulusLimit[] =
     "enterprise-enrollment-modulus-limit";
+
+// Enables the zero-touch enterprise enrollment flow.
+const char kEnterpriseEnableZeroTouchEnrollment[] =
+    "enterprise-enable-zero-touch-enrollment";
 
 // Enables the chromecast support for video player app.
 const char kEnableVideoPlayerChromecastSupport[] =
@@ -337,15 +376,19 @@ const char kCrosRegionsModeHide[] = "hide";
 // Forces CrOS region value.
 const char kCrosRegion[] = "cros-region";
 
-// Enables IME menu
-const char kEnableImeMenu[] = "enable-ime-menu";
-
 // Controls CrOS GaiaId migration for tests:
 // ""        - default,
 // "started" - migration started (i.e. all stored user keys will be converted
 //             to GaiaId).
 const char kTestCrosGaiaIdMigration[] = "test-cros-gaia-id-migration";
 const char kTestCrosGaiaIdMigrationStarted[] = "started";
+
+// This flag disables SystemTimezoneAutomaticDetection policy.
+const char kDisableSystemTimezoneAutomaticDetectionPolicy[] =
+    "disable-system-timezone-automatic-detection";
+
+// This flag enables material design OOBE UI.
+const char kEnableMdOobe[] = "enable-md-oobe";
 
 bool WakeOnWifiEnabled() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(kDisableWakeOnWifi);
@@ -391,10 +434,6 @@ GetMemoryPressureThresholds() {
     return MemoryPressureMonitor::THRESHOLD_AGGRESSIVE;
 
   return MemoryPressureMonitor::THRESHOLD_DEFAULT;
-}
-
-bool IsImeMenuEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(kEnableImeMenu);
 }
 
 bool IsGaiaIdMigrationStarted() {

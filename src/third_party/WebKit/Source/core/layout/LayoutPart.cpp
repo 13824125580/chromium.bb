@@ -31,9 +31,7 @@
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/LayoutView.h"
-#include "core/layout/svg/LayoutSVGRoot.h"
-#include "core/paint/BoxPainter.h"
-#include "core/paint/PaintLayer.h"
+#include "core/layout/api/LayoutAPIShim.h"
 #include "core/paint/PartPainter.h"
 #include "core/plugins/PluginView.h"
 
@@ -129,8 +127,9 @@ bool LayoutPart::requiresAcceleratedCompositing() const
         return true;
 
     if (Document* contentDocument = element->contentDocument()) {
-        if (LayoutView* view = contentDocument->layoutView())
-            return view->usesCompositing();
+        LayoutViewItem viewItem = contentDocument->layoutViewItem();
+        if (!viewItem.isNull())
+            return viewItem.usesCompositing();
     }
 
     return false;
@@ -140,7 +139,7 @@ bool LayoutPart::needsPreferredWidthsRecalculation() const
 {
     if (LayoutReplaced::needsPreferredWidthsRecalculation())
         return true;
-    return embeddedContentBox();
+    return embeddedReplacedContent();
 }
 
 bool LayoutPart::nodeAtPointOverWidget(HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction action)
@@ -168,17 +167,17 @@ bool LayoutPart::nodeAtPoint(HitTestResult& result, const HitTestLocation& locat
 
     if (action == HitTestForeground) {
         FrameView* childFrameView = toFrameView(widget());
-        LayoutView* childRoot = childFrameView->layoutView();
+        LayoutViewItem childRootItem = childFrameView->layoutViewItem();
 
-        if (visibleToHitTestRequest(result.hitTestRequest()) && childRoot) {
+        if (visibleToHitTestRequest(result.hitTestRequest()) && !childRootItem.isNull()) {
             LayoutPoint adjustedLocation = accumulatedOffset + location();
             LayoutPoint contentOffset = LayoutPoint(borderLeft() + paddingLeft(), borderTop() + paddingTop()) - LayoutSize(childFrameView->scrollOffset());
             HitTestLocation newHitTestLocation(locationInContainer, -adjustedLocation - contentOffset);
             HitTestRequest newHitTestRequest(result.hitTestRequest().type() | HitTestRequest::ChildFrameHitTest);
             HitTestResult childFrameResult(newHitTestRequest, newHitTestLocation);
 
-            // The frame's layout and style must be up-to-date if we reach here.
-            bool isInsideChildFrame = childRoot->hitTestNoLifecycleUpdate(childFrameResult);
+            // The frame's layout and style must be up to date if we reach here.
+            bool isInsideChildFrame = childRootItem.hitTestNoLifecycleUpdate(childFrameResult);
 
             if (result.hitTestRequest().listBased()) {
                 result.append(childFrameResult);
@@ -284,41 +283,6 @@ void LayoutPart::updateOnWidgetChange()
     }
 }
 
-void LayoutPart::updateWidgetGeometry()
-{
-    Widget* widget = this->widget();
-    if (!widget || !node()) // Check the node in case destroy() has been called.
-        return;
-
-    bool boundsChanged = updateWidgetGeometryInternal();
-
-    // If the frame bounds got changed, or if view needs layout (possibly indicating
-    // content size is wrong) we have to do a layout to set the right widget size.
-    if (widget && widget->isFrameView()) {
-        FrameView* frameView = toFrameView(widget);
-        // Check the frame's page to make sure that the frame isn't in the process of being destroyed.
-        if ((boundsChanged || frameView->needsLayout()) && frameView->frame().page())
-            frameView->layout();
-    }
-
-    widget->widgetGeometryMayHaveChanged();
-}
-
-bool LayoutPart::updateWidgetGeometryInternal()
-{
-    Widget* widget = this->widget();
-    ASSERT(widget);
-
-    LayoutRect contentBox = contentBoxRect();
-    LayoutRect absoluteContentBox(localToAbsoluteQuad(FloatQuad(FloatRect(contentBox))).boundingBox());
-    if (widget->isFrameView()) {
-        contentBox.setLocation(absoluteContentBox.location());
-        return setWidgetGeometry(contentBox);
-    }
-    // TODO(chrishtr): why are these widgets using an absolute rect for their frameRect?
-    return setWidgetGeometry(absoluteContentBox);
-}
-
 // Widgets are always placed on integer boundaries, so rounding the size is actually
 // the desired behavior. This function is here because it's otherwise seldom what we
 // want to do with a LayoutRect.
@@ -327,34 +291,75 @@ static inline IntRect roundedIntRect(const LayoutRect& rect)
     return IntRect(roundedIntPoint(rect.location()), roundedIntSize(rect.size()));
 }
 
-bool LayoutPart::setWidgetGeometry(const LayoutRect& frame)
+void LayoutPart::updateWidgetGeometry()
 {
-    if (!node())
-        return false;
+    Widget* widget = this->widget();
+    if (!widget || !node()) // Check the node in case destroy() has been called.
+        return;
 
+    IntRect newFrame = roundedIntRect(contentBoxRect());
+    bool boundsWillChange = widget->frameRect().size() != newFrame.size();
+
+    FrameView* frameView = widget->isFrameView() ? toFrameView(widget) : nullptr;
+
+    // If frame bounds are changing mark the view for layout. Also check the
+    // frame's page to make sure that the frame isn't in the process of being
+    // destroyed.
+    if (frameView && boundsWillChange && frameView->frame().page())
+        frameView->setNeedsLayout();
+
+    updateWidgetGeometryInternal();
+
+    // If view needs layout, either because bounds have changed or possibly
+    // indicating content size is wrong, we have to do a layout to set the right
+    // widget size.
+    if (frameView && frameView->needsLayout() && frameView->frame().page())
+        frameView->layout();
+
+    widget->widgetGeometryMayHaveChanged();
+}
+
+void LayoutPart::updateWidgetGeometryInternal()
+{
     Widget* widget = this->widget();
     ASSERT(widget);
+
+    LayoutRect contentBox = contentBoxRect();
+    LayoutRect absoluteContentBox(localToAbsoluteQuad(FloatQuad(FloatRect(contentBox))).boundingBox());
+    if (widget->isFrameView()) {
+        if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+            contentBox.setLocation(absoluteContentBox.location());
+        setWidgetGeometry(contentBox);
+    } else {
+        // TODO(chrishtr): why are these widgets using an absolute rect for their frameRect?
+        setWidgetGeometry(absoluteContentBox);
+    }
+}
+
+void LayoutPart::setWidgetGeometry(const LayoutRect& frame)
+{
+    Widget* widget = this->widget();
+    ASSERT(widget);
+    ASSERT(node());
 
     IntRect newFrame = roundedIntRect(frame);
 
     if (widget->frameRect() == newFrame)
-        return false;
+        return;
 
     RefPtr<LayoutPart> protector(this);
-    RefPtrWillBeRawPtr<Node> protectedNode(node());
     widget->setFrameRect(newFrame);
-    return widget->frameRect().size() != newFrame.size();
 }
 
-void LayoutPart::invalidatePaintOfSubtreesIfNeeded(PaintInvalidationState& paintInvalidationState)
+void LayoutPart::invalidatePaintOfSubtreesIfNeeded(const PaintInvalidationState& paintInvalidationState)
 {
-    if (widget() && widget()->isFrameView()) {
+    if (widget() && widget()->isFrameView() && !isThrottledFrameView()) {
         FrameView* childFrameView = toFrameView(widget());
         // |childFrameView| is in another document, which could be
         // missing its LayoutView. TODO(jchaffraix): Ideally we should
         // not need this code.
-        if (LayoutView* childLayoutView = childFrameView->layoutView()) {
-            PaintInvalidationState childViewPaintInvalidationState(*childLayoutView, paintInvalidationState);
+        if (LayoutView* childLayoutView = toLayoutView(LayoutAPIShim::layoutObjectFrom(childFrameView->layoutViewItem()))) {
+            PaintInvalidationState childViewPaintInvalidationState(paintInvalidationState, *childLayoutView);
             childFrameView->invalidateTreeIfNeeded(childViewPaintInvalidationState);
         }
     }

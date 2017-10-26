@@ -64,26 +64,18 @@ _FIND_ANOMALIES_BENCH_CACHE_KEY = 'find-anomalies-bench'
 
 _EXPERIMENTAL_FUNCTIONS = {
     'find_change_points_default': find_change_points_exp.RunFindChangePoints,
-    'find_change_points_absolute_change_threshold':
-        find_change_points_exp.FindChangePointsWithAbsoluteChangeThreshold,
-    'segment_size_4': lambda test, series:
+    'steppiness_0_3': lambda test, series:
                       find_change_points_exp.RunFindChangePoints(
-                          test, series, min_segment_size=4),
-    'segment_size_8': lambda test, series:
+                          test, series, min_steppiness=0.3),
+    'steppiness_0_4': lambda test, series:
                       find_change_points_exp.RunFindChangePoints(
-                          test, series, min_segment_size=8),
-    'steppiness_0_1': lambda test, series:
-                      find_change_points_exp.RunFindChangePoints(
-                          test, series, min_steppiness=0.1),
+                          test, series, min_steppiness=0.4),
     'steppiness_0_5': lambda test, series:
                       find_change_points_exp.RunFindChangePoints(
                           test, series, min_steppiness=0.5),
-    'std_dev_2': lambda test, series:
-                 find_change_points_exp.RunFindChangePoints(
-                     test, series, multiple_of_std_dev=2.0),
-    'std_dev_3': lambda test, series:
-                 find_change_points_exp.RunFindChangePoints(
-                     test, series, multiple_of_std_dev=3.0),
+    'steppiness_0_6': lambda test, series:
+                      find_change_points_exp.RunFindChangePoints(
+                          test, series, min_steppiness=0.6),
 }
 
 
@@ -118,9 +110,9 @@ _REPORT_TEMPLATE = """%(bench_name)s: %(description)s
 
 
 class TestBench(ndb.Model):
-  """Reference anomaly data for one Test."""
+  """Reference anomaly data for one TestMetadata."""
 
-  # Test key.
+  # TestMetadata key.
   test = ndb.KeyProperty()
 
   # List of tuples of (x_value, y_value) for test.
@@ -146,7 +138,7 @@ class SimulateAlertProcessingPipeline(pipeline.Pipeline):
       test_bench_id: Integer ID of a TestBench entity.
 
     Returns:
-      A pair (TestBench ID, list of Anomaly dicts). But if the Test
+      A pair (TestBench ID, list of Anomaly dicts). But if the TestMetadata
       can't be gotten, this will return (None, None).
     """
     all_change_points = []
@@ -430,10 +422,10 @@ def DeleteAllTestBenchEntities():
 def _AddCreateTestBenchTasks():
   """Adds _CreateTestBench tasks to queue."""
   sheriff_key = ndb.Key('Sheriff', _TEST_DATA_SHERIFF)
-  query = graph_data.Test.query(
-      graph_data.Test.sheriff == sheriff_key,
-      graph_data.Test.has_rows == True,
-      graph_data.Test.deprecated == False)
+  query = graph_data.TestMetadata.query(
+      graph_data.TestMetadata.sheriff == sheriff_key,
+      graph_data.TestMetadata.has_rows == True,
+      graph_data.TestMetadata.deprecated == False)
 
   tests = query.fetch(limit=_NUM_TEST_TO_BENCH)
 
@@ -446,7 +438,8 @@ def _CreateTestBench(test_key):
   """Fetches and stores test and row data that would be used to run bench."""
   # Get rows entity.
   query = graph_data.Row.query(projection=['revision', 'value'])
-  query = query.filter(graph_data.Row.parent_test == test_key)
+  query = query.filter(
+      graph_data.Row.parent_test == utils.OldStyleTestKey(test_key))
   query = query.order(-graph_data.Row.revision)
   rows = list(reversed(query.fetch(limit=_NUM_ROWS_TO_BENCH)))
   data_series = [(row.revision, row.value) for row in rows]
@@ -487,8 +480,7 @@ def _UpdateInvalidAndConfirmedAnomalyRevs(test_bench):
   start_index = min(min_segment_size, len(test_bench.data_series)) - 1
   start_rev = test_bench.data_series[start_index][0]
 
-  query = anomaly.Anomaly.query(anomaly.Anomaly.test == test_bench.test)
-  anomalies = query.fetch()
+  anomalies = anomaly.Anomaly.GetAlertsForTest(test_bench.test)
   anomalies.sort(key=lambda a: a.end_revision)
   anomalies = [a for a in anomalies if a.end_revision >= start_rev and
                not a.is_improvement]
@@ -547,8 +539,8 @@ def _GetRevsAroundRev(data_series, revision):
 
 def _IsRefBuild(test):
   """Returns True if test is a reference build."""
-  key_path = test.key.string_id()
-  return key_path[-1] == 'ref' or key_path[-1].endswith('_ref')
+  test_path = utils.TestPath(test.key)
+  return test_path[-1] == 'ref' or test_path[-1].endswith('_ref')
 
 
 def _GetSheriffForTest(test):
@@ -563,7 +555,7 @@ def _IsRegression(change_point, test):
 
   Args:
     change_point: A find_change_points.ChangePoint object.
-    test: Test to get the regression direction for.
+    test: TestMetadata to get the regression direction for.
 
   Returns:
     True if it is a regression anomaly, otherwise False.

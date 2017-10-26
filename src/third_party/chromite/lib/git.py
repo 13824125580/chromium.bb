@@ -15,11 +15,15 @@ import string
 import time
 from xml import sax
 
+from chromite.cbuildbot import config_lib
 from chromite.cbuildbot import constants
 from chromite.lib import cros_build_lib
 from chromite.lib import cros_logging as logging
 from chromite.lib import osutils
 from chromite.lib import retry_util
+
+
+site_config = config_lib.GetConfig()
 
 
 # Retry a git operation if git returns a error response with any of these
@@ -63,6 +67,9 @@ GIT_TRANSIENT_ERRORS = (
 
     # crbug.com/451458, b/19202011
     r'repository cannot accept new pushes; contact support',
+
+    # crbug.com/535306
+    r'Service Temporarily Unavailable',
 )
 
 GIT_TRANSIENT_ERRORS_RE = re.compile('|'.join(GIT_TRANSIENT_ERRORS),
@@ -142,6 +149,7 @@ def IsGitRepositoryCorrupted(cwd):
   """
   cmd = ['fsck', '--no-progress', '--no-dangling']
   try:
+    GarbageCollection(cwd)
     RunGit(cwd, cmd)
     return False
   except cros_build_lib.RunCommandError as ex:
@@ -287,10 +295,11 @@ class ProjectCheckout(dict):
       return False
 
     # Old heuristic.
-    if (self['remote'] not in constants.CROS_REMOTES or
-        self['remote'] not in constants.BRANCHABLE_PROJECTS):
+    if (self['remote'] not in site_config.params.CROS_REMOTES or
+        self['remote'] not in site_config.params.BRANCHABLE_PROJECTS):
       return False
-    return re.match(constants.BRANCHABLE_PROJECTS[self['remote']], self['name'])
+    return re.match(site_config.params.BRANCHABLE_PROJECTS[self['remote']],
+                    self['name'])
 
   def IsPinnableProject(self):
     """Return whether we should pin to a revision on the CrOS branch."""
@@ -484,10 +493,10 @@ class Manifest(object):
         remote_name, StripRefs(upstream),
     )
 
-    attrs['pushable'] = remote in constants.GIT_REMOTES
+    attrs['pushable'] = remote in site_config.params.GIT_REMOTES
     if attrs['pushable']:
       attrs['push_remote'] = remote
-      attrs['push_remote_url'] = constants.GIT_REMOTES[remote]
+      attrs['push_remote_url'] = site_config.params.GIT_REMOTES[remote]
       attrs['push_url'] = '%s/%s' % (attrs['push_remote_url'], attrs['name'])
     groups = set(attrs.get('groups', 'default').replace(',', ' ').split())
     groups.add('default')
@@ -831,6 +840,18 @@ def Init(git_repo):
   RunGit(git_repo, ['init'])
 
 
+def Clone(git_repo, git_url):
+  """Clone a git repository, into the given directory.
+
+  Args:
+    git_repo: Path for where to create a git repo. Directory will be created if
+              it doesnt exist.
+    git_url: Url to clone the git repository from.
+  """
+  osutils.SafeMakedirs(git_repo)
+  RunGit(git_repo, ['clone', git_url, git_repo])
+
+
 def GetProjectUserEmail(git_repo):
   """Get the email configured for the project."""
   output = RunGit(git_repo, ['var', 'GIT_COMMITTER_IDENT']).output
@@ -1121,7 +1142,8 @@ def RevertPath(git_repo, filename, rev):
   RunGit(git_repo, ['checkout', rev, '--', filename])
 
 
-def Commit(git_repo, message, amend=False, allow_empty=False):
+def Commit(git_repo, message, amend=False, allow_empty=False,
+           reset_author=False):
   """Commit with git.
 
   Args:
@@ -1129,6 +1151,7 @@ def Commit(git_repo, message, amend=False, allow_empty=False):
     message: Commit message to use.
     amend: Whether to 'amend' the CL, default False
     allow_empty: Whether to allow an empty commit. Default False.
+    reset_author: Whether to reset author according to current config.
 
   Returns:
     The Gerrit Change-ID assigned to the CL if it exists.
@@ -1138,6 +1161,8 @@ def Commit(git_repo, message, amend=False, allow_empty=False):
     cmd.append('--amend')
   if allow_empty:
     cmd.append('--allow-empty')
+  if reset_author:
+    cmd.append('--reset-author')
   RunGit(git_repo, cmd)
 
   log = RunGit(git_repo, ['log', '-n', '1', '--format=format:%B']).output
@@ -1184,7 +1209,7 @@ def RawDiff(path, target):
 
 
 def UploadCL(git_repo, remote, branch, local_branch='HEAD', draft=False,
-             **kwargs):
+             reviewers=None, **kwargs):
   """Upload a CL to gerrit. The CL should be checked out currently.
 
   Args:
@@ -1193,39 +1218,44 @@ def UploadCL(git_repo, remote, branch, local_branch='HEAD', draft=False,
     branch: Branch to upload to.
     local_branch: Branch to upload.
     draft: Whether to upload as a draft.
+    reviewers: Add the reviewers to the CL.
     kwargs: Extra options for GitPush. capture_output defaults to False so
       that the URL for new or updated CLs is shown to the user.
   """
   ref = ('refs/drafts/%s' if draft else 'refs/for/%s') % branch
+  if reviewers:
+    reviewer_list = ['r=%s' % i for i in reviewers]
+    ref = ref + '%'+ ','.join(reviewer_list)
   remote_ref = RemoteRef(remote, ref)
   kwargs.setdefault('capture_output', False)
   GitPush(git_repo, local_branch, remote_ref, **kwargs)
 
 
-def GitPush(git_repo, refspec, push_to, dryrun=False, force=False, retry=True,
-            capture_output=True):
+def GitPush(git_repo, refspec, push_to, force=False, retry=True,
+            capture_output=True, skip=False, **kwargs):
   """Wrapper for pushing to a branch.
 
   Args:
     git_repo: Git repository to act on.
     refspec: The local ref to push to the remote.
     push_to: A RemoteRef object representing the remote ref to push to.
-    dryrun: Do not actually push anything.  Uses the --dry-run option
-      built into git.
     force: Whether to bypass non-fastforward checks.
     retry: Retry a push in case of transient errors.
     capture_output: Whether to capture output for this command.
+    skip: Do not actually push anything.
   """
   cmd = ['push', push_to.remote, '%s:%s' % (refspec, push_to.ref)]
-
-  if dryrun:
-    # The 'git push' command has --dry-run support built in, so leverage that.
-    cmd.append('--dry-run')
-
   if force:
     cmd.append('--force')
 
-  RunGit(git_repo, cmd, retry=retry, capture_output=capture_output)
+  if skip:
+    # git-push has a --dry-run option but we can't use it because that still
+    # runs push-access checks, and we want the skip mode to be available to
+    # users who can't really push to remote.
+    logging.info('Would have run "%s"', cmd)
+    return
+
+  RunGit(git_repo, cmd, retry=retry, capture_output=capture_output, **kwargs)
 
 
 # TODO(build): Switch callers of this function to use CreateBranch instead.
@@ -1280,7 +1310,8 @@ def SyncPushBranch(git_repo, remote, rebase_target):
 
 
 # TODO(build): Switch this to use the GitPush function.
-def PushWithRetry(branch, git_repo, dryrun=False, retries=5):
+def PushWithRetry(branch, git_repo, dryrun=False, retries=5,
+                  staging_branch=None):
   """General method to push local git changes.
 
   This method only works with branches created via the CreatePushBranch
@@ -1293,6 +1324,7 @@ def PushWithRetry(branch, git_repo, dryrun=False, retries=5):
     git_repo: Git repository to push from.
     dryrun: Git push --dry-run if set to True.
     retries: The number of times to retry before giving up, default: 5
+    staging_branch: Push change commits to the staging_branch if it's not None
 
   Raises:
     GitPushFailed if push was unsuccessful after retries
@@ -1307,10 +1339,10 @@ def PushWithRetry(branch, git_repo, dryrun=False, retries=5):
     raise Exception('Was asked to push to a non branch namespace: %s' %
                     remote_ref.ref)
 
-  push_command = ['push', remote_ref.remote, '%s:%s' %
-                  (branch, remote_ref.ref)]
+  reference = staging_branch if staging_branch is not None else remote_ref.ref
+  push_command = ['push', remote_ref.remote, '%s:%s' % (branch, reference)]
   logging.debug('Trying to push %s to %s:%s',
-                git_repo, branch, remote_ref.ref)
+                git_repo, branch, reference)
 
   if dryrun:
     push_command.append('--dry-run')
@@ -1328,7 +1360,7 @@ def PushWithRetry(branch, git_repo, dryrun=False, retries=5):
       raise
 
   logging.info('Successfully pushed %s to %s:%s',
-               git_repo, branch, remote_ref.ref)
+               git_repo, branch, reference)
 
 
 def CleanAndDetachHead(git_repo):
@@ -1383,7 +1415,7 @@ def GetChromiteTrackingBranch():
       raise
 
   # Not a manifest checkout.
-  logging.warning(
+  logging.notice(
       "Chromite checkout at %s isn't controlled by repo, nor is it on a "
       'branch (or if it is, the tracking configuration is missing or broken).  '
       'Falling back to assuming the chromite checkout is derived from '

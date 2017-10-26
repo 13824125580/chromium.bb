@@ -12,21 +12,47 @@ import filecmp
 
 
 def _CheckTestharnessResults(input_api, output_api):
-    expected_files = [f.AbsoluteLocalPath() for f in input_api.AffectedFiles() if f.LocalPath().endswith('-expected.txt') and f.Action() != 'D']
-    if len(expected_files) == 0:
+    """Checks for testharness.js test baseline files that contain only PASS lines.
+
+    In general these files are unnecessary because for testharness.js tests, if there is
+    no baseline file then the test is considered to pass when the output is all PASS.
+    """
+    baseline_files = _TestharnessBaselineFilesToCheck(input_api)
+    if not baseline_files:
         return []
 
     checker_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
         '..', 'Tools', 'Scripts', 'check-testharness-expected-pass')
 
     args = [input_api.python_executable, checker_path]
-    args.extend(expected_files)
+    args.extend(baseline_files)
     _, errs = input_api.subprocess.Popen(args,
         stdout=input_api.subprocess.PIPE,
         stderr=input_api.subprocess.PIPE).communicate()
     if errs:
         return [output_api.PresubmitError(errs)]
     return []
+
+
+def _TestharnessBaselineFilesToCheck(input_api):
+    """Returns a list of paths of -expected.txt files for testharness.js tests."""
+    baseline_files = []
+    for f in input_api.AffectedFiles():
+        if f.Action() == 'D':
+            continue
+        path = f.AbsoluteLocalPath()
+        if not path.endswith('-expected.txt'):
+            continue
+        if (input_api.os_path.join('LayoutTests', 'platform') in path or
+            input_api.os_path.join('LayoutTests', 'virtual') in path):
+            # We want to ignore files in LayoutTests/platform, because some all-PASS
+            # platform specific baselines may be necessary to prevent fallback to a
+            # more general baseline; we also ignore files in LayoutTests/virtual
+            # for a similar reason; some all-pass baselines are necessary to
+            # prevent fallback to the corresponding non-virtual test baseline.
+            continue
+        baseline_files.append(path)
+    return baseline_files
 
 
 def _CheckIdenticalFiles(input_api, output_api):
@@ -36,22 +62,14 @@ def _CheckIdenticalFiles(input_api, output_api):
     dirty_files = set(input_api.LocalPaths())
 
     groups = [[
+        'imported/wpt/resources/testharness.js',
         'resources/testharness.js',
-        'http/tests/resources/testharness.js',
-        'http/tests/w3c/resources/testharness.js',
     ], [
+        'imported/wpt/resources/testharnessreport.js',
         'resources/testharnessreport.js',
-        'http/tests/resources/testharnessreport.js',
-        'http/tests/w3c/resources/testharnessreport.js',
     ], [
+        'imported/wpt/resources/idlharness.js',
         'resources/idlharness.js',
-        'http/tests/w3c/resources/idlharness.js',
-    ], [
-        'resources/WebIDLParser.js',
-        'http/tests/w3c/resources/WebIDLParser.js',
-    ], [
-        'resources/testharness-helpers.js',
-        'http/tests/resources/testharness-helpers.js',
     ]]
 
     def _absolute_path(s):

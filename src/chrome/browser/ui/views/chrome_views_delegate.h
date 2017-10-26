@@ -13,6 +13,8 @@
 #include "ui/accessibility/ax_enums.h"
 #include "ui/views/views_delegate.h"
 
+class ScopedKeepAlive;
+
 class ChromeViewsDelegate : public views::ViewsDelegate {
  public:
   ChromeViewsDelegate();
@@ -75,6 +77,13 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
   // and desktop context.
   views::Widget::InitParams::WindowOpacity GetOpacityForInitParams(
       const views::Widget::InitParams& params);
+
+  // |ChromeViewsDelegate| exposes a |RefCounted|-like interface, but //chrome
+  // uses |ScopedKeepAlive|s to manage lifetime. We manage an internal counter
+  // to do that translation.
+  unsigned int ref_count_ = 0u;
+
+  std::unique_ptr<ScopedKeepAlive> keep_alive_;
 
 #if defined(OS_WIN)
   AppbarAutohideEdgeMap appbar_autohide_edge_map_;

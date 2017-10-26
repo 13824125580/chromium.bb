@@ -7,7 +7,7 @@
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/view_event_test_base.h"
@@ -273,7 +273,7 @@ class MenuModelAdapterTest : public ViewEventTestBase,
   TopMenuModel top_menu_model_;
   views::MenuModelAdapter menu_model_adapter_;
   views::MenuItemView* menu_;
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 };
 
 // If this flakes, disable and log details in http://crbug.com/523255.

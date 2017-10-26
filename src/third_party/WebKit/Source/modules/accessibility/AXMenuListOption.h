@@ -34,6 +34,8 @@ namespace blink {
 class AXObjectCacheImpl;
 
 class AXMenuListOption final : public AXMockObject {
+    WTF_MAKE_NONCOPYABLE(AXMenuListOption);
+
 public:
     static AXMenuListOption* create(HTMLOptionElement* element, AXObjectCacheImpl& axObjectCache) { return new AXMenuListOption(element, axObjectCache); }
     ~AXMenuListOption() override;
@@ -44,7 +46,7 @@ private:
 
     bool isMenuListOption() const override { return true; }
 
-    Node* node() const override { return m_element; }
+    Node* getNode() const override { return m_element; }
     void detach() override;
     bool isDetached() const override { return !m_element; }
     AccessibilityRole roleValue() const override;
@@ -61,7 +63,7 @@ private:
     String textAlternative(bool recursive, bool inAriaLabelledByTraversal, AXObjectSet& visited, AXNameFrom&, AXRelatedObjectVector*, NameSources*) const override;
     bool computeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
 
-    RawPtrWillBeMember<HTMLOptionElement> m_element;
+    Member<HTMLOptionElement> m_element;
 };
 
 DEFINE_AX_OBJECT_TYPE_CASTS(AXMenuListOption, isMenuListOption());

@@ -6,29 +6,14 @@
  * @fileoverview
  * 'settings-site-list' shows a list of Allowed and Blocked sites for a given
  * category.
- *
- * Example:
- *    <settings-site-list prefs="{{prefs}}"
- *        category="[[category]]">
- *    </settings-site-list>
- *
- * @group Chrome Settings Elements
- * @element settings-site-list
  */
 Polymer({
+
   is: 'settings-site-list',
 
-  behaviors: [PrefsBehavior, SiteSettingsBehavior],
+  behaviors: [SiteSettingsBehavior, WebUIListenerBehavior],
 
   properties: {
-    /**
-     * Preferences state.
-     */
-    prefs: {
-      type: Object,
-      notify: true,
-    },
-
     /**
      * The current active route.
      */
@@ -38,20 +23,21 @@ Polymer({
     },
 
     /**
-     * The origin that was selected by the user in the dropdown list.
+     * The site that was selected by the user in the dropdown list.
+     * @type {SiteException}
      */
-    selectedOrigin: {
-      type: String,
+    selectedSite: {
+      type: Object,
       notify: true,
     },
 
     /**
      * Array of sites to display in the widget.
+     * @type {!Array<SiteException>}
      */
-    sites_: {
+    sites: {
       type: Array,
       value: function() { return []; },
-      observer: 'onDataChanged_',
     },
 
     /**
@@ -64,12 +50,12 @@ Polymer({
 
     /**
       * The type of category this widget is displaying data for. Normally
-      * either ALLOW or BLOCK, representing which sites are allowed or blocked
-      * respectively.
+      * either 'allow' or 'block', representing which sites are allowed or
+      * blocked respectively.
       */
     categorySubtype: {
-      type: Number,
-      value: -1,
+      type: String,
+      value: settings.INVALID_CATEGORY_SUBTYPE,
     },
 
     /**
@@ -79,7 +65,6 @@ Polymer({
      */
     categoryEnabled: {
       type: Boolean,
-      observer: 'onDataChanged_',
       value: true,
     },
 
@@ -94,6 +79,12 @@ Polymer({
     showBlockAction_: Boolean,
 
     /**
+     * Whether to show the 'Clear on exit' action in the action
+     * menu.
+     */
+    showSessionOnlyAction_: Boolean,
+
+    /**
      * All possible actions in the action menu.
      */
     actions_: {
@@ -103,74 +94,103 @@ Polymer({
         ALLOW: 'Allow',
         BLOCK: 'Block',
         RESET: 'Reset',
+        SESSION_ONLY: 'SessionOnly',
       }
-    },
-
-    i18n_: {
-      readOnly: true,
-      type: Object,
-      value: function() {
-        return {
-          allowAction: loadTimeData.getString('siteSettingsActionAllow'),
-          blockAction: loadTimeData.getString('siteSettingsActionBlock'),
-          resetAction: loadTimeData.getString('siteSettingsActionReset'),
-        };
-      },
     },
   },
 
   observers: [
-    'initialize_(prefs.profile.content_settings.exceptions.*,' +
-        'category, categorySubtype, allSites)'
+    'configureWidget_(category, categorySubtype, categoryEnabled, allSites)'
   ],
 
+  ready: function() {
+    this.addWebUIListener('contentSettingSitePermissionChanged',
+        this.siteWithinCategoryChanged_.bind(this));
+  },
+
   /**
-   * One-time initialization routines for this class.
+   * Called when a site changes permission.
+   * @param {string} category The category of the site that changed.
+   * @param {string} site The site that changed.
    * @private
    */
-  initialize_: function() {
-    CrSettingsPrefs.initialized.then(function() {
-      this.setUpActionMenu_();
-      this.ensureOpened_();
-    }.bind(this));
+  siteWithinCategoryChanged_: function(category, site) {
+    if (category == this.category)
+      this.configureWidget_();
+  },
 
+  /**
+   * Configures the action menu, visibility of the widget and shows the list.
+   * @private
+   */
+  configureWidget_: function() {
+    // The observer for All Sites fires before the attached/ready event, so
+    // initialize this here.
+    if (this.browserProxy_ === undefined) {
+      this.browserProxy_ =
+          settings.SiteSettingsPrefsBrowserProxyImpl.getInstance();
+    }
+
+    this.setUpActionMenu_();
+    this.ensureOpened_();
     this.populateList_();
   },
 
   /**
    * Ensures the widget is |opened| when needed when displayed initially.
+   * @private
    */
   ensureOpened_: function() {
-    // Allowed list is always shown opened by default and All Sites is presented
-    // all in one list (nothing closed by default).
+    // Allowed list and Clear on Exit lists are always shown opened by default
+    // and All Sites is presented all in one list (nothing closed by default).
     if (this.allSites ||
-        this.categorySubtype == settings.PermissionValues.ALLOW) {
+        this.categorySubtype == settings.PermissionValues.ALLOW ||
+        this.categorySubtype == settings.PermissionValues.SESSION_ONLY) {
       this.$.category.opened = true;
       return;
     }
 
     // Block list should only be shown opened if there is nothing to show in
-    // the allowed list.
-    var pref = this.getPref(
-        this.computeCategoryExceptionsPrefName(this.category));
-    var sites = pref.value;
-    for (var origin in sites) {
-      var site = /** @type {{setting: number}} */(sites[origin]);
-      if (site.setting == settings.PermissionValues.ALLOW)
-        return;
+    // the other lists.
+    if (this.category != settings.INVALID_CATEGORY_SUBTYPE) {
+      this.browserProxy_.getExceptionList(this.category).then(
+        function(exceptionList) {
+          var othersExists = exceptionList.some(function(exception) {
+            return exception.setting == settings.PermissionValues.ALLOW ||
+                exception.setting == settings.PermissionValues.SESSION_ONLY;
+          });
+          if (othersExists)
+            return;
+          this.$.category.opened = true;
+      }.bind(this));
+    } else {
+      this.$.category.opened = true;
     }
-
-    this.$.category.opened = true;
   },
 
   /**
-   * Handles the data changing, for example when the category is flipped from
-   * ALLOW to BLOCK or sites are added to the list.
+   * Makes sure the visibility is correct for this widget.
    * @private
    */
-  onDataChanged_: function(newValue, oldValue) {
+  updateCategoryVisibility_: function() {
     this.$.category.hidden =
-        !this.showSiteList_(this.sites_, this.categoryEnabled);
+        !this.showSiteList_(this.sites, this.categoryEnabled);
+  },
+
+  /**
+   * A handler for the Add Site button.
+   * @private
+   */
+  onAddSiteTap_: function() {
+    var dialog = document.createElement('add-site-dialog');
+    dialog.category = this.category;
+    this.shadowRoot.appendChild(dialog);
+
+    dialog.open(this.categorySubtype);
+
+    dialog.addEventListener('iron-overlay-closed', function() {
+      dialog.remove();
+    });
   },
 
   /**
@@ -179,9 +199,9 @@ Polymer({
    */
   onToggle_: function(e) {
     if (this.$.category.opened)
-      this.$.icon.icon = 'icons:expand-less';
+      this.$.icon.icon = 'cr:expand-less';
     else
-      this.$.icon.icon = 'icons:expand-more';
+      this.$.icon.icon = 'cr:expand-more';
   },
 
   /**
@@ -190,69 +210,149 @@ Polymer({
    */
   populateList_: function() {
     if (this.allSites) {
-      this.sites_ = this.toSiteArray_(this.getAllSitesList_());
+      this.getAllSitesList_().then(function(lists) {
+        this.processExceptions_(lists);
+      }.bind(this));
     } else {
-      var sites = new Set();
-      this.sites_ = this.toSiteArray_(
-          this.appendSiteList(sites, this.category, this.categorySubtype));
+      this.browserProxy_.getExceptionList(this.category).then(
+        function(exceptionList) {
+          this.processExceptions_([exceptionList]);
+      }.bind(this));
     }
   },
 
   /**
-   * Retrieves a set of all known sites (any category/setting).
+   * Process the exception list returned from the native layer.
+   * @param {!Array<!Array<SiteException>>} data List of sites (exceptions) to
+   *     process.
+   * @private
+   */
+  processExceptions_: function(data) {
+    var sites = [];
+    for (var i = 0; i < data.length; ++i)
+      sites = this.appendSiteList_(sites, data[i]);
+    this.sites = this.toSiteArray_(sites);
+    this.updateCategoryVisibility_();
+  },
+
+  /**
+   * Retrieves a list of all known sites (any category/setting).
+   * @return {!Promise}
    * @private
    */
   getAllSitesList_: function() {
-    var sites = new Set();
+    var promiseList = [];
     for (var type in settings.ContentSettingsTypes) {
-      sites = this.appendSiteList(sites,
-                                  settings.ContentSettingsTypes[type],
-                                  settings.PermissionValues.ALLOW);
-      sites = this.appendSiteList(sites,
-                                  settings.ContentSettingsTypes[type],
-                                  settings.PermissionValues.BLOCK);
+      promiseList.push(
+          this.browserProxy_.getExceptionList(
+              settings.ContentSettingsTypes[type]));
+    }
+
+    return Promise.all(promiseList);
+  },
+
+  /**
+   * Appends to |list| the sites for a given category and subtype.
+   * @param {!Array<SiteException>} sites The site list to add to.
+   * @param {!Array<SiteException>} exceptionList List of sites (exceptions) to
+   *     add.
+   * @return {!Array<SiteException>} The list of sites.
+   * @private
+   */
+  appendSiteList_: function(sites, exceptionList) {
+    for (var i = 0; i < exceptionList.length; ++i) {
+      if (this.category != settings.ALL_SITES) {
+        if (exceptionList[i].setting == settings.PermissionValues.DEFAULT)
+          continue;
+
+        if (exceptionList[i].setting != this.categorySubtype)
+          continue;
+      }
+
+      sites.push(exceptionList[i]);
     }
     return sites;
   },
 
   /**
-   * Appends to |list| the sites for a given category and subtype.
-   * @param {!Set<string>} list The site list to add to.
-   * @param {number} category The category to look up.
-   * @param {number} categorySubtype The category subtype to look up.
-   * @return {!Set<string>} The list of sites found.
+   * Converts a string origin/pattern to a URL.
+   * @param {string} originOrPattern The origin/pattern to convert to URL.
+   * @return {URL} The URL to return (or null if origin is not a valid URL).
+   * @private
    */
-  appendSiteList: function(list, category, categorySubtype) {
-    var pref = this.getPref(
-        this.computeCategoryExceptionsPrefName(category));
-    var sites = pref.value;
-    for (var origin in sites) {
-      var site = /** @type {{setting: number}} */(sites[origin]);
-      if (site.setting == categorySubtype) {
-        var tokens = origin.split(',');
-        list.add(tokens[0]);
-      }
-    }
-    return list;
+  toUrl_: function(originOrPattern) {
+    if (originOrPattern.length == 0)
+      return null;
+    // TODO(finnur): Hmm, it would probably be better to ensure scheme on the
+    //     JS/C++ boundary.
+    return new URL(
+        this.ensureUrlHasScheme(originOrPattern.replace('[*.]', '')));
   },
 
   /**
-   * Converts a set of sites to an ordered array, sorted by site name then
-   * protocol.
-   * @param {!Set<string>} sites A set of sites to sort and convert to an array.
+   * Converts an unordered site list to an ordered array, sorted by site name
+   * then protocol and de-duped (by origin).
+   * @param {!Array<SiteException>} sites A list of sites to sort and de-dup.
+   * @return {!Array<SiteException>} Sorted and de-duped list.
    * @private
    */
   toSiteArray_: function(sites) {
-    var list = [...sites];
-    list.sort(function(a, b) {
-      var url1 = /** @type {{host: string}} */(new URL(a));
-      var url2 = /** @type {{host: string}} */(new URL(b));
-      var result = url1.host.localeCompare(url2.host);
-      if (result == 0)
-        return url1.protocol.localeCompare(url2.protocol);
-      return result;
+    var self = this;
+    sites.sort(function(a, b) {
+      var url1 = self.toUrl_(a.origin);
+      var url2 = self.toUrl_(b.origin);
+      var comparison = url1.host.localeCompare(url2.host);
+      if (comparison == 0) {
+        comparison = url1.protocol.localeCompare(url2.protocol);
+        if (comparison == 0) {
+          comparison = url1.port.localeCompare(url2.port);
+          if (comparison == 0) {
+            // Compare hosts for the embedding origins.
+            var host1 = self.toUrl_(a.embeddingOrigin);
+            var host2 = self.toUrl_(b.embeddingOrigin);
+            host1 = (host1 == null) ? '' : host1.host;
+            host2 = (host2 == null) ? '' : host2.host;
+            return host1.localeCompare(host2);
+          }
+        }
+      }
+      return comparison;
     });
-    return list;
+    var results = [];
+    var lastOrigin = '';
+    var lastEmbeddingOrigin = '';
+    for (var i = 0; i < sites.length; ++i) {
+      var origin = sites[i].origin;
+      var originForDisplay = this.sanitizePort(origin.replace('[*.]', ''));
+
+      var embeddingOrigin = sites[i].embeddingOrigin;
+      if (this.category == settings.ContentSettingsTypes.GEOLOCATION) {
+        if (embeddingOrigin == '')
+          embeddingOrigin = '*';
+      }
+      var embeddingOriginForDisplay = '';
+      if (embeddingOrigin != '' && origin != embeddingOrigin) {
+        embeddingOriginForDisplay = loadTimeData.getStringF(
+            'embeddedOnHost', this.sanitizePort(embeddingOrigin));
+      }
+
+      // The All Sites category can contain duplicates (from other categories).
+      if (originForDisplay == lastOrigin &&
+          embeddingOriginForDisplay == lastEmbeddingOrigin) {
+        continue;
+      }
+
+      results.push({
+         origin: origin,
+         originForDisplay: originForDisplay,
+         embeddingOrigin: embeddingOrigin,
+         embeddingOriginForDisplay: embeddingOriginForDisplay,
+      });
+
+      lastOrigin = originForDisplay;
+      lastEmbeddingOrigin = embeddingOriginForDisplay;
+    }
+    return results;
   },
 
   /**
@@ -261,10 +361,12 @@ Polymer({
    */
   setUpActionMenu_: function() {
     this.showAllowAction_ =
-        this.categorySubtype == settings.PermissionValues.BLOCK;
+        this.categorySubtype != settings.PermissionValues.ALLOW;
     this.showBlockAction_ =
-        this.categorySubtype == settings.PermissionValues.ALLOW &&
-        this.category != settings.ContentSettingsTypes.FULLSCREEN;
+        this.categorySubtype != settings.PermissionValues.BLOCK;
+    this.showSessionOnlyAction_ =
+        this.categorySubtype != settings.PermissionValues.SESSION_ONLY &&
+        this.category == settings.ContentSettingsTypes.COOKIES;
   },
 
   /**
@@ -272,7 +374,7 @@ Polymer({
    * @private
    */
   onOriginTap_: function(event) {
-    this.selectedOrigin = event.model.item;
+    this.selectedSite = event.model.item;
     var categorySelected =
         this.allSites ?
         'all-sites' :
@@ -286,20 +388,20 @@ Polymer({
 
   /**
    * A handler for activating one of the menu action items.
-   * @param {!{model: !{item: string},
-   *           target: !{selectedItems: !{textContent: string}}}} event
+   * @param {!{model: !{item: !{origin: string}},
+   *           detail: !{selected: string}}} event
    * @private
    */
-  onActionMenuIronSelect_: function(event) {
-    var origin = event.model.item;
-    var action = event.target.selectedItems[0].textContent;
-    if (action == this.i18n_.resetAction) {
-      this.resetCategoryPermissionForOrigin(origin, this.category);
+  onActionMenuIronActivate_: function(event) {
+    var origin = event.model.item.origin;
+    var embeddingOrigin = event.model.item.embeddingOrigin;
+    var action = event.detail.selected;
+    if (action == settings.PermissionValues.DEFAULT) {
+      this.resetCategoryPermissionForOrigin(
+          origin, embeddingOrigin, this.category);
     } else {
-      var value = (action == this.i18n_.allowAction) ?
-          settings.PermissionValues.ALLOW :
-          settings.PermissionValues.BLOCK;
-      this.setCategoryPermissionForOrigin(origin, value, this.category);
+      this.setCategoryPermissionForOrigin(
+          origin, embeddingOrigin, this.category, action);
     }
   },
 
@@ -312,26 +414,34 @@ Polymer({
    * @private
    */
   computeSiteListHeader_: function(siteList, toggleState) {
+    var title = '';
     if (this.categorySubtype == settings.PermissionValues.ALLOW) {
-      return loadTimeData.getStringF(
-          'titleAndCount',
-          loadTimeData.getString(
-              toggleState ? 'siteSettingsAllow' : 'siteSettingsExceptions'),
-          siteList.length);
+      title = loadTimeData.getString(
+          toggleState ? 'siteSettingsAllow' : 'siteSettingsExceptions');
+    } else if (this.categorySubtype == settings.PermissionValues.BLOCK) {
+      title = loadTimeData.getString('siteSettingsBlock');
+    } else if (this.categorySubtype == settings.PermissionValues.SESSION_ONLY) {
+      title = loadTimeData.getString('siteSettingsSessionOnly');
     } else {
-      return loadTimeData.getStringF(
-          'titleAndCount',
-          loadTimeData.getString('siteSettingsBlock'),
-          siteList.length);
+      return title;
     }
+    return loadTimeData.getStringF('titleAndCount', title, siteList.length);
   },
 
   /**
-   * Returns true if this widget is showing the allow list.
+   * Returns true if this widget is showing the Allow list.
    * @private
    */
   isAllowList_: function() {
     return this.categorySubtype == settings.PermissionValues.ALLOW;
+  },
+
+  /**
+   * Returns true if this widget is showing the Session Only list.
+   * @private
+   */
+  isSessionOnlyList_: function() {
+    return this.categorySubtype == settings.PermissionValues.SESSION_ONLY;
   },
 
   /**
@@ -343,24 +453,14 @@ Polymer({
    * @private
    */
   showSiteList_: function(siteList, toggleState) {
-    if (siteList.length == 0)
-      return false;
     // The Block list is only shown when the category is set to Allow since it
     // is redundant to also list all the sites that are blocked.
     if (this.isAllowList_())
       return true;
 
-    return toggleState;
-  },
+    if (this.isSessionOnlyList_())
+      return siteList.length > 0;
 
-  /**
-   * Returns the icon to use for a given site.
-   * @param {string} url The url of the site to fetch the icon for.
-   * @private
-   */
-  computeSiteIcon_: function(url) {
-    // TODO(finnur): For now, we're returning a placeholder image for each site
-    // but the actual favicon for each site will need to be returned.
-    return 'communication:message';
+    return toggleState;
   },
 });

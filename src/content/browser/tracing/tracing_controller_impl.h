@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <list>
 #include <set>
 #include <string>
 #include <vector>
@@ -81,6 +82,16 @@ class TracingControllerImpl
   friend struct base::DefaultLazyInstanceTraits<TracingControllerImpl>;
   friend class TraceMessageFilter;
 
+  // The arguments and callback for an queued global memory dump request.
+  struct QueuedMemoryDumpRequest {
+    QueuedMemoryDumpRequest(
+        const base::trace_event::MemoryDumpRequestArgs& args,
+        const base::trace_event::MemoryDumpCallback& callback);
+    ~QueuedMemoryDumpRequest();
+    const base::trace_event::MemoryDumpRequestArgs args;
+    const base::trace_event::MemoryDumpCallback callback;
+  };
+
   TracingControllerImpl();
   ~TracingControllerImpl() override;
 
@@ -107,6 +118,8 @@ class TracingControllerImpl
   bool can_cancel_watch_event() const {
     return !watch_event_callback_.is_null();
   }
+
+  void PerformNextQueuedGlobalMemoryDump();
 
   // Methods for use by TraceMessageFilter.
   void AddTraceMessageFilter(TraceMessageFilter* trace_message_filter);
@@ -171,7 +184,7 @@ class TracingControllerImpl
   int pending_start_tracing_ack_count_;
   base::OneShotTimer start_tracing_timer_;
   StartTracingDoneCallback start_tracing_done_callback_;
-  scoped_ptr<base::trace_event::TraceConfig> start_tracing_trace_config_;
+  std::unique_ptr<base::trace_event::TraceConfig> start_tracing_trace_config_;
 
   // Pending acks for StopTracing.
   int pending_stop_tracing_ack_count_;
@@ -187,11 +200,9 @@ class TracingControllerImpl
   int pending_memory_dump_ack_count_;
   int failed_memory_dump_count_;
   TraceMessageFilterSet pending_memory_dump_filters_;
-  uint64_t pending_memory_dump_guid_;
-  base::trace_event::MemoryDumpCallback pending_memory_dump_callback_;
+  std::list<QueuedMemoryDumpRequest> queued_memory_dump_requests_;
 
   std::vector<base::trace_event::TracingAgent*> additional_tracing_agents_;
-  int clock_sync_id_;
   int pending_clock_sync_ack_count_;
   base::OneShotTimer clock_sync_timer_;
 

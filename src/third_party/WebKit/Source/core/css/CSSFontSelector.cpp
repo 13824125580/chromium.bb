@@ -44,7 +44,6 @@ namespace blink {
 
 CSSFontSelector::CSSFontSelector(Document* document)
     : m_document(document)
-    , m_fontLoader(FontLoader::create(this, document))
     , m_genericFontFamilySettings(document->frame()->settings()->genericFontFamilySettings())
 {
     // FIXME: An old comment used to say there was no need to hold a reference to m_document
@@ -59,10 +58,6 @@ CSSFontSelector::CSSFontSelector(Document* document)
 
 CSSFontSelector::~CSSFontSelector()
 {
-#if !ENABLE(OILPAN)
-    clearDocument();
-    FontCache::fontCache()->removeClient(this);
-#endif
 }
 
 void CSSFontSelector::registerForInvalidationCallbacks(CSSFontSelectorClient* client)
@@ -70,18 +65,16 @@ void CSSFontSelector::registerForInvalidationCallbacks(CSSFontSelectorClient* cl
     m_clients.add(client);
 }
 
-#if !ENABLE(OILPAN)
 void CSSFontSelector::unregisterForInvalidationCallbacks(CSSFontSelectorClient* client)
 {
     m_clients.remove(client);
 }
-#endif
 
 void CSSFontSelector::dispatchInvalidationCallbacks()
 {
     m_fontFaceCache.incrementVersion();
 
-    WillBeHeapVector<RawPtrWillBeMember<CSSFontSelectorClient>> clients;
+    HeapVector<Member<CSSFontSelectorClient>> clients;
     copyToVector(m_clients, clients);
     for (auto& client : clients)
         client->fontsNeedUpdate(this);
@@ -140,18 +133,18 @@ PassRefPtr<FontData> CSSFontSelector::getFontData(const FontDescription& fontDes
     return FontCache::fontCache()->getFontData(fontDescription, settingsFamilyName);
 }
 
-void CSSFontSelector::willUseFontData(const FontDescription& fontDescription, const AtomicString& family, UChar32 character)
+void CSSFontSelector::willUseFontData(const FontDescription& fontDescription, const AtomicString& family, const String& text)
 {
     CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, family);
     if (face)
-        face->willUseFontData(fontDescription, character);
+        face->willUseFontData(fontDescription, text);
 }
 
-void CSSFontSelector::willUseRange(const FontDescription& fontDescription, const AtomicString& family, const FontDataRange& range)
+void CSSFontSelector::willUseRange(const FontDescription& fontDescription, const AtomicString& family, const FontDataForRangeSet& rangeSet)
 {
     CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, family);
     if (face)
-        face->willUseRange(fontDescription, range);
+        face->willUseRange(fontDescription, rangeSet);
 }
 
 bool CSSFontSelector::isPlatformFontAvailable(const FontDescription& fontDescription, const AtomicString& passedFamily)
@@ -162,32 +155,19 @@ bool CSSFontSelector::isPlatformFontAvailable(const FontDescription& fontDescrip
     return FontCache::fontCache()->isPlatformFontAvailable(fontDescription, family);
 }
 
-#if !ENABLE(OILPAN)
-void CSSFontSelector::clearDocument()
-{
-    m_fontLoader->clearDocumentAndFontSelector();
-    m_document = nullptr;
-    m_fontFaceCache.clearAll();
-}
-#endif
-
 void CSSFontSelector::updateGenericFontFamilySettings(Document& document)
 {
     if (!document.settings())
         return;
     m_genericFontFamilySettings = document.settings()->genericFontFamilySettings();
-    // Need to increment FontFaceCache version to update ComputedStyles.
-    m_fontFaceCache.incrementVersion();
+    fontCacheInvalidated();
 }
 
 DEFINE_TRACE(CSSFontSelector)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_document);
     visitor->trace(m_fontFaceCache);
     visitor->trace(m_clients);
-    visitor->trace(m_fontLoader);
-#endif
     FontSelector::trace(visitor);
 }
 

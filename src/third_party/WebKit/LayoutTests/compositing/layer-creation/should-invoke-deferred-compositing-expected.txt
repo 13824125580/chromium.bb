@@ -1,27 +1,42 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
       "children": [
         {
+          "name": "LayoutBlockFlow (positioned) DIV id='container' class='composited box'",
           "bounds": [300, 300],
           "children": [
             {
+              "name": "LayoutHTMLCanvas (positioned) CANVAS",
               "bounds": [200, 200],
               "drawsContent": true,
-              "repaintRects": [
-                [0, 0, 200, 200]
-              ],
-              "paintInvalidationClients": [
-                "LayoutHTMLCanvas (positioned) CANVAS"
+              "paintInvalidations": [
+                {
+                  "object": "LayoutHTMLCanvas (positioned) CANVAS",
+                  "rect": [0, 0, 200, 200],
+                  "reason": "layoutObject insertion"
+                }
               ]
             }
           ]
         }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutHTMLCanvas (positioned) CANVAS",
+      "reason": "subtree"
+    },
+    {
+      "object": "LayoutHTMLCanvas (positioned) CANVAS",
+      "reason": "layoutObject insertion"
     }
   ]
 }

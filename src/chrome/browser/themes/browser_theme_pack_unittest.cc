@@ -98,7 +98,7 @@ class BrowserThemePackTest : public ::testing::Test {
   }
 
   void LoadColorJSON(const std::string& json) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
     ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
     LoadColorDictionary(static_cast<base::DictionaryValue*>(value.get()));
   }
@@ -108,7 +108,7 @@ class BrowserThemePackTest : public ::testing::Test {
   }
 
   void LoadTintJSON(const std::string& json) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
     ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
     LoadTintDictionary(static_cast<base::DictionaryValue*>(value.get()));
   }
@@ -118,7 +118,7 @@ class BrowserThemePackTest : public ::testing::Test {
   }
 
   void LoadDisplayPropertiesJSON(const std::string& json) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
     ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
     LoadDisplayPropertiesDictionary(
         static_cast<base::DictionaryValue*>(value.get()));
@@ -130,7 +130,7 @@ class BrowserThemePackTest : public ::testing::Test {
 
   void ParseImageNamesJSON(const std::string& json,
                            TestFilePathMap* out_file_paths) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
     ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
     ParseImageNamesDictionary(static_cast<base::DictionaryValue*>(value.get()),
                               out_file_paths);
@@ -159,7 +159,7 @@ class BrowserThemePackTest : public ::testing::Test {
         extension_path.AppendASCII("manifest.json");
     std::string error;
     JSONFileValueDeserializer deserializer(manifest_path);
-    scoped_ptr<base::DictionaryValue> valid_value =
+    std::unique_ptr<base::DictionaryValue> valid_value =
         base::DictionaryValue::From(deserializer.Deserialize(NULL, &error));
     EXPECT_EQ("", error);
     ASSERT_TRUE(valid_value.get());
@@ -364,7 +364,7 @@ class BrowserThemePackTest : public ::testing::Test {
   content::TestBrowserThread fake_ui_thread;
   content::TestBrowserThread fake_file_thread;
 
-  typedef scoped_ptr<ui::test::ScopedSetSupportedScaleFactors>
+  typedef std::unique_ptr<ui::test::ScopedSetSupportedScaleFactors>
       ScopedSetSupportedScaleFactors;
   ScopedSetSupportedScaleFactors scoped_set_supported_scale_factors_;
   scoped_refptr<BrowserThemePack> theme_pack_;
@@ -434,16 +434,18 @@ TEST_F(BrowserThemePackTest, ProvideNtpHeaderColor) {
 }
 
 TEST_F(BrowserThemePackTest, SupportsAlpha) {
-  // Verify that valid alpha values are parsed correctly.
-  std::string color_json = "{ \"toolbar\": [0, 20, 40, 0], "
-                           "  \"tab_text\": [60, 80, 100, 1], "
-                           "  \"tab_background_text\": [120, 140, 160, 0.0], "
-                           "  \"bookmark_text\": [180, 200, 220, 1.0], "
-                           "  \"ntp_text\": [240, 255, 0, 0.5] }";
+  std::string color_json =
+      "{ \"toolbar\": [0, 20, 40, 1], "
+      "  \"tab_text\": [60, 80, 100, 1], "
+      "  \"tab_background_text\": [120, 140, 160, 0.0], "
+      "  \"bookmark_text\": [180, 200, 220, 1.0], "
+      "  \"ntp_text\": [240, 255, 0, 0.5] }";
   LoadColorJSON(color_json);
 
   std::map<int, SkColor> colors = GetDefaultColorMap();
-  colors[ThemeProperties::COLOR_TOOLBAR] = SkColorSetARGB(0, 0, 20, 40);
+  // Verify that valid alpha values are parsed correctly.
+  // The toolbar color's alpha value is intentionally ignored by theme provider.
+  colors[ThemeProperties::COLOR_TOOLBAR] = SkColorSetARGB(255, 0, 20, 40);
   colors[ThemeProperties::COLOR_TAB_TEXT] = SkColorSetARGB(255, 60, 80, 100);
   colors[ThemeProperties::COLOR_BACKGROUND_TAB_TEXT] =
       SkColorSetARGB(0, 120, 140, 160);
@@ -505,11 +507,6 @@ TEST_F(BrowserThemePackTest, CanParsePaths) {
   ParseImageNamesJSON(path_json, &out_file_paths);
 
   size_t expected_file_paths = 2u;
-#if defined(USE_ASH) && !defined(OS_CHROMEOS)
-  // On desktop builds with ash, additional theme paths are generated to map to
-  // the special resource ids like IDR_THEME_FRAME_DESKTOP, etc
-  expected_file_paths = 3u;
-#endif
   EXPECT_EQ(expected_file_paths, out_file_paths.size());
   // "12" and "5" are internal constants to BrowserThemePack and are
   // PRS_THEME_BUTTON_BACKGROUND and PRS_THEME_TOOLBAR, but they are

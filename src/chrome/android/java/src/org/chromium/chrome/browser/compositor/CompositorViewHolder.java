@@ -12,6 +12,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Bundle;
 import android.os.Handler;
+import android.support.design.widget.CoordinatorLayout;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.accessibility.AccessibilityEventCompat;
 import android.support.v4.view.accessibility.AccessibilityNodeInfoCompat;
@@ -23,7 +24,6 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 
 import org.chromium.base.SysUtils;
@@ -44,6 +44,7 @@ import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager.FullscreenListener;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabContentViewParent;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
@@ -70,7 +71,7 @@ import java.util.List;
  * This class also holds the {@link LayoutManager} responsible to describe the items to be
  * drawn by the UI compositor on the native side.
  */
-public class CompositorViewHolder extends FrameLayout
+public class CompositorViewHolder extends CoordinatorLayout
         implements LayoutManagerHost, LayoutRenderHost, Invalidator.Host, FullscreenListener {
     private static List<View> sCachedViewList = new ArrayList<View>();
     private static List<ContentViewCore> sCachedCVCList = new ArrayList<ContentViewCore>();
@@ -306,6 +307,8 @@ public class CompositorViewHolder extends FrameLayout
      * Perform any initialization necessary for showing a reparented tab.
      */
     public void prepareForTabReparenting() {
+        if (mHasDrawnOnce) return;
+
         // Set the background to white while we wait for the first swap of buffers. This gets
         // corrected inside the view.
         mCompositorView.setBackgroundColor(Color.WHITE);
@@ -336,7 +339,8 @@ public class CompositorViewHolder extends FrameLayout
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent e) {
-        super.onInterceptTouchEvent(e);
+        boolean consumedBySuper = super.onInterceptTouchEvent(e);
+        if (consumedBySuper) return true;
 
         if (mLayoutManager == null) return false;
 
@@ -354,6 +358,9 @@ public class CompositorViewHolder extends FrameLayout
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
+        boolean consumedBySuper = super.onTouchEvent(e);
+        if (consumedBySuper) return true;
+
         if (mFullscreenManager != null) mFullscreenManager.onMotionEvent(e);
         if (mFullscreenTouchEvent) return true;
         boolean consumed = mLayoutManager != null && mLayoutManager.onTouchEvent(e);
@@ -447,10 +454,10 @@ public class CompositorViewHolder extends FrameLayout
     }
 
     @Override
-    public void onVisibleContentOffsetChanged(float offset) {
+    public void onVisibleContentOffsetChanged(float offset, boolean needsAnimate) {
         mLastVisibleContentOffset = offset;
         propagateViewportToLayouts(getWidth(), getHeight());
-        requestRender();
+        if (needsAnimate) requestRender();
     }
 
     @Override
@@ -670,13 +677,13 @@ public class CompositorViewHolder extends FrameLayout
     }
 
     @Override
-    protected void onAttachedToWindow() {
+    public void onAttachedToWindow() {
         mInvalidator.set(this);
         super.onAttachedToWindow();
     }
 
     @Override
-    protected void onDetachedFromWindow() {
+    public void onDetachedFromWindow() {
         if (mLayoutManager != null) mLayoutManager.destroy();
         flushInvalidation();
         mInvalidator.set(null);
@@ -778,7 +785,7 @@ public class CompositorViewHolder extends FrameLayout
                     }
                 }
 
-                FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(
+                CoordinatorLayout.LayoutParams layoutParams = new CoordinatorLayout.LayoutParams(
                         LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
                 if (mView.getLayoutParams() instanceof MarginLayoutParams) {
                     MarginLayoutParams existingLayoutParams =
@@ -788,7 +795,13 @@ public class CompositorViewHolder extends FrameLayout
                     layoutParams.topMargin = existingLayoutParams.topMargin;
                     layoutParams.bottomMargin = existingLayoutParams.bottomMargin;
                 }
-                addView(mView, layoutParams);
+                if (mView instanceof TabContentViewParent) {
+                    layoutParams.setBehavior(((TabContentViewParent) mView).getBehavior());
+                }
+                // CompositorView has index of 0; TabContentViewParent has index of 1; Snackbar (if
+                // any) has index of 2. Setting index here explicitly to avoid TabContentViewParent
+                // hiding the snackbar.
+                addView(mView, 1, layoutParams);
 
                 setFocusable(false);
                 setFocusableInTouchMode(false);
@@ -804,14 +817,6 @@ public class CompositorViewHolder extends FrameLayout
                 for (int i = 0; i < sCachedCVCList.size(); i++) {
                     ContentViewCore content = sCachedCVCList.get(i);
                     if (content.isAlive()) content.getContainerView().setVisibility(View.INVISIBLE);
-                }
-
-                if (hasFocus()) {
-                    InputMethodManager manager = (InputMethodManager) getContext().getSystemService(
-                            Context.INPUT_METHOD_SERVICE);
-                    if (manager.isActive(this)) {
-                        manager.hideSoftInputFromWindow(getWindowToken(), 0, null);
-                    }
                 }
                 removeView(mView);
             }

@@ -165,7 +165,6 @@ class BlinkSettingsFieldTrialTest : public testing::Test {
  public:
   static const char kParserFieldTrialName[];
   static const char kIFrameFieldTrialName[];
-  static const char kResourcePrioritiesFieldTrialName[];
   static const char kFakeGroupName[];
   static const char kDefaultGroupName[];
 
@@ -224,8 +223,6 @@ const char BlinkSettingsFieldTrialTest::kParserFieldTrialName[] =
     "BackgroundHtmlParserTokenLimits";
 const char BlinkSettingsFieldTrialTest::kIFrameFieldTrialName[] =
     "LowPriorityIFrames";
-const char BlinkSettingsFieldTrialTest::kResourcePrioritiesFieldTrialName[] =
-    "ResourcePriorities";
 const char BlinkSettingsFieldTrialTest::kFakeGroupName[] = "FakeGroup";
 const char BlinkSettingsFieldTrialTest::kDefaultGroupName[] = "Default";
 
@@ -281,59 +278,6 @@ TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsDuplicateKeys) {
             command_line().GetSwitchValueASCII(switches::kBlinkSettings));
 }
 
-TEST_F(BlinkSettingsFieldTrialTest, ResourcePrioritiesDefault) {
-  CreateFieldTrial(kResourcePrioritiesFieldTrialName, kDefaultGroupName);
-  AppendContentBrowserClientSwitches();
-  EXPECT_FALSE(command_line().HasSwitch(switches::kBlinkSettings));
-}
-
-TEST_F(BlinkSettingsFieldTrialTest, ResourcePrioritiesEverythingEnabled) {
-  CreateFieldTrial(kResourcePrioritiesFieldTrialName,
-                   "Everything_11111_1_1_10");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("fetchDeferLateScripts=true,"
-            "fetchIncreaseFontPriority=true,"
-            "fetchIncreaseAsyncScriptPriority=true,"
-            "fetchIncreasePriorities=true",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
-TEST_F(BlinkSettingsFieldTrialTest, ResourcePrioritiesDeferLateScripts) {
-  CreateFieldTrial(kResourcePrioritiesFieldTrialName,
-                   "LateScripts_10000_0_1_10");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("fetchDeferLateScripts=true",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
-TEST_F(BlinkSettingsFieldTrialTest, ResourcePrioritiesFontsEnabled) {
-  CreateFieldTrial(kResourcePrioritiesFieldTrialName, "FontOnly_01000_0_1_10");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("fetchIncreaseFontPriority=true",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
-TEST_F(BlinkSettingsFieldTrialTest, ResourcePrioritiesIncreaseAsyncScript) {
-  CreateFieldTrial(kResourcePrioritiesFieldTrialName,
-                   "AsyncScript_00100_0_1_10");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("fetchIncreaseAsyncScriptPriority=true",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
-TEST_F(BlinkSettingsFieldTrialTest, ResourcePrioritiesIncreasePriorities) {
-  CreateFieldTrial(kResourcePrioritiesFieldTrialName,
-                   "IncreasePriorities_00010_0_1_10");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("fetchIncreasePriorities=true",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
 #if !defined(OS_ANDROID)
 namespace content {
 
@@ -362,7 +306,7 @@ class InstantNTPURLRewriteTest : public BrowserWithTestWindowTest {
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   }
 
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 };
 
 TEST_F(InstantNTPURLRewriteTest, UberURLHandler_InstantExtendedNewTabPage) {

@@ -46,4 +46,6 @@ PanelCommandType = {
   OPEN_MENUS: 'open_menus',
   ENABLE_MENUS: 'enable_menus',
   DISABLE_MENUS: 'disable_menus',
+  SEARCH: 'search',
+  TUTORIAL: 'tutorial',
 };

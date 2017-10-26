@@ -45,12 +45,10 @@
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/forms/ColorChooser.h"
 #include "core/layout/LayoutTheme.h"
-#include "core/layout/LayoutView.h"
 #include "core/page/ChromeClient.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/UserGestureIndicator.h"
 #include "platform/graphics/Color.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -76,9 +74,15 @@ static bool isValidColorString(const String& value)
     return color.setFromString(value) && !color.hasAlpha();
 }
 
-PassRefPtrWillBeRawPtr<InputType> ColorInputType::create(HTMLInputElement& element)
+ColorInputType::ColorInputType(HTMLInputElement& element)
+    : InputType(element)
+    , KeyboardClickableInputTypeView(element)
 {
-    return adoptRefWillBeNoop(new ColorInputType(element));
+}
+
+InputType* ColorInputType::create(HTMLInputElement& element)
+{
+    return new ColorInputType(element);
 }
 
 ColorInputType::~ColorInputType()
@@ -88,8 +92,14 @@ ColorInputType::~ColorInputType()
 DEFINE_TRACE(ColorInputType)
 {
     visitor->trace(m_chooser);
-    BaseClickableWithKeyInputType::trace(visitor);
+    KeyboardClickableInputTypeView::trace(visitor);
     ColorChooserClient::trace(visitor);
+    InputType::trace(visitor);
+}
+
+InputTypeView* ColorInputType::createView()
+{
+    return this;
 }
 
 void ColorInputType::countUsage()
@@ -124,21 +134,21 @@ Color ColorInputType::valueAsColor() const
 {
     Color color;
     bool success = color.setFromString(element().value());
-    ASSERT_UNUSED(success, success);
+    DCHECK(success);
     return color;
 }
 
 void ColorInputType::createShadowSubtree()
 {
-    ASSERT(element().shadow());
+    DCHECK(element().shadow());
 
     Document& document = element().document();
-    RefPtrWillBeRawPtr<HTMLDivElement> wrapperElement = HTMLDivElement::create(document);
-    wrapperElement->setShadowPseudoId(AtomicString("-webkit-color-swatch-wrapper", AtomicString::ConstructFromLiteral));
-    RefPtrWillBeRawPtr<HTMLDivElement> colorSwatch = HTMLDivElement::create(document);
-    colorSwatch->setShadowPseudoId(AtomicString("-webkit-color-swatch", AtomicString::ConstructFromLiteral));
-    wrapperElement->appendChild(colorSwatch.release());
-    element().userAgentShadowRoot()->appendChild(wrapperElement.release());
+    HTMLDivElement* wrapperElement = HTMLDivElement::create(document);
+    wrapperElement->setShadowPseudoId(AtomicString("-webkit-color-swatch-wrapper"));
+    HTMLDivElement* colorSwatch = HTMLDivElement::create(document);
+    colorSwatch->setShadowPseudoId(AtomicString("-webkit-color-swatch"));
+    wrapperElement->appendChild(colorSwatch);
+    element().userAgentShadowRoot()->appendChild(wrapperElement);
 
     element().updateView();
 }
@@ -160,7 +170,7 @@ void ColorInputType::handleDOMActivateEvent(Event* event)
     if (element().isDisabledFormControl() || !element().layoutObject())
         return;
 
-    if (!UserGestureIndicator::processingUserGesture())
+    if (!UserGestureIndicator::utilizeUserGesture())
         return;
 
     ChromeClient* chromeClient = this->chromeClient();
@@ -262,7 +272,7 @@ Vector<ColorSuggestion> ColorInputType::suggestions() const
     Vector<ColorSuggestion> suggestions;
     HTMLDataListElement* dataList = element().dataList();
     if (dataList) {
-        RefPtrWillBeRawPtr<HTMLDataListOptionsCollection> options = dataList->options();
+        HTMLDataListOptionsCollection* options = dataList->options();
         for (unsigned i = 0; HTMLOptionElement* option = options->item(i); i++) {
             if (!element().isValidValue(option->value()))
                 continue;

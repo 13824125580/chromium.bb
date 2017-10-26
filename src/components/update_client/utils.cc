@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -32,6 +34,7 @@
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
+#include "url/gurl.h"
 
 namespace update_client {
 
@@ -126,12 +129,12 @@ std::string BuildProtocolRequest(const std::string& browser_version,
   return request;
 }
 
-scoped_ptr<net::URLFetcher> SendProtocolRequest(
+std::unique_ptr<net::URLFetcher> SendProtocolRequest(
     const GURL& url,
     const std::string& protocol_request,
     net::URLFetcherDelegate* url_fetcher_delegate,
     net::URLRequestContextGetter* url_request_context_getter) {
-  scoped_ptr<net::URLFetcher> url_fetcher = net::URLFetcher::Create(
+  std::unique_ptr<net::URLFetcher> url_fetcher = net::URLFetcher::Create(
       0, url, net::URLFetcher::POST, url_fetcher_delegate);
   if (!url_fetcher.get())
     return url_fetcher;
@@ -218,12 +221,68 @@ bool VerifyFileHash256(const base::FilePath& filepath,
     return false;
 
   uint8_t actual_hash[crypto::kSHA256Length] = {0};
-  scoped_ptr<crypto::SecureHash> hasher(
+  std::unique_ptr<crypto::SecureHash> hasher(
       crypto::SecureHash::Create(crypto::SecureHash::SHA256));
   hasher->Update(mmfile.data(), mmfile.length());
   hasher->Finish(actual_hash, sizeof(actual_hash));
 
   return memcmp(actual_hash, &expected_hash[0], sizeof(actual_hash)) == 0;
+}
+
+bool IsValidBrand(const std::string& brand) {
+  const size_t kMaxBrandSize = 4;
+  if (!brand.empty() && brand.size() != kMaxBrandSize)
+    return false;
+
+  return std::find_if_not(brand.begin(), brand.end(), [](char ch) {
+           return base::IsAsciiAlpha(ch);
+         }) == brand.end();
+}
+
+// Helper function.
+// Returns true if |part| matches the expression
+// ^[<special_chars>a-zA-Z0-9]{min_length,max_length}$
+bool IsValidInstallerAttributePart(const std::string& part,
+                                   const std::string& special_chars,
+                                   size_t min_length,
+                                   size_t max_length) {
+  if (part.size() < min_length || part.size() > max_length)
+    return false;
+
+  return std::find_if_not(part.begin(), part.end(), [&special_chars](char ch) {
+           if (base::IsAsciiAlpha(ch) || base::IsAsciiDigit(ch))
+             return true;
+
+           for (auto c : special_chars) {
+             if (c == ch)
+               return true;
+           }
+
+           return false;
+         }) == part.end();
+}
+
+// Returns true if the |name| parameter matches ^[-_a-zA-Z0-9]{1,256}$ .
+bool IsValidInstallerAttributeName(const std::string& name) {
+  return IsValidInstallerAttributePart(name, "-_", 1, 256);
+}
+
+// Returns true if the |value| parameter matches ^[-.,;+_=a-zA-Z0-9]{0,256}$ .
+bool IsValidInstallerAttributeValue(const std::string& value) {
+  return IsValidInstallerAttributePart(value, "-.,;+_=", 0, 256);
+}
+
+bool IsValidInstallerAttribute(const InstallerAttribute& attr) {
+  return IsValidInstallerAttributeName(attr.first) &&
+         IsValidInstallerAttributeValue(attr.second);
+}
+
+void RemoveUnsecureUrls(std::vector<GURL>* urls) {
+  DCHECK(urls);
+  urls->erase(std::remove_if(
+                  urls->begin(), urls->end(),
+                  [](const GURL& url) { return !url.SchemeIsCryptographic(); }),
+              urls->end());
 }
 
 }  // namespace update_client

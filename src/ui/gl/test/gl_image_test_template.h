@@ -10,7 +10,8 @@
 
 #include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/stringize_macros.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
@@ -23,6 +24,7 @@
 #include "ui/gl/gl_image.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/gl/init/gl_factory.h"
 #include "ui/gl/test/gl_image_test_support.h"
 #include "ui/gl/test/gl_test_helper.h"
 
@@ -49,10 +51,10 @@ GLuint LoadFragmentShader(unsigned target, const gfx::Size& size) {
   );
   // clang-format on
 
-  bool is_gles = gfx::GetGLImplementation() == gfx::kGLImplementationEGLGLES2;
+  bool is_gles = GetGLImplementation() == kGLImplementationEGLGLES2;
   switch (target) {
     case GL_TEXTURE_2D:
-      return gfx::GLHelper::LoadShader(
+      return GLHelper::LoadShader(
           GL_FRAGMENT_SHADER,
           base::StringPrintf("%s\n"
                              "#define SamplerType sampler2D\n"
@@ -63,10 +65,10 @@ GLuint LoadFragmentShader(unsigned target, const gfx::Size& size) {
                              kFragmentShader)
               .c_str());
     case GL_TEXTURE_RECTANGLE_ARB:
-      return gfx::GLHelper::LoadShader(
+      return GLHelper::LoadShader(
           GL_FRAGMENT_SHADER,
-          base::StringPrintf("%s\n"
-                             "#extension GL_ARB_texture_rectangle : require\n"
+          base::StringPrintf("#extension GL_ARB_texture_rectangle : require\n"
+                             "%s\n"
                              "#define SamplerType sampler2DRect\n"
                              "#define TextureLookup texture2DRect\n"
                              "#define TextureScale vec2(%f, %f)\n"
@@ -74,6 +76,18 @@ GLuint LoadFragmentShader(unsigned target, const gfx::Size& size) {
                              is_gles ? kShaderFloatPrecision : "",
                              static_cast<double>(size.width()),
                              static_cast<double>(size.height()),
+                             kFragmentShader)
+              .c_str());
+    case GL_TEXTURE_EXTERNAL_OES:
+      return GLHelper::LoadShader(
+          GL_FRAGMENT_SHADER,
+          base::StringPrintf("#extension GL_OES_EGL_image_external : require\n"
+                             "%s\n"
+                             "#define SamplerType samplerExternalOES\n"
+                             "#define TextureLookup texture2D\n"
+                             "#define TextureScale vec2(1.0, 1.0)\n"
+                             "%s",
+                             is_gles ? kShaderFloatPrecision : "",
                              kFragmentShader)
               .c_str());
     default:
@@ -96,10 +110,15 @@ void DrawTextureQuad(GLenum target, const gfx::Size& size) {
   );
   // clang-format on
 
-  GLuint vertex_shader =
-      gfx::GLHelper::LoadShader(GL_VERTEX_SHADER, kVertexShader);
+  GLuint vao = 0;
+  if (GLHelper::ShouldTestsUseVAOs()) {
+    glGenVertexArraysOES(1, &vao);
+    glBindVertexArrayOES(vao);
+  }
+
+  GLuint vertex_shader = GLHelper::LoadShader(GL_VERTEX_SHADER, kVertexShader);
   GLuint fragment_shader = LoadFragmentShader(target, size);
-  GLuint program = gfx::GLHelper::SetupProgram(vertex_shader, fragment_shader);
+  GLuint program = GLHelper::SetupProgram(vertex_shader, fragment_shader);
   EXPECT_NE(program, 0u);
   glUseProgram(program);
 
@@ -107,8 +126,12 @@ void DrawTextureQuad(GLenum target, const gfx::Size& size) {
   ASSERT_NE(sampler_location, -1);
   glUniform1i(sampler_location, 0);
 
-  GLuint vertex_buffer = gfx::GLHelper::SetupQuadVertexBuffer();
-  gfx::GLHelper::DrawQuad(vertex_buffer);
+  GLuint vertex_buffer = GLHelper::SetupQuadVertexBuffer();
+  GLHelper::DrawQuad(vertex_buffer);
+
+  if (vao != 0) {
+    glDeleteVertexArraysOES(1, &vao);
+  }
 
   glDeleteShader(vertex_shader);
   glDeleteShader(fragment_shader);
@@ -124,9 +147,9 @@ class GLImageTest : public testing::Test {
   // Overridden from testing::Test:
   void SetUp() override {
     GLImageTestSupport::InitializeGL();
-    surface_ = gfx::GLSurface::CreateOffscreenGLSurface(gfx::Size());
-    context_ = gfx::GLContext::CreateGLContext(nullptr, surface_.get(),
-                                               gfx::PreferIntegratedGpu);
+    surface_ = gl::init::CreateOffscreenGLSurface(gfx::Size());
+    context_ =
+        gl::init::CreateGLContext(nullptr, surface_.get(), PreferIntegratedGpu);
     context_->MakeCurrent(surface_.get());
   }
   void TearDown() override {
@@ -137,8 +160,8 @@ class GLImageTest : public testing::Test {
   }
 
  protected:
-  scoped_refptr<gfx::GLSurface> surface_;
-  scoped_refptr<gfx::GLContext> context_;
+  scoped_refptr<GLSurface> surface_;
+  scoped_refptr<GLContext> context_;
   GLImageTestDelegate delegate_;
 };
 
@@ -147,17 +170,17 @@ TYPED_TEST_CASE_P(GLImageTest);
 TYPED_TEST_P(GLImageTest, CreateAndDestroy) {
   const gfx::Size small_image_size(4, 4);
   const gfx::Size large_image_size(512, 512);
-  const uint8_t image_color[] = {0, 0xff, 0, 0xff};
+  const uint8_t* image_color = this->delegate_.GetImageColor();
 
   // Create a small solid color green image of preferred format. This must
   // succeed in order for a GLImage to be conformant.
-  scoped_refptr<gl::GLImage> small_image =
+  scoped_refptr<GLImage> small_image =
       this->delegate_.CreateSolidColorImage(small_image_size, image_color);
   ASSERT_TRUE(small_image);
 
   // Create a large solid color green image of preferred format. This must
   // succeed in order for a GLImage to be conformant.
-  scoped_refptr<gl::GLImage> large_image =
+  scoped_refptr<GLImage> large_image =
       this->delegate_.CreateSolidColorImage(large_image_size, image_color);
   ASSERT_TRUE(large_image);
 
@@ -188,6 +211,11 @@ TYPED_TEST_P(GLImageZeroInitializeTest, ZeroInitialize) {
   // rendering. https://crbug.com/594343.
   if (base::mac::IsOSMavericks())
     return;
+
+  // This functionality is disabled on Yosemite because it is suspected of
+  // causing performance regressions on old hardware. https://crbug.com/606850.
+  if (base::mac::IsOSYosemite())
+    return;
 #endif
 
   const gfx::Size image_size(256, 256);
@@ -199,7 +227,7 @@ TYPED_TEST_P(GLImageZeroInitializeTest, ZeroInitialize) {
   glViewport(0, 0, image_size.width(), image_size.height());
 
   // Create an uninitialized image of preferred format.
-  scoped_refptr<gl::GLImage> image = this->delegate_.CreateImage(image_size);
+  scoped_refptr<GLImage> image = this->delegate_.CreateImage(image_size);
 
   // Create a texture that |image| will be bound to.
   GLenum target = this->delegate_.GetTextureTarget();
@@ -230,16 +258,60 @@ TYPED_TEST_P(GLImageZeroInitializeTest, ZeroInitialize) {
 REGISTER_TYPED_TEST_CASE_P(GLImageZeroInitializeTest, ZeroInitialize);
 
 template <typename GLImageTestDelegate>
+class GLImageBindTest : public GLImageTest<GLImageTestDelegate> {};
+
+TYPED_TEST_CASE_P(GLImageBindTest);
+
+TYPED_TEST_P(GLImageBindTest, BindTexImage) {
+  const gfx::Size image_size(256, 256);
+  const uint8_t* image_color = this->delegate_.GetImageColor();
+
+  GLuint framebuffer =
+      GLTestHelper::SetupFramebuffer(image_size.width(), image_size.height());
+  ASSERT_TRUE(framebuffer);
+  glBindFramebufferEXT(GL_FRAMEBUFFER, framebuffer);
+  glViewport(0, 0, image_size.width(), image_size.height());
+
+  // Create a solid color green image of preferred format. This must succeed
+  // in order for a GLImage to be conformant.
+  scoped_refptr<GLImage> image =
+      this->delegate_.CreateSolidColorImage(image_size, image_color);
+  ASSERT_TRUE(image);
+
+  // Initialize a blue texture of the same size as |image|.
+  unsigned target = this->delegate_.GetTextureTarget();
+  GLuint texture = GLTestHelper::CreateTexture(target);
+  glBindTexture(target, texture);
+
+  // Bind |image| to |texture|.
+  bool rv = image->BindTexImage(target);
+  EXPECT_TRUE(rv);
+
+  glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  // Draw |texture| to viewport.
+  DrawTextureQuad(target, image_size);
+
+  // Read back pixels to check expectations.
+  GLTestHelper::CheckPixels(0, 0, image_size.width(), image_size.height(),
+                            image_color);
+
+  // Clean up.
+  glDeleteTextures(1, &texture);
+  glDeleteFramebuffersEXT(1, &framebuffer);
+  image->Destroy(true /* have_context */);
+}
+
+REGISTER_TYPED_TEST_CASE_P(GLImageBindTest, BindTexImage);
+
+template <typename GLImageTestDelegate>
 class GLImageCopyTest : public GLImageTest<GLImageTestDelegate> {};
 
 TYPED_TEST_CASE_P(GLImageCopyTest);
 
 TYPED_TEST_P(GLImageCopyTest, CopyTexImage) {
   const gfx::Size image_size(256, 256);
-  // These values are picked so that RGB -> YUV on the CPU converted
-  // back to RGB on the GPU produces the original RGB values without
-  // any error.
-  const uint8_t image_color[] = {0x10, 0x20, 0, 0xff};
+  const uint8_t* image_color = this->delegate_.GetImageColor();
   const uint8_t texture_color[] = {0, 0, 0xff, 0xff};
 
   GLuint framebuffer =
@@ -250,14 +322,14 @@ TYPED_TEST_P(GLImageCopyTest, CopyTexImage) {
 
   // Create a solid color green image of preferred format. This must succeed
   // in order for a GLImage to be conformant.
-  scoped_refptr<gl::GLImage> image =
+  scoped_refptr<GLImage> image =
       this->delegate_.CreateSolidColorImage(image_size, image_color);
   ASSERT_TRUE(image);
 
   // Create a solid color blue texture of the same size as |image|.
   unsigned target = this->delegate_.GetTextureTarget();
   GLuint texture = GLTestHelper::CreateTexture(target);
-  scoped_ptr<uint8_t[]> pixels(new uint8_t[BufferSizeForBufferFormat(
+  std::unique_ptr<uint8_t[]> pixels(new uint8_t[BufferSizeForBufferFormat(
       image_size, gfx::BufferFormat::RGBA_8888)]);
   GLImageTestSupport::SetBufferDataToColor(
       image_size.width(), image_size.height(),

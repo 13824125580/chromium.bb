@@ -10,8 +10,8 @@
 #include "core/frame/FrameView.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/StringBuilder.h"
+#include <memory>
 
 namespace blink {
 
@@ -115,6 +115,18 @@ TestCase floatViewportTestCases[] = {
     {0, 0} // Do not remove the terminator line.
 };
 
+TestCase floatNonFriendlyViewportTestCases[] = {
+    {"(min-width: 821px)", 1},
+    {"(max-width: 821px)", 1},
+    {"(width: 821px)", 1},
+    {"(min-height: 821px)", 1},
+    {"(max-height: 821px)", 1},
+    {"(height: 821px)", 1},
+    {"(width: 100vw)", 1},
+    {"(height: 100vh)", 1},
+    {0, 0} // Do not remove the terminator line.
+};
+
 TestCase printTestCases[] = {
     {"print and (min-resolution: 1dppx)", 1},
     {"print and (min-resolution: 118dpcm)", 1},
@@ -124,10 +136,10 @@ TestCase printTestCases[] = {
 
 void testMQEvaluator(TestCase* testCases, const MediaQueryEvaluator& mediaQueryEvaluator)
 {
-    RefPtrWillBePersistent<MediaQuerySet> querySet = nullptr;
+    Persistent<MediaQuerySet> querySet = nullptr;
     for (unsigned i = 0; testCases[i].input; ++i) {
         querySet = MediaQuerySet::create(testCases[i].input);
-        ASSERT_EQ(testCases[i].output, mediaQueryEvaluator.eval(querySet.get()));
+        EXPECT_EQ(testCases[i].output, mediaQueryEvaluator.eval(querySet.get()));
     }
 }
 
@@ -148,7 +160,7 @@ TEST(MediaQueryEvaluatorTest, Cached)
     data.mediaType = MediaTypeNames::screen;
     data.strictMode = true;
     data.displayMode = WebDisplayModeBrowser;
-    RefPtrWillBeRawPtr<MediaValues> mediaValues = MediaValuesCached::create(data);
+    MediaValues* mediaValues = MediaValuesCached::create(data);
 
     MediaQueryEvaluator mediaQueryEvaluator(*mediaValues);
     testMQEvaluator(screenTestCases, mediaQueryEvaluator);
@@ -162,7 +174,7 @@ TEST(MediaQueryEvaluatorTest, Cached)
 
 TEST(MediaQueryEvaluatorTest, Dynamic)
 {
-    OwnPtr<DummyPageHolder> pageHolder = DummyPageHolder::create(IntSize(500, 500));
+    std::unique_ptr<DummyPageHolder> pageHolder = DummyPageHolder::create(IntSize(500, 500));
     pageHolder->frameView().setMediaType(MediaTypeNames::screen);
 
     MediaQueryEvaluator mediaQueryEvaluator(&pageHolder->frame());
@@ -173,13 +185,13 @@ TEST(MediaQueryEvaluatorTest, Dynamic)
 
 TEST(MediaQueryEvaluatorTest, DynamicNoView)
 {
-    OwnPtr<DummyPageHolder> pageHolder = DummyPageHolder::create(IntSize(500, 500));
-    RefPtrWillBeRawPtr<LocalFrame> frame = &pageHolder->frame();
-    pageHolder.clear();
+    std::unique_ptr<DummyPageHolder> pageHolder = DummyPageHolder::create(IntSize(500, 500));
+    LocalFrame* frame = &pageHolder->frame();
+    pageHolder.reset();
     ASSERT_EQ(nullptr, frame->view());
-    MediaQueryEvaluator mediaQueryEvaluator(frame.get());
-    RefPtrWillBeRawPtr<MediaQuerySet> querySet = MediaQuerySet::create("foobar");
-    EXPECT_FALSE(mediaQueryEvaluator.eval(querySet.get()));
+    MediaQueryEvaluator mediaQueryEvaluator(frame);
+    MediaQuerySet* querySet = MediaQuerySet::create("foobar");
+    EXPECT_FALSE(mediaQueryEvaluator.eval(querySet));
 }
 
 TEST(MediaQueryEvaluatorTest, CachedFloatViewport)
@@ -187,10 +199,21 @@ TEST(MediaQueryEvaluatorTest, CachedFloatViewport)
     MediaValuesCached::MediaValuesCachedData data;
     data.viewportWidth = 600.5;
     data.viewportHeight = 700.125;
-    RefPtrWillBeRawPtr<MediaValues> mediaValues = MediaValuesCached::create(data);
+    MediaValues* mediaValues = MediaValuesCached::create(data);
 
     MediaQueryEvaluator mediaQueryEvaluator(*mediaValues);
     testMQEvaluator(floatViewportTestCases, mediaQueryEvaluator);
+}
+
+TEST(MediaQueryEvaluatorTest, CachedFloatViewportNonFloatFriendly)
+{
+    MediaValuesCached::MediaValuesCachedData data;
+    data.viewportWidth = 821;
+    data.viewportHeight = 821;
+    MediaValues* mediaValues = MediaValuesCached::create(data);
+
+    MediaQueryEvaluator mediaQueryEvaluator(*mediaValues);
+    testMQEvaluator(floatNonFriendlyViewportTestCases, mediaQueryEvaluator);
 }
 
 } // namespace blink

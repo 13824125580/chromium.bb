@@ -27,9 +27,12 @@ def CommonChecks(input_api, output_api):
       input_api,
       output_api,
       pylintrc='pylintrc',
-      # devil and symbols have their own PRESUBMIT.py
-      black_list=build_pys + [r'devil/.*\.py$', r'pylib/symbols/.*\.py$'],
-      extra_paths_list=[J(), J('buildbot')]))
+      black_list=build_pys,
+      extra_paths_list=[
+          J(),
+          J('buildbot'),
+          J('..', '..', 'third_party', 'catapult', 'devil')
+      ]))
   output.extend(input_api.canned_checks.RunPylint(
       input_api,
       output_api,
@@ -56,7 +59,9 @@ def CommonChecks(input_api, output_api):
           J('pylib', 'gtest', 'gtest_test_instance_test.py'),
           J('pylib', 'instrumentation',
             'instrumentation_test_instance_test.py'),
+          J('pylib', 'local', 'device', 'local_device_test_run_test.py'),
           J('pylib', 'results', 'json_results_test.py'),
+          J('pylib', 'symbols', 'elf_symbolizer_unittest.py'),
       ],
       env=pylib_test_env))
 

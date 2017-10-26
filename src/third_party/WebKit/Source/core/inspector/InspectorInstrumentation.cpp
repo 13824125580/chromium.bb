@@ -30,178 +30,186 @@
 
 #include "core/inspector/InspectorInstrumentation.h"
 
-#include "bindings/core/v8/ScriptCallStack.h"
+#include "core/InstrumentingAgents.h"
+#include "core/events/Event.h"
 #include "core/events/EventTarget.h"
 #include "core/fetch/FetchInitiatorInfo.h"
 #include "core/frame/FrameHost.h"
 #include "core/inspector/InspectorCSSAgent.h"
-#include "core/inspector/InspectorConsoleAgent.h"
-#include "core/inspector/InspectorDebuggerAgent.h"
-#include "core/inspector/InspectorProfilerAgent.h"
-#include "core/inspector/InspectorResourceAgent.h"
-#include "core/inspector/InstrumentingAgents.h"
+#include "core/inspector/InspectorDOMDebuggerAgent.h"
+#include "core/inspector/InspectorNetworkAgent.h"
+#include "core/inspector/InspectorPageAgent.h"
+#include "core/inspector/InspectorSession.h"
+#include "core/inspector/MainThreadDebugger.h"
+#include "core/inspector/ThreadDebugger.h"
 #include "core/inspector/WorkerInspectorController.h"
 #include "core/page/Page.h"
+#include "core/workers/MainThreadWorkletGlobalScope.h"
 #include "core/workers/WorkerGlobalScope.h"
+#include "platform/v8_inspector/public/V8Debugger.h"
 
 namespace blink {
 
-namespace {
-
-WillBePersistentHeapHashSet<RawPtrWillBeWeakMember<InstrumentingAgents>>& instrumentingAgentsSet()
-{
-    DEFINE_STATIC_LOCAL(WillBePersistentHeapHashSet<RawPtrWillBeWeakMember<InstrumentingAgents>>, instrumentingAgentsSet, ());
-    return instrumentingAgentsSet;
-}
-
-}
-
-namespace InspectorInstrumentation {
-int FrontendCounter::s_frontendCounter = 0;
-}
-
-InspectorInstrumentationCookie::InspectorInstrumentationCookie()
-    : m_instrumentingAgents(nullptr)
-{
-}
-
-InspectorInstrumentationCookie::InspectorInstrumentationCookie(InstrumentingAgents* agents)
-    : m_instrumentingAgents(agents)
-{
-}
-
-InspectorInstrumentationCookie::InspectorInstrumentationCookie(const InspectorInstrumentationCookie& other)
-    : m_instrumentingAgents(other.m_instrumentingAgents)
-{
-}
-
-InspectorInstrumentationCookie& InspectorInstrumentationCookie::operator=(const InspectorInstrumentationCookie& other)
-{
-    if (this != &other)
-        m_instrumentingAgents = other.m_instrumentingAgents;
-    return *this;
-}
-
-InspectorInstrumentationCookie::~InspectorInstrumentationCookie()
-{
-}
-
 namespace InspectorInstrumentation {
 
-bool isDebuggerPausedImpl(InstrumentingAgents* instrumentingAgents)
+AsyncTask::AsyncTask(ExecutionContext* context, void* task) : AsyncTask(context, task, true)
 {
-    if (InspectorDebuggerAgent* debuggerAgent = instrumentingAgents->inspectorDebuggerAgent())
-        return debuggerAgent->isPaused();
-    return false;
 }
 
-void didReceiveResourceResponseButCanceledImpl(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r)
+AsyncTask::AsyncTask(ExecutionContext* context, void* task, bool enabled)
+    : m_debugger(enabled ? ThreadDebugger::from(toIsolate(context)) : nullptr)
+    , m_task(task)
 {
-    didReceiveResourceResponse(frame, identifier, loader, r, 0);
+    if (m_debugger)
+        m_debugger->asyncTaskStarted(m_task);
 }
 
-void continueAfterXFrameOptionsDeniedImpl(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r)
+AsyncTask::~AsyncTask()
 {
-    didReceiveResourceResponseButCanceledImpl(frame, loader, identifier, r);
+    if (m_debugger)
+        m_debugger->asyncTaskFinished(m_task);
 }
 
-void continueWithPolicyIgnoreImpl(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r)
+void asyncTaskScheduled(ExecutionContext* context, const String& name, void* task)
 {
-    didReceiveResourceResponseButCanceledImpl(frame, loader, identifier, r);
+    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+        debugger->asyncTaskScheduled(name, task, false);
 }
 
-void removedResourceFromMemoryCacheImpl(Resource* cachedResource)
+void asyncTaskScheduled(ExecutionContext* context, const String& name, void* task, bool recurring)
 {
-    ASSERT(isMainThread());
-    for (InstrumentingAgents* instrumentingAgents: instrumentingAgentsSet()) {
-        if (InspectorResourceAgent* inspectorResourceAgent = instrumentingAgents->inspectorResourceAgent())
-            inspectorResourceAgent->removedResourceFromMemoryCache(cachedResource);
+    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+        debugger->asyncTaskScheduled(name, task, recurring);
+}
+
+void asyncTaskCanceled(ExecutionContext* context, void* task)
+{
+    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+        debugger->asyncTaskCanceled(task);
+}
+
+void allAsyncTasksCanceled(ExecutionContext* context)
+{
+    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+        debugger->allAsyncTasksCanceled();
+}
+
+NativeBreakpoint::NativeBreakpoint(ExecutionContext* context, const char* name, bool sync)
+    : m_instrumentingAgents(instrumentingAgentsFor(context))
+    , m_sync(sync)
+{
+    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
+        return;
+    for (InspectorDOMDebuggerAgent* domDebuggerAgent : m_instrumentingAgents->inspectorDOMDebuggerAgents())
+        domDebuggerAgent->allowNativeBreakpoint(name, nullptr, m_sync);
+}
+
+NativeBreakpoint::NativeBreakpoint(ExecutionContext* context, EventTarget* eventTarget, Event* event)
+    : m_instrumentingAgents(instrumentingAgentsFor(context))
+    , m_sync(false)
+{
+    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
+        return;
+    Node* node = eventTarget->toNode();
+    String targetName = node ? node->nodeName() : eventTarget->interfaceName();
+    for (InspectorDOMDebuggerAgent* domDebuggerAgent : m_instrumentingAgents->inspectorDOMDebuggerAgents())
+        domDebuggerAgent->allowNativeBreakpoint(event->type(), &targetName, m_sync);
+}
+
+NativeBreakpoint::~NativeBreakpoint()
+{
+    if (m_sync || !m_instrumentingAgents || !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
+        return;
+    for (InspectorDOMDebuggerAgent* domDebuggerAgent : m_instrumentingAgents->inspectorDOMDebuggerAgents())
+        domDebuggerAgent->cancelNativeBreakpoint();
+}
+
+StyleRecalc::StyleRecalc(Document* document)
+    : m_instrumentingAgents(instrumentingAgentsFor(document))
+{
+    if (!m_instrumentingAgents || m_instrumentingAgents->hasInspectorNetworkAgents())
+        return;
+    for (InspectorNetworkAgent* networkAgent : m_instrumentingAgents->inspectorNetworkAgents())
+        networkAgent->willRecalculateStyle(document);
+}
+
+StyleRecalc::~StyleRecalc()
+{
+    if (!m_instrumentingAgents)
+        return;
+    if (m_instrumentingAgents->hasInspectorNetworkAgents()) {
+        for (InspectorNetworkAgent* networkAgent : m_instrumentingAgents->inspectorNetworkAgents())
+            networkAgent->didRecalculateStyle();
+    }
+    if (m_instrumentingAgents->hasInspectorPageAgents()) {
+        for (InspectorPageAgent* pageAgent : m_instrumentingAgents->inspectorPageAgents())
+            pageAgent->didRecalculateStyle();
     }
 }
 
-bool collectingHTMLParseErrorsImpl(InstrumentingAgents* instrumentingAgents)
+JavaScriptDialog::JavaScriptDialog(LocalFrame* frame, const String& message, ChromeClient::DialogType dialogType)
+    : m_instrumentingAgents(instrumentingAgentsFor(frame))
+    , m_result(false)
 {
-    ASSERT(isMainThread());
-    return instrumentingAgentsSet().contains(instrumentingAgents);
+    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorPageAgents())
+        return;
+    for (InspectorPageAgent* pageAgent : m_instrumentingAgents->inspectorPageAgents())
+        pageAgent->willRunJavaScriptDialog(message, dialogType);
 }
 
-bool consoleAgentEnabled(ExecutionContext* executionContext)
+void JavaScriptDialog::setResult(bool result)
 {
-    InstrumentingAgents* instrumentingAgents = instrumentingAgentsFor(executionContext);
-    InspectorConsoleAgent* consoleAgent = instrumentingAgents ? instrumentingAgents->inspectorConsoleAgent() : 0;
-    return consoleAgent && consoleAgent->enabled();
+    m_result = result;
 }
 
-void registerInstrumentingAgents(InstrumentingAgents* instrumentingAgents)
+JavaScriptDialog::~JavaScriptDialog()
 {
-    ASSERT(isMainThread());
-    instrumentingAgentsSet().add(instrumentingAgents);
+    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorPageAgents())
+        return;
+    for (InspectorPageAgent* pageAgent : m_instrumentingAgents->inspectorPageAgents())
+        pageAgent->didRunJavaScriptDialog(m_result);
 }
 
-void unregisterInstrumentingAgents(InstrumentingAgents* instrumentingAgents)
+int FrontendCounter::s_frontendCounter = 0;
+
+bool isDebuggerPaused(LocalFrame*)
 {
-    ASSERT(isMainThread());
-    ASSERT(instrumentingAgentsSet().contains(instrumentingAgents));
-    instrumentingAgentsSet().remove(instrumentingAgents);
+    return MainThreadDebugger::instance()->debugger()->isPaused();
 }
 
-InstrumentingAgents* instrumentingAgentsFor(LocalFrame* frame)
+void didReceiveResourceResponseButCanceled(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r, Resource* resource)
 {
-    return frame ? frame->instrumentingAgents() : nullptr;
+    didReceiveResourceResponse(frame, identifier, loader, r, resource);
 }
 
-InstrumentingAgents* instrumentingAgentsFor(EventTarget* eventTarget)
+void continueAfterXFrameOptionsDenied(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r, Resource* resource)
 {
-    if (!eventTarget)
-        return 0;
-    return instrumentingAgentsFor(eventTarget->executionContext());
+    didReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
 }
 
-InstrumentingAgents* instrumentingAgentsFor(LayoutObject* layoutObject)
+void continueWithPolicyIgnore(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r, Resource* resource)
 {
-    return instrumentingAgentsFor(layoutObject->frame());
+    didReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
 }
 
 InstrumentingAgents* instrumentingAgentsFor(WorkerGlobalScope* workerGlobalScope)
 {
     if (!workerGlobalScope)
-        return 0;
-    return instrumentationForWorkerGlobalScope(workerGlobalScope);
+        return nullptr;
+    if (WorkerInspectorController* controller = workerGlobalScope->workerInspectorController())
+        return controller->instrumentingAgents();
+    return nullptr;
 }
 
 InstrumentingAgents* instrumentingAgentsForNonDocumentContext(ExecutionContext* context)
 {
     if (context->isWorkerGlobalScope())
-        return instrumentationForWorkerGlobalScope(toWorkerGlobalScope(context));
-    return 0;
+        return instrumentingAgentsFor(toWorkerGlobalScope(context));
+    if (context->isMainThreadWorkletGlobalScope())
+        return instrumentingAgentsFor(toMainThreadWorkletGlobalScope(context)->frame());
+    return nullptr;
 }
 
 } // namespace InspectorInstrumentation
-
-namespace InstrumentationEvents {
-const char PaintSetup[] = "PaintSetup";
-const char Paint[] = "Paint";
-const char Layer[] = "Layer";
-const char RequestMainThreadFrame[] = "RequestMainThreadFrame";
-const char BeginFrame[] = "BeginFrame";
-const char ActivateLayerTree[] = "ActivateLayerTree";
-const char DrawFrame[] = "DrawFrame";
-const char EmbedderCallback[] = "EmbedderCallback";
-};
-
-namespace InstrumentationEventArguments {
-const char FrameId[] = "frameId";
-const char LayerId[] = "layerId";
-const char LayerTreeId[] = "layerTreeId";
-const char PageId[] = "pageId";
-const char CallbackName[] = "callbackName";
-};
-
-InstrumentingAgents* instrumentationForWorkerGlobalScope(WorkerGlobalScope* workerGlobalScope)
-{
-    if (WorkerInspectorController* controller = workerGlobalScope->workerInspectorController())
-        return controller->m_instrumentingAgents.get();
-    return 0;
-}
 
 } // namespace blink

@@ -8,6 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <memory>
 #include <vector>
 
 #include "testing/gmock/include/gmock/gmock.h"
@@ -106,34 +107,40 @@ TEST_F(TestSimulcastEncoderAdapter, DISABLED_TestRPSIEncoder) {
 
 class MockVideoEncoder : public VideoEncoder {
  public:
+  // TODO(nisse): Valid overrides commented out, because the gmock
+  // methods don't use any override declarations, and we want to avoid
+  // warnings from -Winconsistent-missing-override. See
+  // http://crbug.com/428099.
   int32_t InitEncode(const VideoCodec* codecSettings,
                      int32_t numberOfCores,
-                     size_t maxPayloadSize) override {
+                     size_t maxPayloadSize) /* override */ {
     codec_ = *codecSettings;
     return 0;
   }
 
   int32_t Encode(const VideoFrame& inputImage,
                  const CodecSpecificInfo* codecSpecificInfo,
-                 const std::vector<FrameType>* frame_types) override {
-    return 0;
+                 const std::vector<FrameType>* frame_types) /* override */ {
+    return encode_return_value_;
   }
 
   int32_t RegisterEncodeCompleteCallback(
-      EncodedImageCallback* callback) override {
+      EncodedImageCallback* callback) /* override */ {
     callback_ = callback;
     return 0;
   }
 
-  int32_t Release() override { return 0; }
+  int32_t Release() /* override */ { return 0; }
 
-  int32_t SetRates(uint32_t newBitRate, uint32_t frameRate) override {
+  int32_t SetRates(uint32_t newBitRate, uint32_t frameRate) /* override */ {
     return 0;
   }
 
   MOCK_METHOD2(SetChannelParameters, int32_t(uint32_t packetLoss, int64_t rtt));
 
-  bool SupportsNativeHandle() const override { return supports_native_handle_; }
+  bool SupportsNativeHandle() const /* override */ {
+    return supports_native_handle_;
+  }
 
   virtual ~MockVideoEncoder() {}
 
@@ -153,10 +160,15 @@ class MockVideoEncoder : public VideoEncoder {
     supports_native_handle_ = enabled;
   }
 
+  void set_encode_return_value(int value) {
+    encode_return_value_ = value;
+  }
+
   MOCK_CONST_METHOD0(ImplementationName, const char*());
 
  private:
   bool supports_native_handle_ = false;
+  int encode_return_value_ = WEBRTC_VIDEO_CODEC_OK;
   VideoCodec codec_;
   EncodedImageCallback* callback_;
 };
@@ -164,7 +176,8 @@ class MockVideoEncoder : public VideoEncoder {
 class MockVideoEncoderFactory : public VideoEncoderFactory {
  public:
   VideoEncoder* Create() override {
-    MockVideoEncoder* encoder = new MockVideoEncoder();
+    MockVideoEncoder* encoder = new
+        ::testing::NiceMock<MockVideoEncoder>();
     const char* encoder_name = encoder_names_.empty()
                                    ? "codec_implementation_name"
                                    : encoder_names_[encoders_.size()];
@@ -173,7 +186,15 @@ class MockVideoEncoderFactory : public VideoEncoderFactory {
     return encoder;
   }
 
-  void Destroy(VideoEncoder* encoder) override { delete encoder; }
+  void Destroy(VideoEncoder* encoder) override {
+    for (size_t i = 0; i < encoders_.size(); ++i) {
+      if (encoders_[i] == encoder) {
+        encoders_.erase(encoders_.begin() + i);
+        break;
+      }
+    }
+    delete encoder;
+  }
 
   virtual ~MockVideoEncoderFactory() {}
 
@@ -340,8 +361,8 @@ class TestSimulcastEncoderAdapterFake : public ::testing::Test,
   }
 
  protected:
-  rtc::scoped_ptr<TestSimulcastEncoderAdapterFakeHelper> helper_;
-  rtc::scoped_ptr<VP8Encoder> adapter_;
+  std::unique_ptr<TestSimulcastEncoderAdapterFakeHelper> helper_;
+  std::unique_ptr<VP8Encoder> adapter_;
   VideoCodec codec_;
   int last_encoded_image_width_;
   int last_encoded_image_height_;
@@ -420,6 +441,14 @@ TEST_F(TestSimulcastEncoderAdapterFake, SupportsImplementationName) {
   EXPECT_EQ(0, adapter_->InitEncode(&codec_, 1, 1200));
   EXPECT_STREQ("SimulcastEncoderAdapter (codec1, codec2, codec3)",
                adapter_->ImplementationName());
+
+  // Single streams should not expose "SimulcastEncoderAdapter" in name.
+  adapter_->Release();
+  codec_.numberOfSimulcastStreams = 1;
+  EXPECT_EQ(0, adapter_->InitEncode(&codec_, 1, 1200));
+  adapter_->RegisterEncodeCompleteCallback(this);
+  ASSERT_EQ(1u, helper_->factory()->encoders().size());
+  EXPECT_STREQ("codec1", adapter_->ImplementationName());
 }
 
 TEST_F(TestSimulcastEncoderAdapterFake,
@@ -435,6 +464,34 @@ TEST_F(TestSimulcastEncoderAdapterFake,
   for (MockVideoEncoder* encoder : helper_->factory()->encoders())
     encoder->set_supports_native_handle(true);
   EXPECT_FALSE(adapter_->SupportsNativeHandle());
+}
+
+TEST_F(TestSimulcastEncoderAdapterFake, TestFailureReturnCodesFromEncodeCalls) {
+  TestVp8Simulcast::DefaultSettings(
+      &codec_, static_cast<const int*>(kTestTemporalLayerProfile));
+  codec_.numberOfSimulcastStreams = 3;
+  EXPECT_EQ(0, adapter_->InitEncode(&codec_, 1, 1200));
+  adapter_->RegisterEncodeCompleteCallback(this);
+  ASSERT_EQ(3u, helper_->factory()->encoders().size());
+  // Tell the 2nd encoder to request software fallback.
+  helper_->factory()->encoders()[1]->set_encode_return_value(
+      WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE);
+
+  // Send a fake frame and assert the return is software fallback.
+  VideoFrame input_frame;
+  int half_width = (kDefaultWidth + 1) / 2;
+  input_frame.CreateEmptyFrame(kDefaultWidth, kDefaultHeight, kDefaultWidth,
+                                half_width, half_width);
+  memset(input_frame.video_frame_buffer()->MutableDataY(), 0,
+         input_frame.allocated_size(kYPlane));
+  memset(input_frame.video_frame_buffer()->MutableDataU(), 0,
+         input_frame.allocated_size(kUPlane));
+  memset(input_frame.video_frame_buffer()->MutableDataV(), 0,
+         input_frame.allocated_size(kVPlane));
+
+  std::vector<FrameType> frame_types(3, kVideoFrameKey);
+  EXPECT_EQ(WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE,
+            adapter_->Encode(input_frame, nullptr, &frame_types));
 }
 
 }  // namespace testing

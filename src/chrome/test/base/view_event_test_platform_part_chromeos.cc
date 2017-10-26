@@ -4,7 +4,10 @@
 
 #include "chrome/test/base/view_event_test_platform_part.h"
 
-#include "ash/ash_switches.h"
+#include <memory>
+
+#include "ash/common/ash_switches.h"
+#include "ash/common/material_design/material_design_controller.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
 #include "ash/test/ash_test_helper.h"
@@ -38,6 +41,7 @@ class ViewEventTestPlatformPartChromeOS : public ViewEventTestPlatformPart {
 
  private:
   wm::WMState wm_state_;
+  std::unique_ptr<aura::Env> env_;
 
   DISALLOW_COPY_AND_ASSIGN(ViewEventTestPlatformPartChromeOS);
 };
@@ -54,8 +58,9 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
           chromeos::DBusClientBundle::BLUETOOTH));
   chromeos::CrasAudioHandler::InitializeForTesting();
   chromeos::NetworkHandler::Initialize();
+  ash::MaterialDesignController::Initialize();
 
-  aura::Env::CreateInstance(true);
+  env_ = aura::Env::CreateInstance();
   ash::test::TestShellDelegate* shell_delegate =
       new ash::test::TestShellDelegate();
   ash::ShellInitParams init_params;
@@ -72,7 +77,7 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
 
 ViewEventTestPlatformPartChromeOS::~ViewEventTestPlatformPartChromeOS() {
   ash::Shell::DeleteInstance();
-  aura::Env::DeleteInstance();
+  env_.reset();
 
   chromeos::NetworkHandler::Shutdown();
   chromeos::CrasAudioHandler::Shutdown();

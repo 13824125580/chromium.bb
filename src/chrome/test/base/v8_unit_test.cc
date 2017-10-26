@@ -95,6 +95,8 @@ bool V8UnitTest::RunJavascriptTestF(const std::string& test_fixture,
   v8::Local<v8::Context> context =
       v8::Local<v8::Context>::New(isolate, context_);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks(
+      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   v8::Local<v8::Value> function_property =
       context->Global()->Get(v8::String::NewFromUtf8(isolate, "runTest"));
@@ -167,13 +169,16 @@ void V8UnitTest::SetUp() {
   v8::Local<v8::String> log_string = v8::String::NewFromUtf8(isolate, "log");
   v8::Local<v8::FunctionTemplate> log_function =
       v8::FunctionTemplate::New(isolate, &V8UnitTest::Log);
+  log_function->RemovePrototype();
   global->Set(log_string, log_function);
 
   // Set up chrome object for chrome.send().
   v8::Local<v8::ObjectTemplate> chrome = v8::ObjectTemplate::New(isolate);
   global->Set(v8::String::NewFromUtf8(isolate, "chrome"), chrome);
-  chrome->Set(v8::String::NewFromUtf8(isolate, "send"),
-              v8::FunctionTemplate::New(isolate, &V8UnitTest::ChromeSend));
+  v8::Local<v8::FunctionTemplate> send_function =
+      v8::FunctionTemplate::New(isolate, &V8UnitTest::ChromeSend);
+  send_function->RemovePrototype();
+  chrome->Set(v8::String::NewFromUtf8(isolate, "send"), send_function);
 
   // Set up console object for console.log(), etc.
   v8::Local<v8::ObjectTemplate> console = v8::ObjectTemplate::New(isolate);
@@ -181,8 +186,10 @@ void V8UnitTest::SetUp() {
   console->Set(log_string, log_function);
   console->Set(v8::String::NewFromUtf8(isolate, "info"), log_function);
   console->Set(v8::String::NewFromUtf8(isolate, "warn"), log_function);
-  console->Set(v8::String::NewFromUtf8(isolate, "error"),
-               v8::FunctionTemplate::New(isolate, &V8UnitTest::Error));
+  v8::Local<v8::FunctionTemplate> error_function =
+      v8::FunctionTemplate::New(isolate, &V8UnitTest::Error);
+  error_function->RemovePrototype();
+  console->Set(v8::String::NewFromUtf8(isolate, "error"), error_function);
 
   context_.Reset(isolate, v8::Context::New(isolate, NULL, global));
 }
@@ -209,6 +216,8 @@ void V8UnitTest::ExecuteScriptInContext(const base::StringPiece& script_source,
   v8::Local<v8::Context> context =
       v8::Local<v8::Context>::New(isolate, context_);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks(
+      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::String> source =
       v8::String::NewFromUtf8(isolate,
                               script_source.data(),
@@ -257,6 +266,8 @@ void V8UnitTest::TestFunction(const std::string& function_name) {
   v8::Local<v8::Context> context =
       v8::Local<v8::Context>::New(isolate, context_);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks(
+      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   v8::Local<v8::Value> function_property = context->Global()->Get(
       v8::String::NewFromUtf8(isolate, function_name.c_str()));

@@ -86,20 +86,20 @@ LayoutSVGResourceContainer* SVGDocumentExtensions::resourceById(const AtomicStri
     return m_resources.get(id);
 }
 
-void SVGDocumentExtensions::serviceOnAnimationFrame(Document& document, double monotonicAnimationStartTime)
+void SVGDocumentExtensions::serviceOnAnimationFrame(Document& document)
 {
     if (!document.svgExtensions())
         return;
-    document.accessSVGExtensions().serviceAnimations(monotonicAnimationStartTime);
+    document.accessSVGExtensions().serviceAnimations();
 }
 
-void SVGDocumentExtensions::serviceAnimations(double monotonicAnimationStartTime)
+void SVGDocumentExtensions::serviceAnimations()
 {
     if (RuntimeEnabledFeatures::smilEnabled()) {
-        WillBeHeapVector<RefPtrWillBeMember<SVGSVGElement>> timeContainers;
+        HeapVector<Member<SVGSVGElement>> timeContainers;
         copyToVector(m_timeContainers, timeContainers);
         for (const auto& container : timeContainers)
-            container->timeContainer()->serviceAnimations(monotonicAnimationStartTime);
+            container->timeContainer()->serviceAnimations();
     }
 
     SVGElementSet webAnimationsPendingSVGElements;
@@ -118,7 +118,7 @@ void SVGDocumentExtensions::startAnimations()
     // starting animations for a document will do this "latching"
     // FIXME: We hold a ref pointers to prevent a shadow tree from getting removed out from underneath us.
     // In the future we should refactor the use-element to avoid this. See https://webkit.org/b/53704
-    WillBeHeapVector<RefPtrWillBeMember<SVGSVGElement>> timeContainers;
+    HeapVector<Member<SVGSVGElement>> timeContainers;
     copyToVector(m_timeContainers, timeContainers);
     for (const auto& container : timeContainers) {
         SMILTimeContainer* timeContainer = container->timeContainer();
@@ -135,7 +135,7 @@ void SVGDocumentExtensions::pauseAnimations()
 
 void SVGDocumentExtensions::dispatchSVGLoadEventToOutermostSVGElements()
 {
-    WillBeHeapVector<RefPtrWillBeMember<SVGSVGElement>> timeContainers;
+    HeapVector<Member<SVGSVGElement>> timeContainers;
     copyToVector(m_timeContainers, timeContainers);
     for (const auto& container : timeContainers) {
         SVGSVGElement* outerSVG = container.get();
@@ -150,20 +150,21 @@ void SVGDocumentExtensions::dispatchSVGLoadEventToOutermostSVGElements()
 
 void SVGDocumentExtensions::reportError(const String& message)
 {
-    m_document->addConsoleMessage(ConsoleMessage::create(RenderingMessageSource, ErrorMessageLevel,  "Error: " + message));
+    ConsoleMessage* consoleMessage = ConsoleMessage::create(RenderingMessageSource, ErrorMessageLevel,  "Error: " + message);
+    m_document->addConsoleMessage(consoleMessage);
 }
 
 void SVGDocumentExtensions::addPendingResource(const AtomicString& id, Element* element)
 {
     ASSERT(element);
-    ASSERT(element->inDocument());
+    ASSERT(element->inShadowIncludingDocument());
 
     if (id.isEmpty())
         return;
 
-    WillBeHeapHashMap<AtomicString, OwnPtrWillBeMember<SVGPendingElements>>::AddResult result = m_pendingResources.add(id, nullptr);
+    HeapHashMap<AtomicString, Member<SVGPendingElements>>::AddResult result = m_pendingResources.add(id, nullptr);
     if (result.isNewEntry)
-        result.storedValue->value = adoptPtrWillBeNoop(new SVGPendingElements);
+        result.storedValue->value = new SVGPendingElements;
     result.storedValue->value->add(element);
 
     element->setHasPendingResources();
@@ -253,13 +254,13 @@ void SVGDocumentExtensions::removeElementFromPendingResources(Element* element)
     }
 }
 
-PassOwnPtrWillBeRawPtr<SVGDocumentExtensions::SVGPendingElements> SVGDocumentExtensions::removePendingResource(const AtomicString& id)
+SVGDocumentExtensions::SVGPendingElements* SVGDocumentExtensions::removePendingResource(const AtomicString& id)
 {
     ASSERT(m_pendingResources.contains(id));
     return m_pendingResources.take(id);
 }
 
-PassOwnPtrWillBeRawPtr<SVGDocumentExtensions::SVGPendingElements> SVGDocumentExtensions::removePendingResourceForRemoval(const AtomicString& id)
+SVGDocumentExtensions::SVGPendingElements* SVGDocumentExtensions::removePendingResourceForRemoval(const AtomicString& id)
 {
     ASSERT(m_pendingResourcesForRemoval.contains(id));
     return m_pendingResourcesForRemoval.take(id);
@@ -272,7 +273,7 @@ void SVGDocumentExtensions::markPendingResourcesForRemoval(const AtomicString& i
 
     ASSERT(!m_pendingResourcesForRemoval.contains(id));
 
-    OwnPtrWillBeMember<SVGPendingElements> existing = m_pendingResources.take(id);
+    Member<SVGPendingElements> existing = m_pendingResources.take(id);
     if (existing && !existing->isEmpty())
         m_pendingResourcesForRemoval.add(id, existing.release());
 }
@@ -358,14 +359,12 @@ SVGSVGElement* SVGDocumentExtensions::rootElement() const
 
 DEFINE_TRACE(SVGDocumentExtensions)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_document);
     visitor->trace(m_timeContainers);
     visitor->trace(m_webAnimationsPendingSVGElements);
     visitor->trace(m_relativeLengthSVGRoots);
     visitor->trace(m_pendingResources);
     visitor->trace(m_pendingResourcesForRemoval);
-#endif
 }
 
 } // namespace blink

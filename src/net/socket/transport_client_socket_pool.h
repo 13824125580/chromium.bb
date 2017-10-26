@@ -5,11 +5,11 @@
 #ifndef NET_SOCKET_TRANSPORT_CLIENT_SOCKET_POOL_H_
 #define NET_SOCKET_TRANSPORT_CLIENT_SOCKET_POOL_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/host_port_pair.h"
@@ -22,6 +22,7 @@
 namespace net {
 
 class ClientSocketFactory;
+class SocketPerformanceWatcherFactory;
 
 typedef base::Callback<int(const AddressList&, const BoundNetLog& net_log)>
 OnHostResolutionCallback;
@@ -73,76 +74,6 @@ class NET_EXPORT_PRIVATE TransportSocketParams
   DISALLOW_COPY_AND_ASSIGN(TransportSocketParams);
 };
 
-// Common data and logic shared between TransportConnectJob and
-// WebSocketTransportConnectJob.
-class NET_EXPORT_PRIVATE TransportConnectJobHelper {
- public:
-  enum State {
-    STATE_RESOLVE_HOST,
-    STATE_RESOLVE_HOST_COMPLETE,
-    STATE_TRANSPORT_CONNECT,
-    STATE_TRANSPORT_CONNECT_COMPLETE,
-    STATE_NONE,
-  };
-
-  // For recording the connection time in the appropriate bucket.
-  enum ConnectionLatencyHistogram {
-    CONNECTION_LATENCY_UNKNOWN,
-    CONNECTION_LATENCY_IPV4_WINS_RACE,
-    CONNECTION_LATENCY_IPV4_NO_RACE,
-    CONNECTION_LATENCY_IPV6_RACEABLE,
-    CONNECTION_LATENCY_IPV6_SOLO,
-  };
-
-  TransportConnectJobHelper(const scoped_refptr<TransportSocketParams>& params,
-                            ClientSocketFactory* client_socket_factory,
-                            HostResolver* host_resolver,
-                            LoadTimingInfo::ConnectTiming* connect_timing);
-  ~TransportConnectJobHelper();
-
-  ClientSocketFactory* client_socket_factory() {
-    return client_socket_factory_;
-  }
-
-  const AddressList& addresses() const { return addresses_; }
-  State next_state() const { return next_state_; }
-  void set_next_state(State next_state) { next_state_ = next_state; }
-  CompletionCallback on_io_complete() const { return on_io_complete_; }
-  const TransportSocketParams* params() { return params_.get(); }
-
-  int DoResolveHost(RequestPriority priority, const BoundNetLog& net_log);
-  int DoResolveHostComplete(int result, const BoundNetLog& net_log);
-
-  template <class T>
-  int DoConnectInternal(T* job);
-
-  template <class T>
-  void SetOnIOComplete(T* job);
-
-  template <class T>
-  void OnIOComplete(T* job, int result);
-
-  // Record the histograms Net.DNS_Resolution_And_TCP_Connection_Latency2 and
-  // Net.TCP_Connection_Latency and return the connect duration.
-  base::TimeDelta HistogramDuration(ConnectionLatencyHistogram race_result);
-
-  static const int kIPv6FallbackTimerInMs;
-
- private:
-  template <class T>
-  int DoLoop(T* job, int result);
-
-  scoped_refptr<TransportSocketParams> params_;
-  ClientSocketFactory* const client_socket_factory_;
-  SingleRequestHostResolver resolver_;
-  AddressList addresses_;
-  State next_state_;
-  CompletionCallback on_io_complete_;
-  LoadTimingInfo::ConnectTiming* connect_timing_;
-
-  DISALLOW_COPY_AND_ASSIGN(TransportConnectJobHelper);
-};
-
 // TransportConnectJob handles the host resolution necessary for socket creation
 // and the transport (likely TCP) connect. TransportConnectJob also has fallback
 // logic for IPv6 connect() timeouts (which may happen due to networks / routers
@@ -153,15 +84,35 @@ class NET_EXPORT_PRIVATE TransportConnectJobHelper {
 // a headstart) and return the one that completes first to the socket pool.
 class NET_EXPORT_PRIVATE TransportConnectJob : public ConnectJob {
  public:
-  TransportConnectJob(const std::string& group_name,
-                      RequestPriority priority,
-                      ClientSocketPool::RespectLimits respect_limits,
-                      const scoped_refptr<TransportSocketParams>& params,
-                      base::TimeDelta timeout_duration,
-                      ClientSocketFactory* client_socket_factory,
-                      HostResolver* host_resolver,
-                      Delegate* delegate,
-                      NetLog* net_log);
+  // For recording the connection time in the appropriate bucket.
+  enum RaceResult {
+    RACE_UNKNOWN,
+    RACE_IPV4_WINS,
+    RACE_IPV4_SOLO,
+    RACE_IPV6_WINS,
+    RACE_IPV6_SOLO,
+  };
+
+  // TransportConnectJobs will time out after this many seconds.  Note this is
+  // the total time, including both host resolution and TCP connect() times.
+  static const int kTimeoutInSeconds;
+
+  // In cases where both IPv6 and IPv4 addresses were returned from DNS,
+  // TransportConnectJobs will start a second connection attempt to just the
+  // IPv4 addresses after this many milliseconds. (This is "Happy Eyeballs".)
+  static const int kIPv6FallbackTimerInMs;
+
+  TransportConnectJob(
+      const std::string& group_name,
+      RequestPriority priority,
+      ClientSocketPool::RespectLimits respect_limits,
+      const scoped_refptr<TransportSocketParams>& params,
+      base::TimeDelta timeout_duration,
+      ClientSocketFactory* client_socket_factory,
+      SocketPerformanceWatcherFactory* socket_performance_watcher_factory,
+      HostResolver* host_resolver,
+      Delegate* delegate,
+      NetLog* net_log);
   ~TransportConnectJob() override;
 
   // ConnectJob methods.
@@ -172,14 +123,29 @@ class NET_EXPORT_PRIVATE TransportConnectJob : public ConnectJob {
   // WARNING: this method should only be used to implement the prefer-IPv4 hack.
   static void MakeAddressListStartWithIPv4(AddressList* addrlist);
 
+  // Record the histograms Net.DNS_Resolution_And_TCP_Connection_Latency2 and
+  // Net.TCP_Connection_Latency and return the connect duration.
+  static base::TimeDelta HistogramDuration(
+      const LoadTimingInfo::ConnectTiming& connect_timing,
+      RaceResult race_result);
+
  private:
+  enum State {
+    STATE_RESOLVE_HOST,
+    STATE_RESOLVE_HOST_COMPLETE,
+    STATE_TRANSPORT_CONNECT,
+    STATE_TRANSPORT_CONNECT_COMPLETE,
+    STATE_NONE,
+  };
+
   enum ConnectInterval {
     CONNECT_INTERVAL_LE_10MS,
     CONNECT_INTERVAL_LE_20MS,
     CONNECT_INTERVAL_GT_20MS,
   };
 
-  friend class TransportConnectJobHelper;
+  void OnIOComplete(int result);
+  int DoLoop(int result);
 
   int DoResolveHost();
   int DoResolveHostComplete(int result);
@@ -197,14 +163,20 @@ class NET_EXPORT_PRIVATE TransportConnectJob : public ConnectJob {
 
   void CopyConnectionAttemptsFromSockets();
 
-  TransportConnectJobHelper helper_;
+  scoped_refptr<TransportSocketParams> params_;
+  SingleRequestHostResolver resolver_;
+  ClientSocketFactory* const client_socket_factory_;
 
-  scoped_ptr<StreamSocket> transport_socket_;
+  State next_state_;
 
-  scoped_ptr<StreamSocket> fallback_transport_socket_;
-  scoped_ptr<AddressList> fallback_addresses_;
+  std::unique_ptr<StreamSocket> transport_socket_;
+  AddressList addresses_;
+
+  std::unique_ptr<StreamSocket> fallback_transport_socket_;
+  std::unique_ptr<AddressList> fallback_addresses_;
   base::TimeTicks fallback_connect_start_time_;
   base::OneShotTimer fallback_timer_;
+  SocketPerformanceWatcherFactory* socket_performance_watcher_factory_;
 
   // Track the interval between this connect and previous connect.
   ConnectInterval interval_between_connects_;
@@ -231,6 +203,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
       int max_sockets_per_group,
       HostResolver* host_resolver,
       ClientSocketFactory* client_socket_factory,
+      SocketPerformanceWatcherFactory* socket_performance_watcher_factory,
       NetLog* net_log);
 
   ~TransportClientSocketPool() override;
@@ -250,7 +223,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
   void CancelRequest(const std::string& group_name,
                      ClientSocketHandle* handle) override;
   void ReleaseSocket(const std::string& group_name,
-                     scoped_ptr<StreamSocket> socket,
+                     std::unique_ptr<StreamSocket> socket,
                      int id) override;
   void FlushWithError(int error) override;
   void CloseIdleSockets() override;
@@ -258,7 +231,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
   int IdleSocketCountInGroup(const std::string& group_name) const override;
   LoadState GetLoadState(const std::string& group_name,
                          const ClientSocketHandle* handle) const override;
-  scoped_ptr<base::DictionaryValue> GetInfoAsValue(
+  std::unique_ptr<base::DictionaryValue> GetInfoAsValue(
       const std::string& name,
       const std::string& type,
       bool include_nested_pools) const override;
@@ -281,10 +254,14 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
   class TransportConnectJobFactory
       : public PoolBase::ConnectJobFactory {
    public:
-    TransportConnectJobFactory(ClientSocketFactory* client_socket_factory,
-                         HostResolver* host_resolver,
-                         NetLog* net_log)
+    TransportConnectJobFactory(
+        ClientSocketFactory* client_socket_factory,
+        HostResolver* host_resolver,
+        SocketPerformanceWatcherFactory* socket_performance_watcher_factory,
+        NetLog* net_log)
         : client_socket_factory_(client_socket_factory),
+          socket_performance_watcher_factory_(
+              socket_performance_watcher_factory),
           host_resolver_(host_resolver),
           net_log_(net_log) {}
 
@@ -292,7 +269,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
 
     // ClientSocketPoolBase::ConnectJobFactory methods.
 
-    scoped_ptr<ConnectJob> NewConnectJob(
+    std::unique_ptr<ConnectJob> NewConnectJob(
         const std::string& group_name,
         const PoolBase::Request& request,
         ConnectJob::Delegate* delegate) const override;
@@ -301,6 +278,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
 
    private:
     ClientSocketFactory* const client_socket_factory_;
+    SocketPerformanceWatcherFactory* socket_performance_watcher_factory_;
     HostResolver* const host_resolver_;
     NetLog* net_log_;
 
@@ -311,61 +289,6 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool : public ClientSocketPool {
 
   DISALLOW_COPY_AND_ASSIGN(TransportClientSocketPool);
 };
-
-template <class T>
-int TransportConnectJobHelper::DoConnectInternal(T* job) {
-  next_state_ = STATE_RESOLVE_HOST;
-  return this->DoLoop(job, OK);
-}
-
-template <class T>
-void TransportConnectJobHelper::SetOnIOComplete(T* job) {
-  // These usages of base::Unretained() are safe because IO callbacks are
-  // guaranteed not to be called after the object is destroyed.
-  on_io_complete_ = base::Bind(&TransportConnectJobHelper::OnIOComplete<T>,
-                               base::Unretained(this),
-                               base::Unretained(job));
-}
-
-template <class T>
-void TransportConnectJobHelper::OnIOComplete(T* job, int result) {
-  result = this->DoLoop(job, result);
-  if (result != ERR_IO_PENDING)
-    job->NotifyDelegateOfCompletion(result);  // Deletes |job| and |this|
-}
-
-template <class T>
-int TransportConnectJobHelper::DoLoop(T* job, int result) {
-  DCHECK_NE(next_state_, STATE_NONE);
-
-  int rv = result;
-  do {
-    State state = next_state_;
-    next_state_ = STATE_NONE;
-    switch (state) {
-      case STATE_RESOLVE_HOST:
-        DCHECK_EQ(OK, rv);
-        rv = job->DoResolveHost();
-        break;
-      case STATE_RESOLVE_HOST_COMPLETE:
-        rv = job->DoResolveHostComplete(rv);
-        break;
-      case STATE_TRANSPORT_CONNECT:
-        DCHECK_EQ(OK, rv);
-        rv = job->DoTransportConnect();
-        break;
-      case STATE_TRANSPORT_CONNECT_COMPLETE:
-        rv = job->DoTransportConnectComplete(rv);
-        break;
-      default:
-        NOTREACHED();
-        rv = ERR_FAILED;
-        break;
-    }
-  } while (rv != ERR_IO_PENDING && next_state_ != STATE_NONE);
-
-  return rv;
-}
 
 }  // namespace net
 

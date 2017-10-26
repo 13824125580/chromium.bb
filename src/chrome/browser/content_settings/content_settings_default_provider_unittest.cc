@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/content_settings/content_settings_mock_observer.h"
 #include "chrome/common/pref_names.h"
@@ -68,7 +69,7 @@ TEST_F(DefaultProviderTest, DefaultValues) {
                                          CONTENT_SETTINGS_TYPE_GEOLOCATION,
                                          std::string(), false));
 
-  scoped_ptr<base::Value> value(TestUtils::GetContentSettingValue(
+  std::unique_ptr<base::Value> value(TestUtils::GetContentSettingValue(
       &provider_, GURL("http://example.com/"), GURL("http://example.com/"),
       CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE, std::string(), false));
   EXPECT_FALSE(value.get());
@@ -82,7 +83,7 @@ TEST_F(DefaultProviderTest, IgnoreNonDefaultSettings) {
             TestUtils::GetContentSetting(&provider_, primary_url, secondary_url,
                                          CONTENT_SETTINGS_TYPE_COOKIES,
                                          std::string(), false));
-  scoped_ptr<base::Value> value(
+  std::unique_ptr<base::Value> value(
       new base::FundamentalValue(CONTENT_SETTING_BLOCK));
   bool owned = provider_.SetWebsiteSetting(
       ContentSettingsPattern::FromURL(primary_url),
@@ -101,12 +102,12 @@ TEST_F(DefaultProviderTest, Observer) {
   MockObserver mock_observer;
   EXPECT_CALL(mock_observer,
               OnContentSettingChanged(
-                  _, _, CONTENT_SETTINGS_TYPE_IMAGES, ""));
+                  _, _, CONTENT_SETTINGS_TYPE_COOKIES, ""));
   provider_.AddObserver(&mock_observer);
   provider_.SetWebsiteSetting(
       ContentSettingsPattern::Wildcard(),
       ContentSettingsPattern::Wildcard(),
-      CONTENT_SETTINGS_TYPE_IMAGES,
+      CONTENT_SETTINGS_TYPE_COOKIES,
       std::string(),
       new base::FundamentalValue(CONTENT_SETTING_BLOCK));
 
@@ -182,7 +183,7 @@ TEST_F(DefaultProviderTest, OffTheRecord) {
                 std::string(), true /* include_incognito */));
 
   // Changing content settings on the incognito provider should be ignored.
-  scoped_ptr<base::Value> value(
+  std::unique_ptr<base::Value> value(
       new base::FundamentalValue(CONTENT_SETTING_ALLOW));
   bool owned = otr_provider.SetWebsiteSetting(
       ContentSettingsPattern::Wildcard(),

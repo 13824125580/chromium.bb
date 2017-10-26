@@ -4,25 +4,31 @@
 
 #include "ash/shell/shell_delegate_impl.h"
 
-#include "ash/accessibility_delegate.h"
-#include "ash/default_accessibility_delegate.h"
+#include "ash/app_list/app_list_presenter_delegate_factory.h"
+#include "ash/common/accessibility_delegate.h"
+#include "ash/common/default_accessibility_delegate.h"
+#include "ash/common/media_delegate.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/shell_window_ids.h"
+#include "ash/common/system/tray/default_system_tray_delegate.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/default_user_wallpaper_delegate.h"
 #include "ash/gpu_support_stub.h"
-#include "ash/media_delegate.h"
 #include "ash/new_window_delegate.h"
-#include "ash/session/session_state_delegate.h"
+#include "ash/pointer_watcher_delegate_aura.h"
+#include "ash/shell.h"
 #include "ash/shell/context_menu.h"
 #include "ash/shell/example_factory.h"
 #include "ash/shell/shelf_delegate_impl.h"
 #include "ash/shell/toplevel_window.h"
-#include "ash/shell_window_ids.h"
-#include "ash/system/tray/default_system_tray_delegate.h"
 #include "ash/test/test_keyboard_ui.h"
-#include "ash/wm/window_state.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/user_manager/user_info_impl.h"
 #include "ui/app_list/app_list_view_delegate.h"
+#include "ui/app_list/presenter/app_list_presenter_impl.h"
+#include "ui/app_list/presenter/app_list_view_delegate_factory.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -110,10 +116,10 @@ class SessionStateDelegateImpl : public SessionStateDelegate {
   const user_manager::UserInfo* GetUserInfo(UserIndex index) const override {
     return user_info_.get();
   }
-  bool ShouldShowAvatar(aura::Window* window) const override {
+  bool ShouldShowAvatar(WmWindow* window) const override {
     return !user_info_->GetImage().isNull();
   }
-  gfx::ImageSkia GetAvatarImageForWindow(aura::Window* window) const override {
+  gfx::ImageSkia GetAvatarImageForWindow(WmWindow* window) const override {
     return gfx::ImageSkia();
   }
   void SwitchActiveUser(const AccountId& account_id) override {}
@@ -129,14 +135,36 @@ class SessionStateDelegateImpl : public SessionStateDelegate {
   bool screen_locked_;
 
   // A pseudo user info.
-  scoped_ptr<user_manager::UserInfo> user_info_;
+  std::unique_ptr<user_manager::UserInfo> user_info_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionStateDelegateImpl);
 };
 
+class AppListViewDelegateFactoryImpl
+    : public app_list::AppListViewDelegateFactory {
+ public:
+  AppListViewDelegateFactoryImpl() {}
+  ~AppListViewDelegateFactoryImpl() override {}
+
+  // app_list::AppListViewDelegateFactory:
+  app_list::AppListViewDelegate* GetDelegate() override {
+    if (!app_list_view_delegate_.get())
+      app_list_view_delegate_.reset(CreateAppListViewDelegate());
+    return app_list_view_delegate_.get();
+  }
+
+ private:
+  std::unique_ptr<app_list::AppListViewDelegate> app_list_view_delegate_;
+
+  DISALLOW_COPY_AND_ASSIGN(AppListViewDelegateFactoryImpl);
+};
+
 }  // namespace
 
-ShellDelegateImpl::ShellDelegateImpl() : shelf_delegate_(nullptr) {}
+ShellDelegateImpl::ShellDelegateImpl()
+    : shelf_delegate_(nullptr),
+      app_list_presenter_delegate_factory_(new AppListPresenterDelegateFactory(
+          base::WrapUnique(new AppListViewDelegateFactoryImpl))) {}
 
 ShellDelegateImpl::~ShellDelegateImpl() {}
 
@@ -156,7 +184,7 @@ bool ShellDelegateImpl::IsRunningInForcedAppMode() const {
   return false;
 }
 
-bool ShellDelegateImpl::CanShowWindowForUser(aura::Window* window) const {
+bool ShellDelegateImpl::CanShowWindowForUser(WmWindow* window) const {
   return true;
 }
 
@@ -164,11 +192,9 @@ bool ShellDelegateImpl::IsForceMaximizeOnFirstRun() const {
   return false;
 }
 
-void ShellDelegateImpl::PreInit() {
-}
+void ShellDelegateImpl::PreInit() {}
 
-void ShellDelegateImpl::PreShutdown() {
-}
+void ShellDelegateImpl::PreShutdown() {}
 
 void ShellDelegateImpl::Exit() {
   base::MessageLoop::current()->QuitWhenIdle();
@@ -178,21 +204,22 @@ keyboard::KeyboardUI* ShellDelegateImpl::CreateKeyboardUI() {
   return new TestKeyboardUI;
 }
 
-void ShellDelegateImpl::VirtualKeyboardActivated(bool activated) {
-}
+void ShellDelegateImpl::VirtualKeyboardActivated(bool activated) {}
 
 void ShellDelegateImpl::AddVirtualKeyboardStateObserver(
-    VirtualKeyboardStateObserver* observer) {
-}
+    VirtualKeyboardStateObserver* observer) {}
 
 void ShellDelegateImpl::RemoveVirtualKeyboardStateObserver(
-    VirtualKeyboardStateObserver* observer) {
-}
+    VirtualKeyboardStateObserver* observer) {}
 
-app_list::AppListViewDelegate* ShellDelegateImpl::GetAppListViewDelegate() {
-  if (!app_list_view_delegate_)
-    app_list_view_delegate_.reset(ash::shell::CreateAppListViewDelegate());
-  return app_list_view_delegate_.get();
+void ShellDelegateImpl::OpenUrlFromArc(const GURL& url) {}
+
+app_list::AppListPresenter* ShellDelegateImpl::GetAppListPresenter() {
+  if (!app_list_presenter_) {
+    app_list_presenter_.reset(new app_list::AppListPresenterImpl(
+        app_list_presenter_delegate_factory_.get()));
+  }
+  return app_list_presenter_.get();
 }
 
 ShelfDelegate* ShellDelegateImpl::CreateShelfDelegate(ShelfModel* model) {
@@ -224,11 +251,14 @@ ash::MediaDelegate* ShellDelegateImpl::CreateMediaDelegate() {
   return new MediaDelegateImpl;
 }
 
-ui::MenuModel* ShellDelegateImpl::CreateContextMenu(
-    aura::Window* root,
-    ash::ShelfItemDelegate* item_delegate,
-    ash::ShelfItem* item) {
-  return new ContextMenu(root);
+std::unique_ptr<ash::PointerWatcherDelegate>
+ShellDelegateImpl::CreatePointerWatcherDelegate() {
+  return base::WrapUnique(new PointerWatcherDelegateAura);
+}
+
+ui::MenuModel* ShellDelegateImpl::CreateContextMenu(WmShelf* wm_shelf,
+                                                    const ShelfItem* item) {
+  return new ContextMenu(wm_shelf);
 }
 
 GPUSupport* ShellDelegateImpl::CreateGPUSupport() {

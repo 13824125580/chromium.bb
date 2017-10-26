@@ -12,21 +12,23 @@
 
 #include <string.h>
 
+#include <utility>
+
 #include "webrtc/base/checks.h"
 
 namespace webrtc {
 
-AudioEncoderCopyRed::AudioEncoderCopyRed(const Config& config)
-    : speech_encoder_(config.speech_encoder),
+AudioEncoderCopyRed::Config::Config() = default;
+AudioEncoderCopyRed::Config::Config(Config&&) = default;
+AudioEncoderCopyRed::Config::~Config() = default;
+
+AudioEncoderCopyRed::AudioEncoderCopyRed(Config&& config)
+    : speech_encoder_(std::move(config.speech_encoder)),
       red_payload_type_(config.payload_type) {
   RTC_CHECK(speech_encoder_) << "Speech encoder not provided.";
 }
 
 AudioEncoderCopyRed::~AudioEncoderCopyRed() = default;
-
-size_t AudioEncoderCopyRed::MaxEncodedBytes() const {
-  return 2 * speech_encoder_->MaxEncodedBytes();
-}
 
 int AudioEncoderCopyRed::SampleRateHz() const {
   return speech_encoder_->SampleRateHz();
@@ -52,16 +54,17 @@ int AudioEncoderCopyRed::GetTargetBitrate() const {
   return speech_encoder_->GetTargetBitrate();
 }
 
-AudioEncoder::EncodedInfo AudioEncoderCopyRed::EncodeInternal(
+AudioEncoder::EncodedInfo AudioEncoderCopyRed::EncodeImpl(
     uint32_t rtp_timestamp,
     rtc::ArrayView<const int16_t> audio,
-    size_t max_encoded_bytes,
-    uint8_t* encoded) {
+    rtc::Buffer* encoded) {
+
+  const size_t primary_offset = encoded->size();
   EncodedInfo info =
-      speech_encoder_->Encode(rtp_timestamp, audio, max_encoded_bytes, encoded);
-  RTC_CHECK_GE(max_encoded_bytes,
-               info.encoded_bytes + secondary_info_.encoded_bytes);
+      speech_encoder_->Encode(rtp_timestamp, audio, encoded);
+
   RTC_CHECK(info.redundant.empty()) << "Cannot use nested redundant encoders.";
+  RTC_DCHECK_EQ(encoded->size() - primary_offset, info.encoded_bytes);
 
   if (info.encoded_bytes > 0) {
     // |info| will be implicitly cast to an EncodedInfoLeaf struct, effectively
@@ -70,13 +73,13 @@ AudioEncoder::EncodedInfo AudioEncoderCopyRed::EncodeInternal(
     info.redundant.push_back(info);
     RTC_DCHECK_EQ(info.redundant.size(), 1u);
     if (secondary_info_.encoded_bytes > 0) {
-      memcpy(&encoded[info.encoded_bytes], secondary_encoded_.data(),
-             secondary_info_.encoded_bytes);
+      encoded->AppendData(secondary_encoded_);
       info.redundant.push_back(secondary_info_);
       RTC_DCHECK_EQ(info.redundant.size(), 2u);
     }
     // Save primary to secondary.
-    secondary_encoded_.SetData(encoded, info.encoded_bytes);
+    secondary_encoded_.SetData(encoded->data() + primary_offset,
+                               info.encoded_bytes);
     secondary_info_ = info;
     RTC_DCHECK_EQ(info.speech, info.redundant[0].speech);
   }
@@ -118,6 +121,11 @@ void AudioEncoderCopyRed::SetProjectedPacketLossRate(double fraction) {
 
 void AudioEncoderCopyRed::SetTargetBitrate(int bits_per_second) {
   speech_encoder_->SetTargetBitrate(bits_per_second);
+}
+
+rtc::ArrayView<std::unique_ptr<AudioEncoder>>
+AudioEncoderCopyRed::ReclaimContainedEncoders() {
+  return rtc::ArrayView<std::unique_ptr<AudioEncoder>>(&speech_encoder_, 1);
 }
 
 }  // namespace webrtc

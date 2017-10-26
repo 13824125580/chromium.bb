@@ -39,7 +39,7 @@ class BackgroundDownloader : public CrxDownloader {
  protected:
   friend class CrxDownloader;
   BackgroundDownloader(
-      scoped_ptr<CrxDownloader> successor,
+      std::unique_ptr<CrxDownloader> successor,
       net::URLRequestContextGetter* context_getter,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   ~BackgroundDownloader() override;
@@ -85,6 +85,10 @@ class BackgroundDownloader : public CrxDownloader {
   void StartTimer();
   void OnTimer();
 
+  // Returns true if the timer is running or false if the timer is not
+  // created or not running at all.
+  bool TimerIsRunning() const;
+
   HRESULT QueueBitsJob(const GURL& url, IBackgroundCopyJob** job);
   HRESULT CreateOrOpenJob(const GURL& url, IBackgroundCopyJob** job);
   HRESULT InitializeNewJob(
@@ -118,7 +122,7 @@ class BackgroundDownloader : public CrxDownloader {
 
   // The timer has thread affinity. This member is initialized and destroyed
   // on the main task runner.
-  scoped_ptr<base::OneShotTimer> timer_;
+  std::unique_ptr<base::OneShotTimer> timer_;
 
   DWORD git_cookie_bits_manager_;
   DWORD git_cookie_job_;

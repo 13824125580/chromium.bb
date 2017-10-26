@@ -22,6 +22,8 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -30,7 +32,6 @@
 #include "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_bridge.h"
 #include "chrome/browser/ui/cocoa/history_menu_bridge.h"
 #include "chrome/browser/ui/cocoa/run_loop_testing.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/common/chrome_constants.h"
@@ -261,11 +262,12 @@ IN_PROC_BROWSER_TEST_F(AppControllerNewProfileManagementBrowserTest,
 
   // Lock the active profile.
   Profile* profile = [ac lastProfile];
-  ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  size_t profile_index = cache.GetIndexOfProfileWithPath(profile->GetPath());
-  cache.SetProfileSigninRequiredAtIndex(profile_index, true);
-  EXPECT_TRUE(cache.ProfileIsSigninRequiredAtIndex(profile_index));
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(g_browser_process->profile_manager()->
+                  GetProfileAttributesStorage().
+                  GetProfileAttributesWithPath(profile->GetPath(), &entry));
+  entry->SetIsSigninRequired(true);
+  EXPECT_TRUE(entry->IsSigninRequired());
 
   EXPECT_EQ(1u, active_browser_list_->size());
   BOOL result = [ac applicationShouldHandleReopen:NSApp hasVisibleWindows:NO];
@@ -437,7 +439,8 @@ class AppControllerMainMenuBrowserTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
     HistoryMenuResetAfterProfileDeletion) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
-  AppController* ac = [NSApp delegate];
+  AppController* ac =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
 
   // Use the existing profile as profile 1.
   Profile* profile1 = browser()->profile();

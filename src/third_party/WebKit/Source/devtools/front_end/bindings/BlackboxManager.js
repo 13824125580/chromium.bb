@@ -6,6 +6,7 @@
  * @constructor
  * @param {!WebInspector.DebuggerWorkspaceBinding} debuggerWorkspaceBinding
  * @param {!WebInspector.NetworkMapping} networkMapping
+ * @implements {WebInspector.TargetManager.Observer}
  */
 WebInspector.BlackboxManager = function(debuggerWorkspaceBinding, networkMapping)
 {
@@ -21,6 +22,8 @@ WebInspector.BlackboxManager = function(debuggerWorkspaceBinding, networkMapping
     this._debuggerModelData = new Map();
     /** @type {!Map<string, boolean>} */
     this._isBlackboxedURLCache = new Map();
+
+    WebInspector.targetManager.observeTargets(this);
 }
 
 WebInspector.BlackboxManager.prototype = {
@@ -40,6 +43,40 @@ WebInspector.BlackboxManager.prototype = {
     removeChangeListener: function(listener, thisObject)
     {
         WebInspector.moduleSetting("skipStackFramesPattern").removeChangeListener(listener, thisObject);
+    },
+
+     /**
+     * @override
+     * @param {!WebInspector.Target} target
+     */
+    targetAdded: function(target)
+    {
+        var debuggerModel = WebInspector.DebuggerModel.fromTarget(target);
+        if (debuggerModel)
+            this._setBlackboxPatterns(debuggerModel);
+    },
+
+    /**
+     * @override
+     * @param {!WebInspector.Target} target
+     */
+    targetRemoved: function(target)
+    {
+    },
+
+    /**
+     * @param {!WebInspector.DebuggerModel} debuggerModel
+     * @return {!Promise<boolean>}
+     */
+    _setBlackboxPatterns: function(debuggerModel)
+    {
+        var regexPatterns = WebInspector.moduleSetting("skipStackFramesPattern").getAsArray();
+        var patterns = /** @type {!Array<string>} */([]);
+        for (var item of regexPatterns) {
+            if (!item.disabled && item.pattern)
+                patterns.push(item.pattern);
+        }
+        return debuggerModel.setBlackboxPatterns(patterns);
     },
 
     /**
@@ -100,7 +137,7 @@ WebInspector.BlackboxManager.prototype = {
 
     /**
      * @param {!WebInspector.Script} script
-     * @param {?WebInspector.SourceMap} sourceMap
+     * @param {?WebInspector.TextSourceMap} sourceMap
      * @return {!Promise<undefined>}
      */
     sourceMapLoaded: function(script, sourceMap)
@@ -116,7 +153,7 @@ WebInspector.BlackboxManager.prototype = {
 
         if (!mappings.length) {
             if (previousScriptState.length > 0)
-                return this._setScriptState(script, []).then(this._sourceMapLoadedForTest);
+                return this._setScriptState(script, []);
             return Promise.resolve();
         }
 
@@ -129,16 +166,16 @@ WebInspector.BlackboxManager.prototype = {
             currentBlackboxed = true;
         }
         for (var mapping of mappings) {
-            if (currentBlackboxed !== this.isBlackboxedURL(mapping.sourceURL)) {
+            if (mapping.sourceURL && currentBlackboxed !== this.isBlackboxedURL(mapping.sourceURL)) {
                 positions.push({ line: mapping.lineNumber, column: mapping.columnNumber });
                 currentBlackboxed = !currentBlackboxed;
             }
             isBlackboxed = currentBlackboxed || isBlackboxed;
         }
-        return this._setScriptState(script, !isBlackboxed ? [] : positions).then(this._sourceMapLoadedForTest);
+        return this._setScriptState(script, !isBlackboxed ? [] : positions);
         /**
-         * @param {!WebInspector.SourceMap.Entry} a
-         * @param {!WebInspector.SourceMap.Entry} b
+         * @param {!WebInspector.SourceMapEntry} a
+         * @param {!WebInspector.SourceMapEntry} b
          * @return {number}
          */
         function mappingComparator(a, b)
@@ -147,11 +184,6 @@ WebInspector.BlackboxManager.prototype = {
                 return a.lineNumber - b.lineNumber;
             return a.columnNumber - b.columnNumber;
         }
-    },
-
-    _sourceMapLoadedForTest: function()
-    {
-        // This method is sniffed in tests.
     },
 
     /**
@@ -263,13 +295,14 @@ WebInspector.BlackboxManager.prototype = {
 
         var promises = [];
         for (var debuggerModel of WebInspector.DebuggerModel.instances()) {
+            promises.push(this._setBlackboxPatterns.bind(this, debuggerModel));
             for (var scriptId in debuggerModel.scripts) {
                 var script = debuggerModel.scripts[scriptId];
                 promises.push(this._addScript(script)
                                   .then(loadSourceMap.bind(this, script)));
             }
         }
-        Promise.all(promises).then(this._patternChangeFinishedForTests);
+        Promise.all(promises).then(this._patternChangeFinishedForTests.bind(this));
 
         /**
          * @param {!WebInspector.Script} script

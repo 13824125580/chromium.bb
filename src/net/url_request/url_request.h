@@ -7,13 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/debug/leak_tracker.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/supports_user_data.h"
 #include "base/threading/non_thread_safe.h"
@@ -46,7 +46,6 @@ class StackTrace;
 
 namespace net {
 
-class ChunkedUploadDataStream;
 class CookieOptions;
 class HostPortPair;
 class IOBuffer;
@@ -59,11 +58,6 @@ class UploadDataStream;
 class URLRequestContext;
 class URLRequestJob;
 class X509Certificate;
-
-// This stores the values of the Set-Cookie headers received during the request.
-// Each item in the vector corresponds to a Set-Cookie: line received,
-// excluding the "Set-Cookie:" part.
-typedef std::vector<std::string> ResponseCookies;
 
 //-----------------------------------------------------------------------------
 // A class  representing the asynchronous load of a data stream from an URL.
@@ -87,27 +81,31 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
                                            NetworkDelegate* network_delegate,
                                            const std::string& scheme);
 
-  // Referrer policies (see set_referrer_policy): During server redirects, the
-  // referrer header might be cleared, if the protocol changes from HTTPS to
-  // HTTP. This is the default behavior of URLRequest, corresponding to
-  // CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE. Alternatively, the
-  // referrer policy can be set to strip the referrer down to an origin upon
-  // cross-origin navigation (ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN), or
-  // never change the referrer header (NEVER_CLEAR_REFERRER). Embedders will
-  // want to use these options when implementing referrer policy support
-  // (https://w3c.github.io/webappsec/specs/referrer-policy/).
-  //
-  // REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN is a slight variant
-  // on CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE: If the request
-  // downgrades from HTTPS to HTTP, the referrer will be cleared. If the request
-  // transitions cross-origin (but does not downgrade), the referrer's
-  // granularity will be reduced (currently stripped down to an origin rather
-  // than a full URL). Same-origin requests will send the full referrer.
+  // A ReferrerPolicy for the request can be set with
+  // set_referrer_policy() and controls the contents of the Referer
+  // header when URLRequest follows server redirects.
   enum ReferrerPolicy {
+    // Clear the referrer header if the protocol changes from HTTPS to
+    // HTTP. This is the default behavior of URLRequest.
     CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE,
+    // A slight variant on
+    // CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE: If the
+    // request downgrades from HTTPS to HTTP, the referrer will be
+    // cleared. If the request transitions cross-origin (but does not
+    // downgrade), the referrer's granularity will be reduced (currently
+    // stripped down to an origin rather than a full URL). Same-origin
+    // requests will send the full referrer.
     REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
+    // Strip the referrer down to an origin upon cross-origin navigation.
     ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN,
+    // Never change the referrer.
     NEVER_CLEAR_REFERRER,
+    // Strip the referrer down to the origin regardless of the redirect
+    // location.
+    ORIGIN,
+    // Always clear the referrer regardless of the redirect location.
+    NO_REFERRER,
+    MAX_REFERRER_POLICY
   };
 
   // First-party URL redirect policy: During server redirects, the first-party
@@ -150,12 +148,13 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
     // redirect call.
     //
     // When this function is called, the request will still contain the
-    // original URL, the destination of the redirect is provided in 'new_url'.
-    // If the delegate does not cancel the request and |*defer_redirect| is
-    // false, then the redirect will be followed, and the request's URL will be
-    // changed to the new URL.  Otherwise if the delegate does not cancel the
-    // request and |*defer_redirect| is true, then the redirect will be
-    // followed once FollowDeferredRedirect is called on the URLRequest.
+    // original URL, the destination of the redirect is provided in
+    // |redirect_info.new_url|.  If the delegate does not cancel the request
+    // and |*defer_redirect| is false, then the redirect will be followed, and
+    // the request's URL will be changed to the new URL.  Otherwise if the
+    // delegate does not cancel the request and |*defer_redirect| is true, then
+    // the redirect will be followed once FollowDeferredRedirect is called
+    // on the URLRequest.
     //
     // The caller must set |*defer_redirect| to false, so that delegates do not
     // need to set it if they are happy with the default behavior of not
@@ -326,30 +325,20 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   ReferrerPolicy referrer_policy() const { return referrer_policy_; }
   void set_referrer_policy(ReferrerPolicy referrer_policy);
 
+  // If this request should include a referred Token Binding, this returns the
+  // hostname of the referrer that indicated this request should include a
+  // referred Token Binding. Otherwise, this returns the empty string.
+  const std::string& token_binding_referrer() const {
+    return token_binding_referrer_;
+  }
+
   // Sets the delegate of the request.  This is only to allow creating a request
   // before creating its delegate.  |delegate| must be non-NULL and the request
   // must not yet have a Delegate set.
   void set_delegate(Delegate* delegate);
 
-  // Indicates that the request body should be sent using chunked transfer
-  // encoding. This method may only be called before Start() is called.
-  void EnableChunkedUpload();
-
-  // Appends the given bytes to the request's upload data to be sent
-  // immediately via chunked transfer encoding. When all data has been added,
-  // set |is_last_chunk| to true to indicate the end of upload data.  All chunks
-  // but the last must have |bytes_len| > 0.
-  //
-  // This method may be called only after calling EnableChunkedUpload().
-  //
-  // Despite the name of this method, over-the-wire chunk boundaries will most
-  // likely not match the "chunks" appended with this function.
-  void AppendChunkToUpload(const char* bytes,
-                           int bytes_len,
-                           bool is_last_chunk);
-
   // Sets the upload data.
-  void set_upload(scoped_ptr<UploadDataStream> upload);
+  void set_upload(std::unique_ptr<UploadDataStream> upload);
 
   // Gets the upload data.
   const UploadDataStream* get_upload() const;
@@ -400,6 +389,12 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   // are used for range requests or auth.
   int64_t GetTotalSentBytes() const;
 
+  // The size of the response body before removing any content encodings.
+  // Does not include redirects or sub-requests issued at lower levels (range
+  // requests or auth). Only includes bytes which have been read so far,
+  // including bytes from the cache.
+  int64_t GetRawBodyBytes() const;
+
   // Returns the current load state for the request. The returned value's
   // |param| field is an optional parameter describing details related to the
   // load state. Not all load states have a parameter.
@@ -407,7 +402,7 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
 
   // Returns a partial representation of the request's state as a value, for
   // debugging.
-  scoped_ptr<base::Value> GetStateAsValue() const;
+  std::unique_ptr<base::Value> GetStateAsValue() const;
 
   // Logs information about the what external object currently blocking the
   // request.  LogUnblocked must be called before resuming the request.  This
@@ -435,7 +430,8 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   // that appear more than once in the response are coalesced, with values
   // separated by commas (per RFC 2616). This will not work with cookies since
   // comma can be used in cookie values.
-  void GetResponseHeaderByName(const std::string& name, std::string* value);
+  void GetResponseHeaderByName(const std::string& name,
+                               std::string* value) const;
 
   // The time when |this| was constructed.
   base::TimeTicks creation_time() const { return creation_time_; }
@@ -501,12 +497,6 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   // Returns true and fills in |endpoint| if the endpoint is available; returns
   // false and leaves |endpoint| unchanged if it is unavailable.
   bool GetRemoteEndpoint(IPEndPoint* endpoint) const;
-
-  // Returns the cookie values included in the response, if the request is one
-  // that can have cookies.  Returns true if the request is a cookie-bearing
-  // type, false otherwise.  This method may only be called once the
-  // delegate's OnResponseStarted method has been called.
-  bool GetResponseCookies(ResponseCookies* cookies);
 
   // Get the mime type.  This method may only be called once the delegate's
   // OnResponseStarted method has been called.
@@ -642,16 +632,6 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   // MAXIMUM_PRIORITY if the IGNORE_LIMITS load flag is set.
   void SetPriority(RequestPriority priority);
 
-  // Returns true iff this request would be internally redirected to HTTPS
-  // due to HSTS. If so, |redirect_url| is rewritten to the new HTTPS URL.
-  bool GetHSTSRedirect(GURL* redirect_url) const;
-
-  // NOTE(willchan): This is just temporary for debugging
-  // http://crbug.com/90971.
-  // Allows to setting debug info into the URLRequest.
-  void set_stack_trace(const base::debug::StackTrace& stack_trace);
-  const base::debug::StackTrace* stack_trace() const;
-
   void set_received_response_content_length(int64_t received_content_length) {
     received_response_content_length_ = received_content_length;
   }
@@ -780,11 +760,8 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   // Tracks the time spent in various load states throughout this request.
   BoundNetLog net_log_;
 
-  scoped_ptr<URLRequestJob> job_;
-  scoped_ptr<UploadDataStream> upload_data_stream_;
-  // TODO(mmenke):  Make whether or not an upload is chunked transparent to the
-  // URLRequest.
-  ChunkedUploadDataStream* upload_chunked_data_stream_;
+  std::unique_ptr<URLRequestJob> job_;
+  std::unique_ptr<UploadDataStream> upload_data_stream_;
 
   std::vector<GURL> url_chain_;
   GURL first_party_for_cookies_;
@@ -793,6 +770,7 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
   std::string method_;  // "GET", "POST", etc. Should be all uppercase.
   std::string referrer_;
   ReferrerPolicy referrer_policy_;
+  std::string token_binding_referrer_;
   FirstPartyURLPolicy first_party_url_policy_;
   HttpRequestHeaders extra_request_headers_;
   int load_flags_;  // Flags indicating the request type for the load;
@@ -882,8 +860,6 @@ class NET_EXPORT URLRequest : NON_EXPORTED_BASE(public base::NonThreadSafe),
 
   // The proxy server used for this request, if any.
   HostPortPair proxy_server_;
-
-  scoped_ptr<const base::debug::StackTrace> stack_trace_;
 
   DISALLOW_COPY_AND_ASSIGN(URLRequest);
 };

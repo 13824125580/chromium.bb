@@ -37,7 +37,7 @@ std::string getSubProcessModuleName()
               CHROMIUM_VERSION_PATCH,
               BB_PATCH_NUMBER);
     std::string result;
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     if (!env->GetVar(subProcessModuleEnvVar, &result) || result.empty()) {
         return BLPWTK2_DLL_NAME;
     }
@@ -55,6 +55,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
                                 sandbox::SandboxInterfaceInfo* sandboxInfo);
         MainFunc mainFunc = (MainFunc)GetProcAddress(subProcessModule, "SubProcessMain");
         if (!mainFunc) return -4567;
+
         return mainFunc(instance, &sandboxInfo);
     }
 }

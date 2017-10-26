@@ -31,6 +31,7 @@
 #ifndef WebSharedWorker_h
 #define WebSharedWorker_h
 
+#include "../platform/WebAddressSpace.h"
 #include "../platform/WebCommon.h"
 #include "WebContentSecurityPolicy.h"
 
@@ -53,7 +54,8 @@ public:
         const WebURL& scriptURL,
         const WebString& name,
         const WebString& contentSecurityPolicy,
-        WebContentSecurityPolicyType) = 0;
+        WebContentSecurityPolicyType,
+        WebAddressSpace) = 0;
 
     // Sends a connect event to the SharedWorker context.
     virtual void connect(WebMessagePortChannel*) = 0;
@@ -65,7 +67,7 @@ public:
     virtual void attachDevTools(const WebString& hostId, int sessionId) = 0;
     virtual void reattachDevTools(const WebString& hostId, int sessionId, const WebString& savedState) = 0;
     virtual void detachDevTools() = 0;
-    virtual void dispatchDevToolsMessage(int sessionId, const WebString&) = 0;
+    virtual void dispatchDevToolsMessage(int sessionId, int callId, const WebString& method, const WebString& message) = 0;
 };
 
 } // namespace blink

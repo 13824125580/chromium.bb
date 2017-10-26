@@ -1,17 +1,34 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "paintInvalidationClients": [
-        "LayoutBlockFlow (anonymous)",
-        "LayoutInline SPAN id='outer'",
-        "LayoutText #text",
-        "LayoutBlockFlow (anonymous)",
-        "LayoutInline SPAN id='outer'"
-      ]
+      "drawsContent": true
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow (anonymous)",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutInline SPAN id='outer'",
+      "reason": "style change"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "outline"
+    },
+    {
+      "object": "LayoutBlockFlow (anonymous)",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutInline SPAN id='outer'",
+      "reason": "style change"
     }
   ]
 }

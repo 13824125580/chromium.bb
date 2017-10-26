@@ -131,6 +131,11 @@ WebInspector.TabbedEditorContainer.prototype = {
         this._closeTabs([tabId]);
     },
 
+    closeAllFiles: function()
+    {
+        this._closeTabs(this._tabbedPane.allTabs());
+    },
+
     /**
      * @return {!Array.<!WebInspector.UISourceCode>}
      */
@@ -534,7 +539,7 @@ WebInspector.TabbedEditorContainer.HistoryItem.serializableUrlLengthLimit = 4096
  * @param {!Object} serializedHistoryItem
  * @return {!WebInspector.TabbedEditorContainer.HistoryItem}
  */
-WebInspector.TabbedEditorContainer.HistoryItem.fromObject = function (serializedHistoryItem)
+WebInspector.TabbedEditorContainer.HistoryItem.fromObject = function(serializedHistoryItem)
 {
     var selectionRange = serializedHistoryItem.selectionRange ? WebInspector.TextRange.fromObject(serializedHistoryItem.selectionRange) : undefined;
     return new WebInspector.TabbedEditorContainer.HistoryItem(serializedHistoryItem.url, selectionRange, serializedHistoryItem.scrollLineNumber);

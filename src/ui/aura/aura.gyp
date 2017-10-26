@@ -19,6 +19,7 @@
         '../base/ime/ui_base_ime.gyp:ui_base_ime',
         '../base/ui_base.gyp:ui_base',
         '../compositor/compositor.gyp:compositor',
+        '../display/display.gyp:display',
         '../events/events.gyp:events',
         '../events/events.gyp:events_base',
         '../events/platform/events_platform.gyp:events_platform',
@@ -79,6 +80,8 @@
         'client/window_tree_client.h',
         'env.cc',
         'env.h',
+        'env_input_state_controller.cc',
+        'env_input_state_controller.h',
         'env_observer.h',
         'input_state_lookup.cc',
         'input_state_lookup.h',
@@ -99,7 +102,6 @@
         'window_observer.h',
         'window_targeter.cc',
         'window_targeter.h',
-        'window_tracker.cc',
         'window_tracker.h',
         'window_tree_host.cc',
         'window_tree_host.h',
@@ -117,14 +119,15 @@
             '../../build/linux/system.gyp:x11',
             '../../build/linux/system.gyp:xrandr',
             '../../build/linux/system.gyp:xi',
+            '../base/x/ui_base_x.gyp:ui_base_x',
             '../events/devices/events_devices.gyp:events_devices',
+            '../events/devices/x11/events_devices_x11.gyp:events_devices_x11',
             '../events/platform/x11/x11_events_platform.gyp:x11_events_platform',
             '../gfx/x/gfx_x11.gyp:gfx_x11',
           ],
         }],
         ['OS=="win"', {
           'dependencies': [
-            '../metro_viewer/metro_viewer.gyp:metro_viewer_messages',
             '../platform_window/win/win_window.gyp:win_window',
             '../../ipc/ipc.gyp:ipc',
           ],
@@ -201,6 +204,13 @@
       ],
       # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267, ],
+      'conditions': [
+        ['use_x11==1', {
+          'dependencies': [
+            '../base/x/ui_base_x.gyp:ui_base_x',
+          ],
+        }],
+      ],
     },
     {
       'target_name': 'aura_demo',
@@ -214,6 +224,7 @@
         '../base/ui_base.gyp:ui_base',
         '../compositor/compositor.gyp:compositor',
         '../compositor/compositor.gyp:compositor_test_support',
+        '../display/display.gyp:display',
         '../events/events.gyp:events',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
@@ -225,40 +236,6 @@
       ],
       'sources': [
         'demo/demo_main.cc',
-      ],
-      'conditions': [
-        ['use_x11==1', {
-          'dependencies': [
-            '../gfx/x/gfx_x11.gyp:gfx_x11',
-          ],
-        }],
-      ]
-    },
-    {
-      'target_name': 'aura_bench',
-      'type': 'executable',
-      'dependencies': [
-        '../../base/base.gyp:base',
-        '../../base/base.gyp:base_i18n',
-        '../../cc/cc.gyp:cc',
-        '../../gpu/gpu.gyp:gles2_implementation',
-        '../../skia/skia.gyp:skia',
-        '../../third_party/icu/icu.gyp:icui18n',
-        '../../third_party/icu/icu.gyp:icuuc',
-        '../base/ui_base.gyp:ui_base',
-        '../compositor/compositor.gyp:compositor',
-        '../compositor/compositor.gyp:compositor_test_support',
-        '../events/events.gyp:events',
-        '../gfx/gfx.gyp:gfx',
-        '../gfx/gfx.gyp:gfx_geometry',
-        'aura',
-        'aura_test_support',
-      ],
-      'include_dirs': [
-        '..',
-      ],
-      'sources': [
-        'bench/bench_main.cc',
       ],
       'conditions': [
         ['use_x11==1', {
@@ -286,6 +263,7 @@
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         '../gl/gl.gyp:gl',
+        '../gl/init/gl_init.gyp:gl_init',
         'aura_test_support',
         'aura',
       ],

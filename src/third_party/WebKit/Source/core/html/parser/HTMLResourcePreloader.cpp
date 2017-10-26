@@ -31,6 +31,7 @@
 #include "core/loader/DocumentLoader.h"
 #include "platform/Histogram.h"
 #include "public/platform/Platform.h"
+#include <memory>
 
 namespace blink {
 
@@ -39,9 +40,9 @@ inline HTMLResourcePreloader::HTMLResourcePreloader(Document& document)
 {
 }
 
-PassOwnPtrWillBeRawPtr<HTMLResourcePreloader> HTMLResourcePreloader::create(Document& document)
+HTMLResourcePreloader* HTMLResourcePreloader::create(Document& document)
 {
-    return adoptPtrWillBeNoop(new HTMLResourcePreloader(document));
+    return new HTMLResourcePreloader(document);
 }
 
 DEFINE_TRACE(HTMLResourcePreloader)
@@ -59,7 +60,7 @@ static void preconnectHost(PreloadRequest* request, const NetworkHintsInterface&
     networkHintsInterface.preconnectHost(host, request->crossOrigin());
 }
 
-void HTMLResourcePreloader::preload(PassOwnPtr<PreloadRequest> preload, const NetworkHintsInterface& networkHintsInterface)
+void HTMLResourcePreloader::preload(std::unique_ptr<PreloadRequest> preload, const NetworkHintsInterface& networkHintsInterface)
 {
     if (preload->isPreconnect()) {
         preconnectHost(preload.get(), networkHintsInterface);
@@ -74,8 +75,8 @@ void HTMLResourcePreloader::preload(PassOwnPtr<PreloadRequest> preload, const Ne
     if (request.url().protocolIsData())
         return;
     if (preload->resourceType() == Resource::Script || preload->resourceType() == Resource::CSSStyleSheet || preload->resourceType() == Resource::ImportResource)
-        request.setCharset(preload->charset().isEmpty() ? m_document->characterSet().string() : preload->charset());
-    request.setForPreload(true);
+        request.setCharset(preload->charset().isEmpty() ? m_document->characterSet().getString() : preload->charset());
+    request.setForPreload(true, preload->discoveryTime());
     int duration = static_cast<int>(1000 * (monotonicallyIncreasingTime() - preload->discoveryTime()));
     DEFINE_STATIC_LOCAL(CustomCountHistogram, preloadDelayHistogram, ("WebCore.PreloadDelayMs", 0, 2000, 20));
     preloadDelayHistogram.count(duration);

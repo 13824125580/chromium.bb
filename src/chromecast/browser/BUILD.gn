@@ -76,6 +76,7 @@ source_set("browser") {
     "//base",
     "//base:i18n",
     "//cc",
+    "//chromecast:chromecast_features",
     "//chromecast/app:cast_crash_client",
     "//chromecast/app:chromecast_settings",
     "//chromecast/app:resources",
@@ -83,6 +84,7 @@ source_set("browser") {
     "//chromecast/base:cast_sys_info",
     "//chromecast/base:cast_version",
     "//chromecast/common",
+    "//chromecast/common/media",
     "//chromecast/media",
     "//chromecast/net",
     "//chromecast/service",
@@ -98,6 +100,7 @@ source_set("browser") {
     # isn't needed. crbug.com/541577
     "//components/metrics:ui",
     "//components/network_hints/browser",
+    "//components/network_session_configurator:switches",
     "//components/prefs",
     "//content",
     "//content/public/browser",
@@ -109,11 +112,14 @@ source_set("browser") {
     "//net",
     "//ui/base",
     "//ui/compositor",
+    "//ui/display",
     "//ui/gl",
   ]
 
   if (is_linux) {
     sources += [
+      "cast_memory_pressure_monitor.cc",
+      "cast_memory_pressure_monitor.h",
       "metrics/external_metrics.cc",
       "metrics/external_metrics.h",
     ]
@@ -142,8 +148,13 @@ source_set("test_support") {
   sources = [
     "test/chromecast_browser_test.cc",
     "test/chromecast_browser_test.h",
+    "test/chromecast_browser_test_helper.h",
     "test/chromecast_browser_test_runner.cc",
   ]
+
+  if (chromecast_branding == "public") {
+    sources += [ "test/chromecast_browser_test_helper_default.cc" ]
+  }
 
   public_deps = [
     ":browser",
@@ -176,6 +187,7 @@ test("cast_shell_browser_test") {
   deps = [
     ":test_support",
     "//base",
+    "//chromecast:chromecast_features",
     "//content/test:browsertest_base",
     "//content/test:test_support",
     "//media/base:test_support",
@@ -186,6 +198,7 @@ test("cast_shell_browser_test") {
   # TODO(slan): Find a better way to do this.
   if (chromecast_branding != "public") {
     deps += [ "//chromecast/internal:cast_shell_internal" ]
+    deps += [ "//chromecast/internal/shell:cast_shell_browser_test_helper_internal" ]
   }
 
   if (chromecast_branding == "public") {

@@ -20,12 +20,13 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   void OnDataChanged() override;
   bool IsNative() const override;
   void OnLocationChanged() override;
+  base::string16 GetValue() const override;
 
   bool PlatformIsLeaf() const override;
 
   bool IsCheckable() const;
   bool IsChecked() const;
-  bool IsClickable() const;
+  bool IsClickable() const override;
   bool IsCollection() const;
   bool IsCollectionItem() const;
   bool IsContentInvalid() const;

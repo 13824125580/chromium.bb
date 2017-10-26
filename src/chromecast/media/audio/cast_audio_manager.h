@@ -15,12 +15,16 @@ class TaskRunnerImpl;
 namespace media {
 
 class MediaPipelineBackend;
+class MediaPipelineBackendManager;
 struct MediaPipelineDeviceParams;
 
 class CastAudioManager : public ::media::AudioManagerBase {
  public:
-  explicit CastAudioManager(::media::AudioLogFactory* audio_log_factory);
-  ~CastAudioManager() override;
+  CastAudioManager(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      ::media::AudioLogFactory* audio_log_factory,
+      MediaPipelineBackendManager* backend_manager);
 
   // AudioManager implementation.
   bool HasAudioOutputDevices() override;
@@ -31,27 +35,35 @@ class CastAudioManager : public ::media::AudioManagerBase {
   ::media::AudioParameters GetInputStreamParameters(
       const std::string& device_id) override;
 
-  // This must be called on cast media thread.
-  // See chromecast::media::MediaMessageLoop.
-  virtual scoped_ptr<MediaPipelineBackend> CreateMediaPipelineBackend(
+  // This must be called on audio thread.
+  virtual std::unique_ptr<MediaPipelineBackend> CreateMediaPipelineBackend(
       const MediaPipelineDeviceParams& params);
+
+ protected:
+  ~CastAudioManager() override;
 
  private:
   // AudioManagerBase implementation.
   ::media::AudioOutputStream* MakeLinearOutputStream(
-      const ::media::AudioParameters& params) override;
+      const ::media::AudioParameters& params,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioOutputStream* MakeLowLatencyOutputStream(
       const ::media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioInputStream* MakeLinearInputStream(
       const ::media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioInputStream* MakeLowLatencyInputStream(
       const ::media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioParameters GetPreferredOutputStreamParameters(
       const std::string& output_device_id,
       const ::media::AudioParameters& input_params) override;
+
+  MediaPipelineBackendManager* const backend_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(CastAudioManager);
 };

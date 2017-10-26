@@ -45,15 +45,16 @@
 #ifndef PaintLayerClipper_h
 #define PaintLayerClipper_h
 
+#include "core/CoreExport.h"
 #include "core/layout/ClipRectsCache.h"
-#include "core/layout/LayoutBox.h"
+#include "core/layout/ScrollEnums.h"
 #include "wtf/Allocator.h"
 
 namespace blink {
 
 class PaintLayer;
 
-enum ShouldRespectOverflowClip {
+enum ShouldRespectOverflowClipType {
     IgnoreOverflowClip,
     RespectOverflowClip
 };
@@ -61,9 +62,9 @@ enum ShouldRespectOverflowClip {
 class ClipRectsContext {
     STACK_ALLOCATED();
 public:
-    ClipRectsContext(const PaintLayer* root, ClipRectsCacheSlot slot, OverlayScrollbarSizeRelevancy relevancy = IgnoreOverlayScrollbarSize, const LayoutSize& accumulation = LayoutSize())
+    ClipRectsContext(const PaintLayer* root, ClipRectsCacheSlot slot, OverlayScrollbarClipBehavior overlayScrollbarClipBehavior = IgnoreOverlayScrollbarSize, const LayoutSize& accumulation = LayoutSize())
         : rootLayer(root)
-        , scrollbarRelevancy(relevancy)
+        , overlayScrollbarClipBehavior(overlayScrollbarClipBehavior)
         , m_cacheSlot(slot)
         , subPixelAccumulation(accumulation)
         , respectOverflowClip(slot == PaintingClipRectsIgnoringOverflowClip ? IgnoreOverflowClip : RespectOverflowClip)
@@ -91,15 +92,15 @@ public:
     }
 
     const PaintLayer* rootLayer;
-    const OverlayScrollbarSizeRelevancy scrollbarRelevancy;
+    const OverlayScrollbarClipBehavior overlayScrollbarClipBehavior;
 
 private:
     friend class PaintLayerClipper;
 
     ClipRectsCacheSlot m_cacheSlot;
     LayoutSize subPixelAccumulation;
-    ShouldRespectOverflowClip respectOverflowClip;
-    ShouldRespectOverflowClip respectOverflowClipForViewport;
+    ShouldRespectOverflowClipType respectOverflowClip;
+    ShouldRespectOverflowClipType respectOverflowClipForViewport;
 };
 
 // PaintLayerClipper is responsible for computing and caching clip
@@ -167,7 +168,7 @@ public:
     void calculateRects(const ClipRectsContext&, const LayoutRect& paintDirtyRect, LayoutRect& layerBounds,
         ClipRect& backgroundRect, ClipRect& foregroundRect, const LayoutPoint* offsetFromRoot = 0) const;
 
-    ClipRects& paintingClipRects(const PaintLayer* rootLayer, ShouldRespectOverflowClip, const LayoutSize& subpixelAccumulation) const;
+    ClipRects& paintingClipRects(const PaintLayer* rootLayer, ShouldRespectOverflowClipType, const LayoutSize& subpixelAccumulation) const;
 
 private:
     ClipRects& getClipRects(const ClipRectsContext&) const;

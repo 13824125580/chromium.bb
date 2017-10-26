@@ -5,11 +5,11 @@
 #ifndef WebServiceWorkerRegistrationProxy_h
 #define WebServiceWorkerRegistrationProxy_h
 
-#include "public/platform/WebPassOwnPtr.h"
+#include "public/platform/modules/serviceworker/WebServiceWorker.h"
+
+#include <memory>
 
 namespace blink {
-
-class WebServiceWorker;
 
 // A proxy interface, passed via WebServiceWorkerRegistration.setProxy() from
 // blink to the embedder, to talk to the ServiceWorkerRegistration object from
@@ -21,9 +21,9 @@ public:
     // WebServiceWorkerRegistration.installing.
     virtual void dispatchUpdateFoundEvent() = 0;
 
-    virtual void setInstalling(WebPassOwnPtr<WebServiceWorker::Handle>) = 0;
-    virtual void setWaiting(WebPassOwnPtr<WebServiceWorker::Handle>) = 0;
-    virtual void setActive(WebPassOwnPtr<WebServiceWorker::Handle>) = 0;
+    virtual void setInstalling(std::unique_ptr<WebServiceWorker::Handle>) = 0;
+    virtual void setWaiting(std::unique_ptr<WebServiceWorker::Handle>) = 0;
+    virtual void setActive(std::unique_ptr<WebServiceWorker::Handle>) = 0;
 
 protected:
     virtual ~WebServiceWorkerRegistrationProxy() { }

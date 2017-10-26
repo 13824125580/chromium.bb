@@ -5,10 +5,10 @@
 #ifndef DOMWindow_h
 #define DOMWindow_h
 
+#include "bindings/core/v8/Transferables.h"
 #include "core/CoreExport.h"
 #include "core/events/EventTarget.h"
 #include "core/frame/DOMWindowBase64.h"
-#include "core/frame/Location.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollableArea.h"
 
@@ -21,8 +21,9 @@ class BarProp;
 class BBWindowHooks;
 class CSSRuleList;
 class CSSStyleDeclaration;
-class Console;
+class CustomElementsRegistry;
 class DOMSelection;
+class DOMVisualViewport;
 class DOMWindowCSS;
 class Document;
 class Element;
@@ -31,28 +32,28 @@ class FrameRequestCallback;
 class History;
 class IdleRequestCallback;
 class IdleRequestOptions;
+class Location;
 class LocalDOMWindow;
+class MessageEvent;
 class MediaQueryList;
 class Navigator;
 class Screen;
+class ScriptState;
 class ScrollToOptions;
 class SerializedScriptValue;
 class Storage;
 class StyleMedia;
 
-typedef HeapVector<Member<MessagePort>, 1> MessagePortArray;
-
-class CORE_EXPORT DOMWindow : public EventTargetWithInlineData, public RefCountedWillBeNoBase<DOMWindow>, public DOMWindowBase64 {
+class CORE_EXPORT DOMWindow : public EventTargetWithInlineData, public DOMWindowBase64 {
     DEFINE_WRAPPERTYPEINFO();
-    REFCOUNTED_EVENT_TARGET(DOMWindow);
 public:
     ~DOMWindow() override;
 
-    // RefCountedWillBeGarbageCollectedFinalized overrides:
+    // GarbageCollectedFinalized overrides:
     DECLARE_VIRTUAL_TRACE();
 
-    virtual bool isLocalDOMWindow() const { return false; }
-    virtual bool isRemoteDOMWindow() const { return false; }
+    virtual bool isLocalDOMWindow() const = 0;
+    virtual bool isRemoteDOMWindow() const = 0;
 
     virtual Frame* frame() const = 0;
 
@@ -62,6 +63,7 @@ public:
 
     // EventTarget overrides:
     const AtomicString& interfaceName() const override;
+    const DOMWindow* toDOMWindow() const override;
 
     // DOM Level 0
     virtual Screen* screen() const = 0;
@@ -93,6 +95,8 @@ public:
     virtual double scrollY() const = 0;
     double pageXOffset() const { return scrollX(); }
     double pageYOffset() const { return scrollY(); }
+
+    virtual DOMVisualViewport* visualViewport() { return nullptr; }
 
     bool closed() const;
 
@@ -133,19 +137,17 @@ public:
     //  90 is when rotated counter clockwise.
     virtual int orientation() const = 0;
 
-    virtual Console* console() const  = 0;
-
     virtual DOMSelection* getSelection() = 0;
 
     void focus(ExecutionContext*);
     virtual void blur() = 0;
     void close(ExecutionContext*);
-    virtual void print() = 0;
+    virtual void print(ScriptState*) = 0;
     virtual void stop() = 0;
 
-    virtual void alert(const String& message = String()) = 0;
-    virtual bool confirm(const String& message) = 0;
-    virtual String prompt(const String& message, const String& defaultValue) = 0;
+    virtual void alert(ScriptState*, const String& message = String()) = 0;
+    virtual bool confirm(ScriptState*, const String& message) = 0;
+    virtual String prompt(ScriptState*, const String& message, const String& defaultValue) = 0;
 
     virtual bool find(const String&, bool caseSensitive, bool backwards, bool wrap, bool wholeWord, bool searchInFrames, bool showDialog) const = 0;
 
@@ -161,13 +163,13 @@ public:
     virtual void resizeBy(int x, int y) const = 0;
     virtual void resizeTo(int width, int height) const = 0;
 
-    virtual PassRefPtrWillBeRawPtr<MediaQueryList> matchMedia(const String&) = 0;
+    virtual MediaQueryList* matchMedia(const String&) = 0;
 
     // DOM Level 2 Style Interface
-    virtual PassRefPtrWillBeRawPtr<CSSStyleDeclaration> getComputedStyle(Element*, const String& pseudoElt) const = 0;
+    virtual CSSStyleDeclaration* getComputedStyle(Element*, const String& pseudoElt) const = 0;
 
     // WebKit extensions
-    virtual PassRefPtrWillBeRawPtr<CSSRuleList> getMatchedCSSRules(Element*, const String& pseudoElt) const = 0;
+    virtual CSSRuleList* getMatchedCSSRules(Element*, const String& pseudoElt) const = 0;
 
     // WebKit animation extensions
     virtual int requestAnimationFrame(FrameRequestCallback*) = 0;
@@ -178,6 +180,9 @@ public:
     virtual int requestIdleCallback(IdleRequestCallback*, const IdleRequestOptions&) = 0;
     virtual void cancelIdleCallback(int id) = 0;
 
+    // Custom elements
+    virtual CustomElementsRegistry* customElements(ScriptState*) const = 0;
+
     void captureEvents() { }
     void releaseEvents() { }
 
@@ -186,7 +191,7 @@ public:
     // window[index]...
     DOMWindow* anonymousIndexedGetter(uint32_t) const;
 
-    void postMessage(PassRefPtr<SerializedScriptValue> message, const MessagePortArray*, const String& targetOrigin, LocalDOMWindow* source, ExceptionState&);
+    void postMessage(PassRefPtr<SerializedScriptValue> message, const MessagePortArray&, const String& targetOrigin, LocalDOMWindow* source, ExceptionState&);
 
     String sanitizedCrossDomainAccessErrorMessage(const LocalDOMWindow* callingWindow) const;
     String crossDomainAccessErrorMessage(const LocalDOMWindow* callingWindow) const;
@@ -220,6 +225,8 @@ public:
 protected:
     DOMWindow();
 
+    virtual void schedulePostMessage(MessageEvent*, PassRefPtr<SecurityOrigin> target, Document* source) = 0;
+
     // Set to true when close() has been called. Needed for
     // |window.closed| determinism; having it return 'true'
     // only after the layout widget's deferred window close
@@ -228,7 +235,7 @@ protected:
     bool m_windowIsClosing;
 
 private:
-    mutable RefPtrWillBeMember<Location> m_location;
+    mutable Member<Location> m_location;
 };
 
 } // namespace blink

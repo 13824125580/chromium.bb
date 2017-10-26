@@ -23,7 +23,7 @@ tr.b.unittest.testSuite(function() {
   var createModelWithOneOfEverything = function() {
     var m = new tr.Model();
     var cpu = m.kernel.getOrCreateCpu(1);
-    cpu.slices.push(tr.c.TestUtils.newSlice(1, 3));
+    cpu.slices.push(tr.c.TestUtils.newSliceEx({start: 1, duration: 3}));
 
     var p = m.getOrCreateProcess(1);
     var t = p.getOrCreateThread(1);
@@ -81,7 +81,7 @@ tr.b.unittest.testSuite(function() {
     function Helper(model) {
       this.model = model;
     }
-    Helper.guid = tr.b.GUID.allocate();
+    Helper.guid = tr.b.GUID.allocateSimple();
     Helper.supportsModel = function(model) {
       return true;
     };
@@ -94,7 +94,7 @@ tr.b.unittest.testSuite(function() {
     function UnsupportedHelper(model) {
       this.model = model;
     }
-    UnsupportedHelper.guid = tr.b.GUID.allocate();
+    UnsupportedHelper.guid = tr.b.GUID.allocateSimple();
     UnsupportedHelper.supportsModel = function(model) {
       return false;
     };
@@ -141,7 +141,7 @@ tr.b.unittest.testSuite(function() {
   test('modelBounds_OneCpu', function() {
     var m = new tr.Model();
     var cpu = m.kernel.getOrCreateCpu(1);
-    cpu.slices.push(tr.c.TestUtils.newSlice(1, 3));
+    cpu.slices.push(tr.c.TestUtils.newSliceEx({start: 1, duration: 3}));
     m.updateBounds();
     assert.equal(m.bounds.min, 1);
     assert.equal(m.bounds.max, 4);
@@ -150,7 +150,7 @@ tr.b.unittest.testSuite(function() {
   test('modelBounds_OneCpuOneThread', function() {
     var m = new tr.Model();
     var cpu = m.kernel.getOrCreateCpu(1);
-    cpu.slices.push(tr.c.TestUtils.newSlice(1, 3));
+    cpu.slices.push(tr.c.TestUtils.newSliceEx({start: 1, duration: 3}));
 
     var t = m.getOrCreateProcess(1).getOrCreateThread(1);
     t.sliceGroup.pushSlice(new ThreadSlice('', 'a', 0, 1, {}, 4));
@@ -198,7 +198,7 @@ tr.b.unittest.testSuite(function() {
   });
 
   test('TitleOrCategoryFilter', function() {
-    var s0 = tr.c.TestUtils.newSlice(1, 3);
+    var s0 = tr.c.TestUtils.newSliceEx({start: 1, duration: 3});
     assert.isTrue(new TitleOrCategoryFilter('a').matchSlice(s0));
     assert.isFalse(new TitleOrCategoryFilter('x').matchSlice(s0));
 
@@ -232,14 +232,24 @@ tr.b.unittest.testSuite(function() {
     assert.deepEqual(['categoryA', 'categoryB'], m.categories);
   });
 
-  test('model_iterateAllEvents', function() {
-    var m = createModelWithOneOfEverything();
-    var wasCalled = false;
-    m.iterateAllEvents(function(event) {
-      assert.isTrue(event instanceof tr.model.Event);
-      wasCalled = true;
+  test('getEventByStableId', function() {
+    var m = new tr.Model();
+    var p = m.getOrCreateProcess(0);
+    var t = p.getOrCreateThread(1);
+    var slice = tr.c.TestUtils.newSliceEx({start: 0, duration: 10});
+    t.sliceGroup.pushSlice(slice);
+    var ue = tr.c.TestUtils.newInteractionRecord(m, 0, 10);
+    m.userModel.expectations.push(ue);
+    var gie = tr.c.TestUtils.newInstantEvent({
+      title: 'gie',
+      start: 0,
+      colorId: 0
     });
-    assert.isTrue(wasCalled);
+    m.instantEvents.push(gie);
+
+    assert.strictEqual(slice, m.getEventByStableId(slice.stableId));
+    assert.strictEqual(ue, m.getEventByStableId(ue.stableId));
+    assert.strictEqual(gie, m.getEventByStableId(gie.stableId));
   });
 
   test('model_annotationAddRemove', function() {
@@ -279,32 +289,53 @@ tr.b.unittest.testSuite(function() {
     assert.equal(m.intrinsicTimeUnit, unit.ns);
   });
 
-  test('model_highResolutionHeuristicTrue', function() {
+  test('model_getAllProcesses', function() {
     var m = new tr.Model();
-    var t = m.getOrCreateProcess(1).getOrCreateThread(1);
-    // A thousand event not aligned on a millisecond.
-    for (var i = 0; i < 1000; ++i) {
-        var start = 0.53 * i;
-        t.sliceGroup.pushSlice(new ThreadSlice('c', 'a', 0, start, {}, 1));
-    }
-    assert.isTrue(m.isTimeHighResolution);
+    var p1 = m.getOrCreateProcess(1);
+    var p2 = m.getOrCreateProcess(2);
+    var p3 = m.getOrCreateProcess(3);
+    var p4 = m.getOrCreateProcess(4);
+    var p5 = m.getOrCreateProcess(5);
+
+    assert.sameMembers(m.getAllProcesses(), [p1, p2, p3, p4, p5]);
+    assert.sameMembers(m.getAllProcesses(p => true), [p1, p2, p3, p4, p5]);
+    assert.sameMembers(m.getAllProcesses(p => false), []);
+    assert.sameMembers(m.getAllProcesses(p => p.pid % 2 === 0), [p2, p4]);
   });
 
-  test('model_highResolutionHeuristicFalse', function() {
-    var m = new tr.Model();
-    var t = m.getOrCreateProcess(1).getOrCreateThread(1);
-    // A thousand event aligned on a millisecond.
-    for (var i = 0; i < 1000; ++i) {
-        var start = 0.753 + i;
-        t.sliceGroup.pushSlice(new ThreadSlice('c', 'a', 0, start, {}, 1));
+  test('model_joinRefs', function() {
+    function RefCountingSnapshot() {
+      tr.model.ObjectSnapshot.apply(this, arguments);
+      this.refCount = 0;
     }
-    // And fifty not aligned on anything.
-    for (var i = 0; i < 50; ++i) {
-        var start = 0.53 * i;
-        t.sliceGroup.pushSlice(new ThreadSlice('c', 'a', 0, start, {}, 1));
-    }
-    assert.isFalse(m.isTimeHighResolution);
-  });
 
+    RefCountingSnapshot.prototype = {
+      __proto__: tr.model.ObjectSnapshot.prototype,
+
+      referencedAt: function() {
+        ++this.refCount;
+      }
+    };
+
+    var typeName = 'RefCountingSnapshot';
+    tr.model.ObjectSnapshot.register(
+        RefCountingSnapshot,
+        {typeName: typeName});
+
+    var m = new tr.Model();
+    var p = m.getOrCreateProcess(1);
+    var s1 = p.objects.addSnapshot(new tr.model.ScopedId(typeName, '0x1'),
+                                   'cat', typeName, 1000, {});
+    var s2 = p.objects.addSnapshot(new tr.model.ScopedId(typeName, '0x2'),
+                                   'cat', typeName, 2000, {
+                                     myRef: {
+                                       scope: typeName,
+                                       id_ref: '0x1'
+                                     }
+                                   });
+    m.joinRefs();
+    assert.equal(s1.refCount, 1);
+    assert.equal(s2.refCount, 0);
+  });
 });
 </script>

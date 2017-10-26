@@ -4,15 +4,16 @@
 
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/media_stream_request.h"
 #include "media/audio/audio_input_ipc.h"
 #include "media/audio/audio_manager_base.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 
 #if defined(OS_CHROMEOS)
@@ -172,7 +173,7 @@ void AudioInputDeviceManager::EnumerateOnDeviceThread(
     audio_manager_->GetAudioInputDeviceNames(&device_names);
   }
 
-  scoped_ptr<StreamDeviceInfoArray> devices(new StreamDeviceInfoArray());
+  std::unique_ptr<StreamDeviceInfoArray> devices(new StreamDeviceInfoArray());
   for (media::AudioDeviceNames::iterator it = device_names.begin();
        it != device_names.end(); ++it) {
     // Add device information to device vector.
@@ -241,7 +242,7 @@ void AudioInputDeviceManager::OpenOnDeviceThread(
 
 void AudioInputDeviceManager::DevicesEnumeratedOnIOThread(
     MediaStreamType stream_type,
-    scoped_ptr<StreamDeviceInfoArray> devices) {
+    std::unique_ptr<StreamDeviceInfoArray> devices) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   // Ensure that |devices| gets deleted on exit.
   if (listener_)

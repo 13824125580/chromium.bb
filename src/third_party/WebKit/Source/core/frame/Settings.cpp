@@ -27,6 +27,8 @@
 
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/scroll/ScrollbarTheme.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -58,20 +60,19 @@ static const bool defaultSelectTrailingWhitespaceEnabled = false;
 #endif
 
 Settings::Settings()
-    : m_openGLMultisamplingEnabled(false)
 #if DEBUG_TEXT_AUTOSIZING_ON_DESKTOP
-    , m_textAutosizingWindowSizeOverride(320, 480)
+    : m_textAutosizingWindowSizeOverride(320, 480)
     , m_textAutosizingEnabled(true)
 #else
-    , m_textAutosizingEnabled(false)
+    : m_textAutosizingEnabled(false)
 #endif
     SETTINGS_INITIALIZER_LIST
 {
 }
 
-PassOwnPtr<Settings> Settings::create()
+std::unique_ptr<Settings> Settings::create()
 {
-    return adoptPtr(new Settings);
+    return wrapUnique(new Settings);
 }
 
 SETTINGS_SETTER_BODIES
@@ -114,15 +115,6 @@ void Settings::setMockScrollbarsEnabled(bool flag)
 bool Settings::mockScrollbarsEnabled()
 {
     return ScrollbarTheme::mockScrollbarsEnabled();
-}
-
-void Settings::setOpenGLMultisamplingEnabled(bool flag)
-{
-    if (m_openGLMultisamplingEnabled == flag)
-        return;
-
-    m_openGLMultisamplingEnabled = flag;
-    invalidate(SettingsDelegate::MultisamplingChange);
 }
 
 } // namespace blink

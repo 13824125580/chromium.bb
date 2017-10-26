@@ -20,11 +20,14 @@
 <translation id="1467432559032391204">Vasemmalle</translation>
 <translation id="1484102317210609525"><ph name="DEVICE_NAME" /> (HDMI/DP)</translation>
 <translation id="1510238584712386396">Käynnistysohjelma</translation>
+<translation id="1525508553941733066">HYLKÄÄ</translation>
 <translation id="15373452373711364">Suuri hiiren osoitin</translation>
 <translation id="1550523713251050646">Näet lisävaihtoehtoja klikkaamalla tätä.</translation>
 <translation id="1602076796624386989">Ota mobiilitiedonsiirto käyttöön</translation>
 <translation id="1621499497873603021">Akku on tyhjä <ph name="TIME_LEFT" /> kuluttua</translation>
 <translation id="164969095109328410">Chrome-laite</translation>
+<translation id="1677472565718498478"><ph name="TIME" /> jäljellä</translation>
+<translation id="1683360892415596327">Osallistu kyselyyn</translation>
 <translation id="1723752762323179280">Käyttökerran lopettaminen</translation>
 <translation id="1747827819627189109">Ruutunäppäimistö otettiin käyttöön</translation>
 <translation id="1812696562331527143">Syöttötapa on vaihtunut. Uusi syöttötapa on <ph name="INPUT_METHOD_ID" />*(<ph name="BEGIN_LINK" />kolmas osapuoli<ph name="END_LINK" />).
@@ -90,7 +93,6 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="3621712662352432595">Ääniasetukset</translation>
 <translation id="3625258641415618104">Kuvakaappaukset poissa käytöstä</translation>
 <translation id="3626281679859535460">Kirkkaus</translation>
-<translation id="3626637461649818317"><ph name="PERCENTAGE" /> % jäljellä</translation>
 <translation id="3678715477168044796"><ph name="DISPLAY_NAME" />: <ph name="ANNOTATION" /></translation>
 <translation id="3683428399328702079">Ruudun <ph name="DISPLAY_NAME" /> tarkkuudeksi vaihdettiin <ph name="RESOLUTION" /></translation>
 <translation id="370649949373421643">Ota Wi-Fi käyttöön</translation>
@@ -109,13 +111,13 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="397105322502079400">Lasketaan...</translation>
 <translation id="3995138139523574647">C-tyypin USB-laite (oikean sivun taaimmainen portti)</translation>
 <translation id="4053612967614057854">Poista ruutunäppäimistö käytöstä</translation>
-<translation id="412065659894267608">Akku täynnä <ph name="HOUR" /> t <ph name="MINUTE" /> min kuluttua</translation>
 <translation id="4250680216510889253">Ei</translation>
 <translation id="4279490309300973883">Peilaus päällä</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4421231901400348175">Näyttösi hallinta jaetaan käyttäjän <ph name="HELPER_NAME" /> kanssa Etätuen kautta.</translation>
 <translation id="4430019312045809116">Äänenvoimakkuus</translation>
 <translation id="4527045527269911712">Bluetooth-laite <ph name="DEVICE_NAME" /> pyytää lupaa laiteparin muodostamiseen.</translation>
+<translation id="453661520163887813"><ph name="TIME" /> jäljellä, kunnes akku on täynnä</translation>
 <translation id="4544944664594876241">Näytön lukituksen pikanäppäin on muuttunut. Käytä uutta pikanäppäintä <ph name="NEW_SHORTCUT" /> vanhan (<ph name="OLD_SHORTCUT" />) sijaan.</translation>
 <translation id="479989351350248267">haku</translation>
 <translation id="4804818685124855865">Katkaise yhteys</translation>
@@ -127,7 +129,6 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="5011233892417813670">Chromebook</translation>
 <translation id="5012744545445585468">Ctrl+Shift+välilyönti</translation>
 <translation id="5045002648206642691">Google Driven asetukset...</translation>
-<translation id="5102001756192215136"><ph name="HOUR" />.<ph name="MINUTE" /> jäljellä</translation>
 <translation id="511445211639755999"><ph name="RESOLUTION" />, <ph name="OVERSCAN" /></translation>
 <translation id="5168181903108465623">Cast-laitteita käytettävissä</translation>
 <translation id="5222676887888702881">Kirjaudu ulos</translation>
@@ -161,10 +162,10 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="6062360702481658777">Sinut kirjataan ulos automaattisesti, aikaa jäljellä <ph name="LOGOUT_TIME_LEFT" />.</translation>
 <translation id="607652042414456612">Lähellä olevat Bluetooth-laitteet voivat löytää tietokoneesi. Tietokoneesi nimi on <ph name="NAME" /> ja osoite <ph name="ADDRESS" /></translation>
 <translation id="6106745654298855237">Ladataan laitetta <ph name="POWER_SOURCE" /></translation>
+<translation id="6144938890088808325">Auta meitä parantamaan Chromebookeja</translation>
 <translation id="615957422585914272">Näytä ruutunäppäimistö</translation>
 <translation id="6165508094623778733">Lisätietoja</translation>
 <translation id="6203030746557259519">Virtuaalinäyttö</translation>
-<translation id="6247708409970142803"><ph name="PERCENTAGE" /> %</translation>
 <translation id="6248847161401822652">Lopeta painamalla kahdesti Control Shift Q.</translation>
 <translation id="6310121235600822547"><ph name="DISPLAY_NAME" /> käännettiin asentoon <ph name="ROTATION" /></translation>
 <translation id="6359806961507272919">Tekstiviesti lähettäjältä <ph name="PHONE_NUMBER" /></translation>
@@ -203,6 +204,7 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="7510334386202674593">Ctrl+Shift+L</translation>
 <translation id="7561014039265304140"><ph name="DISPLAY_NAME" /> ei tue resoluutiota <ph name="SPECIFIED_RESOLUTION" />. Resoluutioksi valittiin <ph name="FALLBACK_RESOLUTION" />.</translation>
 <translation id="7573962313813535744">Telakoitu tila</translation>
+<translation id="7580671184200851182">Toista äänet samanlaisina kaikista kaiuttimista (monotoisto)</translation>
 <translation id="7593891976182323525">Haku tai Shift</translation>
 <translation id="7649070708921625228">Ohje</translation>
 <translation id="7692480393933218409">Ladataan yhdistettyjä C-tyypin USB-laitteita</translation>
@@ -210,6 +212,7 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="7823564328645135659">Käyttökieli on muutettu kielestä <ph name="FROM_LOCALE" /> kieleksi <ph name="TO_LOCALE" /> asetustesi synkronoinnin yhteydessä.</translation>
 <translation id="785750925697875037">Näytä mobiilitili</translation>
 <translation id="7864539943188674973">Poista Bluetooth käytöstä</translation>
+<translation id="7869829692393275047">Chrome-käyttöjärjestelmän tyytyväisyyskysely löytyy täältä. Chrome-käyttöjärjestelmän tyytyväisyyskysely löytyy täältä. Chrome-käyttöjärjestelmän tyytyväisyyskysely löytyy täältä. Chrome-käyttöjärjestelmän tyytyväisyyskysely löytyy täältä.</translation>
 <translation id="7893838033650689677">Ota Wi-Fi käyttöön</translation>
 <translation id="7904094684485781019">Tämän tilin järjestelmänvalvoja on estänyt useisiin tileihin kirjautumisen.</translation>
 <translation id="7957227661277029961"><ph name="DEVICE_TYPE" /> ei välttämättä lataudu, kun se on käynnissä. Suosittelemme virallisen laturin käyttämistä.</translation>
@@ -221,13 +224,14 @@ Vaihda syöttötapaa painamalla Shift + Alt.</translation>
 <translation id="8308637677604853869">Edellinen valikko</translation>
 <translation id="8356164830168736643">Sulje <ph name="WINDOW_TITLE" /></translation>
 <translation id="8428213095426709021">Asetukset</translation>
-<translation id="8456362689280298700"><ph name="HOUR" />:<ph name="MINUTE" /> kunnes akku on ladattu</translation>
 <translation id="8517041960877371778"><ph name="DEVICE_TYPE" /> ei välttämättä lataudu, kun se on käynnissä.</translation>
 <translation id="8528322925433439945">Mobiiliverkot...</translation>
+<translation id="8639760480004882931"><ph name="PERCENTAGE" /> jäljellä</translation>
 <translation id="8673028979667498656">270°</translation>
 <translation id="8676770494376880701">Pienitehoinen laturi kytketty</translation>
 <translation id="8814190375133053267">Wi-Fi</translation>
 <translation id="882279321799040148">Näytä klikkaamalla</translation>
+<translation id="8825534185036233643">Peilaamista yli kahdelle näytölle ei tueta.</translation>
 <translation id="8828714802988429505">90°</translation>
 <translation id="8850991929411075241">Haku+Esc</translation>
 <translation id="8878886163241303700">Laajennettu näyttö</translation>

@@ -8,15 +8,15 @@
 #include "base/location.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/lifetime/keep_alive_types.h"
 #include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_shower_delegate.h"
 #include "chrome/browser/ui/app_list/app_list_view_delegate.h"
 #include "ui/app_list/views/app_list_view.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/point.h"
-#include "ui/gfx/screen.h"
 
 AppListShower::AppListShower(AppListShowerDelegate* delegate)
     : delegate_(delegate),
@@ -30,7 +30,8 @@ AppListShower::~AppListShower() {
 
 void AppListShower::ShowForCurrentProfile() {
   DCHECK(HasView());
-  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::APP_LIST_SHOWER));
+  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::APP_LIST_SHOWER,
+                                        KeepAliveRestartOption::DISABLED));
 
   // If the app list is already displaying |profile| just activate it (in case
   // we have lost focus).
@@ -118,7 +119,7 @@ app_list::AppListView* AppListShower::MakeViewForCurrentProfile() {
     view = new app_list::AppListView(delegate_->GetViewDelegateForCreate());
   }
 
-  gfx::Point cursor = gfx::Screen::GetScreen()->GetCursorScreenPoint();
+  gfx::Point cursor = display::Screen::GetScreen()->GetCursorScreenPoint();
   view->InitAsBubbleAtFixedLocation(NULL,
                                     0,
                                     cursor,

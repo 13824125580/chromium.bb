@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2009 Google Inc. All rights reserved.
  *
@@ -35,7 +34,6 @@
 #include "../platform/WebCanvas.h"
 #include "../platform/WebCommon.h"
 #include "../platform/WebFloatSize.h"
-#include "../platform/WebFrameTimingEvent.h"
 #include "../platform/WebInputEventResult.h"
 #include "../platform/WebPoint.h"
 #include "../platform/WebRect.h"
@@ -63,12 +61,6 @@ public:
     // Returns the current size of the WebWidget.
     virtual WebSize size() { return WebSize(); }
 
-    // Used to group a series of resize events. For example, if the user
-    // drags a resizer then willStartLiveResize will be called, followed by a
-    // sequence of resize events, ending with willEndLiveResize when the user
-    // lets go of the resizer.
-    virtual void willStartLiveResize() { }
-
     // Called to resize the WebWidget.
     virtual void resize(const WebSize&) { }
 
@@ -79,16 +71,13 @@ public:
     // keyboard to overlay over content but allow scrolling it into view.
     virtual void resizeVisualViewport(const WebSize&) { }
 
-    // Ends a group of resize events that was started with a call to
-    // willStartLiveResize.
-    virtual void willEndLiveResize() { }
-
     // Called to notify the WebWidget of entering/exiting fullscreen mode.
     virtual void didEnterFullScreen() { }
     virtual void didExitFullScreen() { }
 
     // Called to update imperative animation state. This should be called before
     // paint, although the client can rate-limit these calls.
+    // |lastFrameTimeMonotonic| is in seconds.
     virtual void beginFrame(double lastFrameTimeMonotonic) { }
 
     // Called to run through the entire set of document lifecycle phases needed
@@ -105,7 +94,9 @@ public:
     // warranted before painting again).
     virtual void paint(WebCanvas*, const WebRect& viewPort) { }
 
-    virtual void paintCompositedDeprecated(WebCanvas*, const WebRect&) { }
+    // Similar to paint() but ignores compositing decisions, squashing all
+    // contents of the WebWidget into the output given to the WebCanvas.
+    virtual void paintIgnoringCompositing(WebCanvas*, const WebRect&) {}
 
     // Run layout and paint of all pending document changes asynchronously.
     // The caller is resposible for keeping the WebLayoutAndPaintAsyncCallback
@@ -139,14 +130,6 @@ public:
         const WebFloatSize& elasticOverscrollDelta,
         float scaleFactor,
         float topControlsShownRatioDelta) { }
-
-    // Records composite or render events for the Performance Timeline.
-    // See http://w3c.github.io/frame-timing/ for definition of terms.
-    enum FrameTimingEventType {
-        CompositeEvent,
-        RenderEvent,
-    };
-    virtual void recordFrameTimingEvent(FrameTimingEventType eventType, int64_t RectId, const WebVector<WebFrameTimingEvent>& events) { }
 
     // Called to inform the WebWidget that mouse capture was lost.
     virtual void mouseCaptureLost() { }
@@ -258,10 +241,6 @@ public:
     // The currently open page popup, which are calendar and datalist pickers
     // but not the select popup.
     virtual WebPagePopup* pagePopup() const { return 0; }
-
-    // Notification about the top controls height.  If the boolean is true, then
-    // the embedder shrunk the WebView size by the top controls height.
-    virtual void setTopControlsHeight(float height, bool topControlsShrinkLayoutSize) { }
 
     // Updates top controls constraints and current state. Allows embedder to
     // control what are valid states for top controls and if it should animate.

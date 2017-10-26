@@ -19,8 +19,8 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "media/audio/audio_input_controller.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_parameters.h"
 
 #if defined(OS_POSIX)
 #include "base/file_descriptor_posix.h"
@@ -59,7 +59,7 @@ class CONTENT_EXPORT AudioInputSyncWriter
 
  protected:
   // Socket for transmitting audio data.
-  scoped_ptr<base::CancelableSyncSocket> socket_;
+  std::unique_ptr<base::CancelableSyncSocket> socket_;
 
  private:
   friend class AudioInputSyncWriterTest;
@@ -107,7 +107,7 @@ class CONTENT_EXPORT AudioInputSyncWriter
 
   // Socket to be used by the renderer. The reference is released after
   // PrepareForeignSocketHandle() is called and ran successfully.
-  scoped_ptr<base::CancelableSyncSocket> foreign_socket_;
+  std::unique_ptr<base::CancelableSyncSocket> foreign_socket_;
 
   // The time of the creation of this object.
   base::Time creation_time_;

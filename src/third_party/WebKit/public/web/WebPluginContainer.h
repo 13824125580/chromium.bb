@@ -39,12 +39,15 @@ struct NPObject;
 
 namespace blink {
 
+class WebDocument;
 class WebElement;
 class WebPlugin;
 class WebString;
 class WebURL;
 class WebURLRequest;
 class WebLayer;
+class WebDOMMessageEvent;
+class WebDOMEvent;
 struct WebPoint;
 struct WebRect;
 
@@ -59,7 +62,17 @@ public:
     // Returns the element containing this plugin.
     virtual WebElement element() = 0;
 
+    // Returns the owning document for the plugin.
+    virtual WebDocument document() = 0;
+
+    // Synchronously dispatches the progress event.
     virtual void dispatchProgressEvent(const WebString& type, bool lengthComputable, unsigned long long loaded, unsigned long long total, const WebString& url) = 0;
+
+    // Enqueue's a task to dispatch the event.
+    // TODO(esprehn): Why are progress events sync and message events async!?
+    virtual void enqueueMessageEvent(const WebDOMMessageEvent&) = 0;
+
+    virtual void enqueueEvent(const WebDOMEvent& event) = 0;
 
     virtual void invalidate() = 0;
     virtual void invalidateRect(const WebRect&) = 0;
@@ -71,21 +84,6 @@ public:
     // Causes the container to report its current geometry via
     // WebPlugin::updateGeometry.
     virtual void reportGeometry() = 0;
-
-    // Allow the plugin to pass script objects to the browser. The container
-    // tracks ownership of script objects in order to allow browser references
-    // to them to be dropped when clearScriptObjects is called.
-    virtual void allowScriptObjects() = 0;
-
-    // Drop any references to script objects allocated by the plugin.
-    // These are objects derived from WebPlugin::scriptableObject.  This is
-    // called when the plugin is being destroyed or if it needs to be
-    // re-initialized.
-    virtual void clearScriptObjects() = 0;
-
-    // Returns the scriptable object associated with the DOM element
-    // containing the plugin.
-    virtual NPObject* scriptableObjectForElement() = 0;
 
     // Returns the scriptable object associated with the DOM element
     // containing the plugin as a native v8 object.
@@ -140,6 +138,10 @@ public:
     // Sets the layer representing the plugin for compositing. The
     // WebPluginContainer does *not* take ownership.
     virtual void setWebLayer(WebLayer*) = 0;
+
+    virtual void requestFullscreen() = 0;
+    virtual bool isFullscreenElement() const = 0;
+    virtual void cancelFullscreen() = 0;
 
 protected:
     ~WebPluginContainer() { }

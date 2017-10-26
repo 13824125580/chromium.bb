@@ -6,8 +6,12 @@
 #define CHROME_BROWSER_METRICS_METRICS_REPORTING_STATE_H_
 
 #include "base/callback.h"
+#include "components/metrics/metrics_service_client.h"
 
 typedef base::Callback<void(bool)> OnMetricsReportingCallbackType;
+
+class PrefService;
+class PrefRegistrySimple;
 
 // Initiates a change to metrics reporting state to the new value of |enabled|.
 // Starts or stops the metrics service based on the new state and then runs

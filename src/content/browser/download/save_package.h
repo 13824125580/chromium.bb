@@ -88,14 +88,6 @@ class CONTENT_EXPORT SavePackage
   // in the "Save As" dialog box.
   explicit SavePackage(WebContents* web_contents);
 
-  // This contructor is used only for testing. We can bypass the file and
-  // directory name generation / sanitization by providing well known paths
-  // better suited for tests.
-  SavePackage(WebContents* web_contents,
-              SavePageType save_type,
-              const base::FilePath& file_full_path,
-              const base::FilePath& directory_full_path);
-
   // Initialize the SavePackage. Returns true if it initializes properly.  Need
   // to make sure that this method must be called in the UI thread because using
   // g_browser_process on a non-UI thread can cause crashes during shutdown.
@@ -108,14 +100,16 @@ class CONTENT_EXPORT SavePackage
 
   void Finish();
 
-  // Notifications sent from the file thread to the UI thread.
+  // Notifications sent from the FILE thread to the UI thread.
   void StartSave(const SaveFileCreateInfo* info);
   bool UpdateSaveProgress(SaveItemId save_item_id,
                           int64_t size,
                           bool write_success);
+  // Called for updating end state.
   void SaveFinished(SaveItemId save_item_id, int64_t size, bool is_success);
-  void SaveCanceled(SaveItem* save_item);
+  void SaveCanceled(const SaveItem* save_item);
 
+  // Calculate the percentage of whole save page job.
   // Rough percent complete, -1 means we don't know (since we didn't receive a
   // total size).
   int PercentComplete();
@@ -131,17 +125,40 @@ class CONTENT_EXPORT SavePackage
  private:
   friend class base::RefCountedThreadSafe<SavePackage>;
 
+  // Friends for testing. Needed for accessing the test-only constructor below.
+  friend class SavePackageTest;
+  friend class WebContentsImpl;
+  FRIEND_TEST_ALL_PREFIXES(SavePackageTest, TestSuggestedSaveNames);
+  FRIEND_TEST_ALL_PREFIXES(SavePackageTest, TestLongSafePureFilename);
+  FRIEND_TEST_ALL_PREFIXES(SavePackageBrowserTest, ImplicitCancel);
+  FRIEND_TEST_ALL_PREFIXES(SavePackageBrowserTest, ExplicitCancel);
+
+  // Map from SaveItem::id() (aka save_item_id) into a SaveItem.
+  using SaveItemIdMap =
+      std::unordered_map<SaveItemId, SaveItem*, SaveItemId::Hasher>;
+
+  using SaveItemQueue = std::deque<SaveItem*>;
+
+  using FileNameSet = std::set<base::FilePath::StringType,
+                               bool (*)(base::FilePath::StringPieceType,
+                                        base::FilePath::StringPieceType)>;
+
+  using FileNameCountMap =
+      std::unordered_map<base::FilePath::StringType, uint32_t>;
+
+  // Used only for testing. Bypasses the file and directory name generation /
+  // sanitization by providing well known paths better suited for tests.
+  SavePackage(WebContents* web_contents,
+              SavePageType save_type,
+              const base::FilePath& file_full_path,
+              const base::FilePath& directory_full_path);
+
   void InitWithDownloadItem(
       const SavePackageDownloadCreatedCallback& download_created_callback,
       DownloadItemImpl* item);
 
   // Callback for WebContents::GenerateMHTML().
   void OnMHTMLGenerated(int64_t size);
-
-  // For testing only.
-  SavePackage(WebContents* web_contents,
-              const base::FilePath& file_full_path,
-              const base::FilePath& directory_full_path);
 
   ~SavePackage() override;
 
@@ -150,7 +167,14 @@ class CONTENT_EXPORT SavePackage
 
   void Stop();
   void CheckFinish();
+
+  // Initiate a saving job of a specific URL. We send the request to
+  // SaveFileManager, which will dispatch it to different approach according to
+  // the save source. |process_all_remaining_items| indicates whether we need to
+  // save all remaining items.
   void SaveNextFile(bool process_all_remainder_items);
+
+  // Continue processing the save page job after one SaveItem has been finished.
   void DoSavingProcess();
 
   // WebContentsObserver implementation.
@@ -164,7 +188,7 @@ class CONTENT_EXPORT SavePackage
   void FinalizeDownloadEntry();
 
   // Detach from DownloadManager.
-  void StopObservation();
+  void RemoveObservers();
 
   // Return max length of a path for a specific base directory.
   // This is needed on POSIX, which restrict the length of file names in
@@ -172,11 +196,27 @@ class CONTENT_EXPORT SavePackage
   // |base_dir| is assumed to be a directory name with no trailing slash.
   static uint32_t GetMaxPathLengthForDirectory(const base::FilePath& base_dir);
 
-  static bool GetSafePureFileName(
-      const base::FilePath& dir_path,
-      const base::FilePath::StringType& file_name_ext,
-      uint32_t max_file_path_len,
-      base::FilePath::StringType* pure_file_name);
+  // Truncates a filename to fit length constraints.
+  //
+  // |directory|    : Directory containing target file.
+  // |extension|    : Extension.
+  // |max_path_len| : Maximum size allowed for |len(directory + base_name +
+  //                  extension|.
+  // |base_name|    : Variable portion. The length of this component will be
+  //                  adjusted to fit the length constraints described at
+  //                  |max_path_len| above.
+  //
+  // Returns true if |base_name| could be successfully adjusted to fit the
+  // aforementioned constraints, or false otherwise.
+  // TODO(asanka): This function is wrong. |base_name| cannot be truncated
+  //   without knowing its encoding and truncation has to be performed on
+  //   character boundaries. Also the implementation doesn't look up the actual
+  //   path constraints and instead uses hard coded constants. crbug.com/618737
+  static bool TruncateBaseNameToFitPathConstraints(
+      const base::FilePath& directory,
+      const base::FilePath::StringType& extension,
+      uint32_t max_path_len,
+      base::FilePath::StringType* base_name);
 
   // Create a file name based on the response from the server.
   bool GenerateFileName(const std::string& disposition,
@@ -254,33 +294,25 @@ class CONTENT_EXPORT SavePackage
                                               bool end_of_data);
 
   // Look up SaveItem by save item id from in progress map.
-  SaveItem* LookupSaveItemInProcess(SaveItemId save_item_id);
+  SaveItem* LookupInProgressSaveItem(SaveItemId save_item_id);
 
   // Remove SaveItem from in progress map and put it to saved map.
   void PutInProgressItemToSavedMap(SaveItem* save_item);
 
   // Retrieves the URL to be saved from the WebContents.
-  GURL GetUrlToBeSaved();
+  static GURL GetUrlToBeSaved(WebContents* web_contents);
 
-  void CreateDirectoryOnFileThread(const base::FilePath& website_save_dir,
-                                   const base::FilePath& download_save_dir,
-                                   bool skip_dir_check,
-                                   const std::string& mime_type,
-                                   const std::string& accept_langs);
-  void ContinueGetSaveInfo(const base::FilePath& suggested_path,
-                           bool can_save_as_complete);
+  static base::FilePath CreateDirectoryOnFileThread(
+      const base::FilePath& website_save_dir,
+      const base::FilePath& download_save_dir,
+      const base::FilePath& suggested_filename,
+      bool skip_dir_check);
+  void ContinueGetSaveInfo(bool can_save_as_complete,
+                           const base::FilePath& suggested_path);
   void OnPathPicked(
       const base::FilePath& final_name,
       SavePageType type,
       const SavePackageDownloadCreatedCallback& cb);
-
-  // Map from SaveItem::id() (aka save_item_id) into a SaveItem.
-  using SaveItemIdMap =
-      std::unordered_map<SaveItemId, SaveItem*, SaveItemId::Hasher>;
-  // in_progress_items_ is map of all saving job in in-progress state.
-  SaveItemIdMap in_progress_items_;
-  // saved_failed_items_ is map of all saving job which are failed.
-  SaveItemIdMap saved_failed_items_;
 
   // The number of in process SaveItems.
   int in_process_count() const {
@@ -305,8 +337,7 @@ class CONTENT_EXPORT SavePackage
   // suggested name is determined by the web document's title.
   base::FilePath GetSuggestedNameForSaveAs(
       bool can_save_as_complete,
-      const std::string& contents_mime_type,
-      const std::string& accept_langs);
+      const std::string& contents_mime_type);
 
   // Ensures that the file name has a proper extension for HTML by adding ".htm"
   // if necessary.
@@ -322,9 +353,14 @@ class CONTENT_EXPORT SavePackage
   static const base::FilePath::CharType* ExtensionForMimeType(
       const std::string& contents_mime_type);
 
-  using SaveItemQueue = std::deque<SaveItem*>;
   // A queue for items we are about to start saving.
   SaveItemQueue waiting_item_queue_;
+
+  // Map of all saving job in in-progress state.
+  SaveItemIdMap in_progress_items_;
+
+  // Map of all saving job which are failed.
+  SaveItemIdMap saved_failed_items_;
 
   // Used to de-dupe urls that are being gathered into |waiting_item_queue_|
   // and also to find SaveItems to associate with a containing frame.
@@ -347,18 +383,17 @@ class CONTENT_EXPORT SavePackage
       frame_tree_node_id_to_contained_save_items_;
 
   // Number of frames that we still need to get a response from.
-  int number_of_frames_pending_response_;
+  int number_of_frames_pending_response_ = 0;
 
-  // saved_success_items_ is map of all saving job which are successfully saved.
-  std::unordered_map<SaveItemId, SaveItem*, SaveItemId::Hasher>
-      saved_success_items_;
+  // Map of all saving job which are successfully saved.
+  SaveItemIdMap saved_success_items_;
 
-  // Non-owning pointer for handling file writing on the file thread.
-  SaveFileManager* file_manager_;
+  // Non-owning pointer for handling file writing on the FILE thread.
+  SaveFileManager* file_manager_ = nullptr;
 
   // DownloadManager owns the DownloadItem and handles history and UI.
-  DownloadManagerImpl* download_manager_;
-  DownloadItemImpl* download_;
+  DownloadManagerImpl* download_manager_ = nullptr;
+  DownloadItemImpl* download_ = nullptr;
 
   // The URL of the page the user wants to save.
   GURL page_url_;
@@ -369,53 +404,40 @@ class CONTENT_EXPORT SavePackage
   base::string16 title_;
 
   // Used to calculate package download speed (in files per second).
-  base::TimeTicks start_tick_;
+  const base::TimeTicks start_tick_;
 
   // Indicates whether the actual saving job is finishing or not.
-  bool finished_;
-
-  // Indicates whether a call to Finish() has been scheduled.
-  bool mhtml_finishing_;
+  bool finished_ = false;
 
   // Indicates whether user canceled the saving job.
-  bool user_canceled_;
+  bool user_canceled_ = false;
 
   // Indicates whether user get disk error.
-  bool disk_error_occurred_;
+  bool disk_error_occurred_ = false;
+
+  // Variables to record errors that happened so we can record them via
+  // UMA statistics.
+  bool wrote_to_completed_file_ = false;
+  bool wrote_to_failed_file_ = false;
 
   // Type about saving page as only-html or complete-html.
-  SavePageType save_type_;
+  SavePageType save_type_ = SAVE_PAGE_TYPE_UNKNOWN;
 
   // Number of all need to be saved resources.
-  size_t all_save_items_count_;
+  size_t all_save_items_count_ = 0;
 
-  using FileNameSet =
-      std::set<base::FilePath::StringType,
-               bool (*)(base::FilePath::StringPieceType,
-                        base::FilePath::StringPieceType)>;
   // This set is used to eliminate duplicated file names in saving directory.
   FileNameSet file_name_set_;
 
-  using FileNameCountMap =
-      std::unordered_map<base::FilePath::StringType, uint32_t>;
   // This map is used to track serial number for specified filename.
   FileNameCountMap file_name_count_map_;
 
   // Indicates current waiting state when SavePackage try to get something
   // from outside.
-  WaitState wait_state_;
+  WaitState wait_state_ = INITIALIZE;
 
   // Unique ID for this SavePackage.
   const SavePackageId unique_id_;
-
-  // Variables to record errors that happened so we can record them via
-  // UMA statistics.
-  bool wrote_to_completed_file_;
-  bool wrote_to_failed_file_;
-
-  friend class SavePackageTest;
-  FRIEND_TEST_ALL_PREFIXES(SavePackageTest, TestSuggestedSaveNames);
-  FRIEND_TEST_ALL_PREFIXES(SavePackageTest, TestLongSafePureFilename);
 
   DISALLOW_COPY_AND_ASSIGN(SavePackage);
 };

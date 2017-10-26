@@ -6,20 +6,12 @@
 cr.define('settings_dropdown_menu', function() {
   function registerTests() {
     suite('SettingsDropdownMenu', function() {
-      // Import settings_dropdown_menu.html before running suite.
-      suiteSetup(function() {
-        return Promise.all([
-          PolymerTest.importHtml('chrome://md-settings/i18n_setup.html'),
-          PolymerTest.importHtml(
-              'chrome://md-settings/controls/settings_dropdown_menu.html'),
-        ]);
-      });
-
       /** @type {SettingsDropdownMenu} */
       var dropdown;
 
       /**
-       * The IronSelectable (paper-menu) used internally by the dropdown menu.
+       * The IronSelectable (paper-listbox) used internally by the dropdown
+       * menu.
        * @type {Polymer.IronSelectableBehavior}
        */
       var selectable;
@@ -27,7 +19,7 @@ cr.define('settings_dropdown_menu', function() {
       setup(function() {
         PolymerTest.clearBody();
         dropdown = document.createElement('settings-dropdown-menu');
-        selectable = dropdown.$$('paper-menu');
+        selectable = dropdown.$$('paper-listbox');
         document.body.appendChild(dropdown);
       });
 

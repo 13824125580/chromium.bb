@@ -84,10 +84,10 @@ public:
     bool opened();
     bool isNew() const { return m_new; }
 
-    SecurityOrigin* securityOrigin() const;
+    SecurityOrigin* getSecurityOrigin() const;
     String stringIdentifier() const;
     String displayName() const;
-    unsigned long estimatedSize() const;
+    unsigned estimatedSize() const;
     String fileName() const;
     SQLiteDatabase& sqliteDatabase() { return m_sqliteDatabase; }
 
@@ -108,8 +108,8 @@ public:
     void closeImmediately();
     void closeDatabase();
 
-    DatabaseContext* databaseContext() const { return m_databaseContext.get(); }
-    ExecutionContext* executionContext() const;
+    DatabaseContext* getDatabaseContext() const { return m_databaseContext.get(); }
+    ExecutionContext* getExecutionContext() const;
 
 private:
     class DatabaseOpenTask;
@@ -117,7 +117,7 @@ private:
     class DatabaseTransactionTask;
     class DatabaseTableNamesTask;
 
-    Database(DatabaseContext*, const String& name, const String& expectedVersion, const String& displayName, unsigned long estimatedSize);
+    Database(DatabaseContext*, const String& name, const String& expectedVersion, const String& displayName, unsigned estimatedSize);
     bool performOpenAndVerify(bool setVersionInNewDatabase, DatabaseError&, String& errorMessage);
 
     void scheduleTransaction();
@@ -146,9 +146,7 @@ private:
     void reportVacuumDatabaseResult(int sqliteErrorCode);
     void logErrorMessage(const String&);
     static const char* databaseInfoTableName();
-#if !LOG_DISABLED || !ERROR_DISABLED
     String databaseDebugName() const { return m_contextThreadSecurityOrigin->toString() + "::" + m_name; }
-#endif
 
     RefPtr<SecurityOrigin> m_contextThreadSecurityOrigin;
     RefPtr<SecurityOrigin> m_databaseThreadSecurityOrigin;
@@ -168,7 +166,7 @@ private:
 
     Member<DatabaseAuthorizer> m_databaseAuthorizer;
 
-    HeapDeque<Member<SQLTransactionBackend>> m_transactionQueue;
+    Deque<CrossThreadPersistent<SQLTransactionBackend>> m_transactionQueue;
     Mutex m_transactionInProgressMutex;
     bool m_transactionInProgress;
     bool m_isTransactionQueueEnabled;

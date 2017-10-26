@@ -1,5 +1,15 @@
 {
-  "url": "mojo://font_service/",
-  "name": "Font Service",
-  "capabilities": { "*": [ "*" ] }
+  "manifest_version": 1,
+  "name": "mojo:font_service",
+  "display_name": "Font Service",
+  "capabilities": {
+    "provided": {
+      "app": [
+        "font_service::mojom::FontService"
+      ]
+    },
+    "required": {
+      "*": { "classes": [ "app" ] }
+    }
+  }
 }

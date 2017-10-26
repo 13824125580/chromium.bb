@@ -4,6 +4,7 @@
 
 import("//build_overrides/v8.gni")
 import("//testing/test.gni")
+import("//blpwtk2/blpwtk2.gni")
 
 component("gin") {
   sources = [
@@ -21,6 +22,7 @@ component("gin") {
     "function_template.cc",
     "function_template.h",
     "gin_export.h",
+    "gin_features.cc",
     "handle.h",
     "interceptor.cc",
     "interceptor.h",
@@ -45,6 +47,7 @@ component("gin") {
     "public/context_holder.h",
     "public/debug.h",
     "public/gin_embedders.h",
+    "public/gin_features.h",
     "public/isolate_holder.h",
     "public/v8_idle_task_runner.h",
     "public/v8_platform.h",
@@ -68,10 +71,17 @@ component("gin") {
   ]
 
   if (v8_use_external_startup_data) {
+    if (bb_version != "") {
+      data = [
+        "$root_out_dir/natives_blob.$bb_version.bin",
+        "$root_out_dir/snapshot_blob.$bb_version.bin",
+      ]
+    } else {
     data = [
       "$root_out_dir/natives_blob.bin",
       "$root_out_dir/snapshot_blob.bin",
     ]
+  }
   }
 
   defines = [ "GIN_IMPLEMENTATION" ]
@@ -79,6 +89,7 @@ component("gin") {
   public_deps = [
     "//base",
     "//v8",
+    "//blpwtk2:blpwtk2_generate_sources",
   ]
   deps = [
     "//base/third_party/dynamic_annotations",
@@ -90,15 +101,27 @@ component("gin") {
     defines += [ "V8_VERIFY_EXTERNAL_STARTUP_DATA" ]
   }
 
+  if (is_mac) {
+    libs = [ "CoreFoundation.framework" ]
+  }
+
   configs += [ "//v8:external_startup_data" ]
+  public_configs = [
+    "//blpwtk2:blpwtk2_public"
+  ]
 }
 
 if (v8_use_external_startup_data) {
   action("gin_v8_snapshot_fingerprint") {
     script = "//gin/fingerprint/fingerprint_v8_snapshot.py"
 
+    if (bb_version != "") {
+      snapshot_file = "$root_out_dir/snapshot_blob.$bb_version.bin"
+      natives_file = "$root_out_dir/natives_blob.$bb_version.bin"
+    } else {
     snapshot_file = "$root_out_dir/snapshot_blob.bin"
     natives_file = "$root_out_dir/natives_blob.bin"
+    }
     output_file = "$target_gen_dir/v8_snapshot_fingerprint.cc"
 
     args = [
@@ -133,6 +156,7 @@ executable("gin_shell") {
     "//base",
     "//base:i18n",
     "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
     "//v8",
   ]
 
@@ -152,6 +176,9 @@ source_set("gin_test") {
     "test/gtest.h",
     "test/v8_test.cc",
     "test/v8_test.h",
+  ]
+  data = [
+    "test/expect.js",
   ]
 
   public_deps = [
@@ -192,7 +219,6 @@ test("gin_unittests") {
   data = [
     "modules/module_registry_unittests.js",
     "shell/hello_world.js",
-    "test/expect.js",
     "test/file_unittests.js",
     "test/gtest_unittests.js",
     "../OWNERS",

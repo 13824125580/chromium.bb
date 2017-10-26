@@ -11,6 +11,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/common/media/media_stream_messages.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/renderer/media/media_stream_constraints_util.h"
 #include "content/renderer/media/video_capture_impl_manager.h"
@@ -96,14 +97,11 @@ void SetContentCaptureParamsFromConstraints(
   int width = 0;
   int height = 0;
   gfx::Size desired_max_frame_size;
-  if (GetConstraintValueAsInteger(constraints,
-                                  MediaStreamVideoSource::kMaxWidth,
-                                  &width) &&
-      GetConstraintValueAsInteger(constraints,
-                                  MediaStreamVideoSource::kMaxHeight,
-                                  &height) &&
-      DimensionValueIsValid(width) &&
-      DimensionValueIsValid(height)) {
+  if (GetConstraintMaxAsInteger(
+          constraints, &blink::WebMediaTrackConstraintSet::width, &width) &&
+      GetConstraintMaxAsInteger(
+          constraints, &blink::WebMediaTrackConstraintSet::height, &height) &&
+      DimensionValueIsValid(width) && DimensionValueIsValid(height)) {
     desired_max_frame_size.SetSize(width, height);
     if (params->requested_format.frame_size.IsEmpty() ||
         desired_max_frame_size.width() <
@@ -124,9 +122,9 @@ void SetContentCaptureParamsFromConstraints(
   // If the maximum frame rate was provided, use it if either: 1) none has been
   // set yet; or 2) the maximum specificed is smaller than the current setting.
   double frame_rate = 0.0;
-  if (GetConstraintValueAsDouble(constraints,
-                                 MediaStreamVideoSource::kMaxFrameRate,
-                                 &frame_rate) &&
+  if (GetConstraintMaxAsDouble(constraints,
+                               &blink::WebMediaTrackConstraintSet::frameRate,
+                               &frame_rate) &&
       FrameRateValueIsValid(frame_rate)) {
     if (params->requested_format.frame_rate <= 0.0f ||
         frame_rate < params->requested_format.frame_rate) {
@@ -143,12 +141,10 @@ void SetContentCaptureParamsFromConstraints(
   // If the minimum frame resolution was provided, compare it to the maximum
   // frame resolution to determine the intended resolution change policy.
   if (!desired_max_frame_size.IsEmpty() &&
-      GetConstraintValueAsInteger(constraints,
-                                  MediaStreamVideoSource::kMinWidth,
-                                  &width) &&
-      GetConstraintValueAsInteger(constraints,
-                                  MediaStreamVideoSource::kMinHeight,
-                                  &height) &&
+      GetConstraintMinAsInteger(
+          constraints, &blink::WebMediaTrackConstraintSet::width, &width) &&
+      GetConstraintMinAsInteger(
+          constraints, &blink::WebMediaTrackConstraintSet::height, &height) &&
       width <= desired_max_frame_size.width() &&
       height <= desired_max_frame_size.height()) {
     if (width == desired_max_frame_size.width() &&
@@ -186,8 +182,9 @@ void SetPowerLineFrequencyParamFromConstraints(
     media::VideoCaptureParams* params) {
   int freq;
   params->power_line_frequency = media::PowerLineFrequency::FREQUENCY_DEFAULT;
-  if (!GetOptionalConstraintValueAsInteger(constraints, kPowerLineFrequency,
-                                           &freq)) {
+  if (!GetConstraintValueAsInteger(
+          constraints,
+          &blink::WebMediaTrackConstraintSet::googPowerLineFrequency, &freq)) {
     return;
   }
   if (freq == static_cast<int>(media::PowerLineFrequency::FREQUENCY_50HZ))
@@ -214,6 +211,7 @@ class LocalVideoCapturerSource final : public media::VideoCapturerSource {
   void StartCapture(const media::VideoCaptureParams& params,
                     const VideoCaptureDeliverFrameCB& new_frame_callback,
                     const RunningCallback& running_callback) override;
+  void RequestRefreshFrame() override;
   void StopCapture() override;
 
  private:
@@ -313,6 +311,14 @@ void LocalVideoCapturerSource::StartCapture(
       new_frame_callback);
 }
 
+void LocalVideoCapturerSource::RequestRefreshFrame() {
+  DVLOG(3) << __FUNCTION__;
+  DCHECK(thread_checker_.CalledOnValidThread());
+  if (stop_capture_cb_.is_null())
+    return;  // Do not request frames if the source is stopped.
+  manager_->RequestRefreshFrame(session_id_);
+}
+
 void LocalVideoCapturerSource::StopCapture() {
   DVLOG(3) << __FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -386,20 +392,31 @@ void LocalVideoCapturerSource::OnDeviceSupportedFormatsEnumerated(
 
 MediaStreamVideoCapturerSource::MediaStreamVideoCapturerSource(
     const SourceStoppedCallback& stop_callback,
-    scoped_ptr<media::VideoCapturerSource> source)
-    : source_(std::move(source)) {
+    std::unique_ptr<media::VideoCapturerSource> source)
+    : RenderFrameObserver(nullptr), source_(std::move(source)) {
   SetStopCallback(stop_callback);
 }
 
 MediaStreamVideoCapturerSource::MediaStreamVideoCapturerSource(
     const SourceStoppedCallback& stop_callback,
-    const StreamDeviceInfo& device_info)
-    : source_(new LocalVideoCapturerSource(device_info)) {
+    const StreamDeviceInfo& device_info,
+    RenderFrame* render_frame)
+    : RenderFrameObserver(render_frame),
+      source_(new LocalVideoCapturerSource(device_info)) {
   SetStopCallback(stop_callback);
   SetDeviceInfo(device_info);
 }
 
 MediaStreamVideoCapturerSource::~MediaStreamVideoCapturerSource() {
+}
+
+void MediaStreamVideoCapturerSource::RequestRefreshFrame() {
+  source_->RequestRefreshFrame();
+}
+
+void MediaStreamVideoCapturerSource::SetCapturingLinkSecured(bool is_secure) {
+  Send(new MediaStreamHostMsg_SetCapturingLinkSecured(
+      device_info().session_id, device_info().device.type, is_secure));
 }
 
 void MediaStreamVideoCapturerSource::GetCurrentSupportedFormats(

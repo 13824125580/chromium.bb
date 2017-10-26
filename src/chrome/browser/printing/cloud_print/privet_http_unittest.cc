@@ -4,11 +4,16 @@
 
 #include "chrome/browser/printing/cloud_print/privet_http.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/printing/cloud_print/privet_http_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -230,7 +235,7 @@ const char* const kTestParams[] = {"8.8.4.4", "2001:4860:4860::8888"};
 // string.
 std::string NormalizeJson(const std::string& json) {
   std::string result = json;
-  scoped_ptr<base::Value> value = base::JSONReader::Read(result);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(result);
   DCHECK(value) << result;
   base::JSONWriter::Write(*value, &result);
   return result;
@@ -258,7 +263,7 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
     request_context_ = new net::TestURLRequestContextGetter(
         base::ThreadTaskRunnerHandle::Get());
     privet_client_ = PrivetV1HTTPClient::CreateDefault(
-        make_scoped_ptr<PrivetHTTPClient>(new PrivetHTTPClientImpl(
+        base::WrapUnique<PrivetHTTPClient>(new PrivetHTTPClientImpl(
             "sampleDevice._privet._tcp.local",
             net::HostPortPair(GetParam(), 6006), request_context_.get())));
     fetcher_factory_.SetDelegateForTests(&fetcher_delegate_);
@@ -344,7 +349,7 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, callback.callback(), time_period);
 
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     callback.Cancel();
   }
 
@@ -354,7 +359,7 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
   base::MessageLoop loop_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   net::TestURLFetcherFactory fetcher_factory_;
-  scoped_ptr<PrivetV1HTTPClient> privet_client_;
+  std::unique_ptr<PrivetV1HTTPClient> privet_client_;
   NiceMock<MockTestURLFetcherFactoryDelegate> fetcher_delegate_;
 };
 
@@ -378,7 +383,7 @@ class MockJSONCallback{
                       base::Unretained(this));
   }
  protected:
-  scoped_ptr<base::DictionaryValue> value_;
+  std::unique_ptr<base::DictionaryValue> value_;
 };
 
 class MockRegisterDelegate : public PrivetRegisterOperation::Delegate {
@@ -444,7 +449,7 @@ class PrivetInfoTest : public PrivetHTTPTest {
   }
 
  protected:
-  scoped_ptr<PrivetJSONOperation> info_operation_;
+  std::unique_ptr<PrivetJSONOperation> info_operation_;
   StrictMock<MockJSONCallback> info_callback_;
 };
 
@@ -506,9 +511,9 @@ class PrivetRegisterTest : public PrivetHTTPTest {
     return true;
   }
 
-  scoped_ptr<PrivetJSONOperation> info_operation_;
+  std::unique_ptr<PrivetJSONOperation> info_operation_;
   NiceMock<MockJSONCallback> info_callback_;
-  scoped_ptr<PrivetRegisterOperation> register_operation_;
+  std::unique_ptr<PrivetRegisterOperation> register_operation_;
   StrictMock<MockRegisterDelegate> register_delegate_;
 };
 
@@ -664,7 +669,7 @@ class PrivetCapabilitiesTest : public PrivetHTTPTest {
   }
 
  protected:
-  scoped_ptr<PrivetJSONOperation> capabilities_operation_;
+  std::unique_ptr<PrivetJSONOperation> capabilities_operation_;
   StrictMock<MockJSONCallback> capabilities_callback_;
 };
 
@@ -760,7 +765,7 @@ class PrivetLocalPrintTest : public PrivetHTTPTest {
     local_print_operation_ = privet_client_->CreateLocalPrintOperation(
         &local_print_delegate_);
 
-    scoped_ptr<FakePWGRasterConverter> pwg_converter(
+    std::unique_ptr<FakePWGRasterConverter> pwg_converter(
         new FakePWGRasterConverter);
     pwg_converter_ = pwg_converter.get();
     local_print_operation_->SetPWGRasterConverterForTesting(
@@ -771,12 +776,11 @@ class PrivetLocalPrintTest : public PrivetHTTPTest {
       std::string str) {
     std::vector<unsigned char> str_vec;
     str_vec.insert(str_vec.begin(), str.begin(), str.end());
-    return scoped_refptr<base::RefCountedBytes>(
-        base::RefCountedBytes::TakeVector(&str_vec));
+    return base::RefCountedBytes::TakeVector(&str_vec);
   }
 
  protected:
-  scoped_ptr<PrivetLocalPrintOperation> local_print_operation_;
+  std::unique_ptr<PrivetLocalPrintOperation> local_print_operation_;
   StrictMock<MockLocalPrintDelegate> local_print_delegate_;
   FakePWGRasterConverter* pwg_converter_;
 };
@@ -1061,14 +1065,14 @@ class PrivetHttpWithServerTest : public ::testing::Test,
     success_ = false;
     error_ = error;
 
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_);
   }
 
   void OnParsedJson(PrivetURLFetcher* fetcher,
                     const base::DictionaryValue& value,
                     bool has_error) override {
     NOTREACHED();
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_);
   }
 
   bool OnRawData(PrivetURLFetcher* fetcher,
@@ -1078,7 +1082,7 @@ class PrivetHttpWithServerTest : public ::testing::Test,
     done_ = true;
     success_ = true;
 
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_);
     return true;
   }
 
@@ -1089,7 +1093,7 @@ class PrivetHttpWithServerTest : public ::testing::Test,
     base::RunLoop run_loop;
     quit_ = run_loop.QuitClosure();
 
-    scoped_ptr<PrivetURLFetcher> fetcher = client_->CreateURLFetcher(
+    std::unique_ptr<PrivetURLFetcher> fetcher = client_->CreateURLFetcher(
         server_->GetURL("/simple.html"), net::URLFetcher::GET, this);
 
     fetcher->SetMaxRetries(1);
@@ -1106,8 +1110,8 @@ class PrivetHttpWithServerTest : public ::testing::Test,
   PrivetURLFetcher::ErrorType error_ = PrivetURLFetcher::ErrorType();
   content::TestBrowserThreadBundle thread_bundle_;
   scoped_refptr<net::TestURLRequestContextGetter> context_getter_;
-  scoped_ptr<EmbeddedTestServer> server_;
-  scoped_ptr<PrivetHTTPClientImpl> client_;
+  std::unique_ptr<EmbeddedTestServer> server_;
+  std::unique_ptr<PrivetHTTPClientImpl> client_;
 
   base::Closure quit_;
 };

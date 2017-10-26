@@ -17,6 +17,8 @@
 
 const char kSupervisedUserAccessRequestKeyPrefix[] =
     "X-ManagedUser-AccessRequests";
+const char kSupervisedUserInstallRequestKeyPrefix[] =
+    "X-ManagedUser-InstallRequests";
 const char kSupervisedUserUpdateRequestKeyPrefix[] =
     "X-ManagedUser-UpdateRequests";
 const char kSupervisedUserAccessRequestTime[] = "timestamp";
@@ -58,6 +60,12 @@ void PermissionRequestCreatorSync::CreateURLAccessRequest(
                 callback);
 }
 
+void PermissionRequestCreatorSync::CreateExtensionInstallRequest(
+    const std::string& id,
+    const SuccessCallback& callback) {
+  CreateRequest(kSupervisedUserInstallRequestKeyPrefix, id, callback);
+}
+
 void PermissionRequestCreatorSync::CreateExtensionUpdateRequest(
     const std::string& id,
     const SuccessCallback& callback) {
@@ -72,7 +80,7 @@ void PermissionRequestCreatorSync::CreateRequest(
   std::string key =
       SupervisedUserSettingsService::MakeSplitSettingKey(prefix, data);
 
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   // TODO(sergiu): Use sane time here when it's ready.
   dict->SetDouble(kSupervisedUserAccessRequestTime,
                   base::Time::Now().ToJsTime());

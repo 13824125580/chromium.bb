@@ -25,13 +25,16 @@ group("chromevox") {
     "//chrome/browser/resources/chromeos/braille_ime:braille_ime_manifest",
     "//chrome/browser/resources/chromeos/chromevox/strings:chromevox_strings",
     "//chrome/third_party/chromevox:chromevox_third_party_resources",
-    "//third_party/liblouis",
   ]
+  if (enable_nacl) {
+    deps += [ "//third_party/liblouis" ]
+  }
   if (chromevox_compress_js) {
     deps += [
       ":chromevox_background_script",
       ":chromevox_content_script",
       ":chromevox_kbexplorer_script",
+      ":chromevox_min_content_script",
       ":chromevox_options_script",
       ":chromevox_panel_script",
     ]
@@ -160,6 +163,7 @@ run_jsbundler("chromevox_copied_files") {
       chromevox_vars_gypi_values.chromevox_kbexplorer_loader_file,
       chromevox_vars_gypi_values.chromevox_options_script_loader_file,
       chromevox_vars_gypi_values.chromevox_background_script_loader_file,
+      chromevox_vars_gypi_values.chromevox_min_content_script_loader_file,
       chromevox_vars_gypi_values.chromevox_panel_script_loader_file,
     ]
   }
@@ -286,6 +290,13 @@ if (chromevox_compress_js) {
     output_file = "$chromevox_out_dir/chromeVox2ChromeBackgroundScript.js"
   }
 
+  compress_js("chromevox_min_content_script") {
+    sources = [
+      chromevox_vars_gypi_values.chromevox_min_content_script_loader_file,
+    ]
+    output_file = "$chromevox_out_dir/chromeVox2ChromePageScript.js"
+  }
+
   compress_js("chromevox_panel_script") {
     sources = [
       chromevox_vars_gypi_values.chromevox_panel_script_loader_file,
@@ -331,10 +342,6 @@ test("chromevox_tests") {
     "//testing/gmock",
     "//testing/gtest",
   ]
-  if (cld_version == 0 || cld_version == 2) {
-    # Because the browser_tests use translate, they need CLD data.
-    deps += [ "//third_party/cld_2:cld2_platform_impl" ]
-  }
 }
 
 action("chromevox_test_messages_js") {

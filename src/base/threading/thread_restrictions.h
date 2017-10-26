@@ -37,14 +37,14 @@ namespace content {
 class BrowserGpuChannelHostFactory;
 class BrowserGpuMemoryBufferManager;
 class BrowserShutdownProfileDumper;
+class BrowserSurfaceViewManager;
 class BrowserTestBase;
-class GpuChannelHost;
 class NestedMessagePumpAndroid;
 class ScopedAllowWaitForAndroidLayoutTests;
 class ScopedAllowWaitForDebugURL;
 class SoftwareOutputDeviceMus;
 class TextInputClientMac;
-class RasterWorkerPool;
+class CategorizedWorkerPool;
 }  // namespace content
 namespace dbus {
 class Bus;
@@ -53,15 +53,17 @@ namespace disk_cache {
 class BackendImpl;
 class InFlightIO;
 }
-namespace gles2 {
-class CommandBufferClientImpl;
+namespace gpu {
+class GpuChannelHost;
 }
 namespace mojo {
 namespace common {
 class MessagePumpMojo;
 }
+class SyncCallRestrictions;
 }
 namespace mus {
+class CommandBufferClientImpl;
 class CommandBufferLocal;
 class GpuState;
 }
@@ -195,6 +197,7 @@ class BASE_EXPORT ThreadRestrictions {
   // DO NOT ADD ANY OTHER FRIEND STATEMENTS, talk to jam or brettw first.
   // BEGIN ALLOWED USAGE.
   friend class content::BrowserShutdownProfileDumper;
+  friend class content::BrowserSurfaceViewManager;
   friend class content::BrowserTestBase;
   friend class content::NestedMessagePumpAndroid;
   friend class content::ScopedAllowWaitForAndroidLayoutTests;
@@ -203,7 +206,7 @@ class BASE_EXPORT ThreadRestrictions {
   friend class ::ScopedAllowWaitForLegacyWebViewApi;
   friend class cc::CompletionEvent;
   friend class cc::SingleThreadTaskGraphRunner;
-  friend class content::RasterWorkerPool;
+  friend class content::CategorizedWorkerPool;
   friend class remoting::AutoThread;
   friend class ui::WindowResizeHelperMac;
   friend class MessagePumpDefault;
@@ -213,8 +216,9 @@ class BASE_EXPORT ThreadRestrictions {
   friend class ThreadTestHelper;
   friend class PlatformThread;
   friend class android::JavaHandlerThread;
-  friend class gles2::CommandBufferClientImpl;
   friend class mojo::common::MessagePumpMojo;
+  friend class mojo::SyncCallRestrictions;
+  friend class mus::CommandBufferClientImpl;
   friend class mus::CommandBufferLocal;
   friend class mus::GpuState;
 
@@ -227,11 +231,11 @@ class BASE_EXPORT ThreadRestrictions {
       content::BrowserGpuChannelHostFactory;      // http://crbug.com/125248
   friend class
       content::BrowserGpuMemoryBufferManager;     // http://crbug.com/420368
-  friend class content::GpuChannelHost;           // http://crbug.com/125264
   friend class content::TextInputClientMac;       // http://crbug.com/121917
   friend class dbus::Bus;                         // http://crbug.com/125222
   friend class disk_cache::BackendImpl;           // http://crbug.com/74623
   friend class disk_cache::InFlightIO;            // http://crbug.com/74623
+  friend class gpu::GpuChannelHost;               // http://crbug.com/125264
   friend class net::internal::AddressTrackerLinux;  // http://crbug.com/125097
   friend class net::NetworkChangeNotifierMac;     // http://crbug.com/125097
   friend class ::BrowserProcessImpl;              // http://crbug.com/125207

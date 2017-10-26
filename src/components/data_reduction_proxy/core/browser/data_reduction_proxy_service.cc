@@ -14,9 +14,11 @@
 #include "base/task_runner_util.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_pingback_client.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service_observer.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "components/data_reduction_proxy/core/browser/data_store.h"
+#include "components/data_reduction_proxy/core/browser/data_use_group.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_store.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
@@ -29,12 +31,14 @@ DataReductionProxyService::DataReductionProxyService(
     DataReductionProxySettings* settings,
     PrefService* prefs,
     net::URLRequestContextGetter* request_context_getter,
-    scoped_ptr<DataStore> store,
+    std::unique_ptr<DataStore> store,
     const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
     const base::TimeDelta& commit_delay)
     : url_request_context_getter_(request_context_getter),
+      pingback_client_(
+          new DataReductionProxyPingbackClient(request_context_getter)),
       settings_(settings),
       prefs_(prefs),
       db_data_owner_(new DBDataOwner(std::move(store))),
@@ -103,36 +107,37 @@ void DataReductionProxyService::UpdateContentLengths(
     int64_t original_size,
     bool data_reduction_proxy_enabled,
     DataReductionProxyRequestType request_type,
-    const std::string& data_usage_host,
+    scoped_refptr<DataUseGroup> data_use_group,
     const std::string& mime_type) {
   DCHECK(CalledOnValidThread());
   if (compression_stats_) {
     compression_stats_->UpdateContentLengths(
         data_used, original_size, data_reduction_proxy_enabled, request_type,
-        data_usage_host, mime_type);
+        data_use_group, mime_type);
   }
 }
 
-void DataReductionProxyService::AddEvent(scoped_ptr<base::Value> event) {
+void DataReductionProxyService::AddEvent(std::unique_ptr<base::Value> event) {
   DCHECK(CalledOnValidThread());
   event_store_->AddEvent(std::move(event));
 }
 
-void DataReductionProxyService::AddEnabledEvent(scoped_ptr<base::Value> event,
-                                                bool enabled) {
+void DataReductionProxyService::AddEnabledEvent(
+    std::unique_ptr<base::Value> event,
+    bool enabled) {
   DCHECK(CalledOnValidThread());
   event_store_->AddEnabledEvent(std::move(event), enabled);
 }
 
 void DataReductionProxyService::AddEventAndSecureProxyCheckState(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     SecureProxyCheckState state) {
   DCHECK(CalledOnValidThread());
   event_store_->AddEventAndSecureProxyCheckState(std::move(event), state);
 }
 
 void DataReductionProxyService::AddAndSetLastBypassEvent(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     int64_t expiration_ticks) {
   DCHECK(CalledOnValidThread());
   event_store_->AddAndSetLastBypassEvent(std::move(event), expiration_ticks);
@@ -258,9 +263,15 @@ void DataReductionProxyService::SetProxyPrefs(bool enabled, bool at_startup) {
                             enabled, at_startup));
 }
 
+void DataReductionProxyService::SetPingbackReportingFraction(
+    float pingback_reporting_fraction) {
+  DCHECK(CalledOnValidThread());
+  pingback_client_->SetPingbackReportingFraction(pingback_reporting_fraction);
+}
+
 void DataReductionProxyService::LoadHistoricalDataUsage(
     const HistoricalDataUsageCallback& load_data_usage_callback) {
-  scoped_ptr<std::vector<DataUsageBucket>> data_usage(
+  std::unique_ptr<std::vector<DataUsageBucket>> data_usage(
       new std::vector<DataUsageBucket>());
   std::vector<DataUsageBucket>* data_usage_ptr = data_usage.get();
   db_task_runner_->PostTaskAndReply(
@@ -272,7 +283,7 @@ void DataReductionProxyService::LoadHistoricalDataUsage(
 
 void DataReductionProxyService::LoadCurrentDataUsageBucket(
     const LoadCurrentDataUsageCallback& load_current_data_usage_callback) {
-  scoped_ptr<DataUsageBucket> bucket(new DataUsageBucket());
+  std::unique_ptr<DataUsageBucket> bucket(new DataUsageBucket());
   DataUsageBucket* bucket_ptr = bucket.get();
   db_task_runner_->PostTaskAndReply(
       FROM_HERE,
@@ -282,7 +293,7 @@ void DataReductionProxyService::LoadCurrentDataUsageBucket(
 }
 
 void DataReductionProxyService::StoreCurrentDataUsageBucket(
-    scoped_ptr<DataUsageBucket> current) {
+    std::unique_ptr<DataUsageBucket> current) {
   db_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&DBDataOwner::StoreCurrentDataUsageBucket,

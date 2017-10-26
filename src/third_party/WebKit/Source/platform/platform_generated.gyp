@@ -53,9 +53,9 @@
       'type': 'none',
       'hard_dependency': 1,
       'dependencies': [
-        'inspector_protocol/protocol.gyp:protocol_sources',
         'v8_inspector/v8_inspector.gyp:inspector_debugger_script',
         'v8_inspector/v8_inspector.gyp:inspector_injected_script',
+        'v8_inspector/v8_inspector.gyp:protocol_sources',
       ],
       'conditions': [
         ['generate_character_data==1', {
@@ -139,24 +139,25 @@
           ],
         },
         {
-          'action_name': 'CharacterData',
+          'action_name': 'CharacterPropertyData',
           'inputs': [
-            'fonts/CharacterDataGenerator.cpp',
+            'text/CharacterPropertyDataGenerator.cpp',
+            'text/CharacterPropertyDataGenerator.h'
           ],
           'outputs': [
-            '<(blink_platform_output_dir)/CharacterData.cpp',
+            '<(blink_platform_output_dir)/CharacterPropertyData.cpp',
           ],
           'conditions': [
             ['generate_character_data==1', {
               'action': [
                 '<(PRODUCT_DIR)/character_data_generator',
-                '<(blink_platform_output_dir)/CharacterData.cpp',
+                '<(blink_platform_output_dir)/CharacterPropertyData.cpp',
               ],
             }, {
               'action': [
                 'cp',
-                'fonts/CharacterData.cpp',
-                '<(blink_platform_output_dir)/CharacterData.cpp',
+                'text/CharacterPropertyData.cpp',
+                '<(blink_platform_output_dir)/CharacterPropertyData.cpp',
               ],
             }]
           ],
@@ -168,7 +169,7 @@
       'type': 'executable',
       'toolsets': ['host'],
       'sources': [
-        'fonts/CharacterDataGenerator.cpp',
+        'text/CharacterPropertyDataGenerator.cpp',
       ],
       'dependencies': [
         '<(DEPTH)/third_party/icu/icu.gyp:icuuc#host',

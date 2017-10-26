@@ -325,10 +325,8 @@ SkColor NativeThemeGtk2::GetSystemColor(ColorId color_id) const {
       // return GetTextColor(GetButton(), NORMAL);
     case kColorId_CallToActionColor:
       return GetSystemColor(kColorId_LinkEnabled);
-    // TODO(estade): set proper values for these.
-    case kColorId_MdTextButtonEnabledColor:
-    case kColorId_MdTextButtonDisabledColor:
-      return gfx::kPlaceholderColor;
+    case kColorId_TextOnCallToActionColor:
+      return GetTextColor(GetLabel(), SELECTED);
 
     // Textfield
     case kColorId_TextfieldDefaultColor:
@@ -402,14 +400,11 @@ SkColor NativeThemeGtk2::GetSystemColor(ColorId color_id) const {
       return GetSystemColor(kColorId_TextfieldSelectionColor);
     case kColorId_ResultsTableNormalDimmedText:
     case kColorId_ResultsTableHoveredDimmedText:
-    case kColorId_ResultsTableNormalHeadline:
-    case kColorId_ResultsTableHoveredHeadline:
       return color_utils::AlphaBlend(
           GetSystemColor(kColorId_TextfieldDefaultColor),
           GetSystemColor(kColorId_TextfieldDefaultBackground),
           0x80);
     case kColorId_ResultsTableSelectedDimmedText:
-    case kColorId_ResultsTableSelectedHeadline:
       return color_utils::AlphaBlend(
           GetSystemColor(kColorId_TextfieldSelectionColor),
           GetSystemColor(kColorId_TextfieldDefaultBackground),

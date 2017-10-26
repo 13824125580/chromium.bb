@@ -29,7 +29,6 @@
 #include <blpwtk2_rendererinfomap.h>
 #include <blpwtk2_toolkit.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <sandbox/win/src/sandbox_types.h>
 
 #include <string>
@@ -94,6 +93,7 @@ class ToolkitImpl : public Toolkit {
     String getHostChannelId() override;
     void setWebViewHostObserver(WebViewHostObserver* observer) override;
     void setDefaultPrinterName(const StringRef& printerName) override;
+    void setTraceThreshold(unsigned int timeoutMS) override;
 
   private:
     void createInProcessHost();
@@ -106,21 +106,21 @@ class ToolkitImpl : public Toolkit {
     RendererInfo d_inProcessRendererInfo;
     sandbox::SandboxInterfaceInfo d_sandboxInfo;
     ContentMainDelegateImpl d_mainDelegate;
-    scoped_ptr<content::ContentMainRunner> d_mainRunner;
+    std::unique_ptr<content::ContentMainRunner> d_mainRunner;
     std::string d_dictionaryPath;
     std::string d_hostChannel;
 
     // only used for the RENDERER_MAIN thread mode, if host channel is empty
-    scoped_ptr<BrowserThread> d_browserThread;
-    scoped_ptr<ProcessHostImpl> d_inProcessHost;
+    std::unique_ptr<BrowserThread> d_browserThread;
+    std::unique_ptr<ProcessHostImpl> d_inProcessHost;
 
     // only used for the RENDERER_MAIN thread mode
-    scoped_ptr<base::Thread> d_ioThread;  // only used when in-process renderer is disabled
-    scoped_ptr<ProcessClientImpl> d_processClient;
+    std::unique_ptr<base::Thread> d_ioThread;  // only used when in-process renderer is disabled
+    std::unique_ptr<ProcessClientImpl> d_processClient;
 
     // only used for the ORIGINAL thread mode
-    scoped_ptr<BrowserMainRunner> d_browserMainRunner;
-    scoped_ptr<ManagedRenderProcessHost> d_inProcessRendererHost;
+    std::unique_ptr<BrowserMainRunner> d_browserMainRunner;
+    std::unique_ptr<ManagedRenderProcessHost> d_inProcessRendererHost;
 };
 
 }  // close namespace blpwtk2

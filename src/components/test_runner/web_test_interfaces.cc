@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "components/test_runner/app_banner_client.h"
 #include "components/test_runner/mock_web_audio_device.h"
 #include "components/test_runner/mock_web_media_stream_center.h"
@@ -13,6 +14,10 @@
 #include "components/test_runner/mock_webrtc_peer_connection_handler.h"
 #include "components/test_runner/test_interfaces.h"
 #include "components/test_runner/test_runner.h"
+#include "components/test_runner/web_frame_test_client.h"
+#include "components/test_runner/web_test_proxy.h"
+#include "components/test_runner/web_view_test_client.h"
+#include "components/test_runner/web_widget_test_client.h"
 
 using namespace blink;
 
@@ -24,16 +29,12 @@ WebTestInterfaces::WebTestInterfaces() : interfaces_(new TestInterfaces()) {
 WebTestInterfaces::~WebTestInterfaces() {
 }
 
-void WebTestInterfaces::SetWebView(WebView* web_view, WebTestProxyBase* proxy) {
-  interfaces_->SetWebView(web_view, proxy);
+void WebTestInterfaces::SetMainView(WebView* web_view) {
+  interfaces_->SetMainView(web_view);
 }
 
 void WebTestInterfaces::SetDelegate(WebTestDelegate* delegate) {
   interfaces_->SetDelegate(delegate);
-}
-
-void WebTestInterfaces::BindTo(WebFrame* frame) {
-  interfaces_->BindTo(frame);
 }
 
 void WebTestInterfaces::ResetAll() {
@@ -63,7 +64,7 @@ TestInterfaces* WebTestInterfaces::GetTestInterfaces() {
 
 WebMediaStreamCenter* WebTestInterfaces::CreateMediaStreamCenter(
     WebMediaStreamCenterClient* client) {
-  return new MockWebMediaStreamCenter(client, interfaces_.get());
+  return new MockWebMediaStreamCenter();
 }
 
 WebRTCPeerConnectionHandler*
@@ -81,15 +82,40 @@ WebAudioDevice* WebTestInterfaces::CreateAudioDevice(double sample_rate) {
   return new MockWebAudioDevice(sample_rate);
 }
 
-scoped_ptr<blink::WebAppBannerClient>
+std::unique_ptr<blink::WebAppBannerClient>
 WebTestInterfaces::CreateAppBannerClient() {
-  scoped_ptr<AppBannerClient> client(new AppBannerClient);
+  std::unique_ptr<AppBannerClient> client(new AppBannerClient);
   interfaces_->SetAppBannerClient(client.get());
   return std::move(client);
 }
 
-AppBannerClient* WebTestInterfaces::GetAppBannerClient() {
-  return interfaces_->GetAppBannerClient();
+std::unique_ptr<WebFrameTestClient> WebTestInterfaces::CreateWebFrameTestClient(
+    WebTestProxyBase* web_test_proxy_base,
+    WebFrameTestProxyBase* web_frame_test_proxy_base) {
+  return base::WrapUnique(new WebFrameTestClient(interfaces_->GetTestRunner(),
+                                                 interfaces_->GetDelegate(),
+                                                 web_test_proxy_base,
+                                                 web_frame_test_proxy_base));
+}
+
+std::unique_ptr<WebViewTestClient> WebTestInterfaces::CreateWebViewTestClient(
+    WebTestProxyBase* web_test_proxy_base) {
+  return base::WrapUnique(
+      new WebViewTestClient(interfaces_->GetTestRunner(), web_test_proxy_base));
+}
+
+std::unique_ptr<WebWidgetTestClient>
+WebTestInterfaces::CreateWebWidgetTestClient(
+    WebTestProxyBase* web_test_proxy_base) {
+  return base::WrapUnique(new WebWidgetTestClient(interfaces_->GetTestRunner(),
+                                                  web_test_proxy_base));
+}
+
+std::vector<blink::WebView*> WebTestInterfaces::GetWindowList() {
+  std::vector<blink::WebView*> result;
+  for (WebTestProxyBase* proxy : interfaces_->GetWindowList())
+    result.push_back(proxy->web_view());
+  return result;
 }
 
 }  // namespace test_runner

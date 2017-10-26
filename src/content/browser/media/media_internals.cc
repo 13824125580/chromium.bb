@@ -5,6 +5,8 @@
 #include "content/browser/media/media_internals.h"
 
 #include <stddef.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/macros.h"
@@ -13,6 +15,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -20,7 +23,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/media_log_event.h"
 #include "media/filters/gpu_video_decoder.h"
 
@@ -110,6 +113,7 @@ class AudioLogImpl : public media::AudioLog {
   void OnSetVolume(int component_id, double volume) override;
   void OnSwitchOutputDevice(int component_id,
                             const std::string& device_id) override;
+  void OnLogMessage(int component_id, const std::string& message) override;
 
   // Called by MediaInternals to update the WebContents title for a stream.
   void SendWebContentsTitle(int component_id,
@@ -123,10 +127,11 @@ class AudioLogImpl : public media::AudioLog {
   void StoreComponentMetadata(int component_id, base::DictionaryValue* dict);
   std::string FormatCacheKey(int component_id);
 
-  static void SendWebContentsTitleHelper(const std::string& cache_key,
-                                         scoped_ptr<base::DictionaryValue> dict,
-                                         int render_process_id,
-                                         int render_frame_id);
+  static void SendWebContentsTitleHelper(
+      const std::string& cache_key,
+      std::unique_ptr<base::DictionaryValue> dict,
+      int render_process_id,
+      int render_frame_id);
 
   const int owner_id_;
   const media::AudioLogFactory::AudioComponent component_;
@@ -205,10 +210,14 @@ void AudioLogImpl::OnSwitchOutputDevice(int component_id,
                                    kAudioLogUpdateFunction, &dict);
 }
 
+void AudioLogImpl::OnLogMessage(int component_id, const std::string& message) {
+  MediaStreamManager::SendMessageToNativeLog(message);
+}
+
 void AudioLogImpl::SendWebContentsTitle(int component_id,
                                         int render_process_id,
                                         int render_frame_id) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   StoreComponentMetadata(component_id, dict.get());
   SendWebContentsTitleHelper(FormatCacheKey(component_id), std::move(dict),
                              render_process_id, render_frame_id);
@@ -221,7 +230,7 @@ std::string AudioLogImpl::FormatCacheKey(int component_id) {
 // static
 void AudioLogImpl::SendWebContentsTitleHelper(
     const std::string& cache_key,
-    scoped_ptr<base::DictionaryValue> dict,
+    std::unique_ptr<base::DictionaryValue> dict,
     int render_process_id,
     int render_frame_id) {
   // Page title information can only be retrieved from the UI thread.
@@ -424,6 +433,9 @@ void MediaInternals::MediaInternalsUMAHandler::ReportUMAForPipelineStatus(
                               player_info.last_pipeline_status,
                               media::PIPELINE_STATUS_MAX + 1);
   } else {
+    // Note: This metric can be recorded as a result of normal operation with
+    // Media Source Extensions. If a site creates a MediaSource object but never
+    // creates a source buffer or appends data, PIPELINE_OK will be recorded.
     UMA_HISTOGRAM_ENUMERATION("Media.PipelineStatus.Unsupported",
                               player_info.last_pipeline_status,
                               media::PIPELINE_STATUS_MAX + 1);
@@ -601,7 +613,8 @@ void MediaInternals::UpdateVideoCaptureDeviceCapabilities(
     for (const auto& format : video_capture_device_info.supported_formats)
       format_list->AppendString(media::VideoCaptureFormat::ToString(format));
 
-    base::DictionaryValue* device_dict = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> device_dict(
+        new base::DictionaryValue());
     device_dict->SetString("id", video_capture_device_info.name.id());
     device_dict->SetString(
         "name", video_capture_device_info.name.GetNameAndModel());
@@ -611,17 +624,17 @@ void MediaInternals::UpdateVideoCaptureDeviceCapabilities(
     device_dict->SetString(
         "captureApi", video_capture_device_info.name.GetCaptureApiTypeString());
 #endif
-    video_capture_capabilities_cached_data_.Append(device_dict);
+    video_capture_capabilities_cached_data_.Append(std::move(device_dict));
   }
 
   SendVideoCaptureDeviceCapabilities();
 }
 
-scoped_ptr<media::AudioLog> MediaInternals::CreateAudioLog(
+std::unique_ptr<media::AudioLog> MediaInternals::CreateAudioLog(
     AudioComponent component) {
   base::AutoLock auto_lock(lock_);
-  return scoped_ptr<media::AudioLog>(new AudioLogImpl(
-      owner_ids_[component]++, component, this));
+  return std::unique_ptr<media::AudioLog>(
+      new AudioLogImpl(owner_ids_[component]++, component, this));
 }
 
 void MediaInternals::SetWebContentsTitleForAudioLogEntry(
@@ -680,7 +693,7 @@ void MediaInternals::UpdateAudioLog(AudioLogUpdateType type,
       DCHECK_EQ(type, CREATE);
       audio_streams_cached_data_.Set(cache_key, value->DeepCopy());
     } else if (type == UPDATE_AND_DELETE) {
-      scoped_ptr<base::Value> out_value;
+      std::unique_ptr<base::Value> out_value;
       CHECK(audio_streams_cached_data_.Remove(cache_key, &out_value));
     } else {
       base::DictionaryValue* existing_dict = NULL;

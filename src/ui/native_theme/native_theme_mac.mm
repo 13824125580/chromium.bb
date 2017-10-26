@@ -12,8 +12,12 @@
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/macros.h"
 #import "skia/ext/skia_utils_mac.h"
+#include "third_party/skia/include/core/SkDrawLooper.h"
+#include "third_party/skia/include/core/SkRRect.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/shadow_value.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/native_theme/common_theme.h"
 
@@ -25,12 +29,13 @@ namespace {
 // value between 0.0 and 1.0 (i.e. divide by 255.0). Then,
 // alpha = (P2 - P1 + B1 - B2) / (B1 - B2)
 // color = (P1 - B1 + alpha * B1) / alpha.
-const SkColor kMenuPopupBackgroundColor = SkColorSetARGB(255, 255, 255, 255);
-const SkColor kMenuSeparatorColor = SkColorSetARGB(243, 228, 228, 228);
+const SkColor kMenuPopupBackgroundColor = SkColorSetARGB(245, 255, 255, 255);
+const SkColor kMenuSeparatorColor = SkColorSetARGB(255, 217, 217, 217);
 const SkColor kMenuBorderColor = SkColorSetARGB(60, 0, 0, 0);
 
-const SkColor kMenuPopupBackgroundColorYosemite =
-    SkColorSetARGB(255, 230, 230, 230);
+const SkColor kMenuPopupBackgroundColorMavericks =
+    SkColorSetARGB(255, 255, 255, 255);
+const SkColor kMenuSeparatorColorMavericks = SkColorSetARGB(243, 228, 228, 228);
 
 // Hardcoded color used for some existing dialogs in Chrome's Cocoa UI.
 const SkColor kDialogBackgroundColor = SkColorSetRGB(251, 251, 251);
@@ -40,31 +45,12 @@ const SkColor kDialogBackgroundColor = SkColorSetRGB(251, 251, 251);
 const SkColor kUnfocusedSelectedTextBackgroundColor =
     SkColorSetRGB(220, 220, 220);
 
-// On 10.6 and 10.7 there is no way to get components from system colors. Here,
-// system colors are just opaque objects that can paint themselves and otherwise
-// tell you nothing. In 10.8, some of the system color classes have incomplete
-// implementations and throw exceptions even attempting to convert using
-// -[NSColor colorUsingColorSpace:], so don't bother there either.
-// This function paints a single pixel to a 1x1 swatch and reads it back.
-SkColor GetSystemColorUsingSwatch(NSColor* color) {
-  SkColor swatch;
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
-      CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB));
-  const size_t bytes_per_row = 4;
-  static_assert(sizeof(swatch) == bytes_per_row, "skcolor should be 4 bytes");
-  CGBitmapInfo bitmap_info =
-      kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host;
-  base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
-      &swatch, 1, 1, 8, bytes_per_row, color_space, bitmap_info));
-
-  NSGraphicsContext* drawing_context =
-      [NSGraphicsContext graphicsContextWithGraphicsPort:context flipped:NO];
-  [NSGraphicsContext saveGraphicsState];
-  [NSGraphicsContext setCurrentContext:drawing_context];
-  [color drawSwatchInRect:NSMakeRect(0, 0, 1, 1)];
-  [NSGraphicsContext restoreGraphicsState];
-  return swatch;
-}
+// Helper to make indexing an array by an enum class easier.
+template <class KEY, class VALUE>
+struct EnumArray {
+  VALUE& operator[](const KEY& key) { return array[static_cast<size_t>(key)]; }
+  VALUE array[static_cast<size_t>(KEY::COUNT)];
+};
 
 // NSColor has a number of methods that return system colors (i.e. controlled by
 // user preferences). This function converts the color given by an NSColor class
@@ -75,9 +61,6 @@ SkColor GetSystemColorUsingSwatch(NSColor* color) {
 // Apple's documentation also suggests to use NSColorList, but the system color
 // list is just populated with class methods on NSColor.
 SkColor NSSystemColorToSkColor(NSColor* color) {
-  if (base::mac::IsOSMountainLionOrEarlier())
-    return GetSystemColorUsingSwatch(color);
-
   // System colors use the an NSNamedColorSpace called "System", so first step
   // is to convert the color into something that can be worked with.
   NSColor* device_color =
@@ -154,6 +137,10 @@ SkColor NativeThemeMac::GetSystemColor(ColorId color_id) const {
     case kColorId_LabelDisabledColor:
       return NSSystemColorToSkColor([NSColor disabledControlTextColor]);
     case kColorId_ButtonHighlightColor:
+      // Although the NSColor documentation names "selectedControlTextColor" as
+      // the color for a "text in a .. control being clicked or dragged", it
+      // remains black, and text on Yosemite-style pressed buttons is white.
+      return SK_ColorWHITE;
     case kColorId_ButtonHoverColor:
       return NSSystemColorToSkColor([NSColor selectedControlTextColor]);
 
@@ -171,7 +158,8 @@ SkColor NativeThemeMac::GetSystemColor(ColorId color_id) const {
     case kColorId_MenuBackgroundColor:
       return kMenuPopupBackgroundColor;
     case kColorId_MenuSeparatorColor:
-      return kMenuSeparatorColor;
+      return base::mac::IsOSMavericks() ? kMenuSeparatorColorMavericks
+                                        : kMenuSeparatorColor;
     case kColorId_MenuBorderColor:
       return kMenuBorderColor;
 
@@ -232,8 +220,8 @@ void NativeThemeMac::PaintMenuPopupBackground(
     const MenuBackgroundExtraParams& menu_background) const {
   SkPaint paint;
   paint.setAntiAlias(true);
-  if (base::mac::IsOSYosemiteOrLater())
-    paint.setColor(kMenuPopupBackgroundColorYosemite);
+  if (base::mac::IsOSMavericks())
+    paint.setColor(kMenuPopupBackgroundColorMavericks);
   else
     paint.setColor(kMenuPopupBackgroundColor);
   const SkScalar radius = SkIntToScalar(menu_background.corner_radius);
@@ -264,6 +252,142 @@ void NativeThemeMac::PaintMenuItemBackground(
       NOTREACHED();
       break;
   }
+}
+
+// static
+sk_sp<SkShader> NativeThemeMac::GetButtonBackgroundShader(
+    ButtonBackgroundType type,
+    int height) {
+  using ColorByState = EnumArray<ButtonBackgroundType, SkColor>;
+  SkPoint gradient_points[2];
+  gradient_points[0].iset(0, 0);
+  gradient_points[1].iset(0, height);
+
+  SkScalar gradient_positions[] = { 0.0, 1.0 };
+
+  // These hex values are directly from the detailed specs in
+  // https://crbug.com/543683.
+  const SkColor kGrey = SkColorSetRGB(0xf6, 0xf6, 0xf6);
+  const SkColor kBlueStart = SkColorSetRGB(0x6b, 0xb3, 0xfa);
+  const SkColor kBlueEnd = SkColorSetRGB(0x07, 0x7d, 0xff);
+  const SkColor kPressedBlueStart = SkColorSetRGB(0x3e, 0x8b, 0xf6);
+  const SkColor kPressedBlueEnd = SkColorSetRGB(0x03, 0x51, 0xff);
+
+  ColorByState start_colors;
+  start_colors[ButtonBackgroundType::DISABLED] = kGrey;
+  start_colors[ButtonBackgroundType::HIGHLIGHTED] = kBlueStart;
+  start_colors[ButtonBackgroundType::NORMAL] = SK_ColorWHITE;
+  start_colors[ButtonBackgroundType::PRESSED] = kPressedBlueStart;
+
+  ColorByState end_colors;
+  end_colors[ButtonBackgroundType::DISABLED] = kGrey;
+  end_colors[ButtonBackgroundType::HIGHLIGHTED] = kBlueEnd;
+  end_colors[ButtonBackgroundType::NORMAL] = SK_ColorWHITE;
+  end_colors[ButtonBackgroundType::PRESSED] = kPressedBlueEnd;
+
+  SkColor gradient_colors[] = {start_colors[type], end_colors[type]};
+
+  return SkGradientShader::MakeLinear(
+      gradient_points, gradient_colors, gradient_positions,
+      arraysize(gradient_positions),
+      SkShader::kClamp_TileMode);
+}
+
+// static
+sk_sp<SkShader> NativeThemeMac::GetButtonBorderShader(ButtonBackgroundType type,
+                                                      int height) {
+  using ColorByState = EnumArray<ButtonBackgroundType, SkColor>;
+  SkPoint gradient_points[2];
+  gradient_points[0].iset(0, 0);
+  gradient_points[1].iset(0, height);
+
+  // Two positions works well for pressed and highlighted, but the side edges of
+  // disabled and normal are more heavily weighted at the top and bottom.
+  // TODO(tapted): Use more positions for normal and disabled.
+  SkScalar gradient_positions[] = {0.0, 1.0};
+
+  ColorByState top_edge;
+  top_edge[ButtonBackgroundType::DISABLED] = SkColorSetRGB(0xd2, 0xc2, 0xc2);
+  top_edge[ButtonBackgroundType::HIGHLIGHTED] = SkColorSetRGB(0x6a, 0x9f, 0xff);
+  top_edge[ButtonBackgroundType::NORMAL] = SkColorSetRGB(0xcc, 0xcc, 0xcc);
+  top_edge[ButtonBackgroundType::PRESSED] = SkColorSetRGB(0x4f, 0x72, 0xfb);
+  ColorByState bottom_edge;
+  bottom_edge[ButtonBackgroundType::DISABLED] = SkColorSetRGB(0xbe, 0xbe, 0xbe);
+  bottom_edge[ButtonBackgroundType::HIGHLIGHTED] =
+      SkColorSetRGB(0x43, 0x52, 0xff);
+  bottom_edge[ButtonBackgroundType::NORMAL] = SkColorSetRGB(0x9d, 0x9d, 0x9d);
+  bottom_edge[ButtonBackgroundType::PRESSED] = SkColorSetRGB(0x3e, 0x12, 0xff);
+
+  SkColor gradient_colors[] = {top_edge[type], bottom_edge[type]};
+
+  return SkGradientShader::MakeLinear(
+      gradient_points, gradient_colors, gradient_positions,
+      arraysize(gradient_positions), SkShader::kClamp_TileMode);
+}
+
+// static
+void NativeThemeMac::PaintStyledGradientButton(SkCanvas* canvas,
+                                               const gfx::Rect& integer_bounds,
+                                               ButtonBackgroundType type,
+                                               bool round_left,
+                                               bool round_right,
+                                               bool focus) {
+  const SkScalar kBorderThickness = 1;
+  const SkScalar kFocusRingThickness = 4;
+  const SkColor kFocusRingColor = SkColorSetARGB(0x94, 0x79, 0xa7, 0xe9);
+
+  const SkVector kNoCurve = {0, 0};
+  const SkVector kCurve = {kButtonCornerRadius, kButtonCornerRadius};
+  const SkVector kLeftCurves[4] = {kCurve, kNoCurve, kNoCurve, kCurve};
+  const SkVector kRightCurves[4] = {kNoCurve, kCurve, kCurve, kNoCurve};
+
+  const SkScalar kShadowOffsetY = 1;
+  const SkColor kShadowColor = SkColorSetA(SK_ColorBLACK, 0x05);
+  const double kShadowBlur = 0.0;
+  const std::vector<gfx::ShadowValue> shadows(
+      1, gfx::ShadowValue(gfx::Vector2d(0, kShadowOffsetY), kShadowBlur,
+                          kShadowColor));
+
+  SkRect bounds = gfx::RectToSkRect(integer_bounds);
+
+  // Inset to account for the focus ring. Note it draws over the border stroke.
+  bounds.inset(kFocusRingThickness - kBorderThickness,
+               kFocusRingThickness - kBorderThickness);
+
+  SkRRect shape;
+  if (round_left && round_right)
+    shape.setRectXY(bounds, kButtonCornerRadius, kButtonCornerRadius);
+  else if (round_left)
+    shape.setRectRadii(bounds, kLeftCurves);
+  else if (round_right)
+    shape.setRectRadii(bounds, kRightCurves);
+  else
+    shape.setRect(bounds);
+
+  SkPaint paint;
+  paint.setStyle(SkPaint::kFill_Style);
+  paint.setAntiAlias(true);
+
+  // First draw the darker "outer" border, with its gradient and shadow. Inside
+  // a tab strip, this will draw over the outer border and inner separator.
+  paint.setLooper(gfx::CreateShadowDrawLooper(shadows));
+  paint.setShader(GetButtonBorderShader(type, shape.height()));
+  canvas->drawRRect(shape, paint);
+
+  // Then, inset the rounded rect and draw over that with the inner gradient.
+  shape.inset(kBorderThickness, kBorderThickness);
+  paint.setLooper(nullptr);
+  paint.setShader(GetButtonBackgroundShader(type, shape.height()));
+  canvas->drawRRect(shape, paint);
+
+  if (!focus)
+    return;
+
+  SkRRect outer_shape;
+  shape.outset(kFocusRingThickness, kFocusRingThickness, &outer_shape);
+  paint.setShader(nullptr);
+  paint.setColor(kFocusRingColor);
+  canvas->drawDRRect(outer_shape, shape, paint);
 }
 
 NativeThemeMac::NativeThemeMac() {

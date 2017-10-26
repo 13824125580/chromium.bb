@@ -66,8 +66,8 @@ WebInspector.AnimationModel.prototype = {
         if (animation.type() === "WebAnimation" && animation.source().keyframesRule().keyframes().length === 0) {
             this._pendingAnimations.remove(animation.id());
         } else {
-           this._animationsById.set(animation.id(), animation);
-           if (this._pendingAnimations.indexOf(animation.id()) === -1)
+            this._animationsById.set(animation.id(), animation);
+            if (this._pendingAnimations.indexOf(animation.id()) === -1)
                 this._pendingAnimations.push(animation.id());
         }
 
@@ -385,14 +385,14 @@ WebInspector.AnimationModel.Animation.prototype = {
     _updateNodeStyle: function(duration, delay, node)
     {
         var animationPrefix;
-        if (this.type() == WebInspector.AnimationModel.Animation.Type.CSSTransition)
+        if (this.type() === WebInspector.AnimationModel.Animation.Type.CSSTransition)
             animationPrefix = "transition-";
-        else if (this.type() == WebInspector.AnimationModel.Animation.Type.CSSAnimation)
+        else if (this.type() === WebInspector.AnimationModel.Animation.Type.CSSAnimation)
             animationPrefix = "animation-";
         else
             return;
 
-        var cssModel = WebInspector.CSSStyleModel.fromTarget(node.target());
+        var cssModel = WebInspector.CSSModel.fromTarget(node.target());
         if (!cssModel)
             return;
         cssModel.setEffectivePropertyValueForNode(node.id, animationPrefix + "duration", duration + "ms");
@@ -568,7 +568,7 @@ WebInspector.AnimationModel.KeyframesRule = function(target, payload)
 {
     WebInspector.SDKObject.call(this, target);
     this._payload = payload;
-    this._keyframes = this._payload.keyframes.map(function (keyframeStyle) {
+    this._keyframes = this._payload.keyframes.map(function(keyframeStyle) {
         return new WebInspector.AnimationModel.KeyframeStyle(target, keyframeStyle);
     });
 }
@@ -579,7 +579,7 @@ WebInspector.AnimationModel.KeyframesRule.prototype = {
      */
     _setKeyframesPayload: function(payload)
     {
-        this._keyframes = payload.map(function (keyframeStyle) {
+        this._keyframes = payload.map(function(keyframeStyle) {
             return new WebInspector.AnimationModel.KeyframeStyle(this._target, keyframeStyle);
         });
     },
@@ -771,7 +771,12 @@ WebInspector.AnimationModel.AnimationGroup.prototype = {
             return !error ? currentTime : 0;
         }
 
-        return this.target().animationAgent().getCurrentTime(this._animations[0].id(), callback).catchException(0);
+        var longestAnim = null;
+        for (var anim of this._animations) {
+            if (!longestAnim || anim.endTime() > longestAnim.endTime())
+                longestAnim = anim;
+        }
+        return this.target().animationAgent().getCurrentTime(longestAnim.id(), callback).catchException(0);
     },
 
     /**
@@ -883,7 +888,7 @@ WebInspector.AnimationModel.ScreenshotCapture = function(target, model)
     this._model.addEventListener(WebInspector.AnimationModel.Events.ModelReset, this._stopScreencast, this);
 }
 
-/** @typedef {{ time: number, screenshots: !Array.<string>}} */
+/** @typedef {{ endTime: number, screenshots: !Array.<string>}} */
 WebInspector.AnimationModel.ScreenshotCapture.Request;
 
 WebInspector.AnimationModel.ScreenshotCapture.prototype = {

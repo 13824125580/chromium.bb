@@ -1,56 +1,67 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
       "children": [
         {
+          "name": "LayoutBlockFlow (positioned) DIV id='scroller' class='scroller'",
           "position": [10, 60],
           "bounds": [700, 400],
           "shouldFlattenTransform": false,
           "drawsContent": true,
-          "repaintRects": [
-            [300, 100, 120, 50],
-            [50, 100, 120, 50]
-          ],
-          "paintInvalidationClients": [
-            "LayoutBlockFlow (positioned) DIV id='block'"
-          ],
           "children": [
             {
+              "name": "Scrolling Layer",
               "bounds": [685, 385],
               "shouldFlattenTransform": false,
               "children": [
                 {
+                  "name": "Scrolling Contents Layer",
                   "bounds": [685, 600],
                   "drawsContent": true,
-                  "repaintRects": [
-                    [300, 200, 120, 50],
-                    [50, 200, 120, 50]
-                  ],
-                  "paintInvalidationClients": [
-                    "LayoutBlockFlow (positioned) DIV id='block'"
+                  "paintInvalidations": [
+                    {
+                      "object": "LayoutBlockFlow (positioned) DIV id='block'",
+                      "rect": [300, 200, 120, 50],
+                      "reason": "bounds change"
+                    },
+                    {
+                      "object": "LayoutBlockFlow (positioned) DIV id='block'",
+                      "rect": [50, 200, 120, 50],
+                      "reason": "bounds change"
+                    }
                   ]
                 }
               ]
             },
             {
+              "name": "Overflow Controls Host Layer",
               "bounds": [700, 400],
               "children": [
                 {
+                  "name": "Horizontal Scrollbar Layer",
                   "position": [0, 385],
                   "bounds": [685, 15]
                 },
                 {
+                  "name": "Vertical Scrollbar Layer",
                   "position": [685, 0],
                   "bounds": [15, 385],
-                  "repaintRects": [
-                    [0, 0, 15, 385]
+                  "paintInvalidations": [
+                    {
+                      "object": "Vertical Scrollbar Layer",
+                      "rect": [0, 0, 15, 385],
+                      "reason": "full"
+                    }
                   ]
                 },
                 {
+                  "name": "Scroll Corner Layer",
                   "position": [685, 385],
                   "bounds": [15, 15],
                   "drawsContent": true
@@ -60,6 +71,12 @@
           ]
         }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow (positioned) DIV id='block'",
+      "reason": "bounds change"
     }
   ]
 }

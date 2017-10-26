@@ -43,20 +43,20 @@ namespace blink {
 String XSSInfo::buildConsoleError() const
 {
     StringBuilder message;
-    message.appendLiteral("The XSS Auditor ");
+    message.append("The XSS Auditor ");
     message.append(m_didBlockEntirePage ? "blocked access to" : "refused to execute a script in");
-    message.appendLiteral(" '");
+    message.append(" '");
     message.append(m_originalURL);
-    message.appendLiteral("' because ");
+    message.append("' because ");
     message.append(m_didBlockEntirePage ? "the source code of a script" : "its source code");
-    message.appendLiteral(" was found within the request.");
+    message.append(" was found within the request.");
 
     if (m_didSendCSPHeader)
-        message.appendLiteral(" The server sent a 'Content-Security-Policy' header requesting this behavior.");
+        message.append(" The server sent a 'Content-Security-Policy' header requesting this behavior.");
     else if (m_didSendXSSProtectionHeader)
-        message.appendLiteral(" The server sent an 'X-XSS-Protection' header requesting this behavior.");
+        message.append(" The server sent an 'X-XSS-Protection' header requesting this behavior.");
     else
-        message.appendLiteral(" The auditor was enabled as the server sent neither an 'X-XSS-Protection' nor 'Content-Security-Policy' header.");
+        message.append(" The auditor was enabled as the server sent neither an 'X-XSS-Protection' nor 'Content-Security-Policy' header.");
 
     return message.toString();
 }
@@ -106,8 +106,6 @@ void XSSAuditorDelegate::didBlockScript(const XSSInfo& xssInfo)
 
     m_document->addConsoleMessage(ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, xssInfo.buildConsoleError()));
 
-    // stopAllLoaders can detach the LocalFrame, so protect it.
-    RefPtrWillBeRawPtr<LocalFrame> protect(m_document->frame());
     FrameLoader& frameLoader = m_document->frame()->loader();
     if (xssInfo.m_didBlockEntirePage)
         frameLoader.stopAllLoaders();

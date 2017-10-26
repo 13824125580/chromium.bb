@@ -20,6 +20,7 @@
 #include "platform/graphics/UnacceleratedImageBufferSurface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 using ::testing::Mock;
 
@@ -38,9 +39,9 @@ protected:
     void createContext(OpacityMode);
 
 private:
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
-    RefPtrWillBePersistent<HTMLDocument> m_document;
-    RefPtrWillBePersistent<HTMLCanvasElement> m_canvasElement;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
+    Persistent<HTMLDocument> m_document;
+    Persistent<HTMLCanvasElement> m_canvasElement;
 
 };
 
@@ -216,7 +217,8 @@ TEST_F(CanvasRenderingContext2DAPITest, CreateImageData)
     // createImageData(imageData) should create a new ImageData of the same size as 'imageData'
     // but filled with transparent black
 
-    ImageData* sameSizeImageData = context2d()->createImageData(imageData);
+    ImageData* sameSizeImageData = context2d()->createImageData(imageData, exceptionState);
+    EXPECT_FALSE(exceptionState.hadException());
     EXPECT_EQ(100, sameSizeImageData->width());
     EXPECT_EQ(50, sameSizeImageData->height());
     EXPECT_EQ(0, sameSizeImageData->data()->data()[32]);
@@ -236,6 +238,26 @@ TEST_F(CanvasRenderingContext2DAPITest, CreateImageData)
     EXPECT_EQ((unsigned)800, imgdata2->data()->length());
     EXPECT_EQ((unsigned)800, imgdata3->data()->length());
     EXPECT_EQ((unsigned)800, imgdata4->data()->length());
+}
+
+TEST_F(CanvasRenderingContext2DAPITest, CreateImageDataTooBig)
+{
+    createContext(NonOpaque);
+    TrackExceptionState exceptionState;
+    ImageData* tooBigImageData = context2d()->createImageData(1000000, 1000000, exceptionState);
+    EXPECT_EQ(nullptr, tooBigImageData);
+    EXPECT_TRUE(exceptionState.hadException());
+    EXPECT_EQ(V8RangeError, exceptionState.code());
+}
+
+TEST_F(CanvasRenderingContext2DAPITest, GetImageDataTooBig)
+{
+    createContext(NonOpaque);
+    TrackExceptionState exceptionState;
+    ImageData* imageData = context2d()->getImageData(0, 0, 1000000, 1000000, exceptionState);
+    EXPECT_EQ(nullptr, imageData);
+    EXPECT_TRUE(exceptionState.hadException());
+    EXPECT_EQ(V8RangeError, exceptionState.code());
 }
 
 void resetCanvasForAccessibilityRectTest(HTMLDocument& document)
@@ -288,7 +310,7 @@ TEST_F(CanvasRenderingContext2DAPITest, AccessibilityRectTestForDrawFocusIfNeede
     HTMLCanvasElement* canvas = toHTMLCanvasElement(document().getElementById("canvas"));
     CanvasRenderingContext2D* context = static_cast<CanvasRenderingContext2D*>(canvas->renderingContext());
 
-    document().updateLayoutTreeForNode(canvas);
+    document().updateStyleAndLayoutTreeForNode(canvas);
 
     context->beginPath();
     context->rect(10, 10, 40, 40);

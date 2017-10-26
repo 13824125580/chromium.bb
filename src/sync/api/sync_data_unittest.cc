@@ -6,11 +6,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "sync/api/attachments/attachment_id.h"
 #include "sync/internal_api/public/attachments/attachment_service.h"
@@ -41,7 +42,7 @@ class SyncDataTest : public testing::Test {
             attachment_service_weak_ptr_factory.GetWeakPtr()) {}
   base::MessageLoop loop;
   sync_pb::EntitySpecifics specifics;
-  scoped_ptr<AttachmentService> attachment_service;
+  std::unique_ptr<AttachmentService> attachment_service;
   base::WeakPtrFactory<AttachmentService> attachment_service_weak_ptr_factory;
   AttachmentServiceProxy attachment_service_proxy;
 };

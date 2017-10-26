@@ -14,9 +14,19 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ApplicationStatus.ActivityStateListener;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager.PanelPriority;
 import org.chromium.chrome.browser.compositor.layouts.LayoutUpdateHost;
-import org.chromium.chrome.browser.compositor.scene_layer.SceneLayer;
+import org.chromium.chrome.browser.compositor.layouts.components.VirtualView;
+import org.chromium.chrome.browser.compositor.layouts.eventfilter.EdgeSwipeEventFilter.ScrollDirection;
+import org.chromium.chrome.browser.compositor.layouts.eventfilter.EdgeSwipeHandler;
+import org.chromium.chrome.browser.compositor.layouts.eventfilter.EventFilter;
+import org.chromium.chrome.browser.compositor.layouts.eventfilter.EventFilterHost;
+import org.chromium.chrome.browser.compositor.layouts.eventfilter.GestureHandler;
+import org.chromium.chrome.browser.compositor.layouts.eventfilter.OverlayPanelEventFilter;
+import org.chromium.chrome.browser.compositor.overlays.SceneOverlay;
+import org.chromium.chrome.browser.compositor.scene_layer.SceneOverlayLayer;
+import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content.browser.ContentVideoViewEmbedder;
 import org.chromium.content.browser.ContentViewClient;
@@ -25,33 +35,32 @@ import org.chromium.content_public.common.TopControlsState;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.ResourceManager;
 
+import java.util.List;
+
 /**
  * Controls the Overlay Panel.
  */
 public class OverlayPanel extends OverlayPanelAnimation implements ActivityStateListener,
-        OverlayPanelContentFactory {
+        EdgeSwipeHandler, GestureHandler, OverlayPanelContentFactory, SceneOverlay {
 
-    /**
-     * The extra dp added around the close button touch target.
-     */
+    /** The extra dp added around the close button touch target. */
     private static final int CLOSE_BUTTON_TOUCH_SLOP_DP = 5;
 
-    /**
-     * State of the Overlay Panel.
-     */
+    /** State of the Overlay Panel. */
     public static enum PanelState {
+        // TODO(pedrosimonetti): consider removing the UNDEFINED state
         UNDEFINED,
         CLOSED,
         PEEKED,
         EXPANDED,
-        MAXIMIZED;
+        MAXIMIZED
     }
 
     /**
      * The reason for a change in the Overlay Panel's state.
      * TODO(mdjones): Separate generic reasons from Contextual Search reasons.
      */
-    public static enum StateChangeReason {
+    public enum StateChangeReason {
         UNKNOWN,
         RESET,
         BACK_PRESS,
@@ -79,7 +88,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
         CONTENT_CHANGED,
         KEYBOARD_SHOWN,
         KEYBOARD_HIDDEN,
-        TAB_NAVIGATION;
+        TAB_NAVIGATION
     }
 
     /** The activity this panel is in. */
@@ -88,8 +97,14 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     /** The initial height of the Overlay Panel. */
     private float mInitialPanelHeight;
 
+    /** The initial location of a touch on the panel */
+    private float mInitialPanelTouchY;
+
     /** Whether a touch gesture has been detected. */
     private boolean mHasDetectedTouchGesture;
+
+    /** The EventFilter that this panel uses. */
+    protected EventFilter mEventFilter;
 
     /** That factory that creates OverlayPanelContents. */
     private OverlayPanelContentFactory mContentFactory;
@@ -97,11 +112,17 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     /** Container for content the panel will show. */
     private OverlayPanelContent mContent;
 
-    /** The {@link OverlayPanelHost} used to communicate with the supported layout. */
-    private OverlayPanelHost mOverlayPanelHost;
-
     /** OverlayPanel manager handle for notifications of opening and closing. */
     protected OverlayPanelManager mPanelManager;
+
+    /** If the base page text controls have been cleared. */
+    private boolean mDidClearTextControls;
+
+    /** If the panel should be ignoring swipe events (for compatibility mode). */
+    private boolean mIgnoreSwipeEvents;
+
+    /** This is used to make sure there is one show request to one close request. */
+    private boolean mPanelShown;
 
     // ============================================================================================
     // Constructor
@@ -110,15 +131,17 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     /**
      * @param context The current Android {@link Context}.
      * @param updateHost The {@link LayoutUpdateHost} used to request updates in the Layout.
+     * @param eventHost The {@link EventFilterHost} used to propagate events.
      * @param panelManager The {@link OverlayPanelManager} responsible for showing panels.
      */
-    public OverlayPanel(Context context, LayoutUpdateHost updateHost,
+    public OverlayPanel(Context context, LayoutUpdateHost updateHost, EventFilterHost eventHost,
                 OverlayPanelManager panelManager) {
         super(context, updateHost);
         mContentFactory = this;
 
         mPanelManager = panelManager;
         mPanelManager.registerPanel(this);
+        mEventFilter = new OverlayPanelEventFilter(mContext, eventHost, this);
     }
 
     /**
@@ -139,6 +162,8 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
 
     @Override
     protected void onClosed(StateChangeReason reason) {
+        mPanelShown = false;
+        setBasePageTextControlsVisibility(true);
         destroyComponents();
         mPanelManager.notifyPanelClosed(this, reason);
     }
@@ -163,16 +188,10 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
 
     @Override
     public void closePanel(StateChangeReason reason, boolean animate) {
-        if (!isShowing()) return;
+        // If the panel hasn't peeked, then it shouldn't need to close.
+        if (!mPanelShown) return;
 
         super.closePanel(reason, animate);
-
-        // If the close action is animated, the Layout will be hidden when
-        // the animation is finished, so we should only hide the Layout
-        // here when not animating.
-        if (!animate && mOverlayPanelHost != null) {
-            mOverlayPanelHost.hideLayout(true);
-        }
     }
 
     /**
@@ -180,7 +199,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
      * @param reason The reason the panel is being shown.
      */
     public void requestPanelShow(StateChangeReason reason) {
-        if (isShowing()) return;
+        if (mPanelShown) return;
 
         if (mPanelManager != null) {
             mPanelManager.requestPanelShow(this, reason);
@@ -191,6 +210,10 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     public void peekPanel(StateChangeReason reason) {
         // TODO(mdjones): This is making a protected API public and should be removed. Animation
         // should only be controlled by the OverlayPanelManager.
+
+        // Since the OverlayPanelManager can show panels without requestPanelShow being called, the
+        // flag for the panel being shown should be set to true here.
+        mPanelShown = true;
         super.peekPanel(reason);
     }
 
@@ -225,6 +248,12 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
         if (mActivity != null) {
             ApplicationStatus.registerStateListenerForActivity(this, mActivity);
         }
+
+        // TODO(pedrosimonetti): Coordinate with mdjones@ to move this to the OverlayPanelBase
+        // constructor, once we are able to get the Activity during instantiation. The Activity
+        // is needed in order to get the correct height of the Toolbar, which varies depending
+        // on the Activity (WebApps have a smaller toolbar for example).
+        initializeUiState();
     }
 
     /**
@@ -233,7 +262,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
      */
     public void notifyBarTouched(float x) {
         if (!isCoordinateInsideCloseButton(x)) {
-            getOverlayPanelContent().notifyBarTouched();
+            getOverlayPanelContent().showContent();
         }
     }
 
@@ -267,13 +296,51 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
         return -mActivity.getFullscreenManager().getControlOffset() * mPxToDp;
     }
 
+    /**
+     * Set the visibility of the base page text selection controls. This will also attempt to
+     * remove focus from the base page to clear any open controls.
+     * TODO(mdjones): This should be replaced with focusing the panel's ContentViewCore.
+     * @param visible If the text controls are visible.
+     */
+    protected void setBasePageTextControlsVisibility(boolean visible) {
+        if (mActivity == null || mActivity.getActivityTab() == null) return;
+
+        ContentViewCore baseContentView = mActivity.getActivityTab().getContentViewCore();
+        if (baseContentView == null) return;
+
+        // If the panel does not have focus or isn't open, return.
+        if (isPanelOpened() && mDidClearTextControls && !visible) return;
+        if (!isPanelOpened() && !mDidClearTextControls && visible) return;
+
+        mDidClearTextControls = !visible;
+
+        if (!visible) {
+            baseContentView.preserveSelectionOnNextLossOfFocus();
+            baseContentView.getContainerView().clearFocus();
+        }
+
+        baseContentView.updateTextSelectionUI(visible);
+    }
+
     // ============================================================================================
     // ActivityStateListener
     // ============================================================================================
 
     @Override
     public void onActivityStateChange(Activity activity, int newState) {
-        if (newState == ActivityState.RESUMED || newState == ActivityState.STOPPED
+        boolean isMultiWindowMode = MultiWindowUtils.getInstance().isLegacyMultiWindow(mActivity)
+                || MultiWindowUtils.getInstance().isInMultiWindowMode(mActivity);
+
+        // In multi-window mode the activity that was interacted with last is resumed and
+        // all others are paused. We should not close Contextual Search in this case,
+        // because the activity may be visible even though it is paused.
+        if (isMultiWindowMode
+                && (newState == ActivityState.PAUSED || newState == ActivityState.RESUMED)) {
+            return;
+        }
+
+        if (newState == ActivityState.RESUMED
+                || newState == ActivityState.STOPPED
                 || newState == ActivityState.DESTROYED) {
             closePanel(StateChangeReason.UNKNOWN, false);
         }
@@ -439,34 +506,19 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     }
 
     // ============================================================================================
-    // Animation Handling
+    // OverlayPanelBase methods.
     // ============================================================================================
 
     @Override
     protected void onAnimationFinished() {
         super.onAnimationFinished();
 
-        if (shouldHideOverlayPanelLayout()) {
-            if (mOverlayPanelHost != null) {
-                mOverlayPanelHost.hideLayout(false);
-            }
+        if (getPanelState() == PanelState.PEEKED || getPanelState() == PanelState.CLOSED) {
+            setBasePageTextControlsVisibility(true);
+        } else {
+            setBasePageTextControlsVisibility(false);
         }
     }
-
-    /**
-     * Whether the Overlay Panel Layout should be hidden.
-     *
-     * @return Whether the Overlay Panel Layout should be hidden.
-     */
-    private boolean shouldHideOverlayPanelLayout() {
-        final PanelState state = getPanelState();
-        return (state == PanelState.PEEKED || state == PanelState.CLOSED)
-                && getHeight() == getPanelHeightFromState(state);
-    }
-
-    // ============================================================================================
-    // ContextualSearchPanelBase methods.
-    // ============================================================================================
 
     @Override
     protected int getControlContainerHeightResource() {
@@ -480,60 +532,9 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     // ============================================================================================
 
     /**
-     * Sets the {@OverlayPanelHost} used to communicate with the supported layout.
-     * @param host The {@OverlayPanelHost}.
-     */
-    public void setHost(OverlayPanelHost host) {
-        mOverlayPanelHost = host;
-    }
-
-    /**
-     * @return The scene layer used to draw this panel.
-     */
-    public SceneLayer getSceneLayer() {
-        return null;
-    }
-
-    /**
-     * Update this panel's scene layer. This should be implemented by each panel type.
-     * @param resourceManager Used to access static resources.
-     */
-    public void updateSceneLayer(ResourceManager resourceManager) {
-    }
-
-    /**
-     * Determine if using a second layout for showing the overlay panel is possible. This should
-     * be overridden by each panel and returns true by default.
-     * @return True if the layout is supported.
-     * TODO(mdjones): Rename to supportsOverlayPanelLayout once the corresponding class is renamed.
-     */
-    public boolean supportsContextualSearchLayout() {
-        return true;
-    }
-
-    /**
-     * Handles the device orientation change.
-     */
-    public void onOrientationChanged() {
-        if (isNarrowSizePanelSupported()) {
-            // TODO(pedrosimonetti): We cannot preserve the panel when rotating from/to a
-            // narrow version of the Panel because the Content is resized before the Panel
-            // gets a notification of the resize.
-            closePanel(StateChangeReason.UNKNOWN, false);
-        } else {
-            updatePanelForOrientationChange();
-        }
-    }
-
-    /**
      * Updates the Panel so it preserves its state when the orientation changes.
      */
     protected void updatePanelForOrientationChange() {
-        // NOTE(pedrosimonetti): We cannot tell where the selection will be after the
-        // orientation change, so we are setting the selection position to zero, which
-        // means the base page will be positioned in its original state and we won't
-        // try to keep the selection in view.
-        updateBasePageSelectionYPx(0.f);
         resizePanelToState(getPanelState(), StateChangeReason.UNKNOWN);
     }
 
@@ -688,7 +689,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
      * @return The vertical offset of the Overlay Content View in dp.
      */
     public float getContentY() {
-        return getOffsetY() + getBarContainerHeight() + getPromoHeight();
+        return getOffsetY() + getBarContainerHeight();
     }
 
     /**
@@ -696,7 +697,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
      * @param y The y coordinate in dp.
      * @return Whether the given coordinate is inside the Overlay Panel area.
      */
-    private boolean isCoordinateInsideOverlayPanel(float x, float y) {
+    public boolean isCoordinateInsideOverlayPanel(float x, float y) {
         return y >= getOffsetY() && y <= (getOffsetY() + getHeight())
                 &&  x >= getOffsetX() && x <= (getOffsetX() + getWidth());
     }
@@ -714,4 +715,205 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     public void setOverlayPanelContentFactory(OverlayPanelContentFactory factory) {
         mContentFactory = factory;
     }
+
+    // ============================================================================================
+    // GestureHandler and EdgeSwipeHandler implementation.
+    // ============================================================================================
+
+    @Override
+    public void onDown(float x, float y, boolean fromMouse, int buttons) {
+        mInitialPanelTouchY = y;
+        handleSwipeStart();
+    }
+
+    @Override
+    public void drag(float x, float y, float deltaX, float deltaY, float tx, float ty) {
+        handleSwipeMove(y - mInitialPanelTouchY);
+    }
+
+    @Override
+    public void onUpOrCancel() {
+        handleSwipeEnd();
+    }
+
+    @Override
+    public void fling(float x, float y, float velocityX, float velocityY) {
+        handleFling(velocityY);
+    }
+
+    @Override
+    public void click(float x, float y, boolean fromMouse, int buttons) {
+        // TODO(mdjones): The time param for handleClick is not used anywhere, remove it.
+        handleClick(0, x, y);
+    }
+
+    @Override
+    public void onLongPress(float x, float y) {}
+
+    @Override
+    public void onPinch(float x0, float y0, float x1, float y1, boolean firstEvent) {}
+
+    // EdgeSwipeHandler implementation.
+
+    @Override
+    public void swipeStarted(ScrollDirection direction, float x, float y) {
+        if (onInterceptBarSwipe()) {
+            mIgnoreSwipeEvents = true;
+            return;
+        }
+        handleSwipeStart();
+    }
+
+    @Override
+    public void swipeUpdated(float x, float y, float dx, float dy, float tx, float ty) {
+        if (mIgnoreSwipeEvents) return;
+        handleSwipeMove(ty);
+    }
+
+    @Override
+    public void swipeFinished() {
+        if (mIgnoreSwipeEvents) {
+            mIgnoreSwipeEvents = false;
+            return;
+        }
+        handleSwipeEnd();
+    }
+
+    @Override
+    public void swipeFlingOccurred(float x, float y, float tx, float ty, float vx, float vy) {
+        if (mIgnoreSwipeEvents) return;
+        handleFling(vy);
+    }
+
+    @Override
+    public boolean isSwipeEnabled(ScrollDirection direction) {
+        return direction == ScrollDirection.UP && isShowing();
+    }
+
+    // ============================================================================================
+    // SceneOverlay implementation.
+    // ============================================================================================
+
+    @Override
+    public SceneOverlayLayer getUpdatedSceneOverlayTree(LayerTitleCache layerTitleCache,
+            ResourceManager resourceManager, float yOffset) {
+        return null;
+    }
+
+    @Override
+    public boolean isSceneOverlayTreeShowing() {
+        return isShowing();
+    }
+
+    @Override
+    public EventFilter getEventFilter() {
+        return mEventFilter;
+    }
+
+    @Override
+    public void onSizeChanged(float width, float height, float visibleViewportOffsetY,
+            int orientation) {
+        resizePanelContentViewCore(width, height);
+        onSizeChanged(width, height);
+    }
+
+    /**
+     * Resize the panel's ContentViewCore manually since it is not attached to the view hierarchy.
+     * TODO(mdjones): Remove the need for this method by supporting multiple ContentViewCores
+     * existing simultaneously in the view hierarchy.
+     * @param width The new width in dp.
+     * @param height The new height in dp.
+     */
+    private void resizePanelContentViewCore(float width, float height) {
+        if (!isShowing()) return;
+        ContentViewCore panelContent = getContentViewCore();
+        if (panelContent != null) {
+            // Take the height of the toolbar into consideration.
+            int toolbarHeightPx = getTopControlsOffsetDp() > 0
+                    ? 0 : (int) (getToolbarHeight() / mPxToDp);
+            panelContent.onSizeChanged((int) (width / mPxToDp),
+                    (int) (height / mPxToDp) + toolbarHeightPx, panelContent.getViewportWidthPix(),
+                    panelContent.getViewportHeightPix());
+            panelContent.onPhysicalBackingSizeChanged(
+                    (int) (width / mPxToDp), (int) (height / mPxToDp));
+        }
+    }
+
+    @Override
+    public void getVirtualViews(List<VirtualView> views) {
+        // TODO(mdjones): Add views for accessibility.
+    }
+
+    @Override
+    public boolean handlesTabCreating() {
+        // If the panel is not opened, do not handle tab creating.
+        if (!isPanelOpened()) return false;
+        // Updates TopControls' State so the Toolbar becomes visible.
+        // TODO(pedrosimonetti): The transition when promoting to a new tab is only smooth
+        // if the SearchContentView's vertical scroll position is zero. Otherwise the
+        // ContentView will appear to jump in the screen. Coordinate with @dtrainor to solve
+        // this problem.
+        updateTopControlsState(TopControlsState.BOTH, false);
+        return true;
+    }
+
+    @Override
+    public boolean shouldHideAndroidTopControls() {
+        return isPanelOpened();
+    }
+
+    @Override
+    public boolean updateOverlay(long time, long dt) {
+        if (isPanelOpened()) setBasePageTextControlsVisibility(false);
+        return super.onUpdateAnimation(time, false);
+    }
+
+    @Override
+    public void onHideLayout() {
+        if (!isShowing()) return;
+        closePanel(StateChangeReason.UNKNOWN, false);
+    }
+
+    @Override
+    public boolean onBackPressed() {
+        if (!isPanelOpened()) return false;
+        closePanel(StateChangeReason.BACK_PRESS, true);
+        return true;
+    }
+
+    @Override
+    public void tabTitleChanged(int tabId, String title) {}
+
+    @Override
+    public void tabStateInitialized() {}
+
+    @Override
+    public void tabModelSwitched(boolean incognito) {}
+
+    @Override
+    public void tabSelected(long time, boolean incognito, int id, int prevId) {}
+
+    @Override
+    public void tabMoved(long time, boolean incognito, int id, int oldIndex, int newIndex) {}
+
+    @Override
+    public void tabClosed(long time, boolean incognito, int id) {}
+
+    @Override
+    public void tabClosureCancelled(long time, boolean incognito, int id) {}
+
+    @Override
+    public void tabCreated(long time, boolean incognito, int id, int prevId, boolean selected) {}
+
+    @Override
+    public void tabPageLoadStarted(int id, boolean incognito) {}
+
+    @Override
+    public void tabPageLoadFinished(int id, boolean incognito) {}
+
+    @Override
+    public void tabLoadStarted(int id, boolean incognito) {}
+
+    @Override
+    public void tabLoadFinished(int id, boolean incognito) {}
 }

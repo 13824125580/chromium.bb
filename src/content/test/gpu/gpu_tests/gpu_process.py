@@ -16,6 +16,14 @@ test_harness_script = r"""
   }
 
   window.domAutomationController = domAutomationController;
+
+  function GetDriverBugWorkarounds() {
+    var query_result = document.querySelector('.workarounds-list');
+    var browser_list = []
+    for (var i=0; i < query_result.childElementCount; i++)
+      browser_list.push(query_result.children[i].textContent);
+    return browser_list;
+  };
 """
 
 class GpuProcessValidator(gpu_test_base.ValidatorBase):
@@ -47,7 +55,10 @@ class GpuProcess(gpu_test_base.TestBase):
     return expectations.GpuProcessExpectations()
 
   def CreateStorySet(self, options):
-    story_set = page_sets.GpuProcessTestsStorySet(self.GetExpectations())
+    browser_type = options.browser_options.browser_type
+    is_platform_android = browser_type.startswith('android')
+    story_set = page_sets.GpuProcessTestsStorySet(self.GetExpectations(),
+                                                  is_platform_android)
     for page in story_set:
       page.script_to_evaluate_on_commit = test_harness_script
     return story_set

@@ -39,7 +39,7 @@ enum CheckValidityEventBehavior { CheckValidityDispatchNoEvent, CheckValidityDis
 // and form-associated element implementations should use HTMLFormControlElement
 // unless there is a special reason.
 class CORE_EXPORT HTMLFormControlElement : public LabelableElement, public FormAssociatedElement {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(HTMLFormControlElement);
+    USING_GARBAGE_COLLECTED_MIXIN(HTMLFormControlElement);
 
 public:
     ~HTMLFormControlElement() override;
@@ -68,6 +68,8 @@ public:
 
     bool isDisabledFormControl() const override;
 
+    bool matchesEnabledPseudoClass() const override;
+
     bool isEnumeratable() const override { return false; }
 
     bool isRequired() const;
@@ -82,7 +84,12 @@ public:
 
     virtual String resultForDialogSubmit();
 
+    // Return true if this control type can be a submit button.  This doesn't
+    // check |disabled|, and this doesn't check if this is the first submit
+    // button.
     virtual bool canBeSuccessfulSubmitButton() const { return false; }
+    // Return true if this control can submit a form.
+    // i.e. canBeSuccessfulSubmitButton() && !isDisabledFormControl().
     bool isSuccessfulSubmitButton() const;
     virtual bool isActivatedSubmit() const { return false; }
     virtual void setActivatedSubmit(bool) { }
@@ -91,7 +98,7 @@ public:
 
     void updateVisibleValidationMessage();
     void hideVisibleValidationMessage();
-    bool checkValidity(WillBeHeapVector<RefPtrWillBeMember<HTMLFormControlElement>>* unhandledInvalidControls = 0, CheckValidityEventBehavior = CheckValidityDispatchInvalidEvent);
+    bool checkValidity(HeapVector<Member<HTMLFormControlElement>>* unhandledInvalidControls = 0, CheckValidityEventBehavior = CheckValidityDispatchInvalidEvent);
     bool reportValidity();
     // This must be called only after the caller check the element is focusable.
     void showValidationMessage();
@@ -114,11 +121,6 @@ public:
 
     void setFocus(bool flag) override;
     void copyNonAttributePropertiesFromElement(const Element&) override;
-
-#if !ENABLE(OILPAN)
-    using Node::ref;
-    using Node::deref;
-#endif
 
 protected:
     HTMLFormControlElement(const QualifiedName& tagName, Document&, HTMLFormElement*);
@@ -151,17 +153,11 @@ protected:
     virtual bool supportsAutofocus() const;
 
 private:
-#if !ENABLE(OILPAN)
-    void refFormAssociatedElement() final { ref(); }
-    void derefFormAssociatedElement() final { deref(); }
-#endif
-
     bool isFormControlElement() const final { return true; }
     bool alwaysCreateUserAgentShadowRoot() const override { return true; }
 
     short tabIndex() const final;
 
-    bool isDefaultButtonForForm() const final;
     bool isValidElement() override;
     bool matchesValidityPseudoClasses() const override;
     void updateAncestorDisabledState() const;

@@ -5,10 +5,12 @@
 #ifndef MEDIA_CDM_CDM_ALLOCATOR_H_
 #define MEDIA_CDM_CDM_ALLOCATOR_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/base/media_export.h"
 
 namespace cdm {
@@ -25,10 +27,10 @@ class MEDIA_EXPORT CdmAllocator {
 
   // Creates a buffer with at least |capacity| bytes. Caller is required to
   // call Destroy() on the returned buffer when it is done with it.
-  virtual cdm::Buffer* CreateCdmBuffer(uint32_t capacity) = 0;
+  virtual cdm::Buffer* CreateCdmBuffer(size_t capacity) = 0;
 
   // Returns a new VideoFrameImpl.
-  virtual scoped_ptr<VideoFrameImpl> CreateCdmVideoFrame() = 0;
+  virtual std::unique_ptr<VideoFrameImpl> CreateCdmVideoFrame() = 0;
 
  protected:
   CdmAllocator();

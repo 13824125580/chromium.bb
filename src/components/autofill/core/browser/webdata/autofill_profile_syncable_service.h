@@ -5,6 +5,7 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_WEBDATA_AUTOFILL_PROFILE_SYNCABLE_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,8 +70,8 @@ class AutofillProfileSyncableService
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> sync_error_factory) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -120,7 +121,13 @@ class AutofillProfileSyncableService
   FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
                            UpdateField);
   FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
-                           MergeProfile);
+                           MergeSimilarProfiles_AdditionalInfoInBothProfiles);
+  FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
+                           MergeSimilarProfiles_DifferentUseDates);
+  FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
+                           MergeSimilarProfiles_DifferentNames);
+  FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
+                           MergeSimilarProfiles_NonZeroUseCounts);
 
   // The map of the guid to profiles owned by the |profiles_| vector.
   typedef std::map<std::string, AutofillProfile*> GUIDToProfileMap;
@@ -161,14 +168,13 @@ class AutofillProfileSyncableService
                           const std::string& new_value,
                           AutofillProfile* autofill_profile);
 
-  // Calls merge_into->OverwriteWithOrAddTo() and then checks if the
-  // |merge_into| has extra data. Returns true if |merge_from| needs updating to
-  // be in sync with |merge_into|.
-  // TODO(isherman): Seems like this should return |true| if |merge_into| was
-  // modified at all: http://crbug.com/248440
-  static bool MergeProfile(const AutofillProfile& merge_from,
-                           AutofillProfile* merge_into,
-                           const std::string& app_locale);
+  // Calls merge_into->OverwriteWith() and then checks if the
+  // |merge_into| has extra data. Returns true if the merge has made a change to
+  // |merge_into|. This should be used only for similar profiles ie. profiles
+  // where the PrimaryValue() matches.
+  static bool MergeSimilarProfiles(const AutofillProfile& merge_from,
+                                   AutofillProfile* merge_into,
+                                   const std::string& app_locale);
 
   AutofillWebDataBackend* webdata_backend_;  // WEAK
   std::string app_locale_;
@@ -180,9 +186,9 @@ class AutofillProfileSyncableService
   ScopedVector<AutofillProfile> profiles_;
   GUIDToProfileMap profiles_map_;
 
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
 
-  scoped_ptr<syncer::SyncErrorFactory> sync_error_factory_;
+  std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory_;
 
   syncer::SyncableService::StartSyncFlare flare_;
 

@@ -4,17 +4,25 @@
 
 #include "blimp/net/stream_socket_connection.h"
 
+#include "base/memory/ptr_util.h"
+#include "blimp/net/compressed_packet_reader.h"
+#include "blimp/net/compressed_packet_writer.h"
 #include "blimp/net/stream_packet_reader.h"
 #include "blimp/net/stream_packet_writer.h"
 
 namespace blimp {
 
 StreamSocketConnection::StreamSocketConnection(
-    scoped_ptr<net::StreamSocket> socket)
-    : BlimpConnection(make_scoped_ptr(new StreamPacketReader(socket.get())),
-                      make_scoped_ptr(new StreamPacketWriter(socket.get()))),
+    std::unique_ptr<net::StreamSocket> socket,
+    BlimpConnectionStatistics* statistics)
+    : BlimpConnection(
+          base::WrapUnique(new CompressedPacketReader(base::WrapUnique(
+              new StreamPacketReader(socket.get(), statistics)))),
+          base::WrapUnique(new CompressedPacketWriter(base::WrapUnique(
+              new StreamPacketWriter(socket.get(), statistics))))),
       socket_(std::move(socket)) {
   DCHECK(socket_);
+  DCHECK(statistics);
 }
 
 StreamSocketConnection::~StreamSocketConnection() {}

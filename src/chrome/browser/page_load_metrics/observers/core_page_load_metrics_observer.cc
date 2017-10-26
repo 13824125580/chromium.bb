@@ -12,6 +12,7 @@
 #include "components/page_load_metrics/browser/page_load_metrics_util.h"
 #include "components/rappor/rappor_service.h"
 #include "components/rappor/rappor_utils.h"
+#include "ui/base/page_transition_types.h"
 
 namespace {
 
@@ -38,6 +39,29 @@ uint64_t RapporHistogramBucketIndex(base::TimeDelta time) {
   return 5;
 }
 
+// TODO(bmcquade): If other observers want to log histograms based on load type,
+// promote this enum to page_load_metrics_observer.h.
+enum PageLoadType {
+  LOAD_TYPE_NONE = 0,
+  LOAD_TYPE_RELOAD,
+  LOAD_TYPE_FORWARD_BACK,
+  LOAD_TYPE_NEW_NAVIGATION
+};
+
+PageLoadType GetPageLoadType(ui::PageTransition transition) {
+  if (transition & ui::PAGE_TRANSITION_FORWARD_BACK) {
+    return LOAD_TYPE_FORWARD_BACK;
+  }
+  if (ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD)) {
+    return LOAD_TYPE_RELOAD;
+  }
+  if (ui::PageTransitionIsNewNavigation(transition)) {
+    return LOAD_TYPE_NEW_NAVIGATION;
+  }
+  NOTREACHED() << "Received PageTransition with no matching PageLoadType.";
+  return LOAD_TYPE_NONE;
+}
+
 }  // namespace
 
 namespace internal {
@@ -48,12 +72,28 @@ const char kHistogramFirstTextPaint[] =
     "PageLoad.Timing2.NavigationToFirstTextPaint";
 const char kHistogramDomContentLoaded[] =
     "PageLoad.Timing2.NavigationToDOMContentLoadedEventFired";
+const char kHistogramDomLoadingToDomContentLoaded[] =
+    "PageLoad.Timing2.DOMLoadingToDOMContentLoadedEventFired";
 const char kHistogramLoad[] = "PageLoad.Timing2.NavigationToLoadEventFired";
 const char kHistogramFirstPaint[] = "PageLoad.Timing2.NavigationToFirstPaint";
 const char kHistogramFirstImagePaint[] =
     "PageLoad.Timing2.NavigationToFirstImagePaint";
 const char kHistogramFirstContentfulPaint[] =
     "PageLoad.Timing2.NavigationToFirstContentfulPaint";
+const char kHistogramDomLoadingToFirstContentfulPaint[] =
+    "PageLoad.Timing2.DOMLoadingToFirstContentfulPaint";
+const char kHistogramParseDuration[] = "PageLoad.Timing2.ParseDuration";
+const char kHistogramParseBlockedOnScriptLoad[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoad";
+const char kHistogramParseBlockedOnScriptLoadParseComplete[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoad.ParseComplete";
+const char kHistogramParseStartToFirstContentfulPaint[] =
+    "PageLoad.Timing2.ParseStartToFirstContentfulPaint";
+const char kHistogramParseBlockedOnScriptLoadDocumentWrite[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoadFromDocumentWrite";
+const char kHistogramParseBlockedOnScriptLoadDocumentWriteParseComplete[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoadFromDocumentWrite.ParseComplete";
+
 const char kBackgroundHistogramCommit[] =
     "PageLoad.Timing2.NavigationToCommit.Background";
 const char kBackgroundHistogramFirstLayout[] =
@@ -70,6 +110,93 @@ const char kBackgroundHistogramFirstImagePaint[] =
     "PageLoad.Timing2.NavigationToFirstImagePaint.Background.";
 const char kBackgroundHistogramFirstContentfulPaint[] =
     "PageLoad.Timing2.NavigationToFirstContentfulPaint.Background";
+const char kBackgroundHistogramParseDuration[] =
+    "PageLoad.Timing2.ParseDuration.Background";
+const char kBackgroundHistogramParseBlockedOnScriptLoad[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoad.Background";
+const char kBackgroundHistogramParseBlockedOnScriptLoadParseComplete[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoad.ParseComplete.Background";
+const char kBackgroundHistogramParseBlockedOnScriptLoadDocumentWrite[] =
+    "PageLoad.Timing2.ParseBlockedOnScriptLoadFromDocumentWrite.Background";
+const char
+    kBackgroundHistogramParseBlockedOnScriptLoadDocumentWriteParseComplete[] =
+        "PageLoad.Timing2.ParseBlockedOnScriptLoadFromDocumentWrite."
+        "ParseComplete.Background";
+
+// Immediate histogram variants, which are logged as soon as the associated
+// event is observed. These will eventually become our standard metrics, and the
+// Timing2 variants will be deprecated in M54.
+const char kHistogramDomContentLoadedImmediate[] =
+    "PageLoad.DocumentTiming.NavigationToDOMContentLoadedEventFired";
+const char kBackgroundHistogramDomContentLoadedImmediate[] =
+    "PageLoad.DocumentTiming.NavigationToDOMContentLoadedEventFired.Background";
+const char kHistogramLoadImmediate[] =
+    "PageLoad.DocumentTiming.NavigationToLoadEventFired";
+const char kBackgroundHistogramLoadImmediate[] =
+    "PageLoad.DocumentTiming.NavigationToLoadEventFired.Background";
+const char kHistogramFirstLayoutImmediate[] =
+    "PageLoad.DocumentTiming.NavigationToFirstLayout";
+const char kBackgroundHistogramFirstLayoutImmediate[] =
+    "PageLoad.DocumentTiming.NavigationToFirstLayout.Background";
+const char kHistogramFirstPaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstPaint";
+const char kBackgroundHistogramFirstPaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstPaint.Background";
+const char kHistogramFirstTextPaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstTextPaint";
+const char kBackgroundHistogramFirstTextPaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstTextPaint.Background";
+const char kHistogramFirstImagePaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstImagePaint";
+const char kBackgroundHistogramFirstImagePaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstImagePaint.Background";
+const char kHistogramFirstContentfulPaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint";
+const char kBackgroundHistogramFirstContentfulPaintImmediate[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.Background";
+const char kHistogramParseStartToFirstContentfulPaintImmediate[] =
+    "PageLoad.PaintTiming.ParseStartToFirstContentfulPaint";
+const char kBackgroundHistogramParseStartToFirstContentfulPaintImmediate[] =
+    "PageLoad.PaintTiming.ParseStartToFirstContentfulPaint.Background";
+const char kHistogramParseStartImmediate[] =
+    "PageLoad.ParseTiming.NavigationToParseStart";
+const char kBackgroundHistogramParseStartImmediate[] =
+    "PageLoad.ParseTiming.NavigationToParseStart.Background";
+const char kHistogramParseDurationImmediate[] =
+    "PageLoad.ParseTiming.ParseDuration";
+const char kBackgroundHistogramParseDurationImmediate[] =
+    "PageLoad.ParseTiming.ParseDuration.Background";
+const char kHistogramParseBlockedOnScriptLoadImmediate[] =
+    "PageLoad.ParseTiming.ParseBlockedOnScriptLoad";
+const char kBackgroundHistogramParseBlockedOnScriptLoadImmediate[] =
+    "PageLoad.ParseTiming.ParseBlockedOnScriptLoad.Background";
+const char kHistogramParseBlockedOnScriptLoadDocumentWriteImmediate[] =
+    "PageLoad.ParseTiming.ParseBlockedOnScriptLoadFromDocumentWrite";
+const char
+    kBackgroundHistogramParseBlockedOnScriptLoadDocumentWriteImmediate[] =
+        "PageLoad.ParseTiming.ParseBlockedOnScriptLoadFromDocumentWrite."
+        "Background";
+
+const char kHistogramLoadTypeFirstContentfulPaintReload[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.LoadType."
+    "Reload";
+const char kHistogramLoadTypeFirstContentfulPaintReloadByGesture[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.LoadType."
+    "Reload.UserGesture";
+const char kHistogramLoadTypeFirstContentfulPaintForwardBack[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.LoadType."
+    "ForwardBackNavigation";
+const char kHistogramLoadTypeFirstContentfulPaintNewNavigation[] =
+    "PageLoad.PaintTiming.NavigationToFirstContentfulPaint.LoadType."
+    "NewNavigation";
+
+const char kHistogramLoadTypeParseStartReload[] =
+    "PageLoad.ParseTiming.NavigationToParseStart.LoadType.Reload";
+const char kHistogramLoadTypeParseStartForwardBack[] =
+    "PageLoad.ParseTiming.NavigationToParseStart.LoadType."
+    "ForwardBackNavigation";
+const char kHistogramLoadTypeParseStartNewNavigation[] =
+    "PageLoad.ParseTiming.NavigationToParseStart.LoadType.NewNavigation";
 
 const char kHistogramFirstContentfulPaintHigh[] =
     "PageLoad.Timing2.NavigationToFirstContentfulPaint.HighResolutionClock";
@@ -85,6 +212,8 @@ const char kHistogramBackgroundBeforePaint[] =
     "PageLoad.Timing2.NavigationToFirstBackground.AfterCommit.BeforePaint";
 const char kHistogramBackgroundBeforeCommit[] =
     "PageLoad.Timing2.NavigationToFirstBackground.BeforeCommit";
+const char kHistogramBackgroundDuringParse[] =
+    "PageLoad.Timing2.NavigationToFirstBackground.DuringParse";
 const char kHistogramFailedProvisionalLoad[] =
     "PageLoad.Timing2.NavigationToFailedProvisionalLoad";
 
@@ -96,9 +225,191 @@ const char kRapporMetricsNameCoarseTiming[] =
 
 }  // namespace internal
 
-CorePageLoadMetricsObserver::CorePageLoadMetricsObserver() {}
+CorePageLoadMetricsObserver::CorePageLoadMetricsObserver()
+    : transition_(ui::PAGE_TRANSITION_LINK),
+      initiated_by_user_gesture_(false) {}
 
 CorePageLoadMetricsObserver::~CorePageLoadMetricsObserver() {}
+
+void CorePageLoadMetricsObserver::OnCommit(
+    content::NavigationHandle* navigation_handle) {
+  transition_ = navigation_handle->GetPageTransition();
+  initiated_by_user_gesture_ = navigation_handle->HasUserGesture();
+}
+
+void CorePageLoadMetricsObserver::OnDomContentLoadedEventStart(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(
+          timing.dom_content_loaded_event_start, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramDomContentLoadedImmediate,
+                        timing.dom_content_loaded_event_start);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramDomContentLoadedImmediate,
+                        timing.dom_content_loaded_event_start);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnLoadEventStart(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.load_event_start, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramLoadImmediate,
+                        timing.load_event_start);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramLoadImmediate,
+                        timing.load_event_start);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnFirstLayout(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.first_layout, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstLayoutImmediate,
+                        timing.first_layout);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramFirstLayoutImmediate,
+                        timing.first_layout);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnFirstPaint(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.first_paint, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstPaintImmediate,
+                        timing.first_paint);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramFirstPaintImmediate,
+                        timing.first_paint);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnFirstTextPaint(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.first_text_paint, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstTextPaintImmediate,
+                        timing.first_text_paint);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramFirstTextPaintImmediate,
+                        timing.first_text_paint);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnFirstImagePaint(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.first_image_paint, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstImagePaintImmediate,
+                        timing.first_image_paint);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramFirstImagePaintImmediate,
+                        timing.first_image_paint);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnFirstContentfulPaint(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.first_contentful_paint,
+                                              info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstContentfulPaintImmediate,
+                        timing.first_contentful_paint);
+    PAGE_LOAD_HISTOGRAM(
+        internal::kHistogramParseStartToFirstContentfulPaintImmediate,
+        timing.first_contentful_paint - timing.parse_start);
+
+    switch (GetPageLoadType(transition_)) {
+      case LOAD_TYPE_RELOAD:
+        PAGE_LOAD_HISTOGRAM(
+            internal::kHistogramLoadTypeFirstContentfulPaintReload,
+            timing.first_contentful_paint);
+        if (initiated_by_user_gesture_) {
+          PAGE_LOAD_HISTOGRAM(
+              internal::kHistogramLoadTypeFirstContentfulPaintReloadByGesture,
+              timing.first_contentful_paint);
+        }
+        break;
+      case LOAD_TYPE_FORWARD_BACK:
+        PAGE_LOAD_HISTOGRAM(
+            internal::kHistogramLoadTypeFirstContentfulPaintForwardBack,
+            timing.first_contentful_paint);
+        break;
+      case LOAD_TYPE_NEW_NAVIGATION:
+        PAGE_LOAD_HISTOGRAM(
+            internal::kHistogramLoadTypeFirstContentfulPaintNewNavigation,
+            timing.first_contentful_paint);
+        break;
+      case LOAD_TYPE_NONE:
+        NOTREACHED();
+        break;
+    }
+  } else {
+    PAGE_LOAD_HISTOGRAM(
+        internal::kBackgroundHistogramFirstContentfulPaintImmediate,
+        timing.first_contentful_paint);
+    PAGE_LOAD_HISTOGRAM(
+        internal::kBackgroundHistogramParseStartToFirstContentfulPaintImmediate,
+        timing.first_contentful_paint - timing.parse_start);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnParseStart(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (WasStartedInForegroundEventInForeground(timing.parse_start, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramParseStartImmediate,
+                        timing.parse_start);
+
+    switch (GetPageLoadType(transition_)) {
+      case LOAD_TYPE_RELOAD:
+        PAGE_LOAD_HISTOGRAM(internal::kHistogramLoadTypeParseStartReload,
+                            timing.parse_start);
+        break;
+      case LOAD_TYPE_FORWARD_BACK:
+        PAGE_LOAD_HISTOGRAM(internal::kHistogramLoadTypeParseStartForwardBack,
+                            timing.parse_start);
+        break;
+      case LOAD_TYPE_NEW_NAVIGATION:
+        PAGE_LOAD_HISTOGRAM(internal::kHistogramLoadTypeParseStartNewNavigation,
+                            timing.parse_start);
+        break;
+      case LOAD_TYPE_NONE:
+        NOTREACHED();
+        break;
+    }
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramParseStartImmediate,
+                        timing.parse_start);
+  }
+}
+
+void CorePageLoadMetricsObserver::OnParseStop(
+    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  base::TimeDelta parse_duration = timing.parse_stop - timing.parse_start;
+  if (WasStartedInForegroundEventInForeground(timing.parse_stop, info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramParseDurationImmediate,
+                        parse_duration);
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramParseBlockedOnScriptLoadImmediate,
+                        timing.parse_blocked_on_script_load_duration);
+    PAGE_LOAD_HISTOGRAM(
+        internal::kHistogramParseBlockedOnScriptLoadDocumentWriteImmediate,
+        timing.parse_blocked_on_script_load_from_document_write_duration);
+  } else {
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramParseDurationImmediate,
+                        parse_duration);
+    PAGE_LOAD_HISTOGRAM(
+        internal::kBackgroundHistogramParseBlockedOnScriptLoadImmediate,
+        timing.parse_blocked_on_script_load_duration);
+    PAGE_LOAD_HISTOGRAM(
+        internal::
+            kBackgroundHistogramParseBlockedOnScriptLoadDocumentWriteImmediate,
+        timing.parse_blocked_on_script_load_from_document_write_duration);
+  }
+}
 
 void CorePageLoadMetricsObserver::OnComplete(
     const page_load_metrics::PageLoadTiming& timing,
@@ -106,6 +417,13 @@ void CorePageLoadMetricsObserver::OnComplete(
   RecordTimingHistograms(timing, info);
   RecordRappor(timing, info);
 }
+
+CorePageLoadMetricsObserver::FailedProvisionalLoadInfo::
+    FailedProvisionalLoadInfo()
+    : error(net::OK) {}
+
+CorePageLoadMetricsObserver::FailedProvisionalLoadInfo::
+    ~FailedProvisionalLoadInfo() {}
 
 void CorePageLoadMetricsObserver::OnFailedProvisionalLoad(
     content::NavigationHandle* navigation_handle) {
@@ -128,45 +446,61 @@ void CorePageLoadMetricsObserver::OnFailedProvisionalLoad(
 void CorePageLoadMetricsObserver::RecordTimingHistograms(
     const page_load_metrics::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& info) {
-  // Record metrics for pages which starts in the foreground and is backgrounded
-  // prior to the first paint.
-  if (info.started_in_foreground && !info.first_background_time.is_zero() &&
-      (timing.first_paint.is_zero() ||
-       timing.first_paint > info.first_background_time)) {
-    if (!info.time_to_commit.is_zero()) {
-      PAGE_LOAD_HISTOGRAM(internal::kHistogramBackgroundBeforePaint,
-                          info.first_background_time);
-    } else {
+  // Record metrics for pages which start in the foreground and are
+  // backgrounded.
+  if (info.started_in_foreground && info.first_background_time) {
+    const base::TimeDelta first_background_time =
+        info.first_background_time.value();
+
+    if (!info.time_to_commit) {
       PAGE_LOAD_HISTOGRAM(internal::kHistogramBackgroundBeforeCommit,
-                          info.first_background_time);
+                          first_background_time);
+    } else if (timing.first_paint.is_zero() ||
+               timing.first_paint > first_background_time) {
+      PAGE_LOAD_HISTOGRAM(internal::kHistogramBackgroundBeforePaint,
+                          first_background_time);
+    }
+    if (!timing.parse_start.is_zero() &&
+        first_background_time >= timing.parse_start &&
+        (timing.parse_stop.is_zero() ||
+         timing.parse_stop > first_background_time)) {
+      PAGE_LOAD_HISTOGRAM(internal::kHistogramBackgroundDuringParse,
+                          first_background_time);
     }
   }
 
   if (failed_provisional_load_info_.error != net::OK) {
+    DCHECK(failed_provisional_load_info_.interval);
+
     // Ignores a background failed provisional load.
-    if (WasStartedInForegroundEventInForeground(
+    if (WasStartedInForegroundOptionalEventInForeground(
             failed_provisional_load_info_.interval, info)) {
       PAGE_LOAD_HISTOGRAM(internal::kHistogramFailedProvisionalLoad,
-                          failed_provisional_load_info_.interval);
+                          failed_provisional_load_info_.interval.value());
     }
   }
 
-  // The rest of the histograms require the load to have commit and be relevant.
-  // If |timing.IsEmpty()|, then this load was not tracked by the renderer.
-  if (info.time_to_commit.is_zero() || timing.IsEmpty())
+  // The rest of the histograms require the load to have committed and be
+  // relevant. If |timing.IsEmpty()|, then this load was not tracked by the
+  // renderer.
+  if (!info.time_to_commit || timing.IsEmpty())
     return;
 
-  if (WasStartedInForegroundEventInForeground(info.time_to_commit, info)) {
-    PAGE_LOAD_HISTOGRAM(internal::kHistogramCommit, info.time_to_commit);
+  const base::TimeDelta time_to_commit = info.time_to_commit.value();
+  if (WasStartedInForegroundOptionalEventInForeground(info.time_to_commit,
+                                                      info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramCommit, time_to_commit);
   } else {
-    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramCommit,
-                        info.time_to_commit);
+    PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramCommit, time_to_commit);
   }
   if (!timing.dom_content_loaded_event_start.is_zero()) {
     if (WasStartedInForegroundEventInForeground(
             timing.dom_content_loaded_event_start, info)) {
       PAGE_LOAD_HISTOGRAM(internal::kHistogramDomContentLoaded,
                           timing.dom_content_loaded_event_start);
+      PAGE_LOAD_HISTOGRAM(
+          internal::kHistogramDomLoadingToDomContentLoaded,
+          timing.dom_content_loaded_event_start - timing.dom_loading);
     } else {
       PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramDomContentLoaded,
                           timing.dom_content_loaded_event_start);
@@ -201,13 +535,13 @@ void CorePageLoadMetricsObserver::RecordTimingHistograms(
     // - Opened in the background.
     // - Moved to the foreground prior to the first paint.
     // - Not moved back to the background prior to the first paint.
-    if (!info.started_in_foreground && !info.first_foreground_time.is_zero() &&
-        timing.first_paint > info.first_foreground_time &&
-        (info.first_background_time.is_zero() ||
-         timing.first_paint < info.first_background_time)) {
+    if (!info.started_in_foreground && info.first_foreground_time &&
+        timing.first_paint > info.first_foreground_time.value() &&
+        (!info.first_background_time ||
+         timing.first_paint < info.first_background_time.value())) {
       PAGE_LOAD_HISTOGRAM(
           internal::kHistogramForegroundToFirstPaint,
-          timing.first_paint - info.first_foreground_time);
+          timing.first_paint - info.first_foreground_time.value());
     }
   }
   if (!timing.first_text_paint.is_zero()) {
@@ -244,22 +578,66 @@ void CorePageLoadMetricsObserver::RecordTimingHistograms(
         PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstContentfulPaintLow,
                             timing.first_contentful_paint);
       }
+      PAGE_LOAD_HISTOGRAM(internal::kHistogramParseStartToFirstContentfulPaint,
+                          timing.first_contentful_paint - timing.parse_start);
+      PAGE_LOAD_HISTOGRAM(internal::kHistogramDomLoadingToFirstContentfulPaint,
+                          timing.first_contentful_paint - timing.dom_loading);
     } else {
       PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramFirstContentfulPaint,
                           timing.first_contentful_paint);
+    }
+  }
+  if (!timing.parse_start.is_zero()) {
+    if (WasParseInForeground(timing.parse_start, timing.parse_stop, info)) {
+      PAGE_LOAD_HISTOGRAM(internal::kHistogramParseBlockedOnScriptLoad,
+                          timing.parse_blocked_on_script_load_duration);
+      PAGE_LOAD_HISTOGRAM(
+          internal::kHistogramParseBlockedOnScriptLoadDocumentWrite,
+          timing.parse_blocked_on_script_load_from_document_write_duration);
+    } else {
+      PAGE_LOAD_HISTOGRAM(
+          internal::kBackgroundHistogramParseBlockedOnScriptLoad,
+          timing.parse_blocked_on_script_load_duration);
+      PAGE_LOAD_HISTOGRAM(
+          internal::kBackgroundHistogramParseBlockedOnScriptLoadDocumentWrite,
+          timing.parse_blocked_on_script_load_from_document_write_duration);
+    }
+  }
+
+  if (!timing.parse_stop.is_zero()) {
+    base::TimeDelta parse_duration = timing.parse_stop - timing.parse_start;
+    if (WasStartedInForegroundEventInForeground(timing.parse_stop, info)) {
+      PAGE_LOAD_HISTOGRAM(internal::kHistogramParseDuration, parse_duration);
+      PAGE_LOAD_HISTOGRAM(
+          internal::kHistogramParseBlockedOnScriptLoadParseComplete,
+          timing.parse_blocked_on_script_load_duration);
+      PAGE_LOAD_HISTOGRAM(
+          internal::
+              kHistogramParseBlockedOnScriptLoadDocumentWriteParseComplete,
+          timing.parse_blocked_on_script_load_from_document_write_duration);
+    } else {
+      PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramParseDuration,
+                          parse_duration);
+      PAGE_LOAD_HISTOGRAM(
+          internal::kBackgroundHistogramParseBlockedOnScriptLoadParseComplete,
+          timing.parse_blocked_on_script_load_duration);
+      PAGE_LOAD_HISTOGRAM(
+          internal::
+              kBackgroundHistogramParseBlockedOnScriptLoadDocumentWriteParseComplete,
+          timing.parse_blocked_on_script_load_from_document_write_duration);
     }
   }
 
   // Log time to first foreground / time to first background. Log counts that we
   // started a relevant page load in the foreground / background.
   if (info.started_in_foreground) {
-    if (!info.first_background_time.is_zero())
+    if (info.first_background_time)
       PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstBackground,
-                          info.first_background_time);
+                          info.first_background_time.value());
   } else {
-    if (!info.first_foreground_time.is_zero())
+    if (info.first_foreground_time)
       PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstForeground,
-                          info.first_foreground_time);
+                          info.first_foreground_time.value());
   }
 }
 
@@ -275,7 +653,7 @@ void CorePageLoadMetricsObserver::RecordRappor(
   rappor::RapporService* rappor_service = g_browser_process->rappor_service();
   if (!rappor_service)
     return;
-  if (info.time_to_commit.is_zero())
+  if (!info.time_to_commit)
     return;
   DCHECK(!info.committed_url.is_empty());
   // Log the eTLD+1 of sites that show poor loading performance.
@@ -283,7 +661,7 @@ void CorePageLoadMetricsObserver::RecordRappor(
                                                info)) {
     return;
   }
-  scoped_ptr<rappor::Sample> sample =
+  std::unique_ptr<rappor::Sample> sample =
       rappor_service->CreateSample(rappor::UMA_RAPPOR_TYPE);
   sample->SetStringField(
       "Domain", rappor::GetDomainAndRegistrySampleFromGURL(info.committed_url));

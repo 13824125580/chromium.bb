@@ -92,6 +92,13 @@ var GetChildIDAtIndex = requireNative('automationInternal').GetChildIDAtIndex;
 /**
  * @param {number} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
+ * @return {?Object} An object mapping html attributes to values.
+ */
+var GetHtmlAttributes = requireNative('automationInternal').GetHtmlAttributes;
+
+/**
+ * @param {number} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
  * @return {?number} The index of this node in its parent, or undefined if
  *     the tree or node or node parent wasn't found.
  */
@@ -199,26 +206,37 @@ var utils = require('utils');
  */
 function AutomationNodeImpl(root) {
   this.rootImpl = root;
-  // Public attributes. No actual data gets set on this object.
-  this.listeners = {};
+  this.hostNode_ = null;
+  this.listeners = {__proto__: null};
 }
 
 AutomationNodeImpl.prototype = {
+  __proto__: null,
   treeID: -1,
   id: -1,
-  role: '',
-  state: { busy: true },
   isRootNode: false,
 
+  detach: function() {
+    this.rootImpl = null;
+    this.hostNode_ = null;
+    this.listeners = {__proto__: null};
+  },
+
   get root() {
-    return this.rootImpl.wrapper;
+    return this.rootImpl && this.rootImpl.wrapper;
   },
 
   get parent() {
+    if (!this.rootImpl)
+      return undefined;
     if (this.hostNode_)
       return this.hostNode_;
     var parentID = GetParentID(this.treeID, this.id);
     return this.rootImpl.get(parentID);
+  },
+
+  get htmlAttributes() {
+    return GetHtmlAttributes(this.treeID, this.id) || {};
   },
 
   get state() {
@@ -248,6 +266,8 @@ AutomationNodeImpl.prototype = {
   },
 
   get firstChild() {
+    if (!this.rootImpl)
+      return undefined;
     if (this.childTree)
       return this.childTree;
     if (!GetChildCount(this.treeID, this.id))
@@ -257,6 +277,8 @@ AutomationNodeImpl.prototype = {
   },
 
   get lastChild() {
+    if (!this.rootImpl)
+      return undefined;
     if (this.childTree)
       return this.childTree;
     var count = GetChildCount(this.treeID, this.id);
@@ -267,6 +289,9 @@ AutomationNodeImpl.prototype = {
   },
 
   get children() {
+    if (!this.rootImpl)
+      return [];
+
     if (this.childTree)
       return [this.childTree];
 
@@ -275,7 +300,7 @@ AutomationNodeImpl.prototype = {
     for (var i = 0; i < count; ++i) {
       var childID = GetChildIDAtIndex(this.treeID, this.id, i);
       var child = this.rootImpl.get(childID);
-      children.push(child);
+      $Array.push(children, child);
     }
     return children;
   },
@@ -322,11 +347,13 @@ AutomationNodeImpl.prototype = {
   },
 
   domQuerySelector: function(selector, callback) {
+    if (!this.rootImpl)
+      callback();
     automationInternal.querySelector(
       { treeID: this.rootImpl.treeID,
         automationNodeID: this.id,
         selector: selector },
-      this.domQuerySelectorCallback_.bind(this, callback));
+      $Function.bind(this.domQuerySelectorCallback_, this, callback));
   },
 
   find: function(params) {
@@ -345,7 +372,11 @@ AutomationNodeImpl.prototype = {
     this.removeEventListener(eventType, callback);
     if (!this.listeners[eventType])
       this.listeners[eventType] = [];
-    this.listeners[eventType].push({callback: callback, capture: !!capture});
+    $Array.push(this.listeners[eventType], {
+      __proto__: null,
+      callback: callback,
+      capture: !!capture,
+    });
   },
 
   // TODO(dtseng/aboxhall): Check this impl against spec.
@@ -354,7 +385,7 @@ AutomationNodeImpl.prototype = {
       var listeners = this.listeners[eventType];
       for (var i = 0; i < listeners.length; i++) {
         if (callback === listeners[i].callback)
-          listeners.splice(i, 1);
+          $Array.splice(listeners, i, 1);
       }
     }
   },
@@ -370,7 +401,7 @@ AutomationNodeImpl.prototype = {
     var path = [];
     var parent = this.parent;
     while (parent) {
-      path.push(parent);
+      $Array.push(path, parent);
       parent = parent.parent;
     }
     var event = new AutomationEvent(eventType, this.wrapper);
@@ -394,7 +425,7 @@ AutomationNodeImpl.prototype = {
     var childIDs = [];
     for (var i = 0; i < count; ++i) {
       var childID = GetChildIDAtIndex(this.treeID, this.id, i);
-      childIDs.push(childID);
+      $Array.push(childIDs, childID);
     }
 
     var result = 'node id=' + this.id +
@@ -440,6 +471,9 @@ AutomationNodeImpl.prototype = {
 
   fireEventListeners_: function(node, event) {
     var nodeImpl = privates(node).impl;
+    if (!nodeImpl.rootImpl)
+      return;
+
     var listeners = nodeImpl.listeners[event.type];
     if (!listeners)
       return;
@@ -460,6 +494,9 @@ AutomationNodeImpl.prototype = {
   },
 
   performAction_: function(actionType, opt_args) {
+    if (!this.rootImpl)
+      return;
+
     // Not yet initialized.
     if (this.rootImpl.treeID === undefined ||
         this.id === undefined) {
@@ -482,7 +519,7 @@ AutomationNodeImpl.prototype = {
     // resultAutomationNodeID could be zero or undefined or (unlikely) null;
     // they all amount to the same thing here, which is that no node was
     // returned.
-    if (!resultAutomationNodeID) {
+    if (!resultAutomationNodeID || !this.rootImpl) {
       userCallback(null);
       return;
     }
@@ -500,7 +537,7 @@ AutomationNodeImpl.prototype = {
     this.forAllDescendants_(function(node) {
       if (privates(node).impl.matchInternal_(params)) {
         if (opt_results)
-          opt_results.push(node);
+          $Array.push(opt_results, node);
         else
           result = node;
         return !opt_results;
@@ -518,20 +555,20 @@ AutomationNodeImpl.prototype = {
    *     for each node. Return true to early-out the traversal.
    */
   forAllDescendants_: function(closure) {
-    var stack = this.wrapper.children.reverse();
+    var stack = $Array.reverse(this.wrapper.children);
     while (stack.length > 0) {
-      var node = stack.pop();
+      var node = $Array.pop(stack);
       if (closure(node))
         return;
 
       var children = node.children;
       for (var i = children.length - 1; i >= 0; i--)
-        stack.push(children[i]);
+        $Array.push(stack, children[i]);
     }
   },
 
   matchInternal_: function(params) {
-    if (Object.keys(params).length == 0)
+    if ($Object.keys(params).length === 0)
       return false;
 
     if ('role' in params && this.role != params.role)
@@ -549,7 +586,7 @@ AutomationNodeImpl.prototype = {
         if (typeof attrValue != 'object') {
           if (this[attribute] !== attrValue)
             return false;
-        } else if (attrValue instanceof RegExp) {
+        } else if (attrValue instanceof $RegExp.self) {
           if (typeof this[attribute] != 'string')
             return false;
           if (!attrValue.test(this[attribute]))
@@ -576,6 +613,7 @@ var stringAttributes = [
     'dropeffect',
     'help',
     'htmlTag',
+    'language',
     'liveRelevant',
     'liveStatus',
     'name',
@@ -602,8 +640,10 @@ var intAttributes = [
     'backgroundColor',
     'color',
     'colorValue',
+    'descriptionFrom',
     'hierarchicalLevel',
     'invalidState',
+    'nameFrom',
     'posInSet',
     'scrollX',
     'scrollXMax',
@@ -627,7 +667,7 @@ var intAttributes = [
     'textStyle'];
 
 var nodeRefAttributes = [
-    ['activedescendantId', 'activedescendant'],
+    ['activedescendantId', 'activeDescendant'],
     ['tableColumnHeaderId', 'tableColumnHeader'],
     ['tableHeaderId', 'tableHeader'],
     ['tableRowHeaderId', 'tableRowHeader'],
@@ -658,41 +698,45 @@ var htmlAttributes = [
 
 var publicAttributes = [];
 
-stringAttributes.forEach(function (attributeName) {
-  publicAttributes.push(attributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+$Array.forEach(stringAttributes, function(attributeName) {
+  $Array.push(publicAttributes, attributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+    __proto__: null,
     get: function() {
       return GetStringAttribute(this.treeID, this.id, attributeName);
     }
   });
 });
 
-boolAttributes.forEach(function (attributeName) {
-  publicAttributes.push(attributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+$Array.forEach(boolAttributes, function(attributeName) {
+  $Array.push(publicAttributes, attributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+    __proto__: null,
     get: function() {
       return GetBoolAttribute(this.treeID, this.id, attributeName);
     }
   });
 });
 
-intAttributes.forEach(function (attributeName) {
-  publicAttributes.push(attributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+$Array.forEach(intAttributes, function(attributeName) {
+  $Array.push(publicAttributes, attributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+    __proto__: null,
     get: function() {
       return GetIntAttribute(this.treeID, this.id, attributeName);
     }
   });
 });
 
-nodeRefAttributes.forEach(function (params) {
+$Array.forEach(nodeRefAttributes, function(params) {
   var srcAttributeName = params[0];
   var dstAttributeName = params[1];
-  publicAttributes.push(dstAttributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
+  $Array.push(publicAttributes, dstAttributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
+    __proto__: null,
     get: function() {
       var id = GetIntAttribute(this.treeID, this.id, srcAttributeName);
-      if (id)
+      if (id && this.rootImpl)
         return this.rootImpl.get(id);
       else
         return undefined;
@@ -700,49 +744,53 @@ nodeRefAttributes.forEach(function (params) {
   });
 });
 
-intListAttributes.forEach(function (attributeName) {
-  publicAttributes.push(attributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+$Array.forEach(intListAttributes, function(attributeName) {
+  $Array.push(publicAttributes, attributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+    __proto__: null,
     get: function() {
       return GetIntListAttribute(this.treeID, this.id, attributeName);
     }
   });
 });
 
-nodeRefListAttributes.forEach(function (params) {
+$Array.forEach(nodeRefListAttributes, function(params) {
   var srcAttributeName = params[0];
   var dstAttributeName = params[1];
-  publicAttributes.push(dstAttributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
+  $Array.push(publicAttributes, dstAttributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
+    __proto__: null,
     get: function() {
       var ids = GetIntListAttribute(this.treeID, this.id, srcAttributeName);
-      if (!ids)
+      if (!ids || !this.rootImpl)
         return undefined;
       var result = [];
       for (var i = 0; i < ids.length; ++i) {
         var node = this.rootImpl.get(ids[i]);
         if (node)
-          result.push(node);
+          $Array.push(result, node);
       }
       return result;
     }
   });
 });
 
-floatAttributes.forEach(function (attributeName) {
-  publicAttributes.push(attributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+$Array.forEach(floatAttributes, function(attributeName) {
+  $Array.push(publicAttributes, attributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, attributeName, {
+    __proto__: null,
     get: function() {
       return GetFloatAttribute(this.treeID, this.id, attributeName);
     }
   });
 });
 
-htmlAttributes.forEach(function (params) {
+$Array.forEach(htmlAttributes, function(params) {
   var srcAttributeName = params[0];
   var dstAttributeName = params[1];
-  publicAttributes.push(dstAttributeName);
-  Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
+  $Array.push(publicAttributes, dstAttributeName);
+  $Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
+    __proto__: null,
     get: function() {
       return GetHtmlAttribute(this.treeID, this.id, srcAttributeName);
     }
@@ -767,29 +815,30 @@ htmlAttributes.forEach(function (params) {
  * @constructor
  */
 function AutomationRootNodeImpl(treeID) {
-  AutomationNodeImpl.call(this, this);
+  $Function.call(AutomationNodeImpl, this, this);
   this.treeID = treeID;
-  this.axNodeDataCache_ = {};
+  this.axNodeDataCache_ = {__proto__: null};
 }
 
-AutomationRootNodeImpl.idToAutomationRootNode_ = {};
+utils.defineProperty(AutomationRootNodeImpl, 'idToAutomationRootNode_',
+    {__proto__: null});
 
-AutomationRootNodeImpl.get = function(treeID) {
+utils.defineProperty(AutomationRootNodeImpl, 'get', function(treeID) {
   var result = AutomationRootNodeImpl.idToAutomationRootNode_[treeID];
   return result || undefined;
-}
+});
 
-AutomationRootNodeImpl.getOrCreate = function(treeID) {
+utils.defineProperty(AutomationRootNodeImpl, 'getOrCreate', function(treeID) {
   if (AutomationRootNodeImpl.idToAutomationRootNode_[treeID])
     return AutomationRootNodeImpl.idToAutomationRootNode_[treeID];
   var result = new AutomationRootNode(treeID);
   AutomationRootNodeImpl.idToAutomationRootNode_[treeID] = result;
   return result;
-}
+});
 
-AutomationRootNodeImpl.destroy = function(treeID) {
+utils.defineProperty(AutomationRootNodeImpl, 'destroy', function(treeID) {
   delete AutomationRootNodeImpl.idToAutomationRootNode_[treeID];
-}
+});
 
 AutomationRootNodeImpl.prototype = {
   __proto__: AutomationNodeImpl.prototype,
@@ -893,11 +942,16 @@ AutomationRootNodeImpl.prototype = {
   },
 
   remove: function(id) {
+    if (this.axNodeDataCache_[id])
+      privates(this.axNodeDataCache_[id]).impl.detach();
     delete this.axNodeDataCache_[id];
   },
 
   destroy: function() {
     this.dispatchEvent(schema.EventType.destroyed);
+    for (var id in this.axNodeDataCache_)
+      this.remove(id);
+    this.detach();
   },
 
   setHostNode(hostNode) {
@@ -925,8 +979,7 @@ AutomationRootNodeImpl.prototype = {
       if (nodeImpl.isRootNode)
         output += indent + 'tree id=' + nodeImpl.treeID + '\n';
       output += indent +
-          AutomationNodeImpl.prototype.toString.call(nodeImpl) +
-          '\n';
+        $Function.call(AutomationNodeImpl.prototype.toString, nodeImpl) + '\n';
       indent += '  ';
       var children = nodeImpl.children;
       for (var i = 0; i < children.length; ++i)
@@ -937,58 +990,70 @@ AutomationRootNodeImpl.prototype = {
   },
 };
 
-var AutomationNode = utils.expose('AutomationNode',
-                                  AutomationNodeImpl,
-                                  { functions: ['doDefault',
-                                                'find',
-                                                'findAll',
-                                                'focus',
-                                                'makeVisible',
-                                                'matches',
-                                                'setSelection',
-                                                'showContextMenu',
-                                                'addEventListener',
-                                                'removeEventListener',
-                                                'domQuerySelector',
-                                                'toString',
-                                                'boundsForRange'],
-                                    readonly: publicAttributes.concat(
-                                              ['parent',
-                                               'firstChild',
-                                               'lastChild',
-                                               'children',
-                                               'previousSibling',
-                                               'nextSibling',
-                                               'isRootNode',
-                                               'role',
-                                               'state',
-                                               'location',
-                                               'indexInParent',
-                                               'root']) });
+function AutomationNode() {
+  privates(AutomationNode).constructPrivate(this, arguments);
+}
+utils.expose(AutomationNode, AutomationNodeImpl, {
+  functions: [
+    'doDefault',
+    'find',
+    'findAll',
+    'focus',
+    'makeVisible',
+    'matches',
+    'setSelection',
+    'showContextMenu',
+    'addEventListener',
+    'removeEventListener',
+    'domQuerySelector',
+    'toString',
+    'boundsForRange',
+  ],
+  readonly: $Array.concat(publicAttributes, [
+      'parent',
+      'firstChild',
+      'lastChild',
+      'children',
+      'previousSibling',
+      'nextSibling',
+      'isRootNode',
+      'role',
+      'state',
+      'location',
+      'indexInParent',
+      'root',
+      'htmlAttributes',
+  ]),
+});
 
-var AutomationRootNode = utils.expose('AutomationRootNode',
-                                      AutomationRootNodeImpl,
-                                      { superclass: AutomationNode,
-                                        readonly: ['docTitle',
-                                                   'docUrl',
-                                                   'docLoaded',
-                                                   'docLoadingProgress',
-                                                   'anchorObject',
-                                                   'anchorOffset',
-                                                   'focusObject',
-                                                   'focusOffset'] });
+function AutomationRootNode() {
+  privates(AutomationRootNode).constructPrivate(this, arguments);
+}
+utils.expose(AutomationRootNode, AutomationRootNodeImpl, {
+  superclass: AutomationNode,
+  readonly: [
+    'docTitle',
+    'docUrl',
+    'docLoaded',
+    'docLoadingProgress',
+    'anchorObject',
+    'anchorOffset',
+    'focusObject',
+    'focusOffset',
+  ],
+});
 
-AutomationRootNode.get = function(treeID) {
+utils.defineProperty(AutomationRootNode, 'get', function(treeID) {
   return AutomationRootNodeImpl.get(treeID);
-}
+});
 
-AutomationRootNode.getOrCreate = function(treeID) {
+utils.defineProperty(AutomationRootNode, 'getOrCreate', function(treeID) {
   return AutomationRootNodeImpl.getOrCreate(treeID);
-}
+});
 
-AutomationRootNode.destroy = function(treeID) {
+utils.defineProperty(AutomationRootNode, 'destroy', function(treeID) {
   AutomationRootNodeImpl.destroy(treeID);
-}
+});
 
-exports.AutomationNode = AutomationNode;
-exports.AutomationRootNode = AutomationRootNode;
+exports.$set('AutomationNode', AutomationNode);
+exports.$set('AutomationRootNode', AutomationRootNode);

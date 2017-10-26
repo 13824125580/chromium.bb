@@ -1,5 +1,0 @@
-{
-  "url": "mojo://resource_provider/",
-  "name": "Resource Provider",
-  "capabilities": { "*": [ "*" ] }
-}

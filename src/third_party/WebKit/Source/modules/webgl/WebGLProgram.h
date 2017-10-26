@@ -26,6 +26,7 @@
 #ifndef WebGLProgram_h
 #define WebGLProgram_h
 
+#include "bindings/core/v8/ScopedPersistent.h"
 #include "modules/webgl/WebGLShader.h"
 #include "modules/webgl/WebGLSharedPlatform3DObject.h"
 #include "wtf/PassRefPtr.h"
@@ -40,12 +41,7 @@ public:
 
     static WebGLProgram* create(WebGLRenderingContextBase*);
 
-    unsigned numActiveAttribLocations();
-    GLint getActiveAttribLocation(GLuint index);
-
-    bool isUsingVertexAttrib0();
-
-    bool linkStatus();
+    bool linkStatus(WebGLRenderingContextBase*);
 
     unsigned linkCount() const { return m_linkCount; }
 
@@ -63,20 +59,19 @@ public:
     bool attachShader(WebGLShader*);
     bool detachShader(WebGLShader*);
 
+    ScopedPersistent<v8::Array>* getPersistentCache();
+
     DECLARE_VIRTUAL_TRACE();
 
 protected:
     explicit WebGLProgram(WebGLRenderingContextBase*);
 
-    void deleteObjectImpl(WebGraphicsContext3D*) override;
+    void deleteObjectImpl(gpu::gles2::GLES2Interface*) override;
 
 private:
     bool isProgram() const override { return true; }
 
-    void cacheActiveAttribLocations(WebGraphicsContext3D*);
-    void cacheInfoIfNeeded();
-
-    Vector<GLint> m_activeAttribLocations;
+    void cacheInfoIfNeeded(WebGLRenderingContextBase*);
 
     GLint m_linkStatus;
 
@@ -92,6 +87,8 @@ private:
     Member<WebGLShader> m_fragmentShader;
 
     bool m_infoValid;
+
+    ScopedPersistent<v8::Array> m_shaderWrappers;
 };
 
 } // namespace blink

@@ -5,9 +5,12 @@
 #ifndef BLIMP_ENGINE_COMMON_BLIMP_BROWSER_CONTEXT_H_
 #define BLIMP_ENGINE_COMMON_BLIMP_BROWSER_CONTEXT_H_
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "blimp/engine/app/blimp_metrics_service_client.h"
+#include "blimp/engine/app/blimp_system_url_request_context_getter.h"
 #include "blimp/engine/app/blimp_url_request_context_getter.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
@@ -31,19 +34,10 @@ class BlimpBrowserContext : public content::BrowserContext {
   ~BlimpBrowserContext() override;
 
   // content::BrowserContext implementation.
-  scoped_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
+  std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
   base::FilePath GetPath() const override;
   bool IsOffTheRecord() const override;
-  net::URLRequestContextGetter* GetRequestContext() override;
-  net::URLRequestContextGetter* GetRequestContextForRenderProcess(
-      int renderer_child_id) override;
-  net::URLRequestContextGetter* GetMediaRequestContext() override;
-  net::URLRequestContextGetter* GetMediaRequestContextForRenderProcess(
-      int renderer_child_id) override;
-  net::URLRequestContextGetter* GetMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
   content::ResourceContext* GetResourceContext() override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
@@ -52,21 +46,44 @@ class BlimpBrowserContext : public content::BrowserContext {
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
   content::PermissionManager* GetPermissionManager() override;
   content::BackgroundSyncController* GetBackgroundSyncController() override;
-
-  // The content of |protocol_handlers| is swapped into the returned instance.
-  // Caller should take a reference to the returned instance via scoped_refptr.
-  const scoped_refptr<BlimpURLRequestContextGetter>& CreateRequestContext(
+  net::URLRequestContextGetter* CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors);
+      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory,
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateMediaRequestContext() override;
+  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory) override;
+
+  // Provides a URLRequestContextGetter for system requests (e.g. metrics
+  // uploads).
+  net::URLRequestContextGetter* GetSystemRequestContextGetter();
+
+  PrefService* GetPrefService() { return pref_service_.get(); }
 
  private:
   // Performs initialization of the BlimpBrowserContext while IO is still
   // allowed on the current thread.
   void InitWhileIOAllowed();
 
-  scoped_ptr<BlimpResourceContext> resource_context_;
+  // Helper function for PrefService initialization.
+  void InitPrefService();
+
+  // Used in metrics initialization to get a PrefService to store logs
+  // temporarily. Must stay alive for lifetime of metrics_service_client_.
+  std::unique_ptr<PrefService> pref_service_;
+
+  // Used for metrics recording and reporting.
+  std::unique_ptr<BlimpMetricsServiceClient> metrics_service_client_;
+
+  std::unique_ptr<BlimpResourceContext> resource_context_;
+  scoped_refptr<BlimpSystemURLRequestContextGetter> system_context_getter_;
   bool ignore_certificate_errors_;
-  scoped_ptr<content::PermissionManager> permission_manager_;
+  std::unique_ptr<content::PermissionManager> permission_manager_;
   bool off_the_record_;
   net::NetLog* net_log_;
   base::FilePath path_;

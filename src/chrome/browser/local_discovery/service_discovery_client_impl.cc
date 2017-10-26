@@ -6,10 +6,9 @@
 
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/singleton.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/local_discovery/service_discovery_client_impl.h"
 #include "net/dns/dns_protocol.h"
 #include "net/dns/record_rdata.h"
@@ -17,13 +16,15 @@
 namespace local_discovery {
 
 namespace {
+
 // TODO(noamsml): Make this configurable through the LocalDomainResolver
 // interface.
 const int kLocalDomainSecondAddressTimeoutMs = 100;
 
 const int kInitialRequeryTimeSeconds = 1;
-const int kMaxRequeryTimeSeconds = 2; // Time for last requery
-}
+const int kMaxRequeryTimeSeconds = 2;  // Time for last requery
+
+}  // namespace
 
 ServiceDiscoveryClientImpl::ServiceDiscoveryClientImpl(
     net::MDnsClient* mdns_client) : mdns_client_(mdns_client) {
@@ -32,26 +33,28 @@ ServiceDiscoveryClientImpl::ServiceDiscoveryClientImpl(
 ServiceDiscoveryClientImpl::~ServiceDiscoveryClientImpl() {
 }
 
-scoped_ptr<ServiceWatcher> ServiceDiscoveryClientImpl::CreateServiceWatcher(
+std::unique_ptr<ServiceWatcher>
+ServiceDiscoveryClientImpl::CreateServiceWatcher(
     const std::string& service_type,
     const ServiceWatcher::UpdatedCallback& callback) {
-  return scoped_ptr<ServiceWatcher>(new ServiceWatcherImpl(
-      service_type, callback, mdns_client_));
+  return std::unique_ptr<ServiceWatcher>(
+      new ServiceWatcherImpl(service_type, callback, mdns_client_));
 }
 
-scoped_ptr<ServiceResolver> ServiceDiscoveryClientImpl::CreateServiceResolver(
+std::unique_ptr<ServiceResolver>
+ServiceDiscoveryClientImpl::CreateServiceResolver(
     const std::string& service_name,
     const ServiceResolver::ResolveCompleteCallback& callback) {
-  return scoped_ptr<ServiceResolver>(new ServiceResolverImpl(
-      service_name, callback, mdns_client_));
+  return std::unique_ptr<ServiceResolver>(
+      new ServiceResolverImpl(service_name, callback, mdns_client_));
 }
 
-scoped_ptr<LocalDomainResolver>
+std::unique_ptr<LocalDomainResolver>
 ServiceDiscoveryClientImpl::CreateLocalDomainResolver(
-      const std::string& domain,
-      net::AddressFamily address_family,
-      const LocalDomainResolver::IPAddressCallback& callback) {
-  return scoped_ptr<LocalDomainResolver>(new LocalDomainResolverImpl(
+    const std::string& domain,
+    net::AddressFamily address_family,
+    const LocalDomainResolver::IPAddressCallback& callback) {
+  return std::unique_ptr<LocalDomainResolver>(new LocalDomainResolverImpl(
       domain, address_family, callback, mdns_client_));
 }
 
@@ -87,10 +90,8 @@ void ServiceWatcherImpl::SetActivelyRefreshServices(
   DCHECK(started_);
   actively_refresh_services_ = actively_refresh_services;
 
-  for (ServiceListenersMap::iterator i = services_.begin();
-       i != services_.end(); i++) {
-    i->second->SetActiveRefresh(actively_refresh_services);
-  }
+  for (auto& it : services_)
+    it.second->SetActiveRefresh(actively_refresh_services);
 }
 
 void ServiceWatcherImpl::ReadCachedServices() {
@@ -100,8 +101,10 @@ void ServiceWatcherImpl::ReadCachedServices() {
 }
 
 bool ServiceWatcherImpl::CreateTransaction(
-    bool network, bool cache, bool force_refresh,
-    scoped_ptr<net::MDnsTransaction>* transaction) {
+    bool network,
+    bool cache,
+    bool force_refresh,
+    std::unique_ptr<net::MDnsTransaction>* transaction) {
   int transaction_flags = 0;
   if (network)
     transaction_flags |= net::MDnsTransaction::QUERY_NETWORK;
@@ -110,12 +113,11 @@ bool ServiceWatcherImpl::CreateTransaction(
     transaction_flags |= net::MDnsTransaction::QUERY_CACHE;
 
   // TODO(noamsml): Add flag for force_refresh when supported.
-
   if (transaction_flags) {
     *transaction = mdns_client_->CreateTransaction(
         net::dns_protocol::kTypePTR, service_type_, transaction_flags,
         base::Bind(&ServiceWatcherImpl::OnTransactionResponse,
-                   base::Unretained(this), transaction));
+                   AsWeakPtr(), transaction));
     return (*transaction)->Start();
   }
 
@@ -145,25 +147,25 @@ void ServiceWatcherImpl::OnRecordUpdate(
         RemovePTR(rdata->ptrdomain());
         break;
     }
-  } else {
-    DCHECK(record->type() == net::dns_protocol::kTypeSRV ||
-           record->type() == net::dns_protocol::kTypeTXT);
-    DCHECK(services_.find(record->name()) != services_.end());
+    return;
+  }
 
-    if (record->type() == net::dns_protocol::kTypeSRV) {
-      if (update == net::MDnsListener::RECORD_REMOVED) {
-        RemoveSRV(record->name());
-      } else if (update == net::MDnsListener::RECORD_ADDED) {
-        AddSRV(record->name());
-      }
-    }
+  DCHECK(record->type() == net::dns_protocol::kTypeSRV ||
+         record->type() == net::dns_protocol::kTypeTXT);
+  DCHECK(services_.find(record->name()) != services_.end());
 
-    // If this is the first time we see an SRV record, do not send
-    // an UPDATE_CHANGED.
-    if (record->type() != net::dns_protocol::kTypeSRV ||
-        update != net::MDnsListener::RECORD_ADDED) {
-      DeferUpdate(UPDATE_CHANGED, record->name());
-    }
+  if (record->type() == net::dns_protocol::kTypeSRV) {
+    if (update == net::MDnsListener::RECORD_REMOVED)
+      RemoveSRV(record->name());
+    else if (update == net::MDnsListener::RECORD_ADDED)
+      AddSRV(record->name());
+  }
+
+  // If this is the first time we see an SRV record, do not send
+  // an UPDATE_CHANGED.
+  if (record->type() != net::dns_protocol::kTypeSRV ||
+      update != net::MDnsListener::RECORD_ADDED) {
+    DeferUpdate(UPDATE_CHANGED, record->name());
   }
 }
 
@@ -172,14 +174,12 @@ void ServiceWatcherImpl::OnCachePurged() {
 }
 
 void ServiceWatcherImpl::OnTransactionResponse(
-    scoped_ptr<net::MDnsTransaction>* transaction,
+    std::unique_ptr<net::MDnsTransaction>* transaction,
     net::MDnsTransaction::Result result,
     const net::RecordParsed* record) {
   DCHECK(started_);
   if (result == net::MDnsTransaction::RESULT_RECORD) {
-    const net::PtrRecordRdata* rdata = record->rdata<net::PtrRecordRdata>();
-    DCHECK(rdata);
-    AddService(rdata->ptrdomain());
+    AddService(record->rdata<net::PtrRecordRdata>()->ptrdomain());
   } else if (result == net::MDnsTransaction::RESULT_DONE) {
     transaction->reset();
   }
@@ -204,9 +204,7 @@ ServiceWatcherImpl::ServiceListeners::~ServiceListeners() {
 }
 
 bool ServiceWatcherImpl::ServiceListeners::Start() {
-  if (!srv_listener_->Start())
-    return false;
-  return txt_listener_->Start();
+  return srv_listener_->Start() && txt_listener_->Start();
 }
 
 void ServiceWatcherImpl::ServiceListeners::SetActiveRefresh(
@@ -230,48 +228,41 @@ void ServiceWatcherImpl::ServiceListeners::SetActiveRefresh(
 void ServiceWatcherImpl::ServiceListeners::OnSRVRecord(
     net::MDnsTransaction::Result result,
     const net::RecordParsed* record) {
-  set_has_srv(record != NULL);
+  set_has_srv(!!record);
 }
 
 void ServiceWatcherImpl::ServiceListeners::set_has_srv(bool has_srv) {
   has_srv_ = has_srv;
-
   srv_transaction_.reset();
 }
 
 void ServiceWatcherImpl::AddService(const std::string& service) {
   DCHECK(started_);
-  std::pair<ServiceListenersMap::iterator, bool> found = services_.insert(
-      make_pair(service, linked_ptr<ServiceListeners>(NULL)));
 
-  if (found.second) {  // Newly inserted.
-    found.first->second = linked_ptr<ServiceListeners>(
-        new ServiceListeners(service, this, mdns_client_));
-    bool success = found.first->second->Start();
-    found.first->second->SetActiveRefresh(actively_refresh_services_);
-    DeferUpdate(UPDATE_ADDED, service);
-
+  std::unique_ptr<ServiceListeners>& listener = services_[service];
+  if (!listener) {
+    listener.reset(new ServiceListeners(service, this, mdns_client_));
+    bool success = listener->Start();
     DCHECK(success);
+    listener->SetActiveRefresh(actively_refresh_services_);
+    DeferUpdate(UPDATE_ADDED, service);
   }
-
-  found.first->second->set_has_ptr(true);
+  listener->set_has_ptr(true);
 }
 
 void ServiceWatcherImpl::AddSRV(const std::string& service) {
   DCHECK(started_);
 
-  ServiceListenersMap::iterator found = services_.find(service);
-  if (found != services_.end()) {
-    found->second->set_has_srv(true);
-  }
+  ServiceListenersMap::iterator it = services_.find(service);
+  if (it != services_.end())
+    it->second->set_has_srv(true);
 }
 
 void ServiceWatcherImpl::DeferUpdate(ServiceWatcher::UpdateType update_type,
                                      const std::string& service_name) {
-  ServiceListenersMap::iterator found = services_.find(service_name);
-
-  if (found != services_.end() && !found->second->update_pending()) {
-    found->second->set_update_pending(true);
+  ServiceListenersMap::iterator it = services_.find(service_name);
+  if (it != services_.end() && !it->second->update_pending()) {
+    it->second->set_update_pending(true);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&ServiceWatcherImpl::DeliverDeferredUpdate,
                               AsWeakPtr(), update_type, service_name));
@@ -280,10 +271,9 @@ void ServiceWatcherImpl::DeferUpdate(ServiceWatcher::UpdateType update_type,
 
 void ServiceWatcherImpl::DeliverDeferredUpdate(
     ServiceWatcher::UpdateType update_type, const std::string& service_name) {
-  ServiceListenersMap::iterator found = services_.find(service_name);
-
-  if (found != services_.end()) {
-    found->second->set_update_pending(false);
+  ServiceListenersMap::iterator it = services_.find(service_name);
+  if (it != services_.end()) {
+    it->second->set_update_pending(false);
     if (!callback_.is_null())
       callback_.Run(update_type, service_name);
   }
@@ -292,12 +282,11 @@ void ServiceWatcherImpl::DeliverDeferredUpdate(
 void ServiceWatcherImpl::RemovePTR(const std::string& service) {
   DCHECK(started_);
 
-  ServiceListenersMap::iterator found = services_.find(service);
-  if (found != services_.end()) {
-    found->second->set_has_ptr(false);
-
-    if (!found->second->has_ptr_or_srv()) {
-      services_.erase(found);
+  ServiceListenersMap::iterator it = services_.find(service);
+  if (it != services_.end()) {
+    it->second->set_has_ptr(false);
+    if (!it->second->has_ptr_or_srv()) {
+      services_.erase(it);
       if (!callback_.is_null())
         callback_.Run(UPDATE_REMOVED, service);
     }
@@ -307,12 +296,11 @@ void ServiceWatcherImpl::RemovePTR(const std::string& service) {
 void ServiceWatcherImpl::RemoveSRV(const std::string& service) {
   DCHECK(started_);
 
-  ServiceListenersMap::iterator found = services_.find(service);
-  if (found != services_.end()) {
-    found->second->set_has_srv(false);
-
-    if (!found->second->has_ptr_or_srv()) {
-      services_.erase(found);
+  ServiceListenersMap::iterator it = services_.find(service);
+  if (it != services_.end()) {
+    it->second->set_has_srv(false);
+    if (!it->second->has_ptr_or_srv()) {
+      services_.erase(it);
       if (!callback_.is_null())
         callback_.Run(UPDATE_REMOVED, service);
     }
@@ -403,14 +391,15 @@ std::string ServiceResolverImpl::GetName() const {
 void ServiceResolverImpl::SrvRecordTransactionResponse(
     net::MDnsTransaction::Result status, const net::RecordParsed* record) {
   srv_transaction_.reset();
-  if (status == net::MDnsTransaction::RESULT_RECORD) {
-    DCHECK(record);
-    service_staging_.address = RecordToAddress(record);
-    service_staging_.last_seen = record->time_created();
-    CreateATransaction();
-  } else {
+  if (status != net::MDnsTransaction::RESULT_RECORD) {
     ServiceNotFound(MDnsStatusToRequestStatus(status));
+    return;
   }
+
+  DCHECK(record);
+  service_staging_.address = RecordToAddress(record);
+  service_staging_.last_seen = record->time_created();
+  CreateATransaction();
 }
 
 void ServiceResolverImpl::TxtRecordTransactionResponse(
@@ -420,7 +409,7 @@ void ServiceResolverImpl::TxtRecordTransactionResponse(
     DCHECK(record);
     service_staging_.metadata = RecordToMetadata(record);
   } else {
-    service_staging_.metadata = std::vector<std::string>();
+    service_staging_.metadata.clear();
   }
 
   metadata_resolved_ = true;
@@ -480,25 +469,20 @@ ServiceResolver::RequestStatus ServiceResolverImpl::MDnsStatusToRequestStatus(
 const std::vector<std::string>& ServiceResolverImpl::RecordToMetadata(
     const net::RecordParsed* record) const {
   DCHECK(record->type() == net::dns_protocol::kTypeTXT);
-  const net::TxtRecordRdata* txt_rdata = record->rdata<net::TxtRecordRdata>();
-  DCHECK(txt_rdata);
-  return txt_rdata->texts();
+  return record->rdata<net::TxtRecordRdata>()->texts();
 }
 
 net::HostPortPair ServiceResolverImpl::RecordToAddress(
     const net::RecordParsed* record) const {
   DCHECK(record->type() == net::dns_protocol::kTypeSRV);
   const net::SrvRecordRdata* srv_rdata = record->rdata<net::SrvRecordRdata>();
-  DCHECK(srv_rdata);
   return net::HostPortPair(srv_rdata->target(), srv_rdata->port());
 }
 
 net::IPAddress ServiceResolverImpl::RecordToIPAddress(
     const net::RecordParsed* record) const {
   DCHECK(record->type() == net::dns_protocol::kTypeA);
-  const net::ARecordRdata* a_rdata = record->rdata<net::ARecordRdata>();
-  DCHECK(a_rdata);
-  return net::IPAddress(a_rdata->address());
+  return record->rdata<net::ARecordRdata>()->address();
 }
 
 LocalDomainResolverImpl::LocalDomainResolverImpl(
@@ -528,8 +512,8 @@ void LocalDomainResolverImpl::Start() {
   }
 }
 
-scoped_ptr<net::MDnsTransaction> LocalDomainResolverImpl::CreateTransaction(
-    uint16_t type) {
+std::unique_ptr<net::MDnsTransaction>
+LocalDomainResolverImpl::CreateTransaction(uint16_t type) {
   return mdns_client_->CreateTransaction(
       type, domain_, net::MDnsTransaction::SINGLE_RESULT |
                      net::MDnsTransaction::QUERY_CACHE |
@@ -544,12 +528,10 @@ void LocalDomainResolverImpl::OnTransactionComplete(
 
   if (result == net::MDnsTransaction::RESULT_RECORD) {
     if (record->type() == net::dns_protocol::kTypeA) {
-      const net::ARecordRdata* rdata = record->rdata<net::ARecordRdata>();
-      address_ipv4_ = net::IPAddress(rdata->address());
+      address_ipv4_ = record->rdata<net::ARecordRdata>()->address();
     } else {
       DCHECK_EQ(net::dns_protocol::kTypeAAAA, record->type());
-      const net::AAAARecordRdata* rdata = record->rdata<net::AAAARecordRdata>();
-      address_ipv6_ = net::IPAddress(rdata->address());
+      address_ipv6_ = record->rdata<net::AAAARecordRdata>()->address();
     }
   }
 

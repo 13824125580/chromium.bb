@@ -6,9 +6,9 @@
 
 #include <stddef.h>
 
-#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/output/compositor_frame_metadata.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -69,8 +69,13 @@ void SetEventModifiers(blink::WebInputEvent* event, const int* modifiers) {
 }
 
 void SetEventTimestamp(blink::WebInputEvent* event, const double* timestamp) {
-  event->timeStampSeconds =
-      timestamp ? *timestamp : base::Time::Now().ToDoubleT();
+  // Convert timestamp, in seconds since unix epoch, to an event timestamp
+  // which is time ticks since platform start time.
+  base::TimeTicks ticks = timestamp
+                              ? base::TimeDelta::FromSecondsD(*timestamp) +
+                                    base::TimeTicks::UnixEpoch()
+                              : base::TimeTicks::Now();
+  event->timeStampSeconds = (ticks - base::TimeTicks()).InSecondsF();
 }
 
 bool SetKeyboardEventText(blink::WebUChar* to, const std::string* from) {
@@ -136,7 +141,7 @@ void InputHandler::SetRenderWidgetHost(RenderWidgetHostImpl* host) {
   host_ = host;
 }
 
-void InputHandler::SetClient(scoped_ptr<Client> client) {
+void InputHandler::SetClient(std::unique_ptr<Client> client) {
   client_.swap(client);
 }
 
@@ -248,6 +253,7 @@ Response InputHandler::DispatchMouseEvent(
   event.globalX = x * page_scale_factor_;
   event.globalY = y * page_scale_factor_;
   event.clickCount = click_count ? *click_count : 0;
+  event.pointerType = blink::WebPointerProperties::PointerType::Mouse;
 
   if (!host_)
     return Response::ServerError("Could not connect to view");
@@ -296,6 +302,7 @@ Response InputHandler::EmulateTouchFromMouseEvent(const std::string& type,
   event->globalX = x;
   event->globalY = y;
   event->clickCount = click_count ? *click_count : 0;
+  event->pointerType = blink::WebPointerProperties::PointerType::Touch;
 
   if (!host_)
     return Response::ServerError("Could not connect to view");
@@ -424,7 +431,7 @@ void InputHandler::OnScrollFinished(
   }
 
   if (repeat_count > 0) {
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&InputHandler::SynthesizeRepeatingScroll,
                    weak_factory_.GetWeakPtr(), gesture_params, repeat_count - 1,

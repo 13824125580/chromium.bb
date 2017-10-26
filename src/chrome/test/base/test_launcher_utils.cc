@@ -4,10 +4,11 @@
 
 #include "chrome/test/base/test_launcher_utils.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
@@ -71,6 +72,21 @@ void PrepareBrowserCommandLineForTests(base::CommandLine* command_line) {
   command_line->AppendSwitch(switches::kDisableComponentUpdate);
 }
 
+void RemoveCommandLineSwitch(const base::CommandLine& in_command_line,
+                             const std::string& switch_to_remove,
+                             base::CommandLine* out_command_line) {
+  const base::CommandLine::SwitchMap& switch_map =
+      in_command_line.GetSwitches();
+  for (base::CommandLine::SwitchMap::const_iterator i = switch_map.begin();
+       i != switch_map.end(); ++i) {
+    const std::string& switch_name = i->first;
+    if (switch_name == switch_to_remove)
+      continue;
+
+    out_command_line->AppendSwitchNative(switch_name, i->second);
+  }
+}
+
 bool OverrideUserDataDir(const base::FilePath& user_data_dir) {
   bool success = true;
 
@@ -85,7 +101,7 @@ bool OverrideUserDataDir(const base::FilePath& user_data_dir) {
   //
   // Note: we use an environment variable here, because we have to pass the
   // value to the child process. This is the simplest way to do it.
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   success = success && env->SetVar("XDG_CACHE_HOME", user_data_dir.value());
 #endif
 

@@ -8,10 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 #include "net/quic/quic_protocol.h"
@@ -64,10 +65,6 @@ class NET_EXPORT_PRIVATE CryptoHandshakeMessage {
   void set_tag(QuicTag tag) { tag_ = tag; }
 
   const QuicTagValueMap& tag_value_map() const { return tag_value_map_; }
-
-  // SetTaglist sets an element with the given tag to contain a list of tags,
-  // passed as varargs. The argument list must be terminated with a 0 element.
-  void SetTaglist(QuicTag tag, ...);
 
   void SetStringPiece(QuicTag tag, base::StringPiece value);
 
@@ -132,7 +129,7 @@ class NET_EXPORT_PRIVATE CryptoHandshakeMessage {
 
   // The serialized form of the handshake message. This member is constructed
   // lasily.
-  mutable scoped_ptr<QuicData> serialized_;
+  mutable std::unique_ptr<QuicData> serialized_;
 };
 
 }  // namespace net

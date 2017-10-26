@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_egl_api_implementation.h"
 #include "ui/gl/gl_switches.h"
 
-namespace gfx {
+namespace gl {
 
 class EGLApiTest : public testing::Test {
  public:
@@ -88,7 +89,7 @@ class EGLApiTest : public testing::Test {
   static const char* fake_extension_string_;
   static const char* fake_client_extension_string_;
 
-  scoped_ptr<RealEGLApi> api_;
+  std::unique_ptr<RealEGLApi> api_;
 };
 
 const char* EGLApiTest::fake_extension_string_ = "";
@@ -137,4 +138,4 @@ TEST_F(EGLApiTest, DisabledExtensionStringTest) {
   EXPECT_STREQ(kFilteredExtensions, GetExtensions().second);
 }
 
-}  // namespace gfx
+}  // namespace gl

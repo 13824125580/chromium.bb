@@ -7,11 +7,14 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/byte_queue.h"
+#include "media/base/media_export.h"
 #include "media/base/stream_parser.h"
 #include "media/base/video_decoder_config.h"
 
@@ -19,7 +22,7 @@ namespace media {
 
 class WebMClusterParser;
 
-class WebMStreamParser : public StreamParser {
+class MEDIA_EXPORT WebMStreamParser : public StreamParser {
  public:
   WebMStreamParser();
   ~WebMStreamParser() override;
@@ -81,7 +84,7 @@ class WebMStreamParser : public StreamParser {
 
   bool unknown_segment_size_;
 
-  scoped_ptr<WebMClusterParser> cluster_parser_;
+  std::unique_ptr<WebMClusterParser> cluster_parser_;
   ByteQueue byte_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMStreamParser);

@@ -35,6 +35,7 @@
 #include "core/html/URLRegistry.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
+#include <memory>
 
 namespace blink {
 
@@ -42,15 +43,10 @@ class WebMediaSource;
 class HTMLMediaElement;
 class TimeRanges;
 
-class CORE_EXPORT HTMLMediaSource : public URLRegistrable, public WillBeGarbageCollectedMixin {
+class CORE_EXPORT HTMLMediaSource : public URLRegistrable, public GarbageCollectedMixin {
 public:
     static void setRegistry(URLRegistry*);
     static HTMLMediaSource* lookup(const String& url) { return s_registry ? static_cast<HTMLMediaSource*>(s_registry->lookup(url)) : 0; }
-
-#if !ENABLE(OILPAN)
-    void ref() { refHTMLMediaSource(); }
-    void deref() { derefHTMLMediaSource(); }
-#endif
 
     // Called when an HTMLMediaElement is attempting to attach to this object,
     // and helps enforce attachment to at most one element at a time.
@@ -60,16 +56,12 @@ public:
     // Once attached, the source uses the element to synchronously service some
     // API operations like duration change that may need to initiate seek.
     virtual bool attachToElement(HTMLMediaElement*) = 0;
-    virtual void setWebMediaSourceAndOpen(PassOwnPtr<WebMediaSource>) = 0;
+    virtual void setWebMediaSourceAndOpen(std::unique_ptr<WebMediaSource>) = 0;
     virtual void close() = 0;
     virtual bool isClosed() const = 0;
     virtual double duration() const = 0;
     virtual TimeRanges* buffered() const = 0;
     virtual TimeRanges* seekable() const = 0;
-#if !ENABLE(OILPAN)
-    virtual void refHTMLMediaSource() = 0;
-    virtual void derefHTMLMediaSource() = 0;
-#endif
 
     // URLRegistrable
     URLRegistry& registry() const override { return *s_registry; }

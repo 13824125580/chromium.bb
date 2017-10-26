@@ -21,8 +21,9 @@
 #define CLOUD_PRINT_CONNECTOR_UI_AVAILABLE
 #endif
 
+class CloudPrintProxyService;
+
 namespace cloud_print {
-class PrivetConfirmApiCallFlow;
 class PrivetHTTPAsynchronousFactory;
 class PrivetHTTPResolution;
 class PrivetV1HTTPClient;
@@ -66,7 +67,6 @@ class LocalDiscoveryUIHandler
 
   // PrivetDeviceLister::Delegate implementation.
   void DeviceChanged(
-      bool added,
       const std::string& name,
       const cloud_print::DeviceDescription& description) override;
   void DeviceRemoved(const std::string& name) override;
@@ -85,9 +85,9 @@ class LocalDiscoveryUIHandler
                        const std::string& username) override;
 
  private:
-  typedef std::map<std::string,
-                   cloud_print::DeviceDescription> DeviceDescriptionMap;
-  typedef base::Callback<void(bool result)> ResultCallback;
+  using DeviceDescriptionMap =
+      std::map<std::string, cloud_print::DeviceDescription>;
+  using ResultCallback = base::Callback<void(bool result)>;
 
   // Message handlers:
   // For when the page is ready to receive device notifications.
@@ -113,7 +113,8 @@ class LocalDiscoveryUIHandler
   void HandleShowSyncUI(const base::ListValue* args);
 
   // For when the IP address of the printer has been resolved for registration.
-  void StartRegisterHTTP(scoped_ptr<cloud_print::PrivetHTTPClient> http_client);
+  void StartRegisterHTTP(
+      std::unique_ptr<cloud_print::PrivetHTTPClient> http_client);
 
   // For when the confirm operation on the cloudprint server has finished
   // executing.
@@ -129,12 +130,12 @@ class LocalDiscoveryUIHandler
   void SetIsVisible(bool visible);
 
   // Get the sync account email.
-  std::string GetSyncAccount();
+  std::string GetSyncAccount() const;
 
   // Reset and cancel the current registration.
   void ResetCurrentRegistration();
 
-  scoped_ptr<cloud_print::GCDApiFlow> CreateApiFlow();
+  std::unique_ptr<cloud_print::GCDApiFlow> CreateApiFlow();
   void OnSetupError();
 
   // Announcement hasn't been sent for a certain time after registration
@@ -154,8 +155,8 @@ class LocalDiscoveryUIHandler
   void ShowCloudPrintSetupDialog(const base::ListValue* args);
   void HandleDisableCloudPrintConnector(const base::ListValue* args);
   void SetupCloudPrintConnectorSection();
-  void RemoveCloudPrintConnectorSection();
   void RefreshCloudPrintStatusFromService();
+  CloudPrintProxyService* GetCloudPrintProxyService();
 #endif
 
   // A map of current device descriptions provided by the PrivetDeviceLister.
@@ -165,28 +166,30 @@ class LocalDiscoveryUIHandler
   scoped_refptr<ServiceDiscoverySharedClient> service_discovery_client_;
 
   // A factory for creating the privet HTTP Client.
-  scoped_ptr<cloud_print::PrivetHTTPAsynchronousFactory> privet_http_factory_;
+  std::unique_ptr<cloud_print::PrivetHTTPAsynchronousFactory>
+      privet_http_factory_;
 
   // An object representing the resolution process for the privet_http_factory.
-  scoped_ptr<cloud_print::PrivetHTTPResolution> privet_resolution_;
+  std::unique_ptr<cloud_print::PrivetHTTPResolution> privet_resolution_;
 
   // The current HTTP client (used for the current operation).
-  scoped_ptr<cloud_print::PrivetV1HTTPClient> current_http_client_;
+  std::unique_ptr<cloud_print::PrivetV1HTTPClient> current_http_client_;
 
   // The current register operation. Only one allowed at any time.
-  scoped_ptr<cloud_print::PrivetRegisterOperation> current_register_operation_;
+  std::unique_ptr<cloud_print::PrivetRegisterOperation>
+      current_register_operation_;
 
   // The current confirm call used during the registration flow.
-  scoped_ptr<cloud_print::GCDApiFlow> confirm_api_call_flow_;
+  std::unique_ptr<cloud_print::GCDApiFlow> confirm_api_call_flow_;
 
   // The device lister used to list devices on the local network.
-  scoped_ptr<cloud_print::PrivetDeviceLister> privet_lister_;
+  std::unique_ptr<cloud_print::PrivetDeviceLister> privet_lister_;
 
   // Whether or not the page is marked as visible.
   bool is_visible_;
 
   // List of printers from cloud print.
-  scoped_ptr<cloud_print::GCDApiFlow> cloud_print_printer_list_;
+  std::unique_ptr<cloud_print::GCDApiFlow> cloud_print_printer_list_;
   std::vector<cloud_print::CloudPrintPrinterList::Device> cloud_devices_;
   int failed_list_count_;
   int succeded_list_count_;
@@ -194,7 +197,6 @@ class LocalDiscoveryUIHandler
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
   StringPrefMember cloud_print_connector_email_;
   BooleanPrefMember cloud_print_connector_enabled_;
-  bool cloud_print_connector_ui_enabled_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(LocalDiscoveryUIHandler);
@@ -203,4 +205,5 @@ class LocalDiscoveryUIHandler
 #undef CLOUD_PRINT_CONNECTOR_UI_AVAILABLE
 
 }  // namespace local_discovery
+
 #endif  // CHROME_BROWSER_UI_WEBUI_LOCAL_DISCOVERY_LOCAL_DISCOVERY_UI_HANDLER_H_

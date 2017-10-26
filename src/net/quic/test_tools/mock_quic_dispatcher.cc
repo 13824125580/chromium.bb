@@ -12,11 +12,15 @@ namespace test {
 MockQuicDispatcher::MockQuicDispatcher(
     const QuicConfig& config,
     const QuicCryptoServerConfig* crypto_config,
-    QuicConnectionHelperInterface* helper)
+    std::unique_ptr<QuicConnectionHelperInterface> helper,
+    std::unique_ptr<QuicServerSessionBase::Helper> session_helper,
+    std::unique_ptr<QuicAlarmFactory> alarm_factory)
     : QuicDispatcher(config,
                      crypto_config,
                      QuicSupportedVersions(),
-                     helper) {}
+                     std::move(helper),
+                     std::move(session_helper),
+                     std::move(alarm_factory)) {}
 
 MockQuicDispatcher::~MockQuicDispatcher() {}
 

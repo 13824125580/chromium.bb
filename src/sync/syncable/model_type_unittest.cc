@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "sync/internal_api/public/base/model_type.h"
-
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/test/values_test_util.h"
 #include "base/values.h"
+#include "sync/internal_api/public/base/model_type.h"
 #include "sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -33,7 +32,7 @@ TEST_F(ModelTypeTest, ModelTypeToValue) {
 TEST_F(ModelTypeTest, ModelTypeFromValue) {
   for (int i = FIRST_REAL_MODEL_TYPE; i < MODEL_TYPE_COUNT; ++i) {
     ModelType model_type = ModelTypeFromInt(i);
-    scoped_ptr<base::StringValue> value(ModelTypeToValue(model_type));
+    std::unique_ptr<base::StringValue> value(ModelTypeToValue(model_type));
     EXPECT_EQ(model_type, ModelTypeFromValue(*value));
   }
 }
@@ -41,7 +40,7 @@ TEST_F(ModelTypeTest, ModelTypeFromValue) {
 TEST_F(ModelTypeTest, ModelTypeSetToValue) {
   const ModelTypeSet model_types(BOOKMARKS, APPS);
 
-  scoped_ptr<base::ListValue> value(ModelTypeSetToValue(model_types));
+  std::unique_ptr<base::ListValue> value(ModelTypeSetToValue(model_types));
   EXPECT_EQ(2u, value->GetSize());
   std::string types[2];
   EXPECT_TRUE(value->GetString(0, &types[0]));
@@ -53,14 +52,14 @@ TEST_F(ModelTypeTest, ModelTypeSetToValue) {
 TEST_F(ModelTypeTest, ModelTypeSetFromValue) {
   // Try empty set first.
   ModelTypeSet model_types;
-  scoped_ptr<base::ListValue> value(ModelTypeSetToValue(model_types));
-  EXPECT_TRUE(model_types.Equals(ModelTypeSetFromValue(*value)));
+  std::unique_ptr<base::ListValue> value(ModelTypeSetToValue(model_types));
+  EXPECT_EQ(model_types, ModelTypeSetFromValue(*value));
 
   // Now try with a few random types.
   model_types.Put(BOOKMARKS);
   model_types.Put(APPS);
   value = ModelTypeSetToValue(model_types);
-  EXPECT_TRUE(model_types.Equals(ModelTypeSetFromValue(*value)));
+  EXPECT_EQ(model_types, ModelTypeSetFromValue(*value));
 }
 
 TEST_F(ModelTypeTest, IsRealDataType) {
@@ -70,6 +69,7 @@ TEST_F(ModelTypeTest, IsRealDataType) {
   EXPECT_TRUE(IsRealDataType(FIRST_REAL_MODEL_TYPE));
   EXPECT_TRUE(IsRealDataType(BOOKMARKS));
   EXPECT_TRUE(IsRealDataType(APPS));
+  EXPECT_TRUE(IsRealDataType(ARC_PACKAGE));
 }
 
 TEST_F(ModelTypeTest, IsProxyType) {
@@ -117,12 +117,9 @@ TEST_F(ModelTypeTest, ModelTypeSetFromString) {
   syncer::ModelTypeSet one(BOOKMARKS);
   syncer::ModelTypeSet two(BOOKMARKS, TYPED_URLS);
 
-  EXPECT_TRUE(
-      empty.Equals(ModelTypeSetFromString(ModelTypeSetToString(empty))));
-  EXPECT_TRUE(
-      one.Equals(ModelTypeSetFromString(ModelTypeSetToString(one))));
-  EXPECT_TRUE(
-      two.Equals(ModelTypeSetFromString(ModelTypeSetToString(two))));
+  EXPECT_EQ(empty, ModelTypeSetFromString(ModelTypeSetToString(empty)));
+  EXPECT_EQ(one, ModelTypeSetFromString(ModelTypeSetToString(one)));
+  EXPECT_EQ(two, ModelTypeSetFromString(ModelTypeSetToString(two)));
 }
 
 TEST_F(ModelTypeTest, DefaultFieldValues) {

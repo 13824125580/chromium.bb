@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "media/base/media_log.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
@@ -87,7 +88,7 @@ class MockBufferedDataSource : public BufferedDataSource {
         .WillByDefault(Assign(&loading_, false));
 
     // |test_loader_| will be used when Start() is called.
-    loader->test_loader_ = scoped_ptr<WebURLLoader>(url_loader);
+    loader->test_loader_ = std::unique_ptr<WebURLLoader>(url_loader);
     return loader;
   }
 
@@ -118,7 +119,7 @@ static const char kHttpDifferentOriginUrl[] = "http://127.0.0.1/foo.webm";
 class BufferedDataSourceTest : public testing::Test {
  public:
   BufferedDataSourceTest()
-      : view_(WebView::create(NULL)),
+      : view_(WebView::create(nullptr, blink::WebPageVisibilityStateVisible)),
         frame_(
             WebLocalFrame::create(blink::WebTreeScopeType::Document, &client_)),
         bytes_received_(0),
@@ -147,7 +148,7 @@ class BufferedDataSourceTest : public testing::Test {
     EXPECT_CALL(*this, OnInitialize(expected));
     data_source_->Initialize(base::Bind(&BufferedDataSourceTest::OnInitialize,
                                         base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     bool is_http = gurl.SchemeIsHTTPOrHTTPS();
     EXPECT_EQ(data_source_->downloading(), is_http);
@@ -189,32 +190,32 @@ class BufferedDataSourceTest : public testing::Test {
   void Stop() {
     if (data_source_->loading()) {
       loader()->didFail(url_loader(), response_generator_->GenerateError());
-      message_loop_.RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
     }
 
     data_source_->Stop();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void ExpectCreateResourceLoader() {
     EXPECT_CALL(*data_source_, CreateResourceLoader(_, _))
         .WillOnce(Invoke(data_source_.get(),
                          &MockBufferedDataSource::CreateMockResourceLoader));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     bytes_received_ = 0;
   }
 
   void Respond(const WebURLResponse& response) {
     loader()->didReceiveResponse(url_loader(), response);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void ReceiveData(int size) {
-    scoped_ptr<char[]> data(new char[size]);
+    std::unique_ptr<char[]> data(new char[size]);
     memset(data.get(), 0xA5, size);  // Arbitrary non-zero value.
 
     loader()->didReceiveData(url_loader(), data.get(), size, size);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     bytes_received_ += size;
     EXPECT_EQ(bytes_received_, data_source_->GetMemoryUsage());
   }
@@ -222,7 +223,7 @@ class BufferedDataSourceTest : public testing::Test {
   void FinishLoading() {
     data_source_->set_loading(false);
     loader()->didFinishLoading(url_loader(), 0, -1);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   MOCK_METHOD1(ReadCallback, void(int size));
@@ -231,7 +232,7 @@ class BufferedDataSourceTest : public testing::Test {
     data_source_->Read(position, kDataSize, buffer_,
                        base::Bind(&BufferedDataSourceTest::ReadCallback,
                                   base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void ExecuteMixedResponseSuccessTest(const WebURLResponse& response1,
@@ -296,10 +297,11 @@ class BufferedDataSourceTest : public testing::Test {
   void set_might_be_reused_from_cache_in_future(bool value) {
     loader()->might_be_reused_from_cache_in_future_ = value;
   }
+  GURL url() { return data_source_->url_; }
 
-  scoped_ptr<MockBufferedDataSource> data_source_;
+  std::unique_ptr<MockBufferedDataSource> data_source_;
 
-  scoped_ptr<TestResponseGenerator> response_generator_;
+  std::unique_ptr<TestResponseGenerator> response_generator_;
   MockWebFrameClient client_;
   WebView* view_;
   WebLocalFrame* frame_;
@@ -425,7 +427,7 @@ TEST_F(BufferedDataSourceTest, Http_AbortWhileReading) {
   // Abort!!!
   EXPECT_CALL(*this, ReadCallback(media::DataSource::kReadError));
   data_source_->Abort();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(data_source_->loading());
   Stop();
@@ -440,7 +442,7 @@ TEST_F(BufferedDataSourceTest, File_AbortWhileReading) {
   // Abort!!!
   EXPECT_CALL(*this, ReadCallback(media::DataSource::kReadError));
   data_source_->Abort();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(data_source_->loading());
   Stop();
@@ -498,6 +500,67 @@ TEST_F(BufferedDataSourceTest, Http_RetryOnError) {
   EXPECT_FALSE(data_source_->loading());
   Stop();
 }
+
+#if defined(OS_ANDROID)
+// If the initial response is a redirect, BDS saves it and uses it for future
+// requests.
+TEST_F(BufferedDataSourceTest, Http_InitialReponseRedirectsAreCached) {
+  Initialize(kHttpUrl, true);
+
+  WebURLResponse redirect =
+      response_generator_->GeneratePartial206(0, kDataSize - 1);
+  redirect.setURL(GURL(kHttpDifferentPathUrl));
+
+  EXPECT_CALL(host_, SetTotalBytes(kFileSize));
+  Respond(redirect);
+  ASSERT_TRUE(url() == GURL(kHttpDifferentPathUrl));
+}
+
+TEST_F(BufferedDataSourceTest,
+       Http_RedirectsAfterTheInitialReponseAreNotCached) {
+  Initialize(kHttpUrl, true);
+
+  WebURLResponse response =
+      response_generator_->GeneratePartial206(0, kDataSize - 1);
+  response.setURL(GURL(kHttpUrl));
+
+  EXPECT_CALL(host_, SetTotalBytes(kFileSize));
+  EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize - 1));
+  EXPECT_CALL(host_, AddBufferedByteRange(kDataSize, kDataSize * 2 - 1));
+  EXPECT_CALL(*this, ReadCallback(kDataSize)).Times(2);
+
+  Respond(response);
+  ReadAt(0);
+  ReceiveData(kDataSize);
+
+  WebURLResponse redirect =
+      response_generator_->GeneratePartial206(kDataSize, kDataSize * 2 - 1);
+  redirect.setURL(GURL(kHttpDifferentPathUrl));
+
+  ExpectCreateResourceLoader();
+  FinishLoading();
+  ReadAt(kDataSize);
+  Respond(redirect);
+  // The redirect isn't cached.
+  ASSERT_TRUE(url() == GURL(kHttpUrl));
+  ReceiveData(kDataSize);
+  FinishLoading();
+  Stop();
+}
+
+TEST_F(BufferedDataSourceTest, Http_ServiceWorkerRedirectsAreNotCached) {
+  Initialize(kHttpUrl, true);
+
+  WebURLResponse redirect =
+      response_generator_->GeneratePartial206(0, kDataSize - 1);
+  redirect.setURL(GURL(kHttpDifferentPathUrl));
+  redirect.setWasFetchedViaServiceWorker(true);
+
+  EXPECT_CALL(host_, SetTotalBytes(kFileSize));
+  Respond(redirect);
+  ASSERT_TRUE(url() == GURL(kHttpUrl));
+}
+#endif  // defined(OS_ANDROID)
 
 TEST_F(BufferedDataSourceTest, Http_PartialResponse) {
   Initialize(kHttpUrl, true);
@@ -698,7 +761,7 @@ TEST_F(BufferedDataSourceTest, StopDuringRead) {
     EXPECT_CALL(*this, ReadCallback(media::DataSource::kReadError));
     data_source_->Stop();
   }
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(BufferedDataSourceTest, DefaultValues) {
@@ -721,7 +784,7 @@ TEST_F(BufferedDataSourceTest, SetBitrate) {
   InitializeWith206Response();
 
   data_source_->SetBitrate(1234);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1234, data_source_bitrate());
   EXPECT_EQ(1234, loader_bitrate());
 
@@ -744,7 +807,7 @@ TEST_F(BufferedDataSourceTest, MediaPlaybackRateChanged) {
   InitializeWith206Response();
 
   data_source_->MediaPlaybackRateChanged(2.0);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(2.0, data_source_playback_rate());
   EXPECT_EQ(2.0, loader_playback_rate());
 

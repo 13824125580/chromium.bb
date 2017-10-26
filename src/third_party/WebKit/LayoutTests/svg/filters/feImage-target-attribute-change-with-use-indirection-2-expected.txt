@@ -1,23 +1,47 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [0, 0, 110, 110],
-        [0, 0, 100, 100],
-        [0, 0, 100, 100],
-        [0, 0, 50, 100],
-        [0, 0, 50, 100]
-      ],
-      "paintInvalidationClients": [
-        "LayoutSVGContainer use id='use'",
-        "LayoutSVGRect rect id='rect'",
-        "LayoutSVGResourceFilterPrimitive feImage id='feimage'",
-        "LayoutSVGRect rect"
+      "paintInvalidations": [
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 0, 110, 110],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGContainer use id='use'",
+          "rect": [0, 0, 100, 100],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGRect rect id='rect'",
+          "rect": [0, 0, 100, 100],
+          "reason": "location change"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGContainer use id='use'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGRect rect id='rect'",
+      "reason": "location change"
+    },
+    {
+      "object": "LayoutSVGResourceFilterPrimitive feImage id='feimage'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGRect rect",
+      "reason": "full"
     }
   ]
 }

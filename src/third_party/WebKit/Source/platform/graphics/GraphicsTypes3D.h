@@ -34,8 +34,6 @@
 #include "wtf/Forward.h"
 #include <stdint.h>
 
-typedef unsigned Platform3DObject;
-
 // WebGL-specific enums
 const unsigned GC3D_UNPACK_FLIP_Y_WEBGL = 0x9240;
 const unsigned GC3D_UNPACK_PREMULTIPLY_ALPHA_WEBGL = 0x9241;
@@ -55,6 +53,7 @@ const unsigned GC3D_COMPRESSED_ATC_RGBA_INTERPOLATED_ALPHA_AMD = 0x87EE;
 // GL_CHROMIUM_gpu_memory_buffer_image
 const unsigned GC3D_MAP_CHROMIUM = 0x78F1;
 const unsigned GC3D_SCANOUT_CHROMIUM = 0x78F2;
+const unsigned GC3D_GPU_MEMORY_BUFFER_ID = 0x78FD;
 
 namespace blink {
 

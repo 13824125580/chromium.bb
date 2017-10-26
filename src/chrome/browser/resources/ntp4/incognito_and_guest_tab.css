@@ -6,12 +6,13 @@
  */
 
 body {
+  -webkit-font-smoothing: antialiased;
   font-size: 85%;
 }
 
 h1 {
   font-size: 200%;
-  font-weight: 300;
+  font-weight: 400;
   margin-bottom: .77em;
 }
 

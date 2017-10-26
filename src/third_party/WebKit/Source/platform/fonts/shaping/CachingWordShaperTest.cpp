@@ -4,11 +4,14 @@
 
 #include "platform/fonts/shaping/CachingWordShaper.h"
 
+#include "platform/fonts/CharacterRange.h"
 #include "platform/fonts/FontCache.h"
 #include "platform/fonts/GlyphBuffer.h"
 #include "platform/fonts/shaping/CachingWordShapeIterator.h"
 #include "platform/fonts/shaping/ShapeResultTestInfo.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -25,29 +28,30 @@ protected:
         font.update(nullptr);
         ASSERT_TRUE(font.canShapeWordByWord());
         fallbackFonts = nullptr;
-        cache = adoptPtr(new ShapeCache());
+        cache = wrapUnique(new ShapeCache());
     }
 
     FontCachePurgePreventer fontCachePurgePreventer;
     FontDescription fontDescription;
     Font font;
-    OwnPtr<ShapeCache> cache;
+    std::unique_ptr<ShapeCache> cache;
     HashSet<const SimpleFontData*>* fallbackFonts;
     unsigned startIndex = 0;
     unsigned numGlyphs = 0;
     hb_script_t script = HB_SCRIPT_INVALID;
 };
 
-static inline ShapeResultTestInfo* testInfo(RefPtr<ShapeResult>& result)
+static inline const ShapeResultTestInfo* testInfo(
+    RefPtr<const ShapeResult>& result)
 {
-    return static_cast<ShapeResultTestInfo*>(result.get());
+    return static_cast<const ShapeResultTestInfo*>(result.get());
 }
 
 TEST_F(CachingWordShaperTest, LatinLeftToRightByWord)
 {
     TextRun textRun(reinterpret_cast<const LChar*>("ABC DEF."), 8);
 
-    RefPtr<ShapeResult> result;
+    RefPtr<const ShapeResult> result;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
     ASSERT_TRUE(iterator.next(&result));
     ASSERT_TRUE(testInfo(result)->runInfoForTesting(0, startIndex, numGlyphs, script));
@@ -76,7 +80,7 @@ TEST_F(CachingWordShaperTest, CommonAccentLeftToRightByWord)
     TextRun textRun(str, 5);
 
     unsigned offset = 0;
-    RefPtr<ShapeResult> result;
+    RefPtr<const ShapeResult> result;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
     ASSERT_TRUE(iterator.next(&result));
     ASSERT_TRUE(testInfo(result)->runInfoForTesting(0, startIndex, numGlyphs, script));
@@ -115,7 +119,7 @@ TEST_F(CachingWordShaperTest, CommonAccentLeftToRightFillGlyphBuffer)
     GlyphBuffer glyphBuffer;
     shaper.fillGlyphBuffer(&font, textRun, fallbackFonts, &glyphBuffer, 0, 3);
 
-    OwnPtr<ShapeCache> referenceCache = adoptPtr(new ShapeCache());
+    std::unique_ptr<ShapeCache> referenceCache = wrapUnique(new ShapeCache());
     CachingWordShaper referenceShaper(referenceCache.get());
     GlyphBuffer referenceGlyphBuffer;
     font.setCanShapeWordByWordForTesting(false);
@@ -140,7 +144,7 @@ TEST_F(CachingWordShaperTest, CommonAccentRightToLeftFillGlyphBuffer)
     GlyphBuffer glyphBuffer;
     shaper.fillGlyphBuffer(&font, textRun, fallbackFonts, &glyphBuffer, 1, 6);
 
-    OwnPtr<ShapeCache> referenceCache = adoptPtr(new ShapeCache());
+    std::unique_ptr<ShapeCache> referenceCache = wrapUnique(new ShapeCache());
     CachingWordShaper referenceShaper(referenceCache.get());
     GlyphBuffer referenceGlyphBuffer;
     font.setCanShapeWordByWordForTesting(false);
@@ -174,9 +178,8 @@ TEST_F(CachingWordShaperTest, SubRunWithZeroGlyphs)
     GlyphBuffer glyphBuffer;
     shaper.fillGlyphBuffer(&font, textRun, fallbackFonts, &glyphBuffer, 0, 8);
 
-    FloatPoint point;
-    int height = 16;
-    shaper.selectionRect(&font, textRun, point, height, 0, 8);
+
+    shaper.getCharacterRange(&font, textRun, 0, 8);
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKByCharacter)
@@ -192,7 +195,7 @@ TEST_F(CachingWordShaperTest, SegmentCJKByCharacter)
     };
     TextRun textRun(str, 10);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -230,7 +233,7 @@ TEST_F(CachingWordShaperTest, SegmentCJKAndCommon)
     };
     TextRun textRun(str, 7);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -259,7 +262,7 @@ TEST_F(CachingWordShaperTest, SegmentCJKAndInherit)
     };
     TextRun textRun(str, 4);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -283,7 +286,7 @@ TEST_F(CachingWordShaperTest, SegmentCJKAndNonCJKCommon)
     };
     TextRun textRun(str, 2);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -318,7 +321,7 @@ TEST_F(CachingWordShaperTest, SegmentEmojiZWJCommon)
     };
     TextRun textRun(str, 22);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -342,11 +345,30 @@ TEST_F(CachingWordShaperTest, SegmentEmojiHeartZWJSequence)
     };
     TextRun textRun(str, 11);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
     EXPECT_EQ(11u, wordResult->numCharacters());
+
+    ASSERT_FALSE(iterator.next(&wordResult));
+}
+
+TEST_F(CachingWordShaperTest, SegmentEmojiSignsOfHornsModifier)
+{
+    // A Sign of the Horns emoji, followed by a fitzpatrick modifer
+    const UChar str[] = {
+        0xD83E, 0xDD18,
+        0xD83C, 0xDFFB,
+        0x0
+    };
+    TextRun textRun(str, 4);
+
+    RefPtr<const ShapeResult> wordResult;
+    CachingWordShapeIterator iterator(cache.get(), textRun, &font);
+
+    ASSERT_TRUE(iterator.next(&wordResult));
+    EXPECT_EQ(4u, wordResult->numCharacters());
 
     ASSERT_FALSE(iterator.next(&wordResult));
 }
@@ -374,7 +396,7 @@ TEST_F(CachingWordShaperTest, SegmentEmojiExtraZWJPrefix)
     };
     TextRun textRun(str, 23);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -396,7 +418,7 @@ TEST_F(CachingWordShaperTest, SegmentCJKCommon)
     };
     TextRun textRun(str, 3);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
@@ -414,11 +436,47 @@ TEST_F(CachingWordShaperTest, SegmentCJKCommonAndNonCJK)
     };
     TextRun textRun(str, 3);
 
-    RefPtr<ShapeResult> wordResult;
+    RefPtr<const ShapeResult> wordResult;
     CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
     EXPECT_EQ(1u, wordResult->numCharacters());
+
+    ASSERT_TRUE(iterator.next(&wordResult));
+    EXPECT_EQ(2u, wordResult->numCharacters());
+
+    ASSERT_FALSE(iterator.next(&wordResult));
+}
+
+TEST_F(CachingWordShaperTest, SegmentCJKSmallFormVariants)
+{
+    const UChar str[] = {
+        0x5916, // CJK UNIFIED IDEOGRPAH
+        0xFE50, // SMALL COMMA
+        0x0
+    };
+    TextRun textRun(str, 2);
+
+    RefPtr<const ShapeResult> wordResult;
+    CachingWordShapeIterator iterator(cache.get(), textRun, &font);
+
+    ASSERT_TRUE(iterator.next(&wordResult));
+    EXPECT_EQ(2u, wordResult->numCharacters());
+
+    ASSERT_FALSE(iterator.next(&wordResult));
+}
+
+TEST_F(CachingWordShaperTest, SegmentHangulToneMark)
+{
+    const UChar str[] = {
+        0xC740, // HANGUL SYLLABLE EUN
+        0x302E, // HANGUL SINGLE DOT TONE MARK
+        0x0
+    };
+    TextRun textRun(str, 2);
+
+    RefPtr<const ShapeResult> wordResult;
+    CachingWordShapeIterator iterator(cache.get(), textRun, &font);
 
     ASSERT_TRUE(iterator.next(&wordResult));
     EXPECT_EQ(2u, wordResult->numCharacters());

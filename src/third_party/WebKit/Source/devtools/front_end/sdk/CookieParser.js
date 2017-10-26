@@ -258,11 +258,11 @@ WebInspector.Cookie.prototype = {
     },
 
     /**
-     * @return {boolean}
+     * @return {string}
      */
-    sameSite: function ()
+    sameSite: function()
     {
-        return "samesite" in this._attributes;
+        return this._attributes["samesite"];
     },
 
     /**
@@ -429,7 +429,7 @@ WebInspector.Cookies._parseProtocolCookie = function(target, protocolCookie)
     if (protocolCookie["secure"])
         cookie.addAttribute("secure");
     if (protocolCookie["sameSite"])
-        cookie.addAttribute("sameSite");
+        cookie.addAttribute("sameSite", protocolCookie["sameSite"]);
     cookie.setSize(protocolCookie["size"]);
     return cookie;
 }
@@ -445,7 +445,7 @@ WebInspector.Cookies.cookieMatchesResourceURL = function(cookie, resourceURL)
     if (!url || !WebInspector.Cookies.cookieDomainMatchesResourceDomain(cookie.domain(), url.host))
         return false;
     return (url.path.startsWith(cookie.path())
-        && (!cookie.port() || url.port == cookie.port())
+        && (!cookie.port() || url.port === cookie.port())
         && (!cookie.secure() || url.scheme === "https"));
 }
 
@@ -456,7 +456,7 @@ WebInspector.Cookies.cookieMatchesResourceURL = function(cookie, resourceURL)
  */
 WebInspector.Cookies.cookieDomainMatchesResourceDomain = function(cookieDomain, resourceDomain)
 {
-    if (cookieDomain.charAt(0) !== '.')
+    if (cookieDomain.charAt(0) !== ".")
         return resourceDomain === cookieDomain;
     return !!resourceDomain.match(new RegExp("^([^\\.]+\\.)*" + cookieDomain.substring(1).escapeForRegExp() + "$", "i"));
 }

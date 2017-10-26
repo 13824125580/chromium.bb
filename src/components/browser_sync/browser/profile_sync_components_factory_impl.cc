@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_wallet_data_type_controller.h"
@@ -28,7 +29,6 @@
 #include "components/sync_bookmarks/bookmark_model_associator.h"
 #include "components/sync_driver/data_type_manager_impl.h"
 #include "components/sync_driver/device_info_data_type_controller.h"
-#include "components/sync_driver/device_info_model_type_controller.h"
 #include "components/sync_driver/glue/chrome_report_unrecoverable_error.h"
 #include "components/sync_driver/glue/sync_backend_host.h"
 #include "components/sync_driver/glue/sync_backend_host_impl.h"
@@ -37,6 +37,7 @@
 #include "components/sync_driver/sync_client.h"
 #include "components/sync_driver/sync_driver_switches.h"
 #include "components/sync_driver/ui_data_type_controller.h"
+#include "components/sync_driver/ui_model_type_controller.h"
 #include "components/sync_sessions/session_data_type_controller.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 #include "google_apis/gaia/oauth2_token_service_request.h"
@@ -59,14 +60,14 @@ using browser_sync::SessionDataTypeController;
 using browser_sync::SyncBackendHost;
 using browser_sync::TypedUrlDataTypeController;
 using sync_driver::DataTypeController;
-using sync_driver::DataTypeErrorHandler;
+using syncer::DataTypeErrorHandler;
 using sync_driver::DataTypeManager;
 using sync_driver::DataTypeManagerImpl;
 using sync_driver::DataTypeManagerObserver;
 using sync_driver::DeviceInfoDataTypeController;
 using sync_driver::ProxyDataTypeController;
 using sync_driver::UIDataTypeController;
-using sync_driver_v2::DeviceInfoModelTypeController;
+using sync_driver_v2::UIModelTypeController;
 
 namespace {
 
@@ -144,9 +145,8 @@ void ProfileSyncComponentsFactoryImpl::RegisterCommonDataTypes(
   // TODO(stanisc): can DEVICE_INFO be one of disabled datatypes?
   if (channel_ == version_info::Channel::UNKNOWN &&
       command_line_.HasSwitch(switches::kSyncEnableUSSDeviceInfo)) {
-    sync_service->RegisterDataTypeController(new DeviceInfoModelTypeController(
-        ui_thread_, error_callback, sync_client_,
-        sync_service->GetLocalDeviceInfoProvider()));
+    sync_service->RegisterDataTypeController(new UIModelTypeController(
+        ui_thread_, error_callback, syncer::DEVICE_INFO, sync_client_));
   } else {
     sync_service->RegisterDataTypeController(new DeviceInfoDataTypeController(
         ui_thread_, error_callback, sync_client_,
@@ -278,9 +278,9 @@ ProfileSyncComponentsFactoryImpl::CreateSyncBackendHost(
       name, sync_client_, ui_thread_, invalidator, sync_prefs, sync_folder);
 }
 
-scoped_ptr<sync_driver::LocalDeviceInfoProvider>
+std::unique_ptr<sync_driver::LocalDeviceInfoProvider>
 ProfileSyncComponentsFactoryImpl::CreateLocalDeviceInfoProvider() {
-  return scoped_ptr<sync_driver::LocalDeviceInfoProvider>(
+  return base::WrapUnique(
       new browser_sync::LocalDeviceInfoProviderImpl(channel_, version_,
                                                     is_tablet_));
 }
@@ -320,15 +320,15 @@ OAuth2TokenService* TokenServiceProvider::GetTokenService() {
   return token_service_;
 }
 
-scoped_ptr<syncer::AttachmentService>
+std::unique_ptr<syncer::AttachmentService>
 ProfileSyncComponentsFactoryImpl::CreateAttachmentService(
-    scoped_ptr<syncer::AttachmentStoreForSync> attachment_store,
+    std::unique_ptr<syncer::AttachmentStoreForSync> attachment_store,
     const syncer::UserShare& user_share,
     const std::string& store_birthday,
     syncer::ModelType model_type,
     syncer::AttachmentService::Delegate* delegate) {
-  scoped_ptr<syncer::AttachmentUploader> attachment_uploader;
-  scoped_ptr<syncer::AttachmentDownloader> attachment_downloader;
+  std::unique_ptr<syncer::AttachmentUploader> attachment_uploader;
+  std::unique_ptr<syncer::AttachmentDownloader> attachment_downloader;
   // Only construct an AttachmentUploader and AttachmentDownload if we have sync
   // credentials. We may not have sync credentials because there may not be a
   // signed in sync user.
@@ -362,7 +362,7 @@ ProfileSyncComponentsFactoryImpl::CreateAttachmentService(
   const base::TimeDelta initial_backoff_delay =
       base::TimeDelta::FromMinutes(30);
   const base::TimeDelta max_backoff_delay = base::TimeDelta::FromHours(4);
-  scoped_ptr<syncer::AttachmentService> attachment_service(
+  std::unique_ptr<syncer::AttachmentService> attachment_service(
       new syncer::AttachmentServiceImpl(
           std::move(attachment_store), std::move(attachment_uploader),
           std::move(attachment_downloader), delegate, initial_backoff_delay,
@@ -373,7 +373,7 @@ ProfileSyncComponentsFactoryImpl::CreateAttachmentService(
 sync_driver::SyncApiComponentFactory::SyncComponents
 ProfileSyncComponentsFactoryImpl::CreateBookmarkSyncComponents(
     sync_driver::SyncService* sync_service,
-    sync_driver::DataTypeErrorHandler* error_handler) {
+    syncer::DataTypeErrorHandler* error_handler) {
   BookmarkModel* bookmark_model =
       sync_service->GetSyncClient()->GetBookmarkModel();
   syncer::UserShare* user_share = sync_service->GetUserShare();

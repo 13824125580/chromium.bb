@@ -63,11 +63,19 @@
       '<(SHARED_INTERMEDIATE_DIR)/blink',
     ],
     'sources': [
+      '../web/WebInputEvent.cpp',
       'exported/FilePathConversion.cpp',
       'exported/URLConversion.cpp',
       'exported/WebCString.cpp',
-      'exported/WebCommon.cpp',
       'exported/WebString.cpp',
+      'exported/linux/WebFontRenderStyle.cpp',
+    ],
+    'target_conditions': [
+      ['OS=="android"', {
+        'sources/': [
+          ['include', 'exported/linux/WebFontRenderStyle\\.cpp$'],
+        ],
+      }],
     ],
   },
   {
@@ -123,7 +131,10 @@
   {
     'target_name': 'blink_platform',
     'type': '<(component)',
+    # Because of transitive dependency on make_platform_generated.
+    'hard_dependency': 1,
     'dependencies': [
+      '../../public/blink.gyp:mojo_bindings',
       '../config.gyp:config',
       '../wtf/wtf.gyp:wtf',
       'blink_common',
@@ -131,11 +142,15 @@
       'platform_generated.gyp:make_platform_generated',
       '<(DEPTH)/base/base.gyp:base',
       '<(DEPTH)/cc/cc.gyp:cc',
-      '<(DEPTH)/device/battery/battery.gyp:device_battery_mojo_bindings',
+      '<(DEPTH)/components/link_header_util/link_header_util.gyp:link_header_util',
       '<(DEPTH)/gpu/gpu.gyp:gles2_c_lib',
-      '<(DEPTH)/mojo/mojo_base.gyp:mojo_environment_chromium',
+      '<(DEPTH)/gpu/gpu.gyp:gles2_implementation',
       '<(DEPTH)/mojo/mojo_edk.gyp:mojo_system_impl',
+      '<(DEPTH)/mojo/mojo_public.gyp:mojo_cpp_bindings',
+      '<(DEPTH)/mojo/mojo_public.gyp:mojo_cpp_bindings_wtf_support',
+      '<(DEPTH)/net/net.gyp:net',
       '<(DEPTH)/skia/skia.gyp:skia',
+      '<(DEPTH)/third_party/harfbuzz-ng/harfbuzz.gyp:harfbuzz-ng',
       '<(DEPTH)/third_party/iccjpeg/iccjpeg.gyp:iccjpeg',
       '<(DEPTH)/third_party/icu/icu.gyp:icui18n',
       '<(DEPTH)/third_party/icu/icu.gyp:icuuc',
@@ -146,7 +161,8 @@
       '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
       '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
       '<(DEPTH)/url/url.gyp:url_lib',
-      '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+      '<(DEPTH)/url/url.gyp:url_interfaces_mojom_for_blink',
+      '<(DEPTH)/v8/src/v8.gyp:v8',
       '<(libjpeg_gyp_path):libjpeg',
     ],
     'export_dependent_settings': [
@@ -159,7 +175,7 @@
       '<(DEPTH)/third_party/libwebp/libwebp.gyp:libwebp',
       '<(DEPTH)/third_party/ots/ots.gyp:ots',
       '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
-      '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+      '<(DEPTH)/v8/src/v8.gyp:v8',
       '<(DEPTH)/url/url.gyp:url_lib',
       '<(DEPTH)/third_party/iccjpeg/iccjpeg.gyp:iccjpeg',
       '<(libjpeg_gyp_path):libjpeg',
@@ -182,7 +198,7 @@
       '<@(platform_heap_files)',
 
       # Additional .cpp files from platform_generated.gyp:make_platform_generated actions.
-      '<(blink_platform_output_dir)/CharacterData.cpp',
+      '<(blink_platform_output_dir)/CharacterPropertyData.cpp',
       '<(blink_platform_output_dir)/ColorData.cpp',
       '<(blink_platform_output_dir)/FontFamilyNames.cpp',
       '<(blink_platform_output_dir)/HTTPNames.cpp',
@@ -190,9 +206,11 @@
       '<(blink_platform_output_dir)/RuntimeEnabledFeatures.h',
 
       # Additional .cpp files from the protocol_sources list.
-      '<(blink_platform_output_dir)/inspector_protocol/Frontend.cpp',
-      '<(blink_platform_output_dir)/inspector_protocol/Dispatcher.cpp',
-      '<(blink_platform_output_dir)/inspector_protocol/TypeBuilder.cpp',
+      '<(blink_platform_output_dir)/v8_inspector/protocol/Console.cpp',
+      '<(blink_platform_output_dir)/v8_inspector/protocol/Debugger.cpp',
+      '<(blink_platform_output_dir)/v8_inspector/protocol/HeapProfiler.cpp',
+      '<(blink_platform_output_dir)/v8_inspector/protocol/Profiler.cpp',
+      '<(blink_platform_output_dir)/v8_inspector/protocol/Runtime.cpp',
 
       # Additional .cpp files from the v8_inspector.
       '<(blink_platform_output_dir)/v8_inspector/DebuggerScript.h',
@@ -201,7 +219,7 @@
     'sources/': [
       # Exclude all platform specific things, reinclude them below on a per-platform basis
       # FIXME: Figure out how to store these patterns in a variable.
-      ['exclude', '(cf|cg|mac|opentype|win)/'],
+      ['exclude', '(cf|cg|mac|win)/'],
       ['exclude', '(?<!Chromium)(CF|CG|Mac|Win)\\.(cpp|mm?)$'],
 
       # *NEON.cpp files need special compile options.
@@ -219,17 +237,6 @@
           ['include', 'graphics/cpu/x86/WebGLImageConversionSSE\\.h$'],
         ],
       }],
-      ['OS=="linux" or OS=="android" or OS=="win"', {
-        'sources/': [
-          # Cherry-pick files excluded by the broader regular expressions above.
-          ['include', 'fonts/opentype/OpenTypeTypes\\.h$'],
-          ['include', 'fonts/opentype/OpenTypeVerticalData\\.(cpp|h)$'],
-        ],
-        'dependencies': [
-          '<(DEPTH)/third_party/harfbuzz-ng/harfbuzz.gyp:harfbuzz-ng',
-        ],
-      },
-      ],
       ['OS=="linux" or OS=="android"', {
         'sources/': [
           ['include', 'fonts/linux/FontPlatformDataLinux\\.cpp$'],
@@ -240,9 +247,6 @@
         ]
       }],
       ['OS=="mac"', {
-        'dependencies': [
-          '<(DEPTH)/third_party/harfbuzz-ng/harfbuzz.gyp:harfbuzz-ng',
-        ],
         'link_settings': {
           'libraries': [
             '$(SDKROOT)/System/Library/Frameworks/Accelerate.framework',
@@ -265,9 +269,7 @@
           # Use native Mac font code from core.
           ['include', '(fonts/)?mac/[^/]*Font[^/]*\\.(cpp|mm?)$'],
 
-          # TODO(dro): Merge the opentype vertical data files inclusion across all platforms.
-          ['include', 'fonts/opentype/OpenTypeTypes\\.h$'],
-          ['include', 'fonts/opentype/OpenTypeVerticalData\\.(cpp|h)$'],
+          ['include', 'text/mac/HyphenationMac\\.cpp$'],
 
           # Cherry-pick some files that can't be included by broader regexps.
           # Some of these are used instead of Chromium platform files, see
@@ -286,9 +288,10 @@
           ['include', 'mac/VersionUtilMac\\.mm$'],
           ['include', 'mac/WebCoreNSCellExtras\\.h$'],
           ['include', 'mac/WebCoreNSCellExtras\\.mm$'],
+          ['include', 'scroll/ScrollbarThemeMac\\.h$'],
+          ['include', 'scroll/ScrollbarThemeMac\\.mm$'],
 
           # Mac uses only ScrollAnimatorMac.
-          ['exclude', 'scroll/ScrollbarThemeNonMacCommon\\.(cpp|h)$'],
           ['exclude', 'scroll/ScrollAnimator\\.cpp$'],
           ['exclude', 'scroll/ScrollAnimator\\.h$'],
 
@@ -328,10 +331,11 @@
 
           ['include', 'clipboard/ClipboardUtilitiesWin\\.(cpp|h)$'],
 
-          ['include', 'fonts/opentype/'],
           ['include', 'fonts/win/FontCacheSkiaWin\\.cpp$'],
           ['include', 'fonts/win/FontFallbackWin\\.(cpp|h)$'],
           ['include', 'fonts/win/FontPlatformDataWin\\.cpp$'],
+
+          ['include', 'text/win/HyphenationWin\\.cpp$'],
 
           # SystemInfo.cpp is useful and we don't want to copy it.
           ['include', 'win/SystemInfo\\.cpp$'],
@@ -341,7 +345,6 @@
           ['exclude', 'win/'],
           ['exclude', 'Win\\.cpp$'],
           ['exclude', '/(Windows)[^/]*\\.cpp$'],
-          ['include', 'fonts/opentype/OpenTypeSanitizer\\.cpp$'],
         ],
       }],
       ['OS=="win" and chromium_win_pch==1', {
@@ -356,14 +359,6 @@
       }, { # OS!="android"
         'sources/': [
           ['exclude', 'Android\\.cpp$'],
-        ],
-      }],
-      ['OS=="linux"', {
-        'dependencies': [
-          '<(DEPTH)/build/linux/system.gyp:fontconfig',
-        ],
-        'export_dependent_settings': [
-          '<(DEPTH)/build/linux/system.gyp:fontconfig',
         ],
       }],
       ['use_default_render_theme==0', {
@@ -396,8 +391,7 @@
     'target_conditions': [
       ['OS=="android"', {
         'sources/': [
-            ['include', 'exported/linux/WebFontRenderStyle\\.cpp$'],
-            ['include', 'fonts/linux/FontPlatformDataLinux\\.cpp$'],
+          ['include', 'fonts/linux/FontPlatformDataLinux\\.cpp$'],
         ],
       }],
     ],

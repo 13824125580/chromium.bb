@@ -31,6 +31,7 @@ struct DisplayMode_Params {
 
 struct DisplaySnapshot_Params {
   DisplaySnapshot_Params();
+  DisplaySnapshot_Params(const DisplaySnapshot_Params& other);
   ~DisplaySnapshot_Params();
 
   int64_t display_id = 0;
@@ -39,6 +40,7 @@ struct DisplaySnapshot_Params {
   DisplayConnectionType type = DISPLAY_CONNECTION_TYPE_NONE;
   bool is_aspect_preserving_scaling = false;
   bool has_overscan = false;
+  bool has_color_correction_matrix = false;
   std::string display_name;
   base::FilePath sys_path;
   std::vector<DisplayMode_Params> modes;
@@ -49,12 +51,14 @@ struct DisplaySnapshot_Params {
   DisplayMode_Params native_mode;
   int64_t product_id = 0;
   std::string string_representation;
+  gfx::Size maximum_cursor_size;
 };
 
 struct OverlayCheck_Params {
   OverlayCheck_Params();
   OverlayCheck_Params(
       const OverlayCandidatesOzone::OverlaySurfaceCandidate& candidate);
+  OverlayCheck_Params(const OverlayCheck_Params& other);
   ~OverlayCheck_Params();
 
   bool operator<(const OverlayCheck_Params& plane) const;

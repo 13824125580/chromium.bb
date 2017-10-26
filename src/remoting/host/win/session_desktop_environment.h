@@ -20,7 +20,7 @@ class SessionDesktopEnvironment : public Me2MeDesktopEnvironment {
   ~SessionDesktopEnvironment() override;
 
   // DesktopEnvironment implementation.
-  scoped_ptr<InputInjector> CreateInputInjector() override;
+  std::unique_ptr<InputInjector> CreateInputInjector() override;
 
  private:
   friend class SessionDesktopEnvironmentFactory;
@@ -30,10 +30,14 @@ class SessionDesktopEnvironment : public Me2MeDesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       const base::Closure& inject_sas,
+      const base::Closure& lock_workstation,
       bool supports_touch_events);
 
   // Used to ask the daemon to inject Secure Attention Sequence.
   base::Closure inject_sas_;
+
+  // Used to lock the workstation for the current session.
+  base::Closure lock_workstation_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionDesktopEnvironment);
 };
@@ -46,16 +50,20 @@ class SessionDesktopEnvironmentFactory : public Me2MeDesktopEnvironmentFactory {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      const base::Closure& inject_sas);
+      const base::Closure& inject_sas,
+      const base::Closure& lock_workstation);
   ~SessionDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory implementation.
-  scoped_ptr<DesktopEnvironment> Create(
+  std::unique_ptr<DesktopEnvironment> Create(
       base::WeakPtr<ClientSessionControl> client_session_control) override;
 
  private:
   // Used to ask the daemon to inject Secure Attention Sequence.
   base::Closure inject_sas_;
+
+  // Used to lock the workstation for the current session.
+  base::Closure lock_workstation_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionDesktopEnvironmentFactory);
 };

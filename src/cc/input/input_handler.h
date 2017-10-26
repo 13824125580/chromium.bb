@@ -5,8 +5,9 @@
 #ifndef CC_INPUT_INPUT_HANDLER_H_
 #define CC_INPUT_INPUT_HANDLER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "cc/base/cc_export.h"
 #include "cc/input/event_listener_properties.h"
@@ -99,7 +100,11 @@ class CC_EXPORT InputHandler {
     uint32_t main_thread_scrolling_reasons;
   };
 
-  enum ScrollInputType { GESTURE, WHEEL, ANIMATED_WHEEL, NON_BUBBLING_GESTURE };
+  enum ScrollInputType {
+    TOUCHSCREEN,
+    WHEEL,
+    NON_BUBBLING_GESTURE
+  };
 
   // Binds a client to this handler to receive notifications. Only one client
   // can be bound to an InputHandler. The client must live at least until the
@@ -118,6 +123,12 @@ class CC_EXPORT InputHandler {
   // targets at the root layer.
   virtual ScrollStatus RootScrollBegin(ScrollState* scroll_state,
                                        ScrollInputType type) = 0;
+
+  // Returns SCROLL_ON_IMPL_THREAD if a layer is actively being scrolled or
+  // a subsequent call to ScrollAnimated can begin on the impl thread.
+  virtual ScrollStatus ScrollAnimatedBegin(
+      const gfx::Point& viewport_point) = 0;
+
   virtual ScrollStatus ScrollAnimated(const gfx::Point& viewport_point,
                                       const gfx::Vector2dF& scroll_delta) = 0;
 
@@ -137,7 +148,7 @@ class CC_EXPORT InputHandler {
   virtual bool ScrollVerticallyByPage(const gfx::Point& viewport_point,
                                       ScrollDirection direction) = 0;
 
-  // Returns SCROLL_STARTED if a layer was being actively being scrolled,
+  // Returns SCROLL_STARTED if a layer was actively being scrolled,
   // SCROLL_IGNORED if not.
   virtual ScrollStatus FlingScrollBegin() = 0;
 
@@ -183,8 +194,8 @@ class CC_EXPORT InputHandler {
   // LatencyInfoSwapPromiseMonitor, if SetNeedsRedraw() or SetNeedsRedrawRect()
   // is called on LayerTreeHostImpl, the original latency info will be turned
   // into a LatencyInfoSwapPromise.
-  virtual scoped_ptr<SwapPromiseMonitor> CreateLatencyInfoSwapPromiseMonitor(
-      ui::LatencyInfo* latency) = 0;
+  virtual std::unique_ptr<SwapPromiseMonitor>
+  CreateLatencyInfoSwapPromiseMonitor(ui::LatencyInfo* latency) = 0;
 
   virtual ScrollElasticityHelper* CreateScrollElasticityHelper() = 0;
 

@@ -13,7 +13,7 @@
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "content/common/gpu/gpu_watchdog.h"
+#include "gpu/ipc/service/gpu_watchdog.h"
 #include "ui/gfx/native_widget_types.h"
 
 #if defined(USE_X11)
@@ -22,9 +22,8 @@ extern "C" {
 #include <X11/Xatom.h>
 }
 #include <sys/poll.h>
-#include "ui/base/x/x11_util.h"
-#include "ui/gfx/x/x11_types.h"
-
+#include "ui/base/x/x11_util.h"  // nogncheck
+#include "ui/gfx/x/x11_types.h"  // nogncheck
 #endif
 
 namespace content {
@@ -32,7 +31,7 @@ namespace content {
 // A thread that intermitently sends tasks to a group of watched message loops
 // and deliberately crashes if one of them does not respond after a timeout.
 class GpuWatchdogThread : public base::Thread,
-                          public GpuWatchdog,
+                          public gpu::GpuWatchdog,
                           public base::PowerObserver,
                           public base::RefCountedThreadSafe<GpuWatchdogThread> {
  public:
@@ -42,7 +41,7 @@ class GpuWatchdogThread : public base::Thread,
   bool armed() const { return armed_; }
   void PostAcknowledge();
 
-  // Implement GpuWatchdog.
+  // Implement gpu::GpuWatchdog.
   void CheckArmed() override;
 
   // Must be called after a PowerMonitor has been created. Can be called from
@@ -89,7 +88,11 @@ class GpuWatchdogThread : public base::Thread,
   void OnResume() override;
 
 #if defined(OS_WIN)
-  base::TimeDelta GetWatchedThreadTime();
+  base::ThreadTicks GetWatchedThreadTime();
+#endif
+
+#if defined(USE_X11)
+  int GetActiveTTY() const;
 #endif
 
   base::MessageLoop* watched_message_loop_;
@@ -97,9 +100,21 @@ class GpuWatchdogThread : public base::Thread,
   volatile bool armed_;
   GpuWatchdogTaskObserver task_observer_;
 
+  // True if the watchdog should wait for a certain amount of CPU to be used
+  // before killing the process.
+  bool use_thread_cpu_time_;
+
+  // The number of consecutive acknowledgements that had a latency less than
+  // 50ms.
+  int responsive_acknowledge_count_;
+
 #if defined(OS_WIN)
   void* watched_thread_handle_;
-  base::TimeDelta arm_cpu_time_;
+  base::ThreadTicks arm_cpu_time_;
+
+  // This measures the time that the system has been running, in units of 100
+  // ns.
+  ULONGLONG arm_interrupt_time_;
 #endif
 
   // Time after which it's assumed that the computer has been suspended since
@@ -108,14 +123,20 @@ class GpuWatchdogThread : public base::Thread,
 
   bool suspended_;
 
-#if defined(OS_CHROMEOS)
-  FILE* tty_file_;
-#endif
+  // The time the last OnSuspend and OnResume was called.
+  base::Time suspend_time_;
+  base::Time resume_time_;
+
+  // This is the time the last check was sent.
+  base::Time check_time_;
+  base::TimeTicks check_timeticks_;
 
 #if defined(USE_X11)
   XDisplay* display_;
   gfx::AcceleratedWidget window_;
   XAtom atom_;
+  FILE* tty_file_;
+  int host_tty_;
 #endif
 
   base::WeakPtrFactory<GpuWatchdogThread> weak_factory_;

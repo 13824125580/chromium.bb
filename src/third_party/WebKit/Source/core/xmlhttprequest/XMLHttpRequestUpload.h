@@ -31,7 +31,6 @@
 #include "core/xmlhttprequest/XMLHttpRequestEventTarget.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
 
@@ -50,7 +49,7 @@ public:
     XMLHttpRequest* xmlHttpRequest() const { return m_xmlHttpRequest; }
 
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
 
     void dispatchEventAndLoadEnd(const AtomicString&, bool, unsigned long long, unsigned long long);
     void dispatchProgressEvent(unsigned long long, unsigned long long);

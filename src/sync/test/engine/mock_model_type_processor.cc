@@ -7,19 +7,26 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/base64.h"
 #include "base/bind.h"
+#include "base/sha1.h"
 #include "sync/engine/commit_queue.h"
 
 namespace syncer_v2 {
 
-MockModelTypeProcessor::MockModelTypeProcessor() : is_synchronous_(true) {
-}
+MockModelTypeProcessor::MockModelTypeProcessor() : is_synchronous_(true) {}
 
-MockModelTypeProcessor::~MockModelTypeProcessor() {
-}
+MockModelTypeProcessor::~MockModelTypeProcessor() {}
 
-void MockModelTypeProcessor::ConnectSync(scoped_ptr<CommitQueue> commit_queue) {
+void MockModelTypeProcessor::ConnectSync(
+    std::unique_ptr<CommitQueue> commit_queue) {
   NOTREACHED();
+}
+
+void MockModelTypeProcessor::DisconnectSync() {
+  if (!disconnect_callback_.is_null()) {
+    disconnect_callback_.Run();
+  }
 }
 
 void MockModelTypeProcessor::OnCommitCompleted(
@@ -85,6 +92,8 @@ CommitRequestData MockModelTypeProcessor::CommitRequest(
   request_data.entity = data.PassToPtr();
   request_data.sequence_number = GetNextSequenceNumber(tag_hash);
   request_data.base_version = base_version;
+  base::Base64Encode(base::SHA1HashString(specifics.SerializeAsString()),
+                     &request_data.specifics_hash);
 
   return request_data;
 }
@@ -179,6 +188,11 @@ CommitResponseData MockModelTypeProcessor::GetCommitResponse(
   std::map<const std::string, CommitResponseData>::const_iterator it =
       commit_response_items_.find(tag_hash);
   return it->second;
+}
+
+void MockModelTypeProcessor::SetDisconnectCallback(
+    const DisconnectCallback& callback) {
+  disconnect_callback_ = callback;
 }
 
 void MockModelTypeProcessor::OnCommitCompletedImpl(

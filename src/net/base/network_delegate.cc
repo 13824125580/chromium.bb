@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/profiler/scoped_tracker.h"
+#include "base/trace_event/trace_event.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/proxy_info.h"
@@ -16,6 +17,8 @@ namespace net {
 int NetworkDelegate::NotifyBeforeURLRequest(
     URLRequest* request, const CompletionCallback& callback,
     GURL* new_url) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyBeforeURLRequest");
   DCHECK(CalledOnValidThread());
   DCHECK(request);
   DCHECK(!callback.is_null());
@@ -26,28 +29,35 @@ int NetworkDelegate::NotifyBeforeURLRequest(
   return OnBeforeURLRequest(request, callback, new_url);
 }
 
-int NetworkDelegate::NotifyBeforeSendHeaders(
-    URLRequest* request, const CompletionCallback& callback,
+int NetworkDelegate::NotifyBeforeStartTransaction(
+    URLRequest* request,
+    const CompletionCallback& callback,
     HttpRequestHeaders* headers) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyBeforeStartTransation");
   DCHECK(CalledOnValidThread());
   DCHECK(headers);
   DCHECK(!callback.is_null());
-  return OnBeforeSendHeaders(request, callback, headers);
+  return OnBeforeStartTransaction(request, callback, headers);
 }
 
-void NetworkDelegate::NotifyBeforeSendProxyHeaders(
+void NetworkDelegate::NotifyBeforeSendHeaders(
     URLRequest* request,
     const ProxyInfo& proxy_info,
+    const ProxyRetryInfoMap& proxy_retry_info,
     HttpRequestHeaders* headers) {
   DCHECK(CalledOnValidThread());
   DCHECK(headers);
-  OnBeforeSendProxyHeaders(request, proxy_info, headers);
+  OnBeforeSendHeaders(request, proxy_info, proxy_retry_info, headers);
 }
 
-void NetworkDelegate::NotifySendHeaders(URLRequest* request,
-                                        const HttpRequestHeaders& headers) {
+void NetworkDelegate::NotifyStartTransaction(
+    URLRequest* request,
+    const HttpRequestHeaders& headers) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyStartTransaction");
   DCHECK(CalledOnValidThread());
-  OnSendHeaders(request, headers);
+  OnStartTransaction(request, headers);
 }
 
 int NetworkDelegate::NotifyHeadersReceived(
@@ -56,6 +66,8 @@ int NetworkDelegate::NotifyHeadersReceived(
     const HttpResponseHeaders* original_response_headers,
     scoped_refptr<HttpResponseHeaders>* override_response_headers,
     GURL* allowed_unsafe_redirect_url) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyHeadersReceived");
   DCHECK(CalledOnValidThread());
   DCHECK(original_response_headers);
   DCHECK(!callback.is_null());
@@ -74,6 +86,8 @@ void NetworkDelegate::NotifyResponseStarted(URLRequest* request) {
 
 void NetworkDelegate::NotifyNetworkBytesReceived(URLRequest* request,
                                                  int64_t bytes_received) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyNetworkBytesReceived");
   DCHECK(CalledOnValidThread());
   DCHECK_GT(bytes_received, 0);
   OnNetworkBytesReceived(request, bytes_received);
@@ -94,6 +108,8 @@ void NetworkDelegate::NotifyBeforeRedirect(URLRequest* request,
 }
 
 void NetworkDelegate::NotifyCompleted(URLRequest* request, bool started) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyCompleted");
   DCHECK(CalledOnValidThread());
   DCHECK(request);
   // TODO(cbentzel): Remove ScopedTracker below once crbug.com/475753 is fixed.
@@ -103,6 +119,8 @@ void NetworkDelegate::NotifyCompleted(URLRequest* request, bool started) {
 }
 
 void NetworkDelegate::NotifyURLRequestDestroyed(URLRequest* request) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::NotifyURLRequestDestroyed");
   DCHECK(CalledOnValidThread());
   DCHECK(request);
   OnURLRequestDestroyed(request);
@@ -147,6 +165,8 @@ bool NetworkDelegate::CanAccessFile(const URLRequest& request,
 bool NetworkDelegate::CanEnablePrivacyMode(
     const GURL& url,
     const GURL& first_party_for_cookies) const {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "NetworkDelegate::CanEnablePrivacyMode");
   DCHECK(CalledOnValidThread());
   return OnCanEnablePrivacyMode(url, first_party_for_cookies);
 }

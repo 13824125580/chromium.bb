@@ -5,6 +5,8 @@
 #ifndef CONTENT_RENDERER_P2P_PORT_ALLOCATOR_H_
 #define CONTENT_RENDERER_P2P_PORT_ALLOCATOR_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
@@ -36,25 +38,21 @@ class P2PPortAllocator : public cricket::BasicPortAllocator {
     bool enable_default_local_candidate = true;
   };
 
-  P2PPortAllocator(
-      const scoped_refptr<P2PSocketDispatcher>& socket_dispatcher,
-      scoped_ptr<rtc::NetworkManager> network_manager,
-      rtc::PacketSocketFactory* socket_factory,
-      const Config& config,
-      const GURL& origin,
-      const scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  P2PPortAllocator(const scoped_refptr<P2PSocketDispatcher>& socket_dispatcher,
+                   std::unique_ptr<rtc::NetworkManager> network_manager,
+                   rtc::PacketSocketFactory* socket_factory,
+                   const Config& config,
+                   const GURL& origin);
   ~P2PPortAllocator() override;
 
+  // Will also initialize the network manager passed into the constructor.
+  void Initialize() override;
+
  private:
-  scoped_ptr<rtc::NetworkManager> network_manager_;
+  std::unique_ptr<rtc::NetworkManager> network_manager_;
   scoped_refptr<P2PSocketDispatcher> socket_dispatcher_;
   Config config_;
   GURL origin_;
-
-  // This is the thread |network_manager_| is associated with and must be used
-  // to delete |network_manager_|.
-  const scoped_refptr<base::SingleThreadTaskRunner>
-      network_manager_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(P2PPortAllocator);
 };

@@ -21,10 +21,12 @@ static_library("browser") {
     "//components/rappor",
     "//ipc",
     "//net",
+    "//third_party/WebKit/public:blink_headers",
     "//ui/base",
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -39,5 +41,8 @@ source_set("unit_tests") {
     "//content/test:test_support",
     "//net",
     "//testing/gtest",
+    "//third_party/WebKit/public:blink_headers",
   ]
 }
+}
+

@@ -12,6 +12,7 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/edk/embedder/embedder_internal.h"
 #include "mojo/edk/embedder/platform_channel_utils_posix.h"
 #include "mojo/edk/embedder/platform_handle_vector.h"
@@ -33,7 +34,7 @@ BrokerHost::BrokerHost(ScopedPlatformHandle platform_handle) {
   base::MessageLoop::current()->AddDestructionObserver(this);
 
   channel_ = Channel::Create(this, std::move(platform_handle),
-                             base::MessageLoop::current()->task_runner());
+                             base::ThreadTaskRunnerHandle::Get());
   channel_->Start();
 }
 
@@ -61,18 +62,24 @@ void BrokerHost::SendChannel(ScopedPlatformHandle handle) {
 
 void BrokerHost::OnBufferRequest(size_t num_bytes) {
   scoped_refptr<PlatformSharedBuffer> buffer;
+  scoped_refptr<PlatformSharedBuffer> read_only_buffer;
   if (num_bytes <= kMaxSharedBufferSize) {
     buffer = PlatformSharedBuffer::Create(num_bytes);
+    if (buffer)
+      read_only_buffer = buffer->CreateReadOnlyDuplicate();
+    if (!read_only_buffer)
+      buffer = nullptr;
   } else {
     LOG(ERROR) << "Shared buffer request too large: " << num_bytes;
   }
 
   Channel::MessagePtr message = CreateBrokerMessage(
-      BrokerMessageType::BUFFER_RESPONSE, buffer ? 1 : 0, nullptr);
+      BrokerMessageType::BUFFER_RESPONSE, buffer ? 2 : 0, nullptr);
   if (buffer) {
     ScopedPlatformHandleVectorPtr handles;
-    handles.reset(new PlatformHandleVector(1));
+    handles.reset(new PlatformHandleVector(2));
     handles->at(0) = buffer->PassPlatformHandle().release();
+    handles->at(1) = read_only_buffer->PassPlatformHandle().release();
     message->SetHandles(std::move(handles));
   }
 
@@ -82,19 +89,27 @@ void BrokerHost::OnBufferRequest(size_t num_bytes) {
 void BrokerHost::OnChannelMessage(const void* payload,
                                   size_t payload_size,
                                   ScopedPlatformHandleVectorPtr handles) {
+  if (payload_size < sizeof(BrokerMessageHeader))
+    return;
+
   const BrokerMessageHeader* header =
       static_cast<const BrokerMessageHeader*>(payload);
   switch (header->type) {
-    case BrokerMessageType::BUFFER_REQUEST: {
-      const BufferRequestData* request =
-          reinterpret_cast<const BufferRequestData*>(header + 1);
-      OnBufferRequest(request->size);
+    case BrokerMessageType::BUFFER_REQUEST:
+      if (payload_size ==
+            sizeof(BrokerMessageHeader) + sizeof(BufferRequestData)) {
+        const BufferRequestData* request =
+            reinterpret_cast<const BufferRequestData*>(header + 1);
+        OnBufferRequest(request->size);
+        return;
+      }
       break;
-    }
+
     default:
-      LOG(ERROR) << "Unexpected broker message type: " << header->type;
       break;
   }
+
+  LOG(ERROR) << "Unexpected broker message type: " << header->type;
 }
 
 void BrokerHost::OnChannelError() {

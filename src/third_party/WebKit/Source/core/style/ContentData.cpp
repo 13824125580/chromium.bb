@@ -28,41 +28,42 @@
 #include "core/layout/LayoutQuote.h"
 #include "core/layout/LayoutTextFragment.h"
 #include "core/style/ComputedStyle.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<ContentData> ContentData::create(PassRefPtrWillBeRawPtr<StyleImage> image)
+ContentData* ContentData::create(StyleImage* image)
 {
-    return adoptPtrWillBeNoop(new ImageContentData(image));
+    return new ImageContentData(image);
 }
 
-PassOwnPtrWillBeRawPtr<ContentData> ContentData::create(const String& text)
+ContentData* ContentData::create(const String& text)
 {
-    return adoptPtrWillBeNoop(new TextContentData(text));
+    return new TextContentData(text);
 }
 
-PassOwnPtrWillBeRawPtr<ContentData> ContentData::create(PassOwnPtr<CounterContent> counter)
+ContentData* ContentData::create(std::unique_ptr<CounterContent> counter)
 {
-    return adoptPtrWillBeNoop(new CounterContentData(counter));
+    return new CounterContentData(std::move(counter));
 }
 
-PassOwnPtrWillBeRawPtr<ContentData> ContentData::create(QuoteType quote)
+ContentData* ContentData::create(QuoteType quote)
 {
-    return adoptPtrWillBeNoop(new QuoteContentData(quote));
+    return new QuoteContentData(quote);
 }
 
-PassOwnPtrWillBeRawPtr<ContentData> ContentData::clone() const
+ContentData* ContentData::clone() const
 {
-    OwnPtrWillBeRawPtr<ContentData> result = cloneInternal();
+    ContentData* result = cloneInternal();
 
-    ContentData* lastNewData = result.get();
+    ContentData* lastNewData = result;
     for (const ContentData* contentData = next(); contentData; contentData = contentData->next()) {
-        OwnPtrWillBeRawPtr<ContentData> newData = contentData->cloneInternal();
-        lastNewData->setNext(newData.release());
+        ContentData* newData = contentData->cloneInternal();
+        lastNewData->setNext(newData);
         lastNewData = lastNewData->next();
     }
 
-    return result.release();
+    return result;
 }
 
 DEFINE_TRACE(ContentData)

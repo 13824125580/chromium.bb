@@ -46,6 +46,7 @@
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/line/SVGInlineTextBox.h"
 #include "core/layout/svg/line/SVGRootInlineBox.h"
+#include "core/paint/PaintLayer.h"
 #include "core/svg/LinearGradientAttributes.h"
 #include "core/svg/PatternAttributes.h"
 #include "core/svg/RadialGradientAttributes.h"
@@ -273,8 +274,8 @@ static void writeStyle(TextStream& ts, const LayoutObject& object)
     const ComputedStyle& style = object.styleRef();
     const SVGComputedStyle& svgStyle = style.svgStyle();
 
-    if (!object.localTransform().isIdentity())
-        writeNameValuePair(ts, "transform", object.localTransform());
+    if (!object.localSVGTransform().isIdentity())
+        writeNameValuePair(ts, "transform", object.localSVGTransform());
     writeIfNotDefault(ts, "image rendering", style.imageRendering(), ComputedStyle::initialImageRendering());
     writeIfNotDefault(ts, "opacity", style.opacity(), ComputedStyle::initialOpacity());
     if (object.isSVGShape()) {
@@ -506,9 +507,9 @@ void writeSVGResourceContainer(TextStream& ts, const LayoutObject& object, int i
         ts << "\n";
         // Creating a placeholder filter which is passed to the builder.
         FloatRect dummyRect;
-        RefPtrWillBeRawPtr<Filter> dummyFilter = Filter::create(dummyRect, dummyRect, 1, Filter::BoundingBox);
-        SVGFilterBuilder builder(dummyFilter->sourceGraphic());
-        builder.buildGraph(dummyFilter.get(), toSVGFilterElement(*filter->element()), dummyRect);
+        Filter* dummyFilter = Filter::create(dummyRect, dummyRect, 1, Filter::BoundingBox);
+        SVGFilterBuilder builder(dummyFilter->getSourceGraphic());
+        builder.buildGraph(dummyFilter, toSVGFilterElement(*filter->element()), dummyRect);
         if (FilterEffect* lastEffect = builder.lastEffect())
             lastEffect->externalRepresentation(ts, indent + 1);
     } else if (resource->resourceType() == ClipperResourceType) {
@@ -519,7 +520,7 @@ void writeSVGResourceContainer(TextStream& ts, const LayoutObject& object, int i
         writeNameValuePair(ts, "markerUnits", marker->markerUnits());
         ts << " [ref at " << marker->referencePoint() << "]";
         ts << " [angle=";
-        if (marker->angle() == -1)
+        if (marker->orientType() != SVGMarkerOrientAngle)
             ts << marker->orientType() << "]\n";
         else
             ts << marker->angle() << "]\n";
@@ -659,14 +660,22 @@ void writeResources(TextStream& ts, const LayoutObject& object, int indent)
             ts << " " << clipper->resourceBoundingBox(&layoutObject) << "\n";
         }
     }
-    if (!svgStyle.filterResource().isEmpty()) {
-        if (LayoutSVGResourceFilter* filter = getLayoutSVGResourceById<LayoutSVGResourceFilter>(object.document(), svgStyle.filterResource())) {
-            writeIndent(ts, indent);
-            ts << " ";
-            writeNameAndQuotedValue(ts, "filter", svgStyle.filterResource());
-            ts << " ";
-            writeStandardPrefix(ts, *filter, 0);
-            ts << " " << filter->resourceBoundingBox(&layoutObject) << "\n";
+    if (style.hasFilter()) {
+        const FilterOperations& filterOperations = style.filter();
+        if (filterOperations.size() == 1) {
+            const FilterOperation& filterOperation = *filterOperations.at(0);
+            if (filterOperation.type() == FilterOperation::REFERENCE) {
+                const auto& referenceFilterOperation = toReferenceFilterOperation(filterOperation);
+                AtomicString id = SVGURIReference::fragmentIdentifierFromIRIString(referenceFilterOperation.url(), object.document());
+                if (LayoutSVGResourceFilter* filter = getLayoutSVGResourceById<LayoutSVGResourceFilter>(object.document(), id)) {
+                    writeIndent(ts, indent);
+                    ts << " ";
+                    writeNameAndQuotedValue(ts, "filter", id);
+                    ts << " ";
+                    writeStandardPrefix(ts, *filter, 0);
+                    ts << " " << filter->resourceBoundingBox(&layoutObject) << "\n";
+                }
+            }
         }
     }
 }

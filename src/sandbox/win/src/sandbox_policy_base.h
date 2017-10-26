@@ -10,11 +10,11 @@
 #include <stdint.h>
 
 #include <list>
+#include <memory>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/launch.h"
 #include "base/strings/string16.h"
 #include "base/win/scoped_handle.h"
@@ -28,7 +28,6 @@
 
 namespace sandbox {
 
-class AppContainerAttributes;
 class LowLevelPolicy;
 class TargetProcess;
 struct PolicyGlobal;
@@ -53,7 +52,6 @@ class PolicyBase final : public TargetPolicy {
   ResultCode SetIntegrityLevel(IntegrityLevel integrity_level) override;
   IntegrityLevel GetIntegrityLevel() const override;
   ResultCode SetDelayedIntegrityLevel(IntegrityLevel integrity_level) override;
-  ResultCode SetAppContainer(const wchar_t* sid) override;
   ResultCode SetCapability(const wchar_t* sid) override;
   ResultCode SetLowBox(const wchar_t* sid) override;
   ResultCode SetProcessMitigations(MitigationFlags flags) override;
@@ -71,6 +69,9 @@ class PolicyBase final : public TargetPolicy {
   ResultCode AddKernelObjectToClose(const base::char16* handle_type,
                                     const base::char16* handle_name) override;
   void AddHandleToShare(HANDLE handle) override;
+  void SetLockdownDefaultDacl() override;
+  void SetEnableOPMRedirection() override;
+  bool GetEnableOPMRedirection() override;
 
   // Creates a Job object with the level specified in a previous call to
   // SetJobLevel().
@@ -83,13 +84,11 @@ class PolicyBase final : public TargetPolicy {
                         base::win::ScopedHandle* lockdown,
                         base::win::ScopedHandle* lowbox);
 
-  const AppContainerAttributes* GetAppContainer() const;
-
   PSID GetLowBoxSid() const;
 
   // Adds a target process to the internal list of targets. Internally a
   // call to TargetProcess::Init() is issued.
-  bool AddTarget(TargetProcess* target);
+  ResultCode AddTarget(TargetProcess* target);
 
   // Called when there are no more active processes in a Job.
   // Removes a Job object associated with this policy and the target associated
@@ -108,7 +107,7 @@ class PolicyBase final : public TargetPolicy {
   ~PolicyBase();
 
   // Sets up interceptions for a new target.
-  bool SetupAllInterceptions(TargetProcess* target);
+  ResultCode SetupAllInterceptions(TargetProcess* target);
 
   // Sets up the handle closer for a new target.
   bool SetupHandleCloser(TargetProcess* target);
@@ -154,10 +153,10 @@ class PolicyBase final : public TargetPolicy {
   // given type.
   HandleCloser handle_closer_;
   std::vector<base::string16> capabilities_;
-  scoped_ptr<AppContainerAttributes> appcontainer_list_;
   PSID lowbox_sid_;
   base::win::ScopedHandle lowbox_directory_;
-  scoped_ptr<Dispatcher> dispatcher_;
+  std::unique_ptr<Dispatcher> dispatcher_;
+  bool lockdown_default_dacl_;
 
   static HDESK alternate_desktop_handle_;
   static HWINSTA alternate_winstation_handle_;
@@ -167,6 +166,7 @@ class PolicyBase final : public TargetPolicy {
   // This list contains handles other than the stderr/stdout handles which are
   // shared with the target at times.
   base::HandlesToInheritVector handles_to_share_;
+  bool enable_opm_redirection_;
 
   DISALLOW_COPY_AND_ASSIGN(PolicyBase);
 };

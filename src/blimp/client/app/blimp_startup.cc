@@ -4,6 +4,9 @@
 
 #include "blimp/client/app/blimp_startup.h"
 
+#include <string>
+
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -12,13 +15,13 @@
 #include "blimp/client/app/blimp_discardable_memory_allocator.h"
 #include "blimp/client/feature/compositor/decoding_image_generator.h"
 #include "third_party/skia/include/core/SkGraphics.h"
-#include "ui/gl/gl_surface.h"
+#include "ui/gl/init/gl_factory.h"
 
 class SkImageGenerator;
 
 namespace {
-base::LazyInstance<scoped_ptr<base::MessageLoopForUI>> g_main_message_loop =
-    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<std::unique_ptr<base::MessageLoopForUI>>
+    g_main_message_loop = LAZY_INSTANCE_INITIALIZER;
 
 base::LazyInstance<blimp::client::BlimpDiscardableMemoryAllocator>
     g_discardable_memory_allocator = LAZY_INSTANCE_INITIALIZER;
@@ -33,6 +36,17 @@ namespace blimp {
 namespace client {
 
 void InitializeLogging() {
+  // TODO(haibinlu): Remove this before release.
+  // Enables a few verbose log by default.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("vmodule")) {
+    std::string vmodule_entries =
+        "blimp_message_pump=1, blimp_connection=1,"
+        "blimp_compositor=1, blimp_compositor_manager=1,"
+        "remote_channel_impl=1, blimp_client_session=1";
+    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII("vmodule",
+                                                              vmodule_entries);
+  }
+
   logging::LoggingSettings settings;
 #if defined(OS_ANDROID)
   settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
@@ -59,7 +73,7 @@ bool InitializeMainMessageLoop() {
   // Set the DiscardableMemoryAllocator.
   base::DiscardableMemoryAllocator::SetInstance(
       g_discardable_memory_allocator.Pointer());
-  if (!gfx::GLSurface::InitializeOneOff())
+  if (!gl::init::InitializeGLOneOff())
     return false;
   SkGraphics::Init();
   SkGraphics::SetImageGeneratorFromEncodedFactory(CreateImageGenerator);

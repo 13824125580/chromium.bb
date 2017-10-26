@@ -8,6 +8,10 @@
 #include "base/macros.h"
 #include "content/public/browser/content_browser_client.h"
 
+namespace content {
+class GeolocationDelegate;
+}  // namespace content
+
 namespace blimp {
 namespace engine {
 
@@ -19,13 +23,20 @@ class BlimpContentBrowserClient : public content::ContentBrowserClient {
   BlimpContentBrowserClient();
   ~BlimpContentBrowserClient() override;
 
+  BlimpBrowserMainParts* blimp_browser_main_parts() {
+    return blimp_browser_main_parts_;
+  }
+
   // content::ContentBrowserClient implementation.
   content::BrowserMainParts* CreateBrowserMainParts(
       const content::MainFunctionParams& parameters) override;
-  net::URLRequestContextGetter* CreateRequestContext(
-      content::BrowserContext* browser_context,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  void OverrideWebkitPrefs(content::RenderViewHost* render_view_host,
+                           content::WebPreferences* prefs) override;
+  void ExposeInterfacesToRenderer(
+      shell::InterfaceRegistry* registry,
+      content::RenderProcessHost* render_process_host) override;
+
+  content::GeolocationDelegate* CreateGeolocationDelegate() override;
 
   BlimpBrowserContext* GetBrowserContext();
 

@@ -63,7 +63,8 @@ WebInspector.DOMNode = function(domModel, doc, isInShadowTree, payload)
     if (payload.attributes)
         this._setAttributesPayload(payload.attributes);
 
-    this._markers = {};
+    /** @type {!Map<string, ?>} */
+    this._markers = new Map();
     this._subtreeMarkerCount = 0;
 
     this._childNodeCount = payload.childNodeCount || 0;
@@ -348,7 +349,17 @@ WebInspector.DOMNode.prototype = {
         var shadowRootType = this.shadowRootType();
         if (shadowRootType)
             return "#shadow-root (" + shadowRootType + ")";
-        return this.isXMLNode() ? this.nodeName() : this.nodeName().toLowerCase();
+
+        // If there is no local name, it's case sensitive
+        if (!this.localName())
+            return this.nodeName();
+
+        // If the names are different lengths, there is a prefix and it's case sensitive
+        if (this.localName().length !== this.nodeName().length)
+            return this.nodeName();
+
+        // Return the localname, which will be case insensitive if its an html node
+        return this.localName();
     },
 
     /**
@@ -616,7 +627,7 @@ WebInspector.DOMNode.prototype = {
                 continue;
 
             if (!oldAttributesMap[name] || oldAttributesMap[name].value !== value)
-              attributesChanged = true;
+                attributesChanged = true;
         }
         return attributesChanged;
     },
@@ -704,7 +715,7 @@ WebInspector.DOMNode.prototype = {
     _renumber: function()
     {
         this._childNodeCount = this._children.length;
-        if (this._childNodeCount == 0) {
+        if (this._childNodeCount === 0) {
             this.firstChild = null;
             this.lastChild = null;
             return;
@@ -795,10 +806,10 @@ WebInspector.DOMNode.prototype = {
     setMarker: function(name, value)
     {
         if (value === null) {
-            if (!this._markers.hasOwnProperty(name))
+            if (!this._markers.has(name))
                 return;
 
-            delete this._markers[name];
+            this._markers.delete(name);
             for (var node = this; node; node = node.parentNode)
                 --node._subtreeMarkerCount;
             for (var node = this; node; node = node.parentNode)
@@ -806,11 +817,11 @@ WebInspector.DOMNode.prototype = {
             return;
         }
 
-        if (this.parentNode && !this._markers.hasOwnProperty(name)) {
+        if (this.parentNode && !this._markers.has(name)) {
             for (var node = this; node; node = node.parentNode)
                 ++node._subtreeMarkerCount;
         }
-        this._markers[name] = value;
+        this._markers.set(name, value);
         for (var node = this; node; node = node.parentNode)
             this._domModel.dispatchEventToListeners(WebInspector.DOMModel.Events.MarkersChanged, node);
     },
@@ -822,15 +833,7 @@ WebInspector.DOMNode.prototype = {
      */
     marker: function(name)
     {
-        return this._markers[name] || null;
-    },
-
-    /**
-     * @return {!Array<string>}
-     */
-    markers: function()
-    {
-        return Object.values(this._markers);
+        return this._markers.get(name) || null;
     },
 
     /**
@@ -845,7 +848,7 @@ WebInspector.DOMNode.prototype = {
         {
             if (!node._subtreeMarkerCount)
                 return;
-            for (var marker in node._markers)
+            for (var marker of node._markers.keys())
                 visitor(node, marker);
             if (!node._children)
                 return;
@@ -1140,6 +1143,17 @@ WebInspector.DOMModel.hideDOMNodeHighlight = function()
 {
     for (var domModel of WebInspector.DOMModel.instances())
         domModel.highlightDOMNode(0);
+}
+
+WebInspector.DOMModel.muteHighlight = function()
+{
+    WebInspector.DOMModel.hideDOMNodeHighlight();
+    WebInspector.DOMModel._highlightDisabled = true;
+}
+
+WebInspector.DOMModel.unmuteHighlight = function()
+{
+    WebInspector.DOMModel._highlightDisabled = false;
 }
 
 WebInspector.DOMModel.cancelSearch = function()
@@ -1690,7 +1704,7 @@ WebInspector.DOMModel.prototype = {
                 callback(null);
                 return;
             }
-            if (nodeIds.length != 1)
+            if (nodeIds.length !== 1)
                 return;
 
             callback(this.nodeForId(nodeIds[0]));
@@ -1744,6 +1758,8 @@ WebInspector.DOMModel.prototype = {
      */
     highlightDOMNodeWithConfig: function(nodeId, config, backendNodeId, objectId)
     {
+        if (WebInspector.DOMModel._highlightDisabled)
+            return;
         config = config || { mode: "all", showInfo: undefined, selectors: undefined };
         if (this._hideDOMNodeHighlightTimeout) {
             clearTimeout(this._hideDOMNodeHighlightTimeout);
@@ -1771,6 +1787,8 @@ WebInspector.DOMModel.prototype = {
      */
     highlightFrame: function(frameId)
     {
+        if (WebInspector.DOMModel._highlightDisabled)
+            return;
         this._highlighter.highlightFrame(frameId);
     },
 

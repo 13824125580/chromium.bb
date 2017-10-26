@@ -12,9 +12,10 @@
 
 #include "base/compiler_specific.h"
 #include "base/time/time.h"
-#include "media/base/audio_decoder_config.h"
+#include "media/base/audio_codecs.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
+#include "media/base/sample_format.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_frame.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
@@ -51,6 +52,7 @@ MSVC_POP_WARNING();
 namespace media {
 
 class AudioDecoderConfig;
+class EncryptionScheme;
 class VideoDecoderConfig;
 
 // The following implement the deleters declared in ffmpeg_deleters.h (which
@@ -91,6 +93,9 @@ MEDIA_EXPORT base::TimeDelta ConvertFromTimeBase(const AVRational& time_base,
 MEDIA_EXPORT int64_t ConvertToTimeBase(const AVRational& time_base,
                                        const base::TimeDelta& timestamp);
 
+// Converts an FFmpeg audio codec ID into its corresponding supported codec id.
+MEDIA_EXPORT AudioCodec CodecIDToAudioCodec(AVCodecID codec_id);
+
 // Returns true if AVStream is successfully converted to a AudioDecoderConfig.
 // Returns false if conversion fails, in which case |config| is not modified.
 MEDIA_EXPORT bool AVStreamToAudioDecoderConfig(const AVStream* stream,
@@ -112,7 +117,7 @@ void VideoDecoderConfigToAVCodecContext(
 // is not modified.
 MEDIA_EXPORT bool AVCodecContextToAudioDecoderConfig(
     const AVCodecContext* codec_context,
-    bool is_encrypted,
+    const EncryptionScheme& encryption_scheme,
     AudioDecoderConfig* config);
 
 // Converts FFmpeg's channel layout to chrome's ChannelLayout.  |channels| can
@@ -121,6 +126,8 @@ MEDIA_EXPORT bool AVCodecContextToAudioDecoderConfig(
 MEDIA_EXPORT ChannelLayout ChannelLayoutToChromeChannelLayout(int64_t layout,
                                                               int channels);
 
+MEDIA_EXPORT AVCodecID AudioCodecToCodecID(AudioCodec audio_codec,
+                                           SampleFormat sample_format);
 MEDIA_EXPORT AVCodecID VideoCodecToCodecID(VideoCodec video_codec);
 
 // Converts FFmpeg's audio sample format to Chrome's SampleFormat.

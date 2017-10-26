@@ -4,11 +4,12 @@
 
 #include "device/serial/serial_io_handler.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 
@@ -198,7 +199,7 @@ void SerialIoHandler::DoClose(base::File port) {
   // port closed by destructor.
 }
 
-void SerialIoHandler::Read(scoped_ptr<WritableBuffer> buffer) {
+void SerialIoHandler::Read(std::unique_ptr<WritableBuffer> buffer) {
   DCHECK(CalledOnValidThread());
   DCHECK(!IsReadPending());
   pending_read_buffer_ = std::move(buffer);
@@ -207,7 +208,7 @@ void SerialIoHandler::Read(scoped_ptr<WritableBuffer> buffer) {
   ReadImpl();
 }
 
-void SerialIoHandler::Write(scoped_ptr<ReadOnlyBuffer> buffer) {
+void SerialIoHandler::Write(std::unique_ptr<ReadOnlyBuffer> buffer) {
   DCHECK(CalledOnValidThread());
   DCHECK(!IsWritePending());
   pending_write_buffer_ = std::move(buffer);
@@ -220,7 +221,7 @@ void SerialIoHandler::ReadCompleted(int bytes_read,
                                     serial::ReceiveError error) {
   DCHECK(CalledOnValidThread());
   DCHECK(IsReadPending());
-  scoped_ptr<WritableBuffer> pending_read_buffer =
+  std::unique_ptr<WritableBuffer> pending_read_buffer =
       std::move(pending_read_buffer_);
   if (error == serial::ReceiveError::NONE) {
     pending_read_buffer->Done(bytes_read);
@@ -234,7 +235,7 @@ void SerialIoHandler::WriteCompleted(int bytes_written,
                                      serial::SendError error) {
   DCHECK(CalledOnValidThread());
   DCHECK(IsWritePending());
-  scoped_ptr<ReadOnlyBuffer> pending_write_buffer =
+  std::unique_ptr<ReadOnlyBuffer> pending_write_buffer =
       std::move(pending_write_buffer_);
   if (error == serial::SendError::NONE) {
     pending_write_buffer->Done(bytes_written);
@@ -280,14 +281,14 @@ bool SerialIoHandler::ConfigurePort(const serial::ConnectionOptions& options) {
 
 void SerialIoHandler::QueueReadCompleted(int bytes_read,
                                          serial::ReceiveError error) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&SerialIoHandler::ReadCompleted, this, bytes_read, error));
 }
 
 void SerialIoHandler::QueueWriteCompleted(int bytes_written,
                                           serial::SendError error) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&SerialIoHandler::WriteCompleted, this, bytes_written, error));
 }

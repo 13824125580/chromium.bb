@@ -8,11 +8,14 @@
 #import <Cocoa/Cocoa.h>
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
 #include "components/omnibox/browser/omnibox_view.h"
+#include "components/security_state/security_state_model.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 class CommandUpdater;
 class OmniboxPopupView;
@@ -30,6 +33,12 @@ class Clipboard;
 class OmniboxViewMac : public OmniboxView,
                        public AutocompleteTextFieldObserver {
  public:
+  static SkColor BaseTextColorSkia(bool in_dark_mode);
+  static NSColor* BaseTextColor(bool in_dark_mode);
+  static NSColor* GetSecureTextColor(
+      security_state::SecurityStateModel::SecurityLevel security_level,
+      bool in_dark_mode);
+
   OmniboxViewMac(OmniboxEditController* controller,
                  Profile* profile,
                  CommandUpdater* command_updater,
@@ -58,7 +67,7 @@ class OmniboxViewMac : public OmniboxView,
                                 size_t caret_pos,
                                 bool update_popup,
                                 bool notify_text_changed) override;
-  void SetForcedQuery() override;
+  void EnterKeywordModeForDefaultSearchProvider() override;
   bool IsSelectAll() const override;
   bool DeleteAtEndPressed() override;
   void GetSelectionBounds(base::string16::size_type* start,
@@ -90,6 +99,7 @@ class OmniboxViewMac : public OmniboxView,
   NSRange SelectionRangeForProposedRange(NSRange proposed_range) override;
   void OnControlKeyChanged(bool pressed) override;
   bool CanCopy() override;
+  base::scoped_nsobject<NSPasteboardItem> CreatePasteboardItem() override;
   void CopyToPasteboard(NSPasteboard* pboard) override;
   bool ShouldEnableShowURL() override;
   void ShowURL() override;
@@ -116,11 +126,10 @@ class OmniboxViewMac : public OmniboxView,
 
   // Helper to get the font to use in the field, exposed for the
   // popup.
-  // The style parameter specifies the new style for the font, and is a
-  // bitmask of the values: BOLD, ITALIC and UNDERLINE (see ui/gfx/font.h).
-  static NSFont* GetFieldFont(int style);
-  static NSFont* GetLargeFont(int style);
-  static NSFont* GetSmallFont(int style);
+  static NSFont* GetNormalFieldFont();
+  static NSFont* GetBoldFieldFont();
+  static NSFont* GetLargeFont();
+  static NSFont* GetSmallFont();
 
   // If |resource_id| has a PDF image which can be used, return it.
   // Otherwise return the PNG image from the resource bundle.
@@ -188,9 +197,12 @@ class OmniboxViewMac : public OmniboxView,
   // Returns true if the caret is at the end of the content.
   bool IsCaretAtEnd() const;
 
+  // Announce that an inline autocomplete is available for screenreaders.
+  void AnnounceAutocompleteForScreenReader(const base::string16& text);
+
   Profile* profile_;
 
-  scoped_ptr<OmniboxPopupView> popup_view_;
+  std::unique_ptr<OmniboxPopupView> popup_view_;
 
   AutocompleteTextField* field_;  // owned by tab controller
 
@@ -200,8 +212,7 @@ class OmniboxViewMac : public OmniboxView,
 
   // Tracking state before and after a possible change for reporting
   // to model_.
-  NSRange selection_before_change_;
-  base::string16 text_before_change_;
+  State state_before_change_;
   NSRange marked_range_before_change_;
 
   // Was delete pressed?

@@ -23,6 +23,7 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_tree_data.h"
 #include "ui/accessibility/ax_tree_update.h"
+#include "ui/gfx/transform.h"
 #include "url/gurl.h"
 
 #define IPC_MESSAGE_START ChromeExtensionMsgStart
@@ -62,6 +63,7 @@ IPC_STRUCT_TRAITS_BEGIN(ui::AXNodeData)
   IPC_STRUCT_TRAITS_MEMBER(role)
   IPC_STRUCT_TRAITS_MEMBER(state)
   IPC_STRUCT_TRAITS_MEMBER(location)
+  IPC_STRUCT_TRAITS_MEMBER(transform)
   IPC_STRUCT_TRAITS_MEMBER(string_attributes)
   IPC_STRUCT_TRAITS_MEMBER(int_attributes)
   IPC_STRUCT_TRAITS_MEMBER(float_attributes)
@@ -74,6 +76,7 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(ui::AXTreeData)
   IPC_STRUCT_TRAITS_MEMBER(tree_id)
   IPC_STRUCT_TRAITS_MEMBER(parent_tree_id)
+  IPC_STRUCT_TRAITS_MEMBER(focused_tree_id)
   IPC_STRUCT_TRAITS_MEMBER(url)
   IPC_STRUCT_TRAITS_MEMBER(title)
   IPC_STRUCT_TRAITS_MEMBER(mimetype)
@@ -91,6 +94,7 @@ IPC_STRUCT_TRAITS_BEGIN(ui::AXTreeUpdate)
   IPC_STRUCT_TRAITS_MEMBER(has_tree_data)
   IPC_STRUCT_TRAITS_MEMBER(tree_data)
   IPC_STRUCT_TRAITS_MEMBER(node_id_to_clear)
+  IPC_STRUCT_TRAITS_MEMBER(root_id)
   IPC_STRUCT_TRAITS_MEMBER(nodes)
 IPC_STRUCT_TRAITS_END()
 

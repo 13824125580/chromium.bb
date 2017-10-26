@@ -31,12 +31,10 @@
 #include "core/CoreExport.h"
 #include "core/dom/SandboxFlags.h"
 #include "core/dom/SecurityContext.h"
-#include "core/dom/custom/CustomElementRegistrationContext.h"
+#include "core/dom/custom/V0CustomElementRegistrationContext.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
-#include "wtf/WeakPtr.h"
+#include "public/platform/WebInsecureRequestPolicy.h"
 
 namespace blink {
 
@@ -48,7 +46,8 @@ class Settings;
 class CORE_EXPORT DocumentInit final {
     STACK_ALLOCATED();
 public:
-    explicit DocumentInit(const KURL& = KURL(), LocalFrame* = 0, WeakPtrWillBeRawPtr<Document> = nullptr, HTMLImportsController* = 0);
+    DocumentInit(const KURL& = KURL(), LocalFrame* = nullptr, Document* contextDocument = nullptr, HTMLImportsController* = nullptr);
+    DocumentInit(Document* ownerDocument, const KURL&, LocalFrame*, Document* contextDocument = nullptr, HTMLImportsController* = nullptr);
     DocumentInit(const DocumentInit&);
     ~DocumentInit();
 
@@ -62,9 +61,8 @@ public:
     bool isSeamlessAllowedFor(Document* child) const;
     bool shouldReuseDefaultView() const { return m_shouldReuseDefaultView; }
     SandboxFlags getSandboxFlags() const;
-    bool shouldEnforceStrictMixedContentChecking() const;
     bool isHostedInReservedIPRange() const;
-    SecurityContext::InsecureRequestsPolicy getInsecureRequestsPolicy() const;
+    WebInsecureRequestPolicy getInsecureRequestPolicy() const;
     SecurityContext::InsecureNavigationsSet* insecureNavigationsToUpgrade() const;
 
     Document* parent() const { return m_parent.get(); }
@@ -73,23 +71,23 @@ public:
     LocalFrame* ownerFrame() const;
     Settings* settings() const;
 
-    DocumentInit& withRegistrationContext(CustomElementRegistrationContext*);
+    DocumentInit& withRegistrationContext(V0CustomElementRegistrationContext*);
     DocumentInit& withNewRegistrationContext();
-    PassRefPtrWillBeRawPtr<CustomElementRegistrationContext> registrationContext(Document*) const;
-    WeakPtrWillBeRawPtr<Document> contextDocument() const;
+    V0CustomElementRegistrationContext* registrationContext(Document*) const;
+    Document* contextDocument() const;
 
-    static DocumentInit fromContext(WeakPtrWillBeRawPtr<Document> contextDocument, const KURL& = KURL());
+    static DocumentInit fromContext(Document* contextDocument, const KURL& = KURL());
 
 private:
     LocalFrame* frameForSecurityContext() const;
 
     KURL m_url;
-    RawPtrWillBeMember<LocalFrame> m_frame;
-    RefPtrWillBeMember<Document> m_parent;
-    RefPtrWillBeMember<Document> m_owner;
-    WeakPtrWillBeMember<Document> m_contextDocument;
-    RawPtrWillBeMember<HTMLImportsController> m_importsController;
-    RefPtrWillBeMember<CustomElementRegistrationContext> m_registrationContext;
+    Member<LocalFrame> m_frame;
+    Member<Document> m_parent;
+    Member<Document> m_owner;
+    Member<Document> m_contextDocument;
+    Member<HTMLImportsController> m_importsController;
+    Member<V0CustomElementRegistrationContext> m_registrationContext;
     bool m_createNewRegistrationContext;
 
     // In some rare cases, we'll re-use a LocalDOMWindow for a new Document. For example,

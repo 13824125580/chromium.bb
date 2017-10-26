@@ -11,6 +11,10 @@
 
 namespace blink {
 
+class LayoutPoint;
+class LayoutSize;
+class LayoutUnit;
+
 class LayoutBoxItem : public LayoutBoxModel {
 public:
     explicit LayoutBoxItem(LayoutBox* layoutBox)
@@ -21,7 +25,7 @@ public:
     explicit LayoutBoxItem(const LayoutItem& item)
         : LayoutBoxModel(item)
     {
-        ASSERT(!item || item.isBox());
+        ASSERT_WITH_SECURITY_IMPLICATION(!item || item.isBox());
     }
 
     explicit LayoutBoxItem(std::nullptr_t) : LayoutBoxModel(nullptr) { }
@@ -33,9 +37,39 @@ public:
         return LayoutBoxItem(toBox()->enclosingBox());
     }
 
-    ScrollResultOneDimensional scroll(ScrollDirectionPhysical direction, ScrollGranularity granularity, float delta = 1)
+    ScrollResult scroll(ScrollGranularity granularity, const FloatSize& delta)
     {
-        return toBox()->scroll(direction, granularity, delta);
+        return toBox()->scroll(granularity, delta);
+    }
+
+    LayoutSize size() const
+    {
+        return toBox()->size();
+    }
+
+    LayoutPoint location() const
+    {
+        return toBox()->location();
+    }
+
+    LayoutUnit logicalWidth() const
+    {
+        return toBox()->logicalWidth();
+    }
+
+    LayoutUnit logicalHeight() const
+    {
+        return toBox()->logicalHeight();
+    }
+
+    LayoutUnit minPreferredLogicalWidth() const
+    {
+        return toBox()->minPreferredLogicalWidth();
+    }
+
+    LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarClipBehavior behavior = IgnoreOverlayScrollbarSize) const
+    {
+        return toBox()->overflowClipRect(location, behavior);
     }
 
 private:

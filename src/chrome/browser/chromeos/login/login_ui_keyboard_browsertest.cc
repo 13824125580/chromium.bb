@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/location.h"
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/input_method/input_method_persistence.h"
 #include "chrome/browser/chromeos/language_preferences.h"
@@ -53,7 +56,7 @@ class FocusPODWaiter {
   void OnFocusPOD() {
     focused_ = true;
     if (runner_.get())
-      base::MessageLoopForUI::current()->PostTask(
+      base::MessageLoopForUI::current()->task_runner()->PostTask(
           FROM_HERE,
           base::Bind(&FocusPODWaiter::ExitMessageLoop, base::Unretained(this)));
   }
@@ -144,7 +147,8 @@ IN_PROC_BROWSER_TEST_F(LoginUIKeyboardTest, PRE_CheckPODScreenWithUsers) {
   StartupUtils::MarkOobeCompleted();
 }
 
-IN_PROC_BROWSER_TEST_F(LoginUIKeyboardTest, CheckPODScreenWithUsers) {
+// TODO(crbug.com/602951): Test is flaky.
+IN_PROC_BROWSER_TEST_F(LoginUIKeyboardTest, DISABLED_CheckPODScreenWithUsers) {
   js_checker().ExpectEQ("$('pod-row').pods.length", 2);
 
   EXPECT_EQ(user_input_methods[0],
@@ -264,12 +268,12 @@ IN_PROC_BROWSER_TEST_F(LoginUIKeyboardTestWithUsersAndOwner,
 
   // Switch to Gaia.
   js_checker().Evaluate("$('add-user-button').click()");
-  OobeScreenWaiter(OobeDisplay::SCREEN_GAIA_SIGNIN).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_GAIA_SIGNIN).Wait();
   CheckGaiaKeyboard();
 
   // Switch back.
   js_checker().Evaluate("$('gaia-signin').cancel()");
-  OobeScreenWaiter(OobeDisplay::SCREEN_ACCOUNT_PICKER).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_ACCOUNT_PICKER).Wait();
 
   EXPECT_EQ(expected_input_methods,
             input_method::InputMethodManager::Get()

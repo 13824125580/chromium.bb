@@ -6,16 +6,19 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/web_ui_browser_test.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
@@ -64,13 +67,14 @@ IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, HistoryOverride) {
 
   scoped_refptr<const extensions::Extension> extension =
       extensions::ExtensionBuilder()
-          .SetManifest(std::move(
+          .SetManifest(
               extensions::DictionaryBuilder()
                   .Set("name", "History Override")
                   .Set("version", "1")
                   .Set("manifest_version", 2)
                   .Set("permission",
-                       std::move(extensions::ListBuilder().Append("history")))))
+                       extensions::ListBuilder().Append("history").Build())
+                  .Build())
           .Build();
 
   ExtensionService* service = extensions::ExtensionSystem::Get(
@@ -91,11 +95,27 @@ IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, EnableMdExtensionsHidesExtensions) {
 }
 
 IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, EnableMdHistoryHidesHistory) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-    ::switches::kEnableMaterialDesignHistory);
+  std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
+  feature_list->InitializeFromCommandLine(
+      features::kMaterialDesignHistoryFeature.name, "");
+  base::FeatureList::ClearInstanceForTesting();
+  base::FeatureList::SetInstance(std::move(feature_list));
+
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIUberFrameURL));
   SelectTab();
   EXPECT_TRUE(GetJsBool("$('history').hidden"));
+}
+
+IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, EnableMdSettingsHidesSettings) {
+  std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
+  feature_list->InitializeFromCommandLine(
+      features::kMaterialDesignSettingsFeature.name, "");
+  base::FeatureList::ClearInstanceForTesting();
+  base::FeatureList::SetInstance(std::move(feature_list));
+
+  ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIUberFrameURL));
+  SelectTab();
+  EXPECT_TRUE(GetJsBool("$('settings').hidden && $('help').hidden"));
 }
 
 IN_PROC_BROWSER_TEST_F(UberUIBrowserTest,

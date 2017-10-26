@@ -5,6 +5,7 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "content/renderer/media/android/media_info_loader.h"
 #include "content/test/mock_webframeclient.h"
 #include "content/test/mock_weburlloader.h"
@@ -39,7 +40,7 @@ static const int kHttpNotFound = 404;
 class MediaInfoLoaderTest : public testing::Test {
  public:
   MediaInfoLoaderTest()
-      : view_(WebView::create(NULL)),
+      : view_(WebView::create(nullptr, blink::WebPageVisibilityStateVisible)),
         frame_(WebLocalFrame::create(blink::WebTreeScopeType::Document,
                                      &client_)) {
     view_->setMainFrame(frame_);
@@ -62,7 +63,7 @@ class MediaInfoLoaderTest : public testing::Test {
 
     // |test_loader_| will be used when Start() is called.
     url_loader_ = new NiceMock<MockWebURLLoader>();
-    loader_->test_loader_ = scoped_ptr<blink::WebURLLoader>(url_loader_);
+    loader_->test_loader_ = std::unique_ptr<blink::WebURLLoader>(url_loader_);
   }
 
   void Start() {
@@ -84,7 +85,7 @@ class MediaInfoLoaderTest : public testing::Test {
 
     loader_->willFollowRedirect(url_loader_, new_request, redirect_response);
 
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SendResponse(
@@ -112,7 +113,7 @@ class MediaInfoLoaderTest : public testing::Test {
  protected:
   GURL gurl_;
 
-  scoped_ptr<MediaInfoLoader> loader_;
+  std::unique_ptr<MediaInfoLoader> loader_;
   NiceMock<MockWebURLLoader>* url_loader_;
 
   MockWebFrameClient client_;

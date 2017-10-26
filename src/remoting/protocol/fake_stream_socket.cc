@@ -10,7 +10,7 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -169,7 +169,7 @@ void FakeStreamChannelFactory::PairWith(
 void FakeStreamChannelFactory::CreateChannel(
     const std::string& name,
     const ChannelCreatedCallback& callback) {
-  scoped_ptr<FakeStreamSocket> channel(new FakeStreamSocket());
+  std::unique_ptr<FakeStreamSocket> channel(new FakeStreamSocket());
   channels_[name] = channel->GetWeakPtr();
   channel->set_async_write(async_write_);
 
@@ -192,7 +192,7 @@ void FakeStreamChannelFactory::CreateChannel(
 }
 
 void FakeStreamChannelFactory::NotifyChannelCreated(
-    scoped_ptr<FakeStreamSocket> owned_channel,
+    std::unique_ptr<FakeStreamSocket> owned_channel,
     const std::string& name,
     const ChannelCreatedCallback& callback) {
   if (channels_.find(name) != channels_.end())

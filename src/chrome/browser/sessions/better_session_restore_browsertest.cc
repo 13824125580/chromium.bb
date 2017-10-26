@@ -19,7 +19,8 @@
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl.h"
@@ -101,7 +102,7 @@ class URLRequestFakerForPostRequestsInterceptor
     const net::UploadDataStream* upload_data = request->get_upload();
     last_upload_bytes_.clear();
     if (upload_data) {
-      const std::vector<scoped_ptr<net::UploadElementReader>>* readers =
+      const std::vector<std::unique_ptr<net::UploadElementReader>>* readers =
           upload_data->GetElementReaders();
       if (readers) {
         for (size_t i = 0; i < readers->size(); ++i) {
@@ -186,13 +187,13 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
       CHECK(base::ReadFileToString(path, &contents));
       net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
           GURL(fake_server_address_ + test_path_ + *it),
-          scoped_ptr<net::URLRequestInterceptor>(
+          std::unique_ptr<net::URLRequestInterceptor>(
               new URLRequestFakerInterceptor(contents)));
     }
     post_interceptor_ = new URLRequestFakerForPostRequestsInterceptor();
     net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
         GURL(fake_server_address_ + test_path_ + "posted.php"),
-        scoped_ptr<net::URLRequestInterceptor>(post_interceptor_));
+        std::unique_ptr<net::URLRequestInterceptor>(post_interceptor_));
   }
 
  protected:
@@ -202,7 +203,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     helper.SetForceBrowserNotAliveWithNoWindows(true);
     helper.ReleaseService();
     g_browser_process->set_background_mode_manager_for_test(
-        scoped_ptr<BackgroundModeManager>(new FakeBackgroundModeManager));
+        std::unique_ptr<BackgroundModeManager>(new FakeBackgroundModeManager));
   }
 
   void StoreDataWithPage(const std::string& filename) {
@@ -317,8 +318,10 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
                                          bool close_all_windows) {
     Profile* profile = browser->profile();
 
+    ScopedKeepAlive test_keep_alive(KeepAliveOrigin::PANEL_VIEW,
+                                    KeepAliveRestartOption::DISABLED);
+
     // Close the browser.
-    chrome::IncrementKeepAliveCount();
     if (close_all_windows)
       CloseAllBrowsers();
     else
@@ -334,7 +337,6 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     ui_test_utils::BrowserAddedObserver window_observer;
     chrome::NewEmptyWindow(profile);
     Browser* new_browser = window_observer.WaitForSingleNewBrowser();
-    chrome::DecrementKeepAliveCount();
 
     return new_browser;
   }
@@ -597,10 +599,6 @@ class RestartTest : public BetterSessionRestoreTest {
       content::BrowserContext::SaveSessionState(browser->profile());
     PrefService* pref_service = g_browser_process->local_state();
     pref_service->SetBoolean(prefs::kWasRestarted, true);
-#if defined(OS_WIN)
-    if (pref_service->HasPrefPath(prefs::kRelaunchMode))
-      pref_service->ClearPref(prefs::kRelaunchMode);
-#endif
   }
 
  private:

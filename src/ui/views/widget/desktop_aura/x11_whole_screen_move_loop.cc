@@ -82,7 +82,7 @@ uint32_t X11WholeScreenMoveLoop::DispatchEvent(const ui::PlatformEvent& event) {
     case ui::ET_MOUSE_DRAGGED: {
       bool dispatch_mouse_event = !last_motion_in_screen_.get();
       last_motion_in_screen_.reset(
-          static_cast<ui::MouseEvent*>(ui::EventFromNative(xev).release()));
+          ui::EventFromNative(xev).release()->AsMouseEvent());
       last_motion_in_screen_->set_location(
           ui::EventSystemLocationFromNative(xev));
       if (dispatch_mouse_event) {
@@ -159,7 +159,7 @@ bool X11WholeScreenMoveLoop::RunMoveLoop(aura::Window* source,
 
   GrabEscKey();
 
-  scoped_ptr<ui::ScopedEventDispatcher> old_dispatcher =
+  std::unique_ptr<ui::ScopedEventDispatcher> old_dispatcher =
       std::move(nested_dispatcher_);
   nested_dispatcher_ =
          ui::PlatformEventSource::GetInstance()->OverrideDispatcher(this);

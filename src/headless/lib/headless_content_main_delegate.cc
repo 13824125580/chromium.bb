@@ -27,7 +27,7 @@ HeadlessContentMainDelegate* g_current_headless_content_main_delegate = nullptr;
 }  // namespace
 
 HeadlessContentMainDelegate::HeadlessContentMainDelegate(
-    scoped_ptr<HeadlessBrowserImpl> browser)
+    std::unique_ptr<HeadlessBrowserImpl> browser)
     : content_client_(browser->options()), browser_(std::move(browser)) {
   DCHECK(!g_current_headless_content_main_delegate);
   g_current_headless_content_main_delegate = this;
@@ -41,8 +41,8 @@ HeadlessContentMainDelegate::~HeadlessContentMainDelegate() {
 bool HeadlessContentMainDelegate::BasicStartupComplete(int* exit_code) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
-  command_line->AppendSwitch(switches::kNoSandbox);
-  command_line->AppendSwitch(switches::kSingleProcess);
+  if (browser_->options()->single_process_mode)
+    command_line->AppendSwitch(switches::kSingleProcess);
 
   // The headless backend is automatically chosen for a headless build, but also
   // adding it here allows us to run in a non-headless build too.
@@ -69,7 +69,7 @@ int HeadlessContentMainDelegate::RunProcess(
   base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
       kTraceEventBrowserProcessSortIndex);
 
-  scoped_ptr<content::BrowserMainRunner> browser_runner(
+  std::unique_ptr<content::BrowserMainRunner> browser_runner(
       content::BrowserMainRunner::Create());
 
   int exit_code = browser_runner->Initialize(main_function_params);

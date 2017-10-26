@@ -31,7 +31,7 @@
 #define GL_DEPTH24_STENCIL8 0x88F0
 #endif
 
-using ::gfx::MockGLInterface;
+using ::gl::MockGLInterface;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -62,7 +62,7 @@ class GLES2DecoderGeometryInstancingTest : public GLES2DecoderWithShaderTest {
     // Most of the tests in this file assume they're running on
     // desktop OpenGL, and large portions of the tests will become
     // no-ops if they aren't.
-    init.gl_version = "opengl 2.1";
+    init.gl_version = "2.1";
     init.has_alpha = true;
     init.has_depth = true;
     init.request_alpha = true;

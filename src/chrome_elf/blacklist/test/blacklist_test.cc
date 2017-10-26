@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
@@ -116,7 +118,7 @@ class BlacklistTest : public testing::Test {
     }
   }
 
-  scoped_ptr<base::win::RegKey> blacklist_registry_key_;
+  std::unique_ptr<base::win::RegKey> blacklist_registry_key_;
   registry_util::RegistryOverrideManager override_manager_;
 
   // The number of dlls initially blocked by the blacklist.
@@ -266,7 +268,7 @@ TEST_F(BlacklistTest, AddDllsFromRegistryToBlacklist) {
   CheckBlacklistedDllsNotLoaded();
 }
 
-void TestResetBeacon(scoped_ptr<base::win::RegKey>& key,
+void TestResetBeacon(std::unique_ptr<base::win::RegKey>& key,
                      DWORD input_state,
                      DWORD expected_output_state) {
   LONG result = key->WriteValue(blacklist::kBeaconState, input_state);

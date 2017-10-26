@@ -11,8 +11,8 @@
 #include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/android/audio_media_codec_decoder.h"
 #include "media/base/android/media_drm_bridge.h"
 #include "media/base/android/media_player_manager.h"
@@ -40,12 +40,14 @@ MediaCodecPlayer::MediaCodecPlayer(
     int player_id,
     base::WeakPtr<MediaPlayerManager> manager,
     const OnDecoderResourcesReleasedCB& on_decoder_resources_released_cb,
-    scoped_ptr<DemuxerAndroid> demuxer,
-    const GURL& frame_url)
+    std::unique_ptr<DemuxerAndroid> demuxer,
+    const GURL& frame_url,
+    int media_session_id)
     : MediaPlayerAndroid(player_id,
                          manager.get(),
                          on_decoder_resources_released_cb,
-                         frame_url),
+                         frame_url,
+                         media_session_id),
       ui_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       demuxer_(std::move(demuxer)),
       state_(kStatePaused),
@@ -142,7 +144,7 @@ void MediaCodecPlayer::DeleteOnCorrectThread() {
   GetMediaTaskRunner()->DeleteSoon(FROM_HERE, this);
 }
 
-void MediaCodecPlayer::SetVideoSurface(gfx::ScopedJavaSurface surface) {
+void MediaCodecPlayer::SetVideoSurface(gl::ScopedJavaSurface surface) {
   RUN_ON_MEDIA_THREAD(SetVideoSurface, base::Passed(&surface));
 
   DVLOG(1) << __FUNCTION__ << (surface.IsEmpty() ? " empty" : " non-empty");
@@ -677,14 +679,8 @@ void MediaCodecPlayer::OnPermissionDecided(bool granted) {
       }
       break;
 
-    case kStatePaused:
-    case kStateWaitingForSeek:
-    case kStateError:
-      break;  // ignore
-
     default:
-      NOTREACHED() << __FUNCTION__ << ": wrong state " << AsString(state_);
-      break;
+      break;  // ignore
   }
 }
 

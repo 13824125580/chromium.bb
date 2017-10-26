@@ -36,13 +36,12 @@
 #include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLInputElement.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> ResetInputType::create(HTMLInputElement& element)
+InputType* ResetInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new ResetInputType(element));
+    return new ResetInputType(element);
 }
 
 const AtomicString& ResetInputType::formControlType() const

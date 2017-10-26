@@ -10,7 +10,9 @@
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/browser/ui/webui/extensions/extensions_ui.h"
 #include "chrome/browser/ui/webui/log_web_ui_url.h"
+#include "chrome/browser/ui/webui/md_history_ui.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/chrome_manifest_url_handlers.h"
 #include "chrome/common/url_constants.h"
@@ -44,7 +46,7 @@ content::WebUIDataSource* CreateUberHTMLSource() {
   source->AddResourcePath("uber.js", IDR_UBER_JS);
   source->AddResourcePath("uber_utils.js", IDR_UBER_UTILS_JS);
   source->SetDefaultResource(IDR_UBER_HTML);
-  source->OverrideContentSecurityPolicyFrameSrc("frame-src chrome:;");
+  source->OverrideContentSecurityPolicyChildSrc("child-src chrome:;");
 
   // Hack alert: continue showing "Loading..." until a real title is set.
   source->AddLocalizedString("pageTitle", IDS_TAB_LOADING_TITLE);
@@ -81,6 +83,7 @@ content::WebUIDataSource* CreateUberFrameHTMLSource(
     content::BrowserContext* browser_context) {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIUberFrameHost);
+  Profile* profile = Profile::FromBrowserContext(browser_context);
 
   source->SetJsonPath("strings.js");
   source->AddResourcePath("uber_frame.js", IDR_UBER_FRAME_JS);
@@ -95,7 +98,9 @@ content::WebUIDataSource* CreateUberFrameHTMLSource(
 
   source->AddBoolean("hideExtensions", ::switches::MdExtensionsEnabled());
   source->AddBoolean("hideSettingsAndHelp",
-                     ::switches::SettingsWindowEnabled());
+                     ::switches::SettingsWindowEnabled() ||
+                         base::FeatureList::IsEnabled(
+                             features::kMaterialDesignSettingsFeature));
   source->AddString("extensionsHost", chrome::kChromeUIExtensionsHost);
   source->AddLocalizedString("extensionsDisplayName",
                              IDS_MANAGE_EXTENSIONS_SETTING_WINDOWS_TITLE);
@@ -108,13 +113,15 @@ content::WebUIDataSource* CreateUberFrameHTMLSource(
   bool overrides_history =
       HasExtensionType(browser_context, chrome::kChromeUIHistoryHost);
   source->AddString("overridesHistory", overrides_history ? "yes" : "no");
-  source->AddBoolean("hideHistory",
-                     ::switches::MdHistoryEnabled() && !overrides_history);
-  source->DisableDenyXFrameOptions();
-  source->OverrideContentSecurityPolicyFrameSrc("frame-src chrome:;");
+  source->AddBoolean(
+      "hideHistory",
+      MdHistoryUI::IsEnabled(profile)
+      && !overrides_history);
 
-  source->AddBoolean("profileIsGuest",
-      Profile::FromBrowserContext(browser_context)->IsGuestSession());
+  source->DisableDenyXFrameOptions();
+  source->OverrideContentSecurityPolicyChildSrc("child-src chrome:;");
+
+  source->AddBoolean("profileIsGuest", profile->IsGuestSession());
 
   return source;
 }
@@ -123,7 +130,7 @@ void UpdateHistoryNavigation(content::WebUI* web_ui) {
   bool overrides_history =
       HasExtensionType(web_ui->GetWebContents()->GetBrowserContext(),
                        chrome::kChromeUIHistoryHost);
-  web_ui->CallJavascriptFunction(
+  web_ui->CallJavascriptFunctionUnsafe(
       "uber_frame.setNavigationOverride",
       base::StringValue(chrome::kChromeUIHistoryHost),
       base::StringValue(overrides_history ? "yes" : "no"));
@@ -187,13 +194,6 @@ void UberUI::RenderViewCreated(RenderViewHost* render_view_host) {
   for (SubpageMap::iterator iter = sub_uis_.begin(); iter != sub_uis_.end();
        ++iter) {
     iter->second->GetController()->RenderViewCreated(render_view_host);
-  }
-}
-
-void UberUI::RenderViewReused(RenderViewHost* render_view_host) {
-  for (SubpageMap::iterator iter = sub_uis_.begin(); iter != sub_uis_.end();
-       ++iter) {
-    iter->second->GetController()->RenderViewReused(render_view_host);
   }
 }
 

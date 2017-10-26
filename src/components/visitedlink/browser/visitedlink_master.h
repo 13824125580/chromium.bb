@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -319,10 +320,11 @@ class VisitedLinkMaster : public VisitedLinkCommon {
   // Structure is filled with 0s and shared header with salt. The result of
   // allocation is saved into |shared_memory| and |hash_table| points to the
   // beginning of Fingerprint table in |shared_memory|.
-  static bool CreateApartURLTable(int32_t num_entries,
-                                  const uint8_t salt[LINK_SALT_LENGTH],
-                                  scoped_ptr<base::SharedMemory>* shared_memory,
-                                  VisitedLinkCommon::Fingerprint** hash_table);
+  static bool CreateApartURLTable(
+      int32_t num_entries,
+      const uint8_t salt[LINK_SALT_LENGTH],
+      std::unique_ptr<base::SharedMemory>* shared_memory,
+      VisitedLinkCommon::Fingerprint** hash_table);
 
   // A wrapper for CreateURLTable, this will allocate a new table, initialized
   // to empty. The caller is responsible for saving the shared memory pointer
@@ -397,7 +399,7 @@ class VisitedLinkMaster : public VisitedLinkCommon {
   VisitedLinkDelegate* delegate_;
 
   // VisitedLinkEventListener to handle incoming events.
-  scoped_ptr<Listener> listener_;
+  std::unique_ptr<Listener> listener_;
 
   // Lazily initialized sequence token for posting file tasks.
   base::SequencedWorkerPool::SequenceToken sequence_token_;

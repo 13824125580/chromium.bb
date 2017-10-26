@@ -7,14 +7,17 @@
 #include <utility>
 
 #include "build/build_config.h"
+#include "components/mus/public/cpp/property_type_converters.h"
 #include "components/mus/public/cpp/window.h"
-#include "components/mus/public/cpp/window_tree_connection.h"
-#include "content/browser/mojo/mojo_shell_client_host.h"
+#include "components/mus/public/cpp/window_property.h"
+#include "components/mus/public/cpp/window_tree_client.h"
+#include "components/mus/public/interfaces/window_manager_constants.mojom.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/common/render_widget_window_tree_client_factory.mojom.h"
+#include "content/common/text_input_state.h"
 #include "content/public/common/mojo_shell_connection.h"
-#include "mojo/shell/public/cpp/connector.h"
+#include "services/shell/public/cpp/connector.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window.h"
 #include "ui/base/hit_test.h"
@@ -29,23 +32,24 @@ RenderWidgetHostViewMus::RenderWidgetHostViewMus(mus::Window* parent_window,
                                                  RenderWidgetHostImpl* host)
     : host_(host), aura_window_(nullptr) {
   DCHECK(parent_window);
-  mus::Window* window = parent_window->connection()->NewWindow();
+  mus::Window* window = parent_window->window_tree()->NewWindow();
   window->SetVisible(true);
   window->SetBounds(gfx::Rect(300, 300));
+  window->set_input_event_handler(this);
   parent_window->AddChild(window);
   mus_window_.reset(new mus::ScopedWindowPtr(window));
   host_->SetView(this);
 
   // Connect to the renderer, pass it a WindowTreeClient interface request
   // and embed that client inside our mus window.
-  std::string url = GetMojoApplicationInstanceURL(host_->GetProcess());
   mojom::RenderWidgetWindowTreeClientFactoryPtr factory;
-  MojoShellConnection::Get()->GetConnector()->ConnectToInterface(url, &factory);
+  host_->GetProcess()->GetChildConnection()->GetInterface(&factory);
 
   mus::mojom::WindowTreeClientPtr window_tree_client;
   factory->CreateWindowTreeClientForRenderWidget(
       host_->GetRoutingID(), mojo::GetProxy(&window_tree_client));
-  mus_window_->window()->Embed(std::move(window_tree_client));
+  mus_window_->window()->Embed(std::move(window_tree_client),
+                               mus::mojom::kEmbedFlagEmbedderInterceptsEvents);
 }
 
 RenderWidgetHostViewMus::~RenderWidgetHostViewMus() {}
@@ -172,16 +176,8 @@ gfx::NativeView RenderWidgetHostViewMus::GetNativeView() const {
   return aura_window_;
 }
 
-gfx::NativeViewId RenderWidgetHostViewMus::GetNativeViewId() const {
-  return gfx::NativeViewId();
-}
-
 gfx::NativeViewAccessible RenderWidgetHostViewMus::GetNativeViewAccessible() {
   return gfx::NativeViewAccessible();
-}
-
-void RenderWidgetHostViewMus::MovePluginWindows(
-    const std::vector<WebPluginGeometry>& moves) {
 }
 
 void RenderWidgetHostViewMus::UpdateCursor(const WebCursor& cursor) {
@@ -193,7 +189,7 @@ void RenderWidgetHostViewMus::SetIsLoading(bool is_loading) {
 }
 
 void RenderWidgetHostViewMus::TextInputStateChanged(
-    const ViewHostMsg_TextInputState_Params& params) {
+    const TextInputState& params) {
   // TODO(fsamuel): Implement an IME mojo app.
 }
 
@@ -261,12 +257,6 @@ void RenderWidgetHostViewMus::GetScreenInfo(blink::WebScreenInfo* results) {
   // TODO(fsamuel): Populate screen info from Mus.
 }
 
-bool RenderWidgetHostViewMus::GetScreenColorProfile(
-    std::vector<char>* color_profile) {
-  // TODO(fsamuel): Implement color profile in Mus.
-  return false;
-}
-
 gfx::Rect RenderWidgetHostViewMus::GetBoundsInRootWindow() {
   aura::Window* top_level = aura_window_->GetToplevelWindow();
   gfx::Rect bounds(top_level->GetBoundsInScreen());
@@ -274,14 +264,12 @@ gfx::Rect RenderWidgetHostViewMus::GetBoundsInRootWindow() {
 }
 
 #if defined(OS_MACOSX)
+ui::AcceleratedWidgetMac* RenderWidgetHostViewMus::GetAcceleratedWidgetMac()
+    const {
+  return nullptr;
+}
+
 void RenderWidgetHostViewMus::SetActive(bool active) {
-}
-
-void RenderWidgetHostViewMus::SetWindowVisibility(bool visible) {
-  // TODO(fsamuel): Propagate visibility to Mus?
-}
-
-void RenderWidgetHostViewMus::WindowFrameChanged() {
 }
 
 void RenderWidgetHostViewMus::ShowDefinitionForSelection() {
@@ -305,12 +293,6 @@ bool RenderWidgetHostViewMus::IsSpeaking() const {
 void RenderWidgetHostViewMus::StopSpeaking() {
   // TODO(fsamuel): Implement this on Mac.
 }
-
-bool RenderWidgetHostViewMus::PostProcessEventForPluginIme(
-    const NativeWebKeyboardEvent& event) {
-  return false;
-}
-
 #endif  // defined(OS_MACOSX)
 
 void RenderWidgetHostViewMus::LockCompositingSurface() {
@@ -321,14 +303,12 @@ void RenderWidgetHostViewMus::UnlockCompositingSurface() {
   NOTIMPLEMENTED();
 }
 
-#if defined(OS_WIN)
-void RenderWidgetHostViewMus::SetParentNativeViewAccessible(
-    gfx::NativeViewAccessible accessible_parent) {}
-
-gfx::NativeViewId RenderWidgetHostViewMus::GetParentForWindowlessPlugin()
-    const {
-  return gfx::NativeViewId();
+void RenderWidgetHostViewMus::OnWindowInputEvent(
+    mus::Window* window,
+    const ui::Event& event,
+    std::unique_ptr<base::Callback<void(mus::mojom::EventResult)>>*
+        ack_callback) {
+  // TODO(sad): Dispatch |event| to the RenderWidgetHost.
 }
-#endif
 
 }  // namespace content

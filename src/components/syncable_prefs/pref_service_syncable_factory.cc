@@ -11,7 +11,7 @@
 #include "components/prefs/pref_value_store.h"
 #include "components/syncable_prefs/pref_service_syncable.h"
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
+#if defined(SYNCABLE_PREFS_USE_POLICY)
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/browser/configuration_policy_pref_store.h"
 #include "components/policy/core/common/policy_service.h"  // nogncheck
@@ -26,47 +26,45 @@ PrefServiceSyncableFactory::PrefServiceSyncableFactory() {
 PrefServiceSyncableFactory::~PrefServiceSyncableFactory() {
 }
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
 void PrefServiceSyncableFactory::SetManagedPolicies(
     policy::PolicyService* service,
     policy::BrowserPolicyConnector* connector) {
+#if defined(SYNCABLE_PREFS_USE_POLICY)
   set_managed_prefs(new policy::ConfigurationPolicyPrefStore(
       service, connector->GetHandlerList(), policy::POLICY_LEVEL_MANDATORY));
+#else
+  NOTREACHED();
+#endif
 }
 
 void PrefServiceSyncableFactory::SetRecommendedPolicies(
     policy::PolicyService* service,
     policy::BrowserPolicyConnector* connector) {
+#if defined(SYNCABLE_PREFS_USE_POLICY)
   set_recommended_prefs(new policy::ConfigurationPolicyPrefStore(
       service, connector->GetHandlerList(), policy::POLICY_LEVEL_RECOMMENDED));
-}
+#else
+  NOTREACHED();
 #endif
+}
 
 void PrefServiceSyncableFactory::SetPrefModelAssociatorClient(
     PrefModelAssociatorClient* pref_model_associator_client) {
   pref_model_associator_client_ = pref_model_associator_client;
 }
 
-scoped_ptr<PrefServiceSyncable> PrefServiceSyncableFactory::CreateSyncable(
+std::unique_ptr<PrefServiceSyncable> PrefServiceSyncableFactory::CreateSyncable(
     user_prefs::PrefRegistrySyncable* pref_registry) {
   TRACE_EVENT0("browser", "PrefServiceSyncableFactory::CreateSyncable");
   PrefNotifierImpl* pref_notifier = new PrefNotifierImpl();
-  scoped_ptr<PrefServiceSyncable> pref_service(
-      new PrefServiceSyncable(
-          pref_notifier,
-          new PrefValueStore(managed_prefs_.get(),
-                             supervised_user_prefs_.get(),
-                             extension_prefs_.get(),
-                             command_line_prefs_.get(),
-                             user_prefs_.get(),
-                             recommended_prefs_.get(),
-                             pref_registry->defaults().get(),
-                             pref_notifier),
-          user_prefs_.get(),
-          pref_registry,
-          pref_model_associator_client_,
-          read_error_callback_,
-          async_));
+  std::unique_ptr<PrefServiceSyncable> pref_service(new PrefServiceSyncable(
+      pref_notifier,
+      new PrefValueStore(managed_prefs_.get(), supervised_user_prefs_.get(),
+                         extension_prefs_.get(), command_line_prefs_.get(),
+                         user_prefs_.get(), recommended_prefs_.get(),
+                         pref_registry->defaults().get(), pref_notifier),
+      user_prefs_.get(), pref_registry, pref_model_associator_client_,
+      read_error_callback_, async_));
   return pref_service;
 }
 

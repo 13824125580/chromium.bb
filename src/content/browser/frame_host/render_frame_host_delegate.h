@@ -38,6 +38,7 @@ class WakeLockServiceContext;
 class WebContents;
 struct AXEventNotificationDetails;
 struct ContextMenuParams;
+struct FileChooserParams;
 struct TransitionLayerData;
 
 // An interface implemented by an object interested in knowing about the state
@@ -64,9 +65,6 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Informs the delegate whenever a RenderFrameHost is deleted.
   virtual void RenderFrameDeleted(RenderFrameHost* render_frame_host) {}
 
-  // The RenderFrameHost has been swapped out.
-  virtual void SwappedOut(RenderFrameHost* render_frame_host) {}
-
   // A context menu should be shown, to be built using the context information
   // provided in the supplied params.
   virtual void ShowContextMenu(RenderFrameHost* render_frame_host,
@@ -81,9 +79,12 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
                                     IPC::Message* reply_msg) {}
 
   virtual void RunBeforeUnloadConfirm(RenderFrameHost* render_frame_host,
-                                      const base::string16& message,
                                       bool is_reload,
                                       IPC::Message* reply_msg) {}
+
+  // Called when a file selection is to be done.
+  virtual void RunFileChooser(RenderFrameHost* render_frame_host,
+                              const FileChooserParams& params) {}
 
   // Another page accessed the top-level initial empty document, which means it
   // is no longer safe to display a pending URL without risking a URL spoof.
@@ -185,12 +186,8 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
 
   // Creates a WebUI object for a frame navigating to |url|. If no WebUI
   // applies, returns null.
-  virtual scoped_ptr<WebUIImpl> CreateWebUIForRenderFrameHost(const GURL& url);
-
-#if defined(OS_WIN)
-  // Returns the frame's parent's NativeViewAccessible.
-  virtual gfx::NativeViewAccessible GetParentNativeViewAccessible();
-#endif
+  virtual std::unique_ptr<WebUIImpl> CreateWebUIForRenderFrameHost(
+      const GURL& url);
 
  protected:
   virtual ~RenderFrameHostDelegate() {}

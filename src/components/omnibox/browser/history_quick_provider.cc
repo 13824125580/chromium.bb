@@ -14,6 +14,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_service.h"
@@ -37,19 +38,18 @@ bool HistoryQuickProvider::disabled_ = false;
 
 HistoryQuickProvider::HistoryQuickProvider(AutocompleteProviderClient* client)
     : HistoryProvider(AutocompleteProvider::TYPE_HISTORY_QUICK, client),
-      languages_(client->GetAcceptLanguages()),
       in_memory_url_index_(client->GetInMemoryURLIndex()) {
 }
 
 void HistoryQuickProvider::Start(const AutocompleteInput& input,
                                  bool minimal_changes) {
+  TRACE_EVENT0("omnibox", "HistoryQuickProvider::Start");
   matches_.clear();
   if (disabled_ || input.from_omnibox_focus())
     return;
 
-  // Don't bother with INVALID and FORCED_QUERY.
-  if ((input.type() == metrics::OmniboxInputType::INVALID) ||
-      (input.type() == metrics::OmniboxInputType::FORCED_QUERY))
+  // Don't bother with INVALID.
+  if ((input.type() == metrics::OmniboxInputType::INVALID))
     return;
 
   autocomplete_input_ = input;
@@ -207,7 +207,7 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
       ~(!history_match.match_in_scheme ? 0 : url_formatter::kFormatUrlOmitHTTP);
   base::OffsetAdjuster::Adjustments adjustments;
   match.contents = url_formatter::FormatUrlWithAdjustments(
-      info.url(), languages_, format_types, net::UnescapeRule::SPACES, nullptr,
+      info.url(), format_types, net::UnescapeRule::SPACES, nullptr,
       nullptr, &adjustments);
   match.fill_into_edit =
       AutocompleteInput::FormattedStringWithEquivalentMeaning(
@@ -240,10 +240,8 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
     match.allowed_to_be_default_match = match.inline_autocompletion.empty() ||
         !PreventInlineAutocomplete(autocomplete_input_);
   }
-  match.EnsureUWYTIsAllowedToBeDefault(
-      autocomplete_input_,
-      client()->GetAcceptLanguages(),
-      client()->GetTemplateURLService());
+  match.EnsureUWYTIsAllowedToBeDefault(autocomplete_input_,
+                                       client()->GetTemplateURLService());
 
   // Format the description autocomplete presentation.
   match.description = info.title();

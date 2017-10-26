@@ -42,9 +42,9 @@
 #include "public/web/WebRemoteFrameClient.h"
 #include "public/web/WebViewClient.h"
 #include "web/WebViewImpl.h"
-#include "wtf/PassOwnPtr.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 
 namespace blink {
@@ -54,10 +54,12 @@ class WebFrameWidget;
 class WebLocalFrame;
 class WebRemoteFrame;
 class WebRemoteFrameImpl;
+enum class WebCachePolicy;
 
 namespace FrameTestHelpers {
 
 class TestWebFrameClient;
+using TestWebWidgetClient = WebWidgetClient;
 
 // Loads a url into the specified WebFrame for testing purposes. Pumps any
 // pending resource requests, as well as waiting for the threaded parser to
@@ -66,19 +68,22 @@ void loadFrame(WebFrame*, const std::string& url);
 // Same as above, but for WebFrame::loadHTMLString().
 void loadHTMLString(WebFrame*, const std::string& html, const WebURL& baseURL);
 // Same as above, but for WebFrame::loadHistoryItem().
-void loadHistoryItem(WebFrame*, const WebHistoryItem&, WebHistoryLoadType, WebURLRequest::CachePolicy);
+void loadHistoryItem(WebFrame*, const WebHistoryItem&, WebHistoryLoadType, WebCachePolicy);
 // Same as above, but for WebFrame::reload().
 void reloadFrame(WebFrame*);
 void reloadFrameIgnoringCache(WebFrame*);
 
-// Pumps pending resource requests while waiting for a frame to load. Don't use
-// this. Use one of the above helpers.
-void pumpPendingRequestsDoNotUse(WebFrame*);
+// Pumps pending resource requests while waiting for a frame to load. Consider
+// using one of the above helper methods whenever possible.
+void pumpPendingRequestsForFrameToLoad(WebFrame*);
+
+WebMouseEvent createMouseEvent(WebInputEvent::Type, WebMouseEvent::Button, const IntPoint&, int modifiers);
 
 // Calls WebRemoteFrame::createLocalChild, but with some arguments prefilled
 // with default test values (i.e. with a default |client| or |properties| and/or
 // with a precalculated |uniqueName|).
-WebLocalFrame* createLocalChild(WebRemoteFrame* parent, const WebString& name = WebString::fromUTF8("frameName"), WebFrameClient* = nullptr, WebFrame* previousSibling = nullptr, const WebFrameOwnerProperties& = WebFrameOwnerProperties());
+WebLocalFrame* createLocalChild(WebRemoteFrame* parent, const WebString& name = WebString(), WebFrameClient* = nullptr, WebFrame* previousSibling = nullptr, const WebFrameOwnerProperties& = WebFrameOwnerProperties());
+WebRemoteFrame* createRemoteChild(WebRemoteFrame* parent, WebRemoteFrameClient*, const WebString& name = WebString());
 
 class SettingOverrider {
 public:
@@ -123,8 +128,13 @@ public:
     bool animationScheduled() { return m_animationScheduled; }
     void clearAnimationScheduled() { m_animationScheduled = false; }
 
+    // TODO(lfg): This is a temporary method to retrieve the WebWidgetClient,
+    // while we refactor WebView to not inherit from Webwidget.
+    // Returns the WebWidgetClient.
+    WebWidgetClient* widgetClient() { return this; }
+
 private:
-    OwnPtr<WebLayerTreeView> m_layerTreeView;
+    std::unique_ptr<WebLayerTreeView> m_layerTreeView;
     bool m_animationScheduled;
 };
 
@@ -135,14 +145,17 @@ public:
     WebViewHelper(SettingOverrider* = 0);
     ~WebViewHelper();
 
-    // Creates and initializes the WebView. Implicitly calls reset() first. IF a
-    // WebFrameClient or a WebViewClient are passed in, they must outlive the
+    // Creates and initializes the WebView. Implicitly calls reset() first. If
+    // a WebFrameClient or a WebViewClient are passed in, they must outlive the
     // WebViewHelper.
-    WebViewImpl* initialize(bool enableJavascript = false, TestWebFrameClient* = 0, TestWebViewClient* = 0, void (*updateSettingsFunc)(WebSettings*) = 0);
+    WebViewImpl* initializeWithOpener(WebFrame* opener, bool enableJavascript = false, TestWebFrameClient* = nullptr, TestWebViewClient* = nullptr, TestWebWidgetClient* = nullptr, void (*updateSettingsFunc)(WebSettings*) = nullptr);
+
+    // Same as initializeWithOpener(), but always sets the opener to null.
+    WebViewImpl* initialize(bool enableJavascript = false, TestWebFrameClient* = nullptr, TestWebViewClient* = nullptr, TestWebWidgetClient* = nullptr, void (*updateSettingsFunc)(WebSettings*) = 0);
 
     // Same as initialize() but also performs the initial load of the url. Only
     // returns once the load is complete.
-    WebViewImpl* initializeAndLoad(const std::string& url, bool enableJavascript = false, TestWebFrameClient* = 0, TestWebViewClient* = 0, void (*updateSettingsFunc)(WebSettings*) = 0);
+    WebViewImpl* initializeAndLoad(const std::string& url, bool enableJavascript = false, TestWebFrameClient* = nullptr, TestWebViewClient* = nullptr, TestWebWidgetClient* = nullptr, void (*updateSettingsFunc)(WebSettings*) = 0);
 
     void resize(WebSize);
 
@@ -171,10 +184,9 @@ public:
     void didStopLoading() override;
 
     bool isLoading() { return m_loadsInProgress > 0; }
-    void waitForLoadToComplete();
 
 private:
-    int m_loadsInProgress;
+    int m_loadsInProgress = 0;
 };
 
 // Minimal implementation of WebRemoteFrameClient needed for unit tests that load remote frames. Tests that load
@@ -187,14 +199,14 @@ public:
 
     // WebRemoteFrameClient overrides:
     void frameDetached(DetachType) override;
-    void postMessageEvent(
+    void forwardPostMessage(
         WebLocalFrame* sourceFrame,
         WebRemoteFrame* targetFrame,
         WebSecurityOrigin targetOrigin,
         WebDOMMessageEvent) override { }
 
 private:
-    RawPtrWillBePersistent<WebRemoteFrameImpl> const m_frame;
+    Persistent<WebRemoteFrameImpl> const m_frame;
 };
 
 } // namespace FrameTestHelpers

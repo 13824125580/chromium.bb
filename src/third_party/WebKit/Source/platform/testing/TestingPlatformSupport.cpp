@@ -30,48 +30,10 @@
 
 #include "platform/testing/TestingPlatformSupport.h"
 
-#if !OS(ANDROID)
-#include "device/battery/battery_monitor_impl.h"
-#endif
-
-#include <cstring>
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
-
-TestingDiscardableMemory::TestingDiscardableMemory(size_t size) : m_data(size), m_isLocked(true)
-{
-}
-
-TestingDiscardableMemory::~TestingDiscardableMemory()
-{
-}
-
-bool TestingDiscardableMemory::lock()
-{
-    ASSERT(!m_isLocked);
-    m_isLocked = true;
-    return false;
-}
-
-void* TestingDiscardableMemory::data()
-{
-    ASSERT(m_isLocked);
-    return m_data.data();
-}
-
-void TestingDiscardableMemory::unlock()
-{
-    ASSERT(m_isLocked);
-    m_isLocked = false;
-    // Force eviction to catch clients not correctly checking the return value of lock().
-    memset(m_data.data(), 0, m_data.size());
-}
-
-WebMemoryAllocatorDump* TestingDiscardableMemory::createMemoryAllocatorDump(const WebString& name, WebProcessMemoryDump* dump) const
-{
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
 
 TestingPlatformSupport::TestingPlatformSupport()
     : TestingPlatformSupport(TestingPlatformSupport::Config())
@@ -82,17 +44,13 @@ TestingPlatformSupport::TestingPlatformSupport(const Config& config)
     : m_config(config)
     , m_oldPlatform(Platform::current())
 {
-    Platform::initialize(this);
+    ASSERT(m_oldPlatform);
+    Platform::setCurrentPlatformForTesting(this);
 }
 
 TestingPlatformSupport::~TestingPlatformSupport()
 {
-    Platform::initialize(m_oldPlatform);
-}
-
-WebDiscardableMemory* TestingPlatformSupport::allocateAndLockDiscardableMemory(size_t bytes)
-{
-    return !m_config.hasDiscardableMemorySupport ? 0 : new TestingDiscardableMemory(bytes);
+    Platform::setCurrentPlatformForTesting(m_oldPlatform);
 }
 
 WebString TestingPlatformSupport::defaultLocale()
@@ -110,33 +68,15 @@ WebThread* TestingPlatformSupport::currentThread()
     return m_oldPlatform ? m_oldPlatform->currentThread() : nullptr;
 }
 
-WebUnitTestSupport* TestingPlatformSupport::unitTestSupport()
-{
-    return m_oldPlatform ? m_oldPlatform->unitTestSupport() : nullptr;
-}
-
-void TestingPlatformSupport::connectToRemoteService(const char* name, mojo::ScopedMessagePipeHandle handle)
-{
-#if !OS(ANDROID)
-    if (std::strcmp(name, device::BatteryMonitor::Name_) == 0) {
-        device::BatteryMonitorImpl::Create(
-            mojo::MakeRequest<device::BatteryMonitor>(std::move(handle)));
-        return;
-    }
-#endif
-
-    ASSERT_NOT_REACHED();
-}
-
 class TestingPlatformMockWebTaskRunner : public WebTaskRunner {
     WTF_MAKE_NONCOPYABLE(TestingPlatformMockWebTaskRunner);
 public:
-    explicit TestingPlatformMockWebTaskRunner(Deque<OwnPtr<WebTaskRunner::Task>>* tasks) : m_tasks(tasks) { }
+    explicit TestingPlatformMockWebTaskRunner(Deque<std::unique_ptr<WebTaskRunner::Task>>* tasks) : m_tasks(tasks) { }
     ~TestingPlatformMockWebTaskRunner() override { }
 
     void postTask(const WebTraceLocation&, Task* task) override
     {
-        m_tasks->append(adoptPtr(task));
+        m_tasks->append(wrapUnique(task));
     }
 
     void postDelayedTask(const WebTraceLocation&, Task*, double delayMs) override
@@ -162,13 +102,13 @@ public:
     }
 
 private:
-    Deque<OwnPtr<WebTaskRunner::Task>>* m_tasks; // NOT OWNED
+    Deque<std::unique_ptr<WebTaskRunner::Task>>* m_tasks; // NOT OWNED
 };
 
 // TestingPlatformMockScheduler definition:
 
 TestingPlatformMockScheduler::TestingPlatformMockScheduler()
-    : m_mockWebTaskRunner(adoptPtr(new TestingPlatformMockWebTaskRunner(&m_tasks))) { }
+    : m_mockWebTaskRunner(wrapUnique(new TestingPlatformMockWebTaskRunner(&m_tasks))) { }
 
 TestingPlatformMockScheduler::~TestingPlatformMockScheduler() { }
 
@@ -198,10 +138,10 @@ void TestingPlatformMockScheduler::runAllTasks()
 class TestingPlatformMockWebThread : public WebThread {
     WTF_MAKE_NONCOPYABLE(TestingPlatformMockWebThread);
 public:
-    TestingPlatformMockWebThread() : m_mockWebScheduler(adoptPtr(new TestingPlatformMockScheduler)) { }
+    TestingPlatformMockWebThread() : m_mockWebScheduler(wrapUnique(new TestingPlatformMockScheduler)) { }
     ~TestingPlatformMockWebThread() override { }
 
-    WebTaskRunner* taskRunner() override
+    WebTaskRunner* getWebTaskRunner() override
     {
         return m_mockWebScheduler->timerTaskRunner();
     }
@@ -223,17 +163,17 @@ public:
     }
 
 private:
-    OwnPtr<TestingPlatformMockScheduler> m_mockWebScheduler;
+    std::unique_ptr<TestingPlatformMockScheduler> m_mockWebScheduler;
 };
 
 // TestingPlatformSupportWithMockScheduler definition:
 
 TestingPlatformSupportWithMockScheduler::TestingPlatformSupportWithMockScheduler()
-    : m_mockWebThread(adoptPtr(new TestingPlatformMockWebThread())) { }
+    : m_mockWebThread(wrapUnique(new TestingPlatformMockWebThread())) { }
 
 TestingPlatformSupportWithMockScheduler::TestingPlatformSupportWithMockScheduler(const Config& config)
     : TestingPlatformSupport(config)
-    , m_mockWebThread(adoptPtr(new TestingPlatformMockWebThread())) { }
+    , m_mockWebThread(wrapUnique(new TestingPlatformMockWebThread())) { }
 
 TestingPlatformSupportWithMockScheduler::~TestingPlatformSupportWithMockScheduler() { }
 

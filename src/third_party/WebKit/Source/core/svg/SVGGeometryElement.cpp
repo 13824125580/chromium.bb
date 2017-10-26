@@ -44,9 +44,9 @@ SVGGeometryElement::SVGGeometryElement(const QualifiedName& tagName, Document& d
 {
 }
 
-bool SVGGeometryElement::isPointInFill(PassRefPtrWillBeRawPtr<SVGPointTearOff> point) const
+bool SVGGeometryElement::isPointInFill(SVGPointTearOff* point) const
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     // FIXME: Eventually we should support isPointInFill for display:none elements.
     if (!layoutObject() || !layoutObject()->isSVGShape())
@@ -58,9 +58,9 @@ bool SVGGeometryElement::isPointInFill(PassRefPtrWillBeRawPtr<SVGPointTearOff> p
     return toLayoutSVGShape(layoutObject())->nodeAtFloatPointInternal(request, point->target()->value(), hitRules);
 }
 
-bool SVGGeometryElement::isPointInStroke(PassRefPtrWillBeRawPtr<SVGPointTearOff> point) const
+bool SVGGeometryElement::isPointInStroke(SVGPointTearOff* point) const
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     // FIXME: Eventually we should support isPointInStroke for display:none elements.
     if (!layoutObject() || !layoutObject()->isSVGShape())

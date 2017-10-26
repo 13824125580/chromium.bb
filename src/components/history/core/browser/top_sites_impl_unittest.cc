@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "build/build_config.h"
@@ -36,9 +37,6 @@
 namespace history {
 
 namespace {
-
-// Key for URL blacklist.
-const char kAcceptLanguages[] = "en-US,en";
 
 const char kApplicationScheme[] = "application";
 const char kPrepopulatedPageURL[] =
@@ -94,7 +92,7 @@ class TopSitesQuerier {
         include_forced_urls);
     if (wait && start_number_of_callbacks == number_of_callbacks_) {
       waiting_ = true;
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
     }
   }
 
@@ -145,9 +143,8 @@ class TopSitesImplTest : public HistoryUnitTestBase {
     pref_service_.reset(new TestingPrefServiceSimple);
     TopSitesImpl::RegisterPrefs(pref_service_->registry());
     history_service_.reset(
-        new HistoryService(nullptr, scoped_ptr<VisitDelegate>()));
+        new HistoryService(nullptr, std::unique_ptr<VisitDelegate>()));
     ASSERT_TRUE(history_service_->Init(
-        kAcceptLanguages,
         TestHistoryDatabaseParamsForPath(scoped_temp_dir_.path())));
     ResetTopSites();
     WaitTopSitesLoaded();
@@ -181,9 +178,9 @@ class TopSitesImplTest : public HistoryUnitTestBase {
   // need to wait until you know history has processed a task.
   void WaitForHistory() {
     history_service()->ScheduleDBTask(
-        scoped_ptr<history::HistoryDBTask>(new WaitForHistoryTask()),
+        std::unique_ptr<history::HistoryDBTask>(new WaitForHistoryTask()),
         &history_tracker_);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   // Waits for top sites to finish processing a task. This is useful if you need
@@ -192,7 +189,7 @@ class TopSitesImplTest : public HistoryUnitTestBase {
     top_sites()->backend_->DoEmptyRequest(
         base::Bind(&TopSitesImplTest::QuitCallback, base::Unretained(this)),
         &top_sites_tracker_);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   TopSitesImpl* top_sites() { return top_sites_impl_.get(); }
@@ -329,7 +326,7 @@ class TopSitesImplTest : public HistoryUnitTestBase {
       top_sites_impl_ = nullptr;
 
       if (base::MessageLoop::current())
-        base::MessageLoop::current()->RunUntilIdle();
+        base::RunLoop().RunUntilIdle();
     }
   }
 
@@ -343,8 +340,8 @@ class TopSitesImplTest : public HistoryUnitTestBase {
   base::ScopedTempDir scoped_temp_dir_;
   base::MessageLoopForUI message_loop_;
 
-  scoped_ptr<TestingPrefServiceSimple> pref_service_;
-  scoped_ptr<HistoryService> history_service_;
+  std::unique_ptr<TestingPrefServiceSimple> pref_service_;
+  std::unique_ptr<HistoryService> history_service_;
   scoped_refptr<TopSitesImpl> top_sites_impl_;
 
   // To cancel HistoryService tasks.

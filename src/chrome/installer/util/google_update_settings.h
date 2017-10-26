@@ -7,10 +7,11 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "base/version.h"
@@ -92,13 +93,21 @@ class GoogleUpdateSettings {
   // false if the setting could not be recorded.
   static bool SetCollectStatsConsentAtLevel(bool system_install,
                                             bool consented);
+
+  // Returns the default (original) state of the "send usage stats" checkbox
+  // shown to the user when they downloaded Chrome. The value is returned via
+  // the out parameter |stats_consent_default|. This function returns true if
+  // the default state is known and false otherwise. If false the out param
+  // will not be set.
+  static bool GetCollectStatsConsentDefault(bool* stats_consent_default)
+      WARN_UNUSED_RESULT;
 #endif
 
   // Returns the metrics client info backed up in the registry. NULL
   // if-and-only-if the client_id couldn't be retrieved (failure to retrieve
   // other fields only makes them keep their default value). A non-null return
   // will NEVER contain an empty client_id field.
-  static scoped_ptr<metrics::ClientInfo> LoadMetricsClientInfo();
+  static std::unique_ptr<metrics::ClientInfo> LoadMetricsClientInfo();
 
   // Stores a backup of the metrics client info in the registry. Storing a
   // |client_info| with an empty client id will effectively void the backup.

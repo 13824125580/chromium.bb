@@ -43,6 +43,7 @@ class _Generator(object):
       .Append()
       .Append(self._util_cc_helper.GetIncludePath())
       .Append('#include "base/logging.h"')
+      .Append('#include "base/memory/ptr_util.h"')
       .Append('#include "base/strings/string_number_conversions.h"')
       .Append('#include "base/strings/utf_string_conversions.h"')
       .Append('#include "%s/%s.h"' %
@@ -126,7 +127,15 @@ class _Generator(object):
       (c.Append('%s::%s()' % (classname_in_namespace, classname))
         .Cblock(self._GenerateInitializersAndBody(type_))
         .Append('%s::~%s() {}' % (classname_in_namespace, classname))
-        .Append()
+      )
+      # Note: we use 'rhs' because some API objects have a member 'other'.
+      (c.Append('%s::%s(%s&& rhs)' %
+                    (classname_in_namespace, classname, classname))
+        .Cblock(self._GenerateMoveCtor(type_))
+        .Append('%s& %s::operator=(%s&& rhs)' %
+                    (classname_in_namespace, classname_in_namespace,
+                     classname))
+        .Cblock(self._GenerateMoveAssignOperator(type_))
       )
       if type_.origin.from_json:
         c.Cblock(self._GenerateTypePopulate(classname_in_namespace, type_))
@@ -178,10 +187,90 @@ class _Generator(object):
         raise TypeError(t)
 
     if items:
-      s = ': %s' % (', '.join(items))
+      s = ': %s' % (',\n'.join(items))
     else:
       s = ''
     s = s + ' {}'
+    return Code().Append(s)
+
+  def _GetMoveProps(self, type_, copy_str, move_str):
+    """Returns a tuple of (props, dicts) for the type.
+
+    |props| is a list of all the copyable or movable properties generated using
+    the copy_str and move_str, and |dicts| is a list of all the dictionary
+    properties by name.
+
+    Properties:
+    - |type_| the Type to get the properties from
+    - |copy_str| the string to use when copying a value; should have two
+                 placeholders to take the property name.
+    - |move_str| the string to use when moving a value; should have two
+                 placeholders to take the property name.
+    """
+    props = []
+    dicts = []
+    for prop in type_.properties.values():
+      t = prop.type_
+
+      real_t = self._type_helper.FollowRef(t)
+      if (real_t.property_type != PropertyType.ENUM and
+          (prop.optional or
+           t.property_type == PropertyType.ANY or
+           t.property_type == PropertyType.ARRAY or
+           t.property_type == PropertyType.BINARY or
+           t.property_type == PropertyType.CHOICES or
+           t.property_type == PropertyType.OBJECT or
+           t.property_type == PropertyType.REF or
+           t.property_type == PropertyType.STRING)):
+        props.append(move_str % (prop.unix_name, prop.unix_name))
+      elif t.property_type == PropertyType.FUNCTION:
+        dicts.append(prop.unix_name)
+      elif (real_t.property_type == PropertyType.ENUM or
+            t.property_type == PropertyType.INTEGER or
+            t.property_type == PropertyType.DOUBLE or
+            t.property_type == PropertyType.BOOLEAN):
+        props.append(copy_str % (prop.unix_name, prop.unix_name))
+      else:
+        raise TypeError(t)
+
+    if type_.property_type == PropertyType.CHOICES:
+      for choice in type_.choices:
+        prop_name = 'as_%s' % choice.unix_name
+        props.append(move_str % (prop_name, prop_name))
+
+    if (type_.property_type == PropertyType.OBJECT and
+        type_.additional_properties is not None):
+      if type_.additional_properties.property_type == PropertyType.ANY:
+        dicts.append('additional_properties')
+      else:
+        props.append(move_str % ('additional_properties',
+                                 'additional_properties'))
+
+    return (props, dicts)
+
+  def _GenerateMoveCtor(self, type_):
+    props, dicts = self._GetMoveProps(type_, '%s(rhs.%s)',
+                                      '%s(std::move(rhs.%s))')
+    s = ''
+    if props:
+      s = s + ': %s' % (',\n'.join(props))
+    s = s + '{'
+    for item in dicts:
+      s = s + ('\n%s.Swap(&rhs.%s);' % (item, item))
+    s = s + '\n}'
+
+    return Code().Append(s)
+
+  def _GenerateMoveAssignOperator(self, type_):
+    props, dicts = self._GetMoveProps(type_, '%s = rhs.%s;',
+                                      '%s = std::move(rhs.%s);')
+    s = '{\n'
+    if props:
+      s = s + '\n'.join(props)
+    for item in dicts:
+      s = s + ('%s.Swap(&rhs.%s);' % (item, item))
+    s = s + '\nreturn *this;\n}'
+
     return Code().Append(s)
 
   def _GenerateTypePopulate(self, cpp_namespace, type_):
@@ -229,7 +318,7 @@ class _Generator(object):
         c.Append('const base::DictionaryValue* dict = '
                      'static_cast<const base::DictionaryValue*>(&value);')
         if self._generate_error_messages:
-            c.Append('std::set<std::string> keys;')
+          c.Append('std::set<std::string> keys;')
       for prop in type_.properties.itervalues():
         c.Concat(self._InitializePropertyToDefault(prop, 'out'))
       for prop in type_.properties.itervalues():
@@ -323,15 +412,15 @@ class _Generator(object):
     classname = cpp_util.Classname(schema_util.StripNamespace(type_.name))
     c = Code()
     (c.Append('// static')
-      .Append('scoped_ptr<%s> %s::FromValue(%s) {' % (classname,
+      .Append('std::unique_ptr<%s> %s::FromValue(%s) {' % (classname,
         cpp_namespace, self._GenerateParams(('const base::Value& value',))))
     )
     if self._generate_error_messages:
       c.Append('DCHECK(error);')
-    (c.Append('  scoped_ptr<%s> out(new %s());' % (classname, classname))
+    (c.Append('  std::unique_ptr<%s> out(new %s());' % (classname, classname))
       .Append('  if (!Populate(%s))' % self._GenerateArgs(
           ('value', 'out.get()')))
-      .Append('    return scoped_ptr<%s>();' % classname)
+      .Append('    return nullptr;')
       .Append('  return out;')
       .Append('}')
     )
@@ -353,9 +442,9 @@ class _Generator(object):
     into a base::DictionaryValue.
     """
     c = Code()
-    (c.Sblock('scoped_ptr<base::DictionaryValue> %s::ToValue() const {' %
+    (c.Sblock('std::unique_ptr<base::DictionaryValue> %s::ToValue() const {' %
           cpp_namespace)
-        .Append('scoped_ptr<base::DictionaryValue> value('
+        .Append('std::unique_ptr<base::DictionaryValue> value('
                     'new base::DictionaryValue());')
         .Append()
     )
@@ -394,16 +483,12 @@ class _Generator(object):
       if type_.additional_properties.property_type == PropertyType.ANY:
         c.Append('value->MergeDictionary(&additional_properties);')
       else:
-        # Non-copyable types will be wrapped in a linked_ptr for inclusion in
-        # maps, so we need to unwrap them.
-        needs_unwrap = (
-            not self._type_helper.IsCopyable(type_.additional_properties))
         (c.Sblock('for (const auto& it : additional_properties) {')
           .Cblock(self._CreateValueFromType(
               'value->SetWithoutPathExpansion(it.first, %s);',
               type_.additional_properties.name,
               type_.additional_properties,
-              '%sit.second' % ('*' if needs_unwrap else '')))
+              'it.second'))
           .Eblock('}')
         )
 
@@ -416,27 +501,20 @@ class _Generator(object):
     into a base::Value.
     """
     c = Code()
-    c.Sblock('scoped_ptr<base::Value> %s::ToValue() const {' % cpp_namespace)
-    c.Append('scoped_ptr<base::Value> result;')
+    c.Sblock('std::unique_ptr<base::Value> %s::ToValue() const {' %
+                 cpp_namespace)
+    c.Append('std::unique_ptr<base::Value> result;')
     for choice in type_.choices:
       choice_var = 'as_%s' % choice.unix_name
       # Enums cannot be wrapped with scoped_ptr, but the XXX_NONE enum value
       # is equal to 0.
       (c.Sblock('if (%s) {' % choice_var)
-          .Append('DCHECK(!result) << "Cannot set multiple choices for %s";' %
-                      type_.unix_name)
-          .Cblock(self._CreateValueFromType('result.reset(%s);',
-                                            choice.name,
-                                            choice,
-                                            choice_var,
-                                            True))
-        .Eblock('}')
-      )
+       .Append('DCHECK(!result) << "Cannot set multiple choices for %s";' %
+               type_.unix_name).Cblock(self._CreateValueFromType(
+                   'result = %s;', choice.name, choice, choice_var, True))
+       .Eblock('}'))
     (c.Append('DCHECK(result) << "Must set at least one choice for %s";' %
-                  type_.unix_name)
-      .Append('return result;')
-      .Eblock('}')
-    )
+              type_.unix_name).Append('return result;').Eblock('}'))
     return c
 
   def _GenerateFunction(self, function):
@@ -485,7 +563,7 @@ class _Generator(object):
 
   def _CreateValueFromType(self, code, prop_name, type_, var, is_ptr=False):
     """Creates a base::Value given a type. Generated code passes ownership
-    to caller.
+    to caller via std::unique_ptr.
 
     var: variable or variable*
 
@@ -539,39 +617,40 @@ class _Generator(object):
     if (underlying_type.property_type == PropertyType.CHOICES or
         underlying_type.property_type == PropertyType.OBJECT):
       if is_ptr:
-        return '(%s)->ToValue().release()' % var
+        return '(%s)->ToValue()' % var
       else:
-        return '(%s).ToValue().release()' % var
+        return '(%s).ToValue()' % var
     elif (underlying_type.property_type == PropertyType.ANY or
           underlying_type.property_type == PropertyType.FUNCTION):
       if is_ptr:
         vardot = '(%s)->' % var
       else:
         vardot = '(%s).' % var
-      return '%sDeepCopy()' % vardot
+      return '%sCreateDeepCopy()' % vardot
     elif underlying_type.property_type == PropertyType.ENUM:
       maybe_namespace = ''
       if type_.property_type == PropertyType.REF:
         maybe_namespace = '%s::' % underlying_type.namespace.unix_name
-      return 'new base::StringValue(%sToString(%s))' % (maybe_namespace, var)
+      return 'base::MakeUnique<base::StringValue>(%sToString(%s))' % (
+          maybe_namespace, var)
     elif underlying_type.property_type == PropertyType.BINARY:
       if is_ptr:
         vardot = var + '->'
       else:
         vardot = var + '.'
-      return ('base::BinaryValue::CreateWithCopiedBuffer(%sdata(),'
-              ' %ssize())' % (vardot, vardot))
+      return ('base::BinaryValue::CreateWithCopiedBuffer('
+              '%sdata(), %ssize())' % (vardot, vardot))
     elif underlying_type.property_type == PropertyType.ARRAY:
-      return '%s.release()' % self._util_cc_helper.CreateValueFromArray(
+      return '%s' % self._util_cc_helper.CreateValueFromArray(
           var,
           is_ptr)
     elif underlying_type.property_type.is_fundamental:
       if is_ptr:
         var = '*%s' % var
       if underlying_type.property_type == PropertyType.STRING:
-        return 'new base::StringValue(%s)' % var
+        return 'base::MakeUnique<base::StringValue>(%s)' % var
       else:
-        return 'new base::FundamentalValue(%s)' % var
+        return 'base::MakeUnique<base::FundamentalValue>(%s)' % var
     else:
       raise NotImplementedError('Conversion of %s to base::Value not '
                                 'implemented' % repr(type_.type_))
@@ -595,7 +674,7 @@ class _Generator(object):
     (c.Concat(self._GenerateError(
         '"expected %%(total)d arguments, got " '
         '+ base::IntToString(%%(var)s.GetSize())'))
-      .Append('return scoped_ptr<Params>();')
+      .Append('return nullptr;')
       .Eblock('}')
       .Substitute({
         'var': var,
@@ -612,13 +691,13 @@ class _Generator(object):
     """
     c = Code()
     (c.Append('// static')
-      .Sblock('scoped_ptr<Params> Params::Create(%s) {' % self._GenerateParams(
-        ['const base::ListValue& args']))
+      .Sblock('std::unique_ptr<Params> Params::Create(%s) {' %
+                  self._GenerateParams(['const base::ListValue& args']))
     )
     if self._generate_error_messages:
       c.Append('DCHECK(error);')
     (c.Concat(self._GenerateParamsCheck(function, 'args'))
-      .Append('scoped_ptr<Params> params(new Params());')
+      .Append('std::unique_ptr<Params> params(new Params());')
     )
 
     for param in function.params:
@@ -629,7 +708,7 @@ class _Generator(object):
       # incorrect or missing, those following it are not processed. Note that
       # for optional arguments, we allow missing arguments and proceed because
       # there may be other arguments following it.
-      failure_value = 'scoped_ptr<Params>()'
+      failure_value = 'std::unique_ptr<Params>()'
       c.Append()
       value_var = param.unix_name + '_value'
       (c.Append('const base::Value* %(value_var)s = NULL;')
@@ -728,7 +807,7 @@ class _Generator(object):
           c.Append('return %(failure_value)s;')
         (c.Eblock('}')
           .Sblock('else {')
-          .Append('scoped_ptr<%(cpp_type)s> temp(new %(cpp_type)s());')
+          .Append('std::unique_ptr<%(cpp_type)s> temp(new %(cpp_type)s());')
           .Append('if (!%%(cpp_type)s::Populate(%s)) {' % self._GenerateArgs(
             ('*dictionary', 'temp.get()')))
           .Append('  return %(failure_value)s;')
@@ -755,7 +834,7 @@ class _Generator(object):
       if is_ptr:
         c.Append('%(dst_var)s.reset(new base::DictionaryValue());')
     elif underlying_type.property_type == PropertyType.ANY:
-      c.Append('%(dst_var)s.reset(%(src_var)s->DeepCopy());')
+      c.Append('%(dst_var)s = %(src_var)s->CreateDeepCopy();')
     elif underlying_type.property_type == PropertyType.ARRAY:
       # util_cc_helper deals with optional and required arrays
       (c.Append('const base::ListValue* list = NULL;')
@@ -792,7 +871,7 @@ class _Generator(object):
       c.Eblock('}')
     elif underlying_type.property_type == PropertyType.CHOICES:
       if is_ptr:
-        (c.Append('scoped_ptr<%(cpp_type)s> temp(new %(cpp_type)s());')
+        (c.Append('std::unique_ptr<%(cpp_type)s> temp(new %(cpp_type)s());')
           .Append('if (!%%(cpp_type)s::Populate(%s))' % self._GenerateArgs(
             ('*%(src_var)s', 'temp.get()')))
           .Append('  return %(failure_value)s;')
@@ -1001,9 +1080,9 @@ class _Generator(object):
     params = callback.params
     c.Concat(self._GeneratePropertyFunctions(function_scope, params))
 
-    (c.Sblock('scoped_ptr<base::ListValue> %(function_scope)s'
+    (c.Sblock('std::unique_ptr<base::ListValue> %(function_scope)s'
                   'Create(%(declaration_list)s) {')
-      .Append('scoped_ptr<base::ListValue> create_results('
+      .Append('std::unique_ptr<base::ListValue> create_results('
               'new base::ListValue());')
     )
     declaration_list = []

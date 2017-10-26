@@ -41,10 +41,6 @@ PpapiCommandBufferProxy::~PpapiCommandBufferProxy() {
   // deleted, closing the handle in this process.
 }
 
-bool PpapiCommandBufferProxy::Initialize() {
-  return true;
-}
-
 gpu::CommandBuffer::State PpapiCommandBufferProxy::GetLastState() {
   ppapi::ProxyLock::AssertAcquiredDebugOnly();
   return last_state_;
@@ -150,7 +146,7 @@ scoped_refptr<gpu::Buffer> PpapiCommandBufferProxy::CreateTransferBuffer(
     return NULL;
   }
 
-  scoped_ptr<base::SharedMemory> shared_memory(
+  std::unique_ptr<base::SharedMemory> shared_memory(
       new base::SharedMemory(handle.shmem(), false));
 
   // Map the shared memory on demand.
@@ -177,11 +173,6 @@ void PpapiCommandBufferProxy::DestroyTransferBuffer(int32_t id) {
 
 void PpapiCommandBufferProxy::SetLock(base::Lock*) {
   NOTIMPLEMENTED();
-}
-
-bool PpapiCommandBufferProxy::IsGpuChannelLost() {
-  NOTIMPLEMENTED();
-  return false;
 }
 
 void PpapiCommandBufferProxy::EnsureWorkVisible() {
@@ -241,6 +232,11 @@ void PpapiCommandBufferProxy::SignalQuery(uint32_t query,
   NOTREACHED();
 }
 
+void PpapiCommandBufferProxy::SetGpuControlClient(gpu::GpuControlClient*) {
+  // TODO(piman): The lost context callback skips past here and goes directly
+  // to the plugin instance. Make it more uniform and use the GpuControlClient.
+}
+
 gpu::Capabilities PpapiCommandBufferProxy::GetCapabilities() {
   return capabilities_;
 }
@@ -262,6 +258,11 @@ int32_t PpapiCommandBufferProxy::CreateGpuMemoryBufferImage(
     size_t height,
     unsigned internalformat,
     unsigned usage) {
+  NOTREACHED();
+  return -1;
+}
+
+int32_t PpapiCommandBufferProxy::GetImageGpuMemoryBufferId(unsigned image_id) {
   NOTREACHED();
   return -1;
 }

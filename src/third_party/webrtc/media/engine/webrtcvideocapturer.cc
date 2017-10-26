@@ -10,10 +10,6 @@
 
 #include "webrtc/media/engine/webrtcvideocapturer.h"
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
 #include "webrtc/base/arraysize.h"
 #include "webrtc/base/bind.h"
 #include "webrtc/base/checks.h"
@@ -52,7 +48,9 @@ static kVideoFourCCEntry kSupportedFourCCs[] = {
 
 class WebRtcVcmFactory : public WebRtcVcmFactoryInterface {
  public:
-  virtual webrtc::VideoCaptureModule* Create(int id, const char* device) {
+  virtual rtc::scoped_refptr<webrtc::VideoCaptureModule> Create(
+      int id,
+      const char* device) {
     return webrtc::VideoCaptureFactory::Create(id, device);
   }
   virtual webrtc::VideoCaptureModule::DeviceInfo* CreateDeviceInfo(int id) {
@@ -128,11 +126,7 @@ WebRtcVideoCapturer::WebRtcVideoCapturer(WebRtcVcmFactoryInterface* factory)
   set_frame_factory(new WebRtcVideoFrameFactory());
 }
 
-WebRtcVideoCapturer::~WebRtcVideoCapturer() {
-  if (module_) {
-    module_->Release();
-  }
-}
+WebRtcVideoCapturer::~WebRtcVideoCapturer() {}
 
 bool WebRtcVideoCapturer::Init(const Device& device) {
   RTC_DCHECK(!start_thread_);
@@ -198,14 +192,14 @@ bool WebRtcVideoCapturer::Init(const Device& device) {
   }
 
   // It is safe to change member attributes now.
-  module_->AddRef();
   SetId(device.id);
   SetSupportedFormats(supported);
 
   return true;
 }
 
-bool WebRtcVideoCapturer::Init(webrtc::VideoCaptureModule* module) {
+bool WebRtcVideoCapturer::Init(
+    const rtc::scoped_refptr<webrtc::VideoCaptureModule>& module) {
   RTC_DCHECK(!start_thread_);
   if (module_) {
     LOG(LS_ERROR) << "The capturer is already initialized";
@@ -216,7 +210,7 @@ bool WebRtcVideoCapturer::Init(webrtc::VideoCaptureModule* module) {
     return false;
   }
   // TODO(juberti): Set id and formats.
-  (module_ = module)->AddRef();
+  module_ = module;
   return true;
 }
 
@@ -262,7 +256,7 @@ void WebRtcVideoCapturer::OnSinkWantsChanged(const rtc::VideoSinkWants& wants) {
 CaptureState WebRtcVideoCapturer::Start(const VideoFormat& capture_format) {
   if (!module_) {
     LOG(LS_ERROR) << "The capturer has not been initialized";
-    return CS_NO_DEVICE;
+    return CS_FAILED;
   }
   if (start_thread_) {
     LOG(LS_ERROR) << "The capturer is already running";
@@ -284,7 +278,7 @@ CaptureState WebRtcVideoCapturer::Start(const VideoFormat& capture_format) {
     return CS_FAILED;
   }
 
-  uint32_t start = rtc::Time();
+  int64_t start = rtc::TimeMillis();
   module_->RegisterCaptureDataCallback(*this);
   if (module_->StartCapture(cap) != 0) {
     LOG(LS_ERROR) << "Camera '" << GetId() << "' failed to start";
@@ -365,7 +359,7 @@ void WebRtcVideoCapturer::OnIncomingCapturedFrame(
     // thread hop.
     // Note that Stop() can cause the async invoke call to be cancelled.
     async_invoker_->AsyncInvoke<void>(
-        start_thread_,
+        RTC_FROM_HERE, start_thread_,
         // Note that Bind captures by value, so there's an intermediate copy
         // of sample.
         rtc::Bind(&WebRtcVideoCapturer::SignalFrameCapturedOnStartThread, this,

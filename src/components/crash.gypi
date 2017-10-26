@@ -223,13 +223,6 @@
             '../third_party/kasko/kasko.gyp:kasko',
           ],
           'conditions': [
-            ['OS=="win"', {
-              'dependencies': [
-                # TODO(fdoray): Remove this once the PreRead field trial has
-                # expired. crbug.com/577698
-                '<(DEPTH)/components/components.gyp:startup_metric_utils_common',
-              ],
-            }],
             ['OS=="mac" or OS=="win"', {
               'dependencies': [
                 '../third_party/crashpad/crashpad/client/client.gyp:crashpad_client',
@@ -297,6 +290,22 @@
                 '..',
                 '../breakpad/src',
               ],
+              'all_dependent_settings': {
+                'msvs_settings': {
+                  'VCLinkerTool': {
+                    'AdditionalDependencies': [
+                      'userenv.lib',
+                    ],
+                  },
+                },
+              },
+              'msvs_settings': {
+                'VCLinkerTool': {
+                  'AdditionalDependencies': [
+                    'userenv.lib',
+                  ],
+                },
+              },
             }],
           ],
         },
@@ -372,6 +381,26 @@
                   'msvs_target_platform': 'x64',
                 },
               },
+              'conditions': [
+                ['OS=="win"', {
+                  'all_dependent_settings': {
+                    'msvs_settings': {
+                      'VCLinkerTool': {
+                        'AdditionalDependencies': [
+                          'userenv.lib',
+                        ],
+                      },
+                    },
+                  },
+                  'msvs_settings': {
+                    'VCLinkerTool': {
+                      'AdditionalDependencies': [
+                        'userenv.lib',
+                      ],
+                    },
+                  },
+                }],
+              ],
             },
             {
               # GN version: //components/crash/content/tools:crash_service
@@ -397,6 +426,7 @@
         ['OS=="mac"', {
           'targets': [
             {
+              # GN version: //components/crash/content/app:breakpad_stubs
               'target_name': 'breakpad_stubs',
               'type': 'static_library',
               'dependencies': [

@@ -7,18 +7,24 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/synchronization/lock.h"
 #include "cc/output/context_provider.h"
-#include "mojo/public/c/gles2/gles2_types.h"
+#include "components/mus/public/interfaces/command_buffer.mojom.h"
 #include "mojo/public/cpp/system/core.h"
+
+namespace shell {
+class Connector;
+}
 
 namespace mus {
 
+class GLES2Context;
+
 class ContextProvider : public cc::ContextProvider {
  public:
-  explicit ContextProvider(mojo::ScopedMessagePipeHandle command_buffer_handle);
+  explicit ContextProvider(shell::Connector* connector);
 
   // cc::ContextProvider implementation.
   bool BindToCurrentThread() override;
@@ -26,9 +32,8 @@ class ContextProvider : public cc::ContextProvider {
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
   void InvalidateGrContext(uint32_t state) override;
-  void SetupLock() override;
   base::Lock* GetLock() override;
-  Capabilities ContextCapabilities() override;
+  gpu::Capabilities ContextCapabilities() override;
   void DeleteCachedResources() override {}
   void SetLostContextCallback(
       const LostContextCallback& lost_context_callback) override {}
@@ -38,17 +43,8 @@ class ContextProvider : public cc::ContextProvider {
   ~ContextProvider() override;
 
  private:
-  static void ContextLostThunk(void* closure) {
-    static_cast<ContextProvider*>(closure)->ContextLost();
-  }
-  void ContextLost();
-
-  cc::ContextProvider::Capabilities capabilities_;
-  mojo::ScopedMessagePipeHandle command_buffer_handle_;
-  MojoGLES2Context context_;
-  scoped_ptr<gpu::gles2::GLES2Interface> context_gl_;
-
-  base::Lock context_lock_;
+  std::unique_ptr<shell::Connector> connector_;
+  std::unique_ptr<GLES2Context> context_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextProvider);
 };

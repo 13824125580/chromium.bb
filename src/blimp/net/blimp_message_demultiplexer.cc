@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/strings/stringprintf.h"
+#include "blimp/common/logging.h"
 #include "blimp/net/common.h"
 #include "net/base/net_errors.h"
 
@@ -16,21 +17,23 @@ BlimpMessageDemultiplexer::BlimpMessageDemultiplexer() {}
 
 BlimpMessageDemultiplexer::~BlimpMessageDemultiplexer() {}
 
-void BlimpMessageDemultiplexer::AddProcessor(BlimpMessage::Type type,
-                                             BlimpMessageProcessor* receiver) {
+void BlimpMessageDemultiplexer::AddProcessor(
+    BlimpMessage::FeatureCase feature_case,
+    BlimpMessageProcessor* receiver) {
   DCHECK(receiver);
-  if (feature_receiver_map_.find(type) == feature_receiver_map_.end()) {
-    feature_receiver_map_.insert(std::make_pair(type, receiver));
+  if (feature_receiver_map_.find(feature_case) == feature_receiver_map_.end()) {
+    feature_receiver_map_.insert(std::make_pair(feature_case, receiver));
   } else {
-    DLOG(FATAL) << "Handler already registered for type=" << type << ".";
+    DLOG(FATAL) << "Handler already registered for feature=" << feature_case
+                << ".";
   }
 }
 
 void BlimpMessageDemultiplexer::ProcessMessage(
-    scoped_ptr<BlimpMessage> message,
+    std::unique_ptr<BlimpMessage> message,
     const net::CompletionCallback& callback) {
   DVLOG(2) << "ProcessMessage : " << *message;
-  auto receiver_iter = feature_receiver_map_.find(message->type());
+  auto receiver_iter = feature_receiver_map_.find(message->feature_case());
   if (receiver_iter == feature_receiver_map_.end()) {
     DLOG(ERROR) << "No registered receiver for " << *message << ".";
     if (!callback.is_null()) {

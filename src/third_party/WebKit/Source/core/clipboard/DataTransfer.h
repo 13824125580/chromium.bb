@@ -32,9 +32,7 @@
 #include "platform/geometry/IntPoint.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/RefCounted.h"
-#include "wtf/RefPtr.h"
-#include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -86,9 +84,9 @@ public:
     void setDragImageResource(ImageResource*, const IntPoint&);
     void setDragImageElement(Node*, const IntPoint&);
 
-    PassOwnPtr<DragImage> createDragImage(IntPoint& dragLocation, LocalFrame*) const;
+    std::unique_ptr<DragImage> createDragImage(IntPoint& dragLocation, LocalFrame*) const;
     void declareAndWriteDragImage(Element*, const KURL&, const String& title);
-    void writeURL(const KURL&, const String&);
+    void writeURL(Node*, const KURL&, const String&);
     void writeSelection(const FrameSelection&);
 
     void setAccessPolicy(DataTransferAccessPolicy);
@@ -130,8 +128,8 @@ private:
     Member<DataObject> m_dataObject;
 
     IntPoint m_dragLoc;
-    RefPtrWillBeMember<ImageResource> m_dragImage;
-    RefPtrWillBeMember<Node> m_dragImageElement;
+    Member<ImageResource> m_dragImage;
+    Member<Node> m_dragImageElement;
 };
 
 DragOperation convertDropZoneOperationToDragOperation(const String& dragOperation);

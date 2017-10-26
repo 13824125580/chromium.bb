@@ -7,14 +7,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "build/build_config.h"
 #include "ui/events/event.h"
@@ -26,6 +27,7 @@
 #if defined(USE_X11)
 #include <X11/Xlib.h>
 #include "ui/events/test/events_test_utils_x11.h"
+#include "ui/events/x/events_x_utils.h"
 #endif
 
 #if defined(OS_WIN)
@@ -38,6 +40,41 @@ namespace {
 
 void DummyCallback(EventType, const gfx::Vector2dF&) {
 }
+
+// A proxy for TickClock that allows passing the same underlying clock
+// to multiple consumers, each retaining a unique_ptr to their own
+// instance of TickClock proxy.
+class ClonableTickClock : public base::TickClock,
+                          public base::RefCounted<ClonableTickClock> {
+ private:
+  class TickClockProxy : public base::TickClock {
+   public:
+    explicit TickClockProxy(ClonableTickClock* tick_clock)
+        : tick_clock_(tick_clock) {}
+
+   private:
+    base::TimeTicks NowTicks() override { return tick_clock_->NowTicks(); }
+
+    scoped_refptr<ClonableTickClock> tick_clock_;
+    DISALLOW_COPY_AND_ASSIGN(TickClockProxy);
+  };
+
+ public:
+  explicit ClonableTickClock(std::unique_ptr<base::TickClock> tick_clock)
+      : tick_clock_(std::move(tick_clock)) {}
+
+  base::TimeTicks NowTicks() override { return tick_clock_->NowTicks(); }
+  std::unique_ptr<TickClock> Clone() {
+    return WrapUnique(new TickClockProxy(this));
+  }
+
+ private:
+  friend class base::RefCounted<ClonableTickClock>;
+  ~ClonableTickClock() override = default;
+  std::unique_ptr<TickClock> tick_clock_;
+
+  DISALLOW_COPY_AND_ASSIGN(ClonableTickClock);
+};
 
 class TestTickClock : public base::TickClock {
  public:
@@ -54,21 +91,13 @@ class TestTickClock : public base::TickClock {
   DISALLOW_COPY_AND_ASSIGN(TestTickClock);
 };
 
-class TestKeyEvent : public ui::KeyEvent {
- public:
-  TestKeyEvent(const base::NativeEvent& native_event, int flags)
-      : KeyEvent(native_event) {
-    set_flags(flags);
-  }
-};
-
 class TestTouchEvent : public ui::TouchEvent {
  public:
   TestTouchEvent(ui::EventType type,
                  const gfx::Point& root_location,
                  int touch_id,
                  int flags,
-                 base::TimeDelta timestamp)
+                 base::TimeTicks timestamp)
       : TouchEvent(type,
                    root_location,
                    flags,
@@ -94,8 +123,7 @@ EventGenerator::EventGenerator(gfx::NativeWindow root_window)
       flags_(0),
       grab_(false),
       async_(false),
-      targeting_application_(false),
-      tick_clock_(new TestTickClock()) {
+      targeting_application_(false) {
   Init(root_window, NULL);
 }
 
@@ -106,8 +134,7 @@ EventGenerator::EventGenerator(gfx::NativeWindow root_window,
       flags_(0),
       grab_(false),
       async_(false),
-      targeting_application_(false),
-      tick_clock_(new TestTickClock()) {
+      targeting_application_(false) {
   Init(root_window, NULL);
 }
 
@@ -117,8 +144,7 @@ EventGenerator::EventGenerator(gfx::NativeWindow root_window,
       flags_(0),
       grab_(false),
       async_(false),
-      targeting_application_(false),
-      tick_clock_(new TestTickClock()) {
+      targeting_application_(false) {
   Init(root_window, window);
 }
 
@@ -128,17 +154,14 @@ EventGenerator::EventGenerator(EventGeneratorDelegate* delegate)
       flags_(0),
       grab_(false),
       async_(false),
-      targeting_application_(false),
-      tick_clock_(new TestTickClock()) {
+      targeting_application_(false) {
   Init(NULL, NULL);
 }
 
 EventGenerator::~EventGenerator() {
-  for (std::list<ui::Event*>::iterator i = pending_events_.begin();
-      i != pending_events_.end(); ++i)
-    delete *i;
   pending_events_.clear();
   delegate()->SetContext(NULL, NULL, NULL);
+  ui::SetEventTickClockForTesting(nullptr);
 }
 
 void EventGenerator::PressLeftButton() {
@@ -191,14 +214,15 @@ void EventGenerator::MoveMouseToWithNative(const gfx::Point& point_in_host,
 #if defined(USE_X11)
   ui::ScopedXI2Event xevent;
   xevent.InitMotionEvent(point_in_host, point_for_native, flags_);
-  static_cast<XEvent*>(xevent)->xmotion.time = Now().InMicroseconds();
+  static_cast<XEvent*>(xevent)->xmotion.time =
+      (Now() - base::TimeTicks()).InMilliseconds() & UINT32_MAX;
   ui::MouseEvent mouseev(xevent);
 #elif defined(USE_OZONE)
   // Ozone uses the location in native event as a system location.
   // Create a fake event with the point in host, which will be passed
   // to the non native event, then update the native event with the native
   // (root) one.
-  scoped_ptr<ui::MouseEvent> native_event(new ui::MouseEvent(
+  std::unique_ptr<ui::MouseEvent> native_event(new ui::MouseEvent(
       ui::ET_MOUSE_MOVED, point_in_host, point_in_host, Now(), flags_, 0));
   ui::MouseEvent mouseev(native_event.get());
   native_event->set_location(point_for_native);
@@ -311,8 +335,9 @@ void EventGenerator::PressMoveAndReleaseTouchToCenterOf(EventTarget* window) {
 }
 
 void EventGenerator::GestureEdgeSwipe() {
-  ui::GestureEvent gesture(
-      0, 0, 0, Now(), ui::GestureEventDetails(ui::ET_GESTURE_WIN8_EDGE_SWIPE));
+  GestureEventDetails details(ET_GESTURE_WIN8_EDGE_SWIPE);
+  details.set_device_type(GestureDeviceType::DEVICE_TOUCHSCREEN);
+  GestureEvent gesture(0, 0, 0, Now(), details);
   Dispatch(&gesture);
 }
 
@@ -369,7 +394,7 @@ void EventGenerator::GestureScrollSequenceWithCallback(
     int steps,
     const ScrollStepCallback& callback) {
   const int kTouchId = 5;
-  base::TimeDelta timestamp = Now();
+  base::TimeTicks timestamp = Now();
   ui::TouchEvent press(ui::ET_TOUCH_PRESSED, start, 0, kTouchId,
                        timestamp, 5.0f, 5.0f, 0.0f, 1.0f);
   Dispatch(&press);
@@ -429,8 +454,8 @@ void EventGenerator::GestureMultiFingerScrollWithDelays(
     points[i] = start[i];
   }
 
-  base::TimeDelta press_time_first = Now();
-  base::TimeDelta press_time[kMaxTouchPoints];
+  base::TimeTicks press_time_first = Now();
+  base::TimeTicks press_time[kMaxTouchPoints];
   bool pressed[kMaxTouchPoints];
   for (int i = 0; i < count; ++i) {
     pressed[i] = false;
@@ -440,7 +465,8 @@ void EventGenerator::GestureMultiFingerScrollWithDelays(
 
   int last_id = 0;
   for (int step = 0; step < steps; ++step) {
-    base::TimeDelta move_time = press_time_first +
+    base::TimeTicks move_time =
+        press_time_first +
         base::TimeDelta::FromMilliseconds(event_separation_time_ms * step);
 
     while (last_id < count &&
@@ -464,7 +490,8 @@ void EventGenerator::GestureMultiFingerScrollWithDelays(
     }
   }
 
-  base::TimeDelta release_time = press_time_first +
+  base::TimeTicks release_time =
+      press_time_first +
       base::TimeDelta::FromMilliseconds(event_separation_time_ms * steps);
   for (int i = 0; i < last_id; ++i) {
     ui::TouchEvent release(
@@ -479,7 +506,7 @@ void EventGenerator::ScrollSequence(const gfx::Point& start,
                                     float y_offset,
                                     int steps,
                                     int num_fingers) {
-  base::TimeDelta timestamp = Now();
+  base::TimeTicks timestamp = Now();
   ui::ScrollEvent fling_cancel(ui::ET_SCROLL_FLING_CANCEL,
                                start,
                                timestamp,
@@ -518,7 +545,7 @@ void EventGenerator::ScrollSequence(const gfx::Point& start,
                                     const std::vector<gfx::PointF>& offsets,
                                     int num_fingers) {
   size_t steps = offsets.size();
-  base::TimeDelta timestamp = Now();
+  base::TimeTicks timestamp = Now();
   ui::ScrollEvent fling_cancel(ui::ET_SCROLL_FLING_CANCEL,
                                start,
                                timestamp,
@@ -562,19 +589,24 @@ void EventGenerator::Dispatch(ui::Event* event) {
   DoDispatchEvent(event, async_);
 }
 
-void EventGenerator::SetTickClock(scoped_ptr<base::TickClock> tick_clock) {
-  tick_clock_ = std::move(tick_clock);
+void EventGenerator::SetTickClock(std::unique_ptr<base::TickClock> tick_clock) {
+  scoped_refptr<ClonableTickClock> clonable =
+      new ClonableTickClock(std::move(tick_clock));
+  ui::SetEventTickClockForTesting(clonable->Clone());
+  tick_clock_ = clonable->Clone();
 }
 
-base::TimeDelta EventGenerator::Now() {
+base::TimeTicks EventGenerator::Now() {
   // This is the same as what EventTimeForNow() does, but here we do it
   // with a tick clock that can be replaced with a simulated clock for tests.
-  return base::TimeDelta::FromInternalValue(
-      tick_clock_->NowTicks().ToInternalValue());
+  // TODO(majidvp): The tick clock used by |ui::EventTimeForNow()| is now
+  // mockable so we no longer need this.
+  return tick_clock_->NowTicks();
 }
 
 void EventGenerator::Init(gfx::NativeWindow root_window,
                           gfx::NativeWindow window_context) {
+  SetTickClock(WrapUnique(new TestTickClock()));
   delegate()->SetContext(this, root_window, window_context);
   if (window_context)
     current_location_ = delegate()->CenterOfWindow(window_context);
@@ -590,7 +622,7 @@ void EventGenerator::DispatchKeyEvent(bool is_press,
       ui::UsLayoutKeyboardCodeToDomCode(key_code), flags);
   if (is_press && character) {
     MSG native_event = { NULL, WM_KEYDOWN, key_code, 0 };
-    TestKeyEvent keyev(native_event, flags);
+    ui::KeyEvent keyev(native_event, flags);
     Dispatch(&keyev);
     // On Windows, WM_KEYDOWN event is followed by WM_CHAR with a character
     // if the key event cooresponds to a real character.
@@ -599,14 +631,15 @@ void EventGenerator::DispatchKeyEvent(bool is_press,
   }
   MSG native_event =
       { NULL, (is_press ? key_press : WM_KEYUP), key_code, 0 };
-  native_event.time = Now().InMicroseconds();
-  TestKeyEvent keyev(native_event, flags);
+  native_event.time = (Now() - base::TimeTicks()).InMicroseconds();
+  ui::KeyEvent keyev(native_event, flags);
 #elif defined(USE_X11)
   ui::ScopedXI2Event xevent;
   xevent.InitKeyEvent(is_press ? ui::ET_KEY_PRESSED : ui::ET_KEY_RELEASED,
                       key_code,
                       flags);
-  static_cast<XEvent*>(xevent)->xkey.time = Now().InMicroseconds();
+  static_cast<XEvent*>(xevent)->xkey.time =
+      (Now() - base::TimeTicks()).InMilliseconds() & UINT32_MAX;
   ui::KeyEvent keyev(xevent);
 #else
   ui::EventType type = is_press ? ui::ET_KEY_PRESSED : ui::ET_KEY_RELEASED;
@@ -653,32 +686,17 @@ gfx::Point EventGenerator::CenterOfWindow(const EventTarget* window) const {
 
 void EventGenerator::DoDispatchEvent(ui::Event* event, bool async) {
   if (async) {
-    ui::Event* pending_event;
-    if (event->IsKeyEvent()) {
-      pending_event = new ui::KeyEvent(*static_cast<ui::KeyEvent*>(event));
-    } else if (event->IsMouseEvent()) {
-      pending_event = new ui::MouseEvent(*static_cast<ui::MouseEvent*>(event));
-    } else if (event->IsTouchEvent()) {
-      pending_event = new ui::TouchEvent(*static_cast<ui::TouchEvent*>(event));
-    } else if (event->IsScrollEvent()) {
-      pending_event =
-          new ui::ScrollEvent(*static_cast<ui::ScrollEvent*>(event));
-    } else {
-      NOTREACHED() << "Invalid event type";
-      return;
-    }
+    std::unique_ptr<ui::Event> pending_event = ui::Event::Clone(*event);
     if (pending_events_.empty()) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
           base::Bind(&EventGenerator::DispatchNextPendingEvent,
                      base::Unretained(this)));
     }
-    pending_events_.push_back(pending_event);
+    pending_events_.push_back(std::move(pending_event));
   } else {
-    if (event->IsKeyEvent()) {
-      delegate()->DispatchKeyEventToIME(current_target_,
-                                        static_cast<ui::KeyEvent*>(event));
-    }
+    if (event->IsKeyEvent())
+      delegate()->DispatchKeyEventToIME(current_target_, event->AsKeyEvent());
     if (!event->handled()) {
       ui::EventSource* event_source =
           delegate()->GetEventSource(current_target_);
@@ -692,10 +710,9 @@ void EventGenerator::DoDispatchEvent(ui::Event* event, bool async) {
 
 void EventGenerator::DispatchNextPendingEvent() {
   DCHECK(!pending_events_.empty());
-  ui::Event* event = pending_events_.front();
+  ui::Event* event = pending_events_.front().get();
   DoDispatchEvent(event, false);
   pending_events_.pop_front();
-  delete event;
   if (!pending_events_.empty()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,

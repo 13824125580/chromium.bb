@@ -140,7 +140,16 @@ void BBWindowHooks::addMarker(Range* range, long markerType)
 
 }
 
-PassRefPtrWillBeRawPtr<Range> BBWindowHooks::findPlainText(Range* range, const String& target, long options)
+void BBWindowHooks::addHighlightMarker(Range* range, long foregroundColor, long backgroundColor)
+{
+    range->ownerDocument().markers().addHighlightMarker(
+        range->startPosition(),
+        range->endPosition(),
+        Color(foregroundColor),
+        Color(backgroundColor).blendWithWhite());
+}
+
+Range* BBWindowHooks::findPlainText(Range* range, const String& target, long options)
 {
     EphemeralRange result = blink::findPlainText(EphemeralRange(range), target, options);
     return Range::create(result.document(), result.startPosition(), result.endPosition());
@@ -152,14 +161,14 @@ bool BBWindowHooks::checkSpellingForNode(Node* node)
         return false;
     }
 
-    RefPtrWillBeRawPtr<Element> e = toElement(node);
+    Element* e = toElement(node);
 
     if (e && e->isSpellCheckingEnabled()) {
         LocalFrame *frame = e->document().frame();
         if (frame) {
             VisibleSelection s(
-                firstPositionInOrBeforeNode(e.get()),
-                lastPositionInOrAfterNode(e.get()));
+                firstPositionInOrBeforeNode(e),
+                lastPositionInOrAfterNode(e));
             if (frame->settings() && !frame->settings()->asynchronousSpellCheckingEnabled()) {
                 frame->spellChecker().clearMisspellingsAndBadGrammar(s);
             }

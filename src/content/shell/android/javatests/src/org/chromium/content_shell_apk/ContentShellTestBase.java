@@ -32,7 +32,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.lang.reflect.Method;
+import java.lang.reflect.AnnotatedElement;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -74,8 +74,9 @@ public class ContentShellTestBase
      * Starts the content shell activity with the provided test url.
      * The url is synchronously loaded.
      * @param url Test url to load.
+     * @throws InterruptedException
      */
-    protected void startActivityWithTestUrl(String url) throws Throwable {
+    protected void startActivityWithTestUrl(String url) throws InterruptedException {
         launchContentShellWithUrl(UrlUtils.getIsolatedTestFileUrl(url));
         assertNotNull(getActivity());
         waitForActiveShellToBeDoneLoading();
@@ -108,7 +109,7 @@ public class ContentShellTestBase
         final ContentShellActivity activity = getActivity();
 
         // Wait for the Content Shell to be initialized.
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 Shell shell = activity.getActiveShell();
@@ -120,12 +121,12 @@ public class ContentShellTestBase
                     updateFailureReason("Shell is null.");
                     return false;
                 }
-                if (shell.isLoading()) {
-                    updateFailureReason("Shell is still loading.");
-                    return false;
-                }
                 if (TextUtils.isEmpty(shell.getContentViewCore().getWebContents().getUrl())) {
                     updateFailureReason("Shell's URL is empty or null.");
+                    return false;
+                }
+                if (!shell.getContentViewCore().getWebContents().isReady()) {
+                    updateFailureReason("Shell's view is not ready.");
                     return false;
                 }
                 return true;
@@ -198,14 +199,15 @@ public class ContentShellTestBase
      * Waits till the ContentViewCore receives the expected page scale factor
      * from the compositor and asserts that this happens.
      */
-    protected void assertWaitForPageScaleFactorMatch(final float expectedScale)
+    protected void assertWaitForPageScaleFactorMatch(float expectedScale)
             throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return getContentViewCore().getScale() == expectedScale;
-            }
-        });
+        CriteriaHelper.pollInstrumentationThread(
+                Criteria.equals(expectedScale, new Callable<Float>() {
+                    @Override
+                    public Float call() {
+                        return getContentViewCore().getScale();
+                    }
+                }));
     }
 
     /**
@@ -230,7 +232,7 @@ public class ContentShellTestBase
     protected void runTest() throws Throwable {
         super.runTest();
         try {
-            Method method = getClass().getMethod(getName(), (Class[]) null);
+            AnnotatedElement method = getClass().getMethod(getName(), (Class[]) null);
             if (method.isAnnotationPresent(RerunWithUpdatedContainerView.class)) {
                 replaceContainerView();
                 super.runTest();

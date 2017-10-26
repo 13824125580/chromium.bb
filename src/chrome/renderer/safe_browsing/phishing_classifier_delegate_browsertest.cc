@@ -4,7 +4,8 @@
 
 #include "chrome/renderer/safe_browsing/phishing_classifier_delegate.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
 #include "chrome/common/safe_browsing/safebrowsing_messages.h"
@@ -80,7 +81,7 @@ class FakeRenderThread : public ChromeMockRenderThread {
     if (verdict.ParseFromString(verdict_str)) {
       EXPECT_EQ("http://host.com/", verdict.url());
       EXPECT_EQ(0.8f, verdict.client_score());
-      EXPECT_EQ(false, verdict.is_phishing());
+      EXPECT_FALSE(verdict.is_phishing());
     } else {
       NOTREACHED() << "Cannot parse IPC content. Test failed.";
     }
@@ -185,7 +186,7 @@ TEST_F(PhishingClassifierDelegateTest, Navigation) {
   // Navigating within page works similarly to a subframe navigation, but
   // see the TODO in PhishingClassifierDelegate::DidCommitProvisionalLoad.
   EXPECT_CALL(*classifier_, CancelPendingClassification());
-  DidNavigateWithinPage(GetMainFrame(), true);
+  DidNavigateWithinPage(GetMainFrame(), true, true);
   Mock::VerifyAndClearExpectations(classifier_);
 
   OnStartPhishingDetection(url);
@@ -250,7 +251,7 @@ TEST_F(PhishingClassifierDelegateTest, Navigation) {
 
   EXPECT_CALL(*classifier_, CancelPendingClassification());
   // In-page navigation.
-  DidNavigateWithinPage(GetMainFrame(), true);
+  DidNavigateWithinPage(GetMainFrame(), true, true);
   Mock::VerifyAndClearExpectations(classifier_);
 
   OnStartPhishingDetection(url);

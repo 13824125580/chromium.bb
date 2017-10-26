@@ -19,6 +19,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_view_state.h"
 #include "ui/base/default_style.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
@@ -191,8 +192,16 @@ void Label::SetHandlesTooltips(bool enabled) {
   handles_tooltips_ = enabled;
 }
 
-void Label::SizeToFit(int max_width) {
+void Label::SizeToFit(int fixed_width) {
   DCHECK(multi_line());
+  DCHECK_EQ(0, max_width_);
+  fixed_width_ = fixed_width;
+  SizeToPreferredSize();
+}
+
+void Label::SetMaximumWidth(int max_width) {
+  DCHECK(multi_line());
+  DCHECK_EQ(0, fixed_width_);
   max_width_ = max_width;
   SizeToPreferredSize();
 }
@@ -213,7 +222,7 @@ base::string16 Label::GetDisplayTextForTesting() {
 
 gfx::Insets Label::GetInsets() const {
   gfx::Insets insets = View::GetInsets();
-  if (focusable()) {
+  if (focus_behavior() != FocusBehavior::NEVER) {
     insets += gfx::Insets(kFocusBorderPadding, kFocusBorderPadding,
                           kFocusBorderPadding, kFocusBorderPadding);
   }
@@ -233,12 +242,16 @@ gfx::Size Label::GetPreferredSize() const {
   if (!visible() && collapse_when_hidden_)
     return gfx::Size();
 
-  if (multi_line() && max_width_ != 0 && !text().empty())
-    return gfx::Size(max_width_, GetHeightForWidth(max_width_));
+  if (multi_line() && fixed_width_ != 0 && !text().empty())
+    return gfx::Size(fixed_width_, GetHeightForWidth(fixed_width_));
 
   gfx::Size size(GetTextSize());
   const gfx::Insets insets = GetInsets();
   size.Enlarge(insets.width(), insets.height());
+
+  if (multi_line() && max_width_ != 0 && max_width_ < size.width())
+    return gfx::Size(max_width_, GetHeightForWidth(max_width_));
+
   return size;
 }
 
@@ -332,15 +345,16 @@ bool Label::GetTooltipText(const gfx::Point& p, base::string16* tooltip) const {
 }
 
 void Label::OnEnabledChanged() {
-  RecalculateColors();
+  ApplyTextColors();
+  View::OnEnabledChanged();
 }
 
-scoped_ptr<gfx::RenderText> Label::CreateRenderText(
+std::unique_ptr<gfx::RenderText> Label::CreateRenderText(
     const base::string16& text,
     gfx::HorizontalAlignment alignment,
     gfx::DirectionalityMode directionality,
     gfx::ElideBehavior elide_behavior) {
-  scoped_ptr<gfx::RenderText> render_text(
+  std::unique_ptr<gfx::RenderText> render_text(
       render_text_->CreateInstanceOfSameType());
   render_text->SetHorizontalAlignment(alignment);
   render_text->SetDirectionalityMode(directionality);
@@ -378,7 +392,7 @@ void Label::OnPaint(gfx::Canvas* canvas) {
   } else {
     PaintText(canvas);
   }
-  if (HasFocus())
+  if (HasFocus() && !ui::MaterialDesignController::IsSecondaryUiMaterial())
     canvas->DrawFocusRect(GetFocusBounds());
 }
 
@@ -418,6 +432,7 @@ void Label::Init(const base::string16& text, const gfx::FontList& font_list) {
   UpdateColorsFromTheme(GetNativeTheme());
   handles_tooltips_ = true;
   collapse_when_hidden_ = false;
+  fixed_width_ = 0;
   max_width_ = 0;
   is_first_paint_text_ = true;
   SetText(text);
@@ -435,7 +450,7 @@ void Label::MaybeBuildRenderTextLines() {
     return;
 
   gfx::Rect rect = GetContentsBounds();
-  if (focusable())
+  if (focus_behavior() != FocusBehavior::NEVER)
     rect.Inset(kFocusBorderPadding, kFocusBorderPadding);
   if (rect.IsEmpty())
     return;
@@ -458,7 +473,7 @@ void Label::MaybeBuildRenderTextLines() {
   gfx::ElideBehavior elide_behavior =
       multi_line() ? gfx::NO_ELIDE : elide_behavior_;
   if (!multi_line() || render_text_->MultilineSupported()) {
-    scoped_ptr<gfx::RenderText> render_text =
+    std::unique_ptr<gfx::RenderText> render_text =
         CreateRenderText(text(), alignment, directionality, elide_behavior);
     render_text->SetDisplayRect(rect);
     render_text->SetMultiline(multi_line());
@@ -471,7 +486,7 @@ void Label::MaybeBuildRenderTextLines() {
 
     const int bottom = GetContentsBounds().bottom();
     for (size_t i = 0; i < lines.size() && rect.y() <= bottom; ++i) {
-      scoped_ptr<gfx::RenderText> line =
+      std::unique_ptr<gfx::RenderText> line =
           CreateRenderText(lines[i], alignment, directionality, elide_behavior);
       line->SetDisplayRect(rect);
       lines_.push_back(std::move(line));
@@ -481,7 +496,7 @@ void Label::MaybeBuildRenderTextLines() {
     for (size_t i = lines_.size(); i < lines.size(); ++i)
       lines_.back()->SetText(lines_.back()->text() + lines[i]);
   }
-  RecalculateColors();
+  ApplyTextColors();
 }
 
 gfx::Rect Label::GetFocusBounds() {
@@ -535,7 +550,8 @@ gfx::Size Label::GetTextSize() const {
   } else {
     // Get the natural text size, unelided and only wrapped on newlines.
     std::vector<base::string16> lines = GetLinesForWidth(width());
-    scoped_ptr<gfx::RenderText> render_text(gfx::RenderText::CreateInstance());
+    std::unique_ptr<gfx::RenderText> render_text(
+        gfx::RenderText::CreateInstance());
     render_text->SetFontList(font_list());
     for (size_t i = 0; i < lines.size(); ++i) {
       render_text->SetText(lines[i]);
@@ -559,6 +575,11 @@ void Label::RecalculateColors() {
                                     background_color_) :
       requested_disabled_color_;
 
+  ApplyTextColors();
+  SchedulePaint();
+}
+
+void Label::ApplyTextColors() {
   SkColor color = enabled() ? actual_enabled_color_ : actual_disabled_color_;
   bool subpixel_rendering_suppressed =
       SkColorGetA(background_color_) != 0xFF || !subpixel_rendering_enabled_;
@@ -566,7 +587,6 @@ void Label::RecalculateColors() {
     lines_[i]->SetColor(color);
     lines_[i]->set_subpixel_rendering_suppressed(subpixel_rendering_suppressed);
   }
-  SchedulePaint();
 }
 
 void Label::UpdateColorsFromTheme(const ui::NativeTheme* theme) {

@@ -6,6 +6,7 @@
 
 #include "base/android/jni_string.h"
 #include "blimp/client/app/android/blimp_client_session_android.h"
+#include "components/url_formatter/url_fixer.h"
 #include "jni/Toolbar_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/android/java_bitmap.h"
@@ -56,8 +57,14 @@ void Toolbar::Destroy(JNIEnv* env, const JavaParamRef<jobject>& jobj) {
 void Toolbar::OnUrlTextEntered(JNIEnv* env,
                                const JavaParamRef<jobject>& jobj,
                                const JavaParamRef<jstring>& text) {
-  navigation_feature_->NavigateToUrlText(
-      kDummyTabId, base::android::ConvertJavaStringToUTF8(env, text));
+  std::string url = base::android::ConvertJavaStringToUTF8(env, text);
+
+  // Build a search query, if |url| doesn't have a '.' anywhere.
+  if (url.find(".") == std::string::npos)
+    url = "http://www.google.com/search?q=" + url;
+
+  GURL fixed_url = url_formatter::FixupURL(url, std::string());
+  navigation_feature_->NavigateToUrlText(kDummyTabId, fixed_url.spec());
 }
 
 void Toolbar::OnReloadPressed(JNIEnv* env, const JavaParamRef<jobject>& jobj) {
@@ -106,6 +113,15 @@ void Toolbar::OnLoadingChanged(int tab_id, bool loading) {
   Java_Toolbar_onEngineSentLoading(env,
                                    java_obj_.obj(),
                                    static_cast<jboolean>(loading));
+}
+
+void Toolbar::OnPageLoadStatusUpdate(int tab_id, bool completed) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+
+  Java_Toolbar_onEngineSentPageLoadStatusUpdate(
+      env,
+      java_obj_.obj(),
+      static_cast<jboolean>(completed));
 }
 
 }  // namespace client

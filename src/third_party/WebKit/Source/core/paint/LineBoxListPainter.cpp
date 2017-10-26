@@ -5,12 +5,10 @@
 #include "core/paint/LineBoxListPainter.h"
 
 #include "core/layout/LayoutBoxModelObject.h"
-#include "core/layout/LayoutInline.h"
 #include "core/layout/api/LineLayoutBoxModel.h"
 #include "core/layout/line/InlineFlowBox.h"
 #include "core/layout/line/LineBoxList.h"
 #include "core/layout/line/RootInlineBox.h"
-#include "core/paint/InlinePainter.h"
 #include "core/paint/ObjectPainter.h"
 #include "core/paint/PaintInfo.h"
 #include "platform/graphics/paint/PaintController.h"
@@ -62,6 +60,8 @@ void LineBoxListPainter::paint(const LayoutBoxModelObject& layoutObject, const P
 
 static void invalidateLineBoxPaintOffsetsInternal(PaintController& paintController, InlineFlowBox* inlineBox)
 {
+#if 0
+    // TODO(wangxianzhu): Implement this with PaintInvalidator.
     paintController.invalidatePaintOffset(*inlineBox);
     for (InlineBox* child = inlineBox->firstChild(); child; child = child->nextOnLine()) {
         if (!child->getLineLayoutItem().isText() && child->boxModelObject().hasSelfPaintingLayer())
@@ -71,11 +71,12 @@ static void invalidateLineBoxPaintOffsetsInternal(PaintController& paintControll
         else
             paintController.invalidatePaintOffset(*child);
     }
+#endif
 }
 
 void LineBoxListPainter::invalidateLineBoxPaintOffsets(const PaintInfo& paintInfo) const
 {
-    PaintController& paintController = paintInfo.context.paintController();
+    PaintController& paintController = paintInfo.context.getPaintController();
     for (InlineFlowBox* curr = m_lineBoxList.firstLineBox(); curr; curr = curr->nextLineBox())
         invalidateLineBoxPaintOffsetsInternal(paintController, curr);
 }

@@ -213,7 +213,7 @@ void my_uint64tos(char* output, uint64_t i, unsigned i_len) {
 
 #if !defined(OS_CHROMEOS)
 bool my_isxdigit(char c) {
-  return (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f');
+  return base::IsAsciiDigit(c) || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f');
 }
 #endif
 
@@ -603,8 +603,6 @@ bool FinalizeCrashDoneAndroid(bool is_browser_process) {
                       android_build_info->package_version_name());
   __android_log_write(ANDROID_LOG_WARN, kGoogleBreakpad,
                       android_build_info->package_version_code());
-  __android_log_write(ANDROID_LOG_WARN, kGoogleBreakpad,
-                      CHROME_BUILD_ID);
   AndroidLogWriteHorizontalRule();
 
   if (!is_browser_process &&
@@ -1596,6 +1594,7 @@ void HandleCrashDump(const BreakpadInfo& info) {
     static const char android_build_id[] = "android_build_id";
     static const char android_build_fp[] = "android_build_fp";
     static const char device[] = "device";
+    static const char gms_core_version[] = "gms_core_version";
     static const char model[] = "model";
     static const char brand[] = "brand";
     static const char exception_info[] = "exception_info";
@@ -1613,6 +1612,9 @@ void HandleCrashDump(const BreakpadInfo& info) {
     writer.AddPairString(model, android_build_info->model());
     writer.AddBoundary();
     writer.AddPairString(brand, android_build_info->brand());
+    writer.AddBoundary();
+    writer.AddPairString(gms_core_version,
+        android_build_info->gms_version_code());
     writer.AddBoundary();
     if (android_build_info->java_exception_info() != nullptr) {
       writer.AddPairString(exception_info,

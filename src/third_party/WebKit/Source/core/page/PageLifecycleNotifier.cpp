@@ -32,44 +32,16 @@ namespace blink {
 
 void PageLifecycleNotifier::notifyPageVisibilityChanged()
 {
-    TemporaryChange<IterationType> scope(m_iterating, IteratingOverAll);
-#if !ENABLE(OILPAN)
-    // Notifications perform unknown amounts of heap allocations,
-    // which might trigger (conservative) GCs. This will flush out
-    // dead observers, causing the _non-heap_ set be updated. Snapshot
-    // the observers and explicitly check if they're still alive before
-    // notifying.
-    Vector<RawPtr<PageLifecycleObserver>> snapshotOfObservers;
-    copyToVector(m_observers, snapshotOfObservers);
-    for (PageLifecycleObserver* observer : snapshotOfObservers) {
-        if (m_observers.contains(observer))
-            observer->pageVisibilityChanged();
-    }
-#else
+    TemporaryChange<IterationState> scope(m_iterationState, AllowingNone);
     for (PageLifecycleObserver* observer : m_observers)
         observer->pageVisibilityChanged();
-#endif
 }
 
 void PageLifecycleNotifier::notifyDidCommitLoad(LocalFrame* frame)
 {
-    TemporaryChange<IterationType> scope(m_iterating, IteratingOverAll);
-#if !ENABLE(OILPAN)
-    // Notifications perform unknown amounts of heap allocations,
-    // which might trigger (conservative) GCs. This will flush out
-    // dead observers, causing the _non-heap_ set be updated. Snapshot
-    // the observers and explicitly check if they're still alive before
-    // notifying.
-    Vector<RawPtr<PageLifecycleObserver>> snapshotOfObservers;
-    copyToVector(m_observers, snapshotOfObservers);
-    for (PageLifecycleObserver* observer : snapshotOfObservers) {
-        if (m_observers.contains(observer))
-            observer->didCommitLoad(frame);
-    }
-#else
+    TemporaryChange<IterationState> scope(m_iterationState, AllowingNone);
     for (PageLifecycleObserver* observer : m_observers)
         observer->didCommitLoad(frame);
-#endif
 }
 
 } // namespace blink

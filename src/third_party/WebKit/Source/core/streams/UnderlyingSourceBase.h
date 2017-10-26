@@ -5,6 +5,7 @@
 #ifndef UnderlyingSourceBase_h
 #define UnderlyingSourceBase_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
@@ -18,9 +19,9 @@ namespace blink {
 
 class ReadableStreamController;
 
-class CORE_EXPORT UnderlyingSourceBase : public GarbageCollectedFinalized<UnderlyingSourceBase>, public ScriptWrappable, public ActiveDOMObject {
+class CORE_EXPORT UnderlyingSourceBase : public GarbageCollectedFinalized<UnderlyingSourceBase>, public ScriptWrappable, public ActiveScriptWrappable, public ActiveDOMObject {
     DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(UnderlyingSourceBase);
+    USING_GARBAGE_COLLECTED_MIXIN(UnderlyingSourceBase);
 
 public:
     DECLARE_VIRTUAL_TRACE();
@@ -34,13 +35,19 @@ public:
     ScriptPromise cancelWrapper(ScriptState*, ScriptValue reason);
     virtual ScriptPromise cancel(ScriptState*, ScriptValue reason);
 
+    void notifyLockAcquired();
+    void notifyLockReleased();
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const;
+
     // ActiveDOMObject
-    bool hasPendingActivity() const override;
     void stop() override;
 
 protected:
     explicit UnderlyingSourceBase(ScriptState* scriptState)
-        : ActiveDOMObject(scriptState->executionContext())
+        : ActiveScriptWrappable(this)
+        , ActiveDOMObject(scriptState->getExecutionContext())
     {
         this->suspendIfNeeded();
     }
@@ -49,6 +56,7 @@ protected:
 
 private:
     Member<ReadableStreamController> m_controller;
+    bool m_isStreamLocked = false;
 };
 
 } // namespace blink

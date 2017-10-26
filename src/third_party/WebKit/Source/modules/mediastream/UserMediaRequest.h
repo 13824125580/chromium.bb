@@ -32,7 +32,6 @@
 #define UserMediaRequest_h
 
 #include "core/dom/ActiveDOMObject.h"
-#include "core/frame/OriginsUsingFeatures.h"
 #include "modules/ModulesExport.h"
 #include "modules/mediastream/NavigatorUserMediaErrorCallback.h"
 #include "modules/mediastream/NavigatorUserMediaSuccessCallback.h"
@@ -50,9 +49,10 @@ class MediaStreamDescriptor;
 class UserMediaController;
 
 class MODULES_EXPORT UserMediaRequest final : public GarbageCollectedFinalized<UserMediaRequest>, public ContextLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(UserMediaRequest);
+    USING_GARBAGE_COLLECTED_MIXIN(UserMediaRequest);
 public:
     static UserMediaRequest* create(ExecutionContext*, UserMediaController*, const MediaStreamConstraints& options, NavigatorUserMediaSuccessCallback*, NavigatorUserMediaErrorCallback*, MediaErrorState&);
+    static UserMediaRequest* createForTesting(const WebMediaConstraints& audio, const WebMediaConstraints& video);
     virtual ~UserMediaRequest();
 
     NavigatorUserMediaSuccessCallback* successCallback() const { return m_successCallback.get(); }
@@ -86,7 +86,7 @@ private:
     WebMediaConstraints m_audio;
     WebMediaConstraints m_video;
 
-    RawPtrWillBeMember<UserMediaController> m_controller;
+    Member<UserMediaController> m_controller;
 
     Member<NavigatorUserMediaSuccessCallback> m_successCallback;
     Member<NavigatorUserMediaErrorCallback> m_errorCallback;

@@ -8,11 +8,11 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -319,13 +319,12 @@ TemplateURL* TemplateURLParsingContext::GetTemplateURL(
   // Generate a keyword for this search engine if a custom one was not present
   // in the imported data.
   if (!has_custom_keyword_)
-    data_.SetKeyword(TemplateURL::GenerateKeyword(
-        search_url, search_terms_data.GetAcceptLanguages()));
+    data_.SetKeyword(TemplateURL::GenerateKeyword(search_url));
 
   data_.show_in_default_list = show_in_default_list;
 
   // Bail if the search URL is empty or if either TemplateURLRef is invalid.
-  scoped_ptr<TemplateURL> template_url(new TemplateURL(data_));
+  std::unique_ptr<TemplateURL> template_url(new TemplateURL(data_));
   if (template_url->url().empty() ||
       !template_url->url_ref().IsValid(search_terms_data) ||
       (!template_url->suggestions_url().empty() &&

@@ -5,6 +5,8 @@
 #ifndef ASH_FRAME_CAPTION_BUTTONS_FRAME_SIZE_BUTTON_H_
 #define ASH_FRAME_CAPTION_BUTTONS_FRAME_SIZE_BUTTON_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "ash/frame/caption_buttons/frame_caption_button.h"
 #include "ash/frame/caption_buttons/frame_size_button_delegate.h"
@@ -49,11 +51,7 @@ class ASH_EXPORT FrameSizeButton : public FrameCaptionButton {
   }
 
  private:
-  enum SnapType {
-    SNAP_LEFT,
-    SNAP_RIGHT,
-    SNAP_NONE
-  };
+  enum SnapType { SNAP_LEFT, SNAP_RIGHT, SNAP_NONE };
 
   // Starts |set_buttons_to_snap_mode_timer_|.
   void StartSetButtonsToSnapModeTimer(const ui::LocatedEvent& event);
@@ -112,7 +110,7 @@ class ASH_EXPORT FrameSizeButton : public FrameCaptionButton {
   // Displays a preview of how the window's bounds will change as a result of
   // snapping the window left or right. The preview is only visible if the snap
   // left or snap right button is pressed.
-  scoped_ptr<PhantomWindowController> phantom_window_controller_;
+  std::unique_ptr<PhantomWindowController> phantom_window_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameSizeButton);
 };

@@ -7,7 +7,7 @@
 #include "base/command_line.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/base/switches.h"
 #include "cc/output/compositor_frame_metadata.h"
 #include "cc/output/copy_output_request.h"
@@ -16,8 +16,9 @@
 #include "cc/output/output_surface_client.h"
 #include "cc/output/software_renderer.h"
 #include "cc/output/texture_mailbox_deleter.h"
-#include "cc/raster/tile_task_worker_pool.h"
+#include "cc/raster/raster_buffer_provider.h"
 #include "cc/resources/resource_provider.h"
+#include "cc/scheduler/begin_frame_source.h"
 #include "cc/test/fake_output_surface_client.h"
 #include "cc/test/paths.h"
 #include "cc/test/pixel_test_output_surface.h"
@@ -65,10 +66,9 @@ bool PixelTest::RunPixelTestWithReadbackTargetAndArea(
     const gfx::Rect* copy_rect) {
   base::RunLoop run_loop;
 
-  scoped_ptr<CopyOutputRequest> request =
+  std::unique_ptr<CopyOutputRequest> request =
       CopyOutputRequest::CreateBitmapRequest(
-          base::Bind(&PixelTest::ReadbackResult,
-                     base::Unretained(this),
+          base::Bind(&PixelTest::ReadbackResult, base::Unretained(this),
                      run_loop.QuitClosure()));
   if (copy_rect)
     request->set_area(*copy_rect);
@@ -81,10 +81,8 @@ bool PixelTest::RunPixelTestWithReadbackTargetAndArea(
                                    ? device_viewport_rect
                                    : external_device_clip_rect_;
   renderer_->DecideRenderPassAllocationsForFrame(*pass_list);
-  renderer_->DrawFrame(pass_list,
-                       device_scale_factor,
-                       device_viewport_rect,
-                       device_clip_rect,
+  renderer_->DrawFrame(pass_list, device_scale_factor, gfx::ColorSpace(),
+                       device_viewport_rect, device_clip_rect,
                        disable_picture_quad_image_filtering_);
 
   // Wait for the readback to complete.
@@ -96,7 +94,7 @@ bool PixelTest::RunPixelTestWithReadbackTargetAndArea(
 }
 
 void PixelTest::ReadbackResult(base::Closure quit_run_loop,
-                               scoped_ptr<CopyOutputResult> result) {
+                               std::unique_ptr<CopyOutputResult> result) {
   ASSERT_TRUE(result->HasBitmap());
   result_bitmap_ = result->TakeBitmap();
   quit_run_loop.Run();
@@ -122,22 +120,26 @@ bool PixelTest::PixelsMatchReference(const base::FilePath& ref_file,
 
 void PixelTest::SetUpGLRenderer(bool use_skia_gpu_backend,
                                 bool flipped_output_surface) {
-  enable_pixel_output_.reset(new gfx::DisableNullDrawGLBindings);
+  enable_pixel_output_.reset(new gl::DisableNullDrawGLBindings);
 
+  scoped_refptr<TestInProcessContextProvider> compositor(
+      new TestInProcessContextProvider(nullptr));
+  scoped_refptr<TestInProcessContextProvider> worker(
+      new TestInProcessContextProvider(compositor.get()));
   output_surface_.reset(new PixelTestOutputSurface(
-      new TestInProcessContextProvider, new TestInProcessContextProvider,
-      flipped_output_surface));
+      std::move(compositor), std::move(worker), flipped_output_surface));
   output_surface_->BindToClient(output_surface_client_.get());
 
   shared_bitmap_manager_.reset(new TestSharedBitmapManager);
   gpu_memory_buffer_manager_.reset(new TestGpuMemoryBufferManager);
-  resource_provider_ = ResourceProvider::Create(
-      output_surface_.get(), shared_bitmap_manager_.get(),
+  resource_provider_ = base::MakeUnique<ResourceProvider>(
+      output_surface_->context_provider(), shared_bitmap_manager_.get(),
       gpu_memory_buffer_manager_.get(), main_thread_task_runner_.get(), 0, 1,
+      output_surface_->capabilities().delegated_sync_points_required,
       settings_.renderer_settings.use_gpu_memory_buffer_resources,
       settings_.use_image_texture_targets);
 
-  texture_mailbox_deleter_ = make_scoped_ptr(
+  texture_mailbox_deleter_ = base::WrapUnique(
       new TextureMailboxDeleter(base::ThreadTaskRunnerHandle::Get()));
 
   renderer_ = GLRenderer::Create(
@@ -169,18 +171,20 @@ void PixelTest::EnableExternalStencilTest() {
 }
 
 void PixelTest::SetUpSoftwareRenderer() {
-  scoped_ptr<SoftwareOutputDevice> device(new PixelTestSoftwareOutputDevice());
+  std::unique_ptr<SoftwareOutputDevice> device(
+      new PixelTestSoftwareOutputDevice());
   output_surface_.reset(new PixelTestOutputSurface(std::move(device)));
   output_surface_->BindToClient(output_surface_client_.get());
   shared_bitmap_manager_.reset(new TestSharedBitmapManager());
-  resource_provider_ = ResourceProvider::Create(
-      output_surface_.get(), shared_bitmap_manager_.get(),
-      gpu_memory_buffer_manager_.get(), main_thread_task_runner_.get(), 0, 1,
+  bool delegated_sync_points_required = false;  // Meaningless for software.
+  resource_provider_ = base::MakeUnique<ResourceProvider>(
+      nullptr, shared_bitmap_manager_.get(), gpu_memory_buffer_manager_.get(),
+      main_thread_task_runner_.get(), 0, 1, delegated_sync_points_required,
       settings_.renderer_settings.use_gpu_memory_buffer_resources,
       settings_.use_image_texture_targets);
-  renderer_ =
-      SoftwareRenderer::Create(this, &settings_.renderer_settings,
-                               output_surface_.get(), resource_provider_.get());
+  renderer_ = SoftwareRenderer::Create(
+      this, &settings_.renderer_settings, output_surface_.get(),
+      resource_provider_.get(), true /* use_image_hijack_canvas */);
 }
 
 }  // namespace cc

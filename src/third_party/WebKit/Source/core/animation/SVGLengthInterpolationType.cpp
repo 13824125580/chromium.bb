@@ -10,6 +10,7 @@
 #include "core/svg/SVGElement.h"
 #include "core/svg/SVGLength.h"
 #include "core/svg/SVGLengthContext.h"
+#include <memory>
 
 namespace blink {
 
@@ -40,7 +41,7 @@ LengthInterpolatedUnit convertToInterpolatedUnit(CSSPrimitiveValue::UnitType uni
     switch (unitType) {
     case CSSPrimitiveValue::UnitType::Unknown:
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
     case CSSPrimitiveValue::UnitType::Pixels:
     case CSSPrimitiveValue::UnitType::Number:
     case CSSPrimitiveValue::UnitType::UserUnits:
@@ -75,13 +76,13 @@ LengthInterpolatedUnit convertToInterpolatedUnit(CSSPrimitiveValue::UnitType uni
 
 } // namespace
 
-PassOwnPtr<InterpolableValue> SVGLengthInterpolationType::neutralInterpolableValue()
+std::unique_ptr<InterpolableValue> SVGLengthInterpolationType::neutralInterpolableValue()
 {
-    OwnPtr<InterpolableList> listOfValues = InterpolableList::create(numLengthInterpolatedUnits);
+    std::unique_ptr<InterpolableList> listOfValues = InterpolableList::create(numLengthInterpolatedUnits);
     for (size_t i = 0; i < numLengthInterpolatedUnits; ++i)
         listOfValues->set(i, InterpolableNumber::create(0));
 
-    return listOfValues.release();
+    return std::move(listOfValues);
 }
 
 InterpolationValue SVGLengthInterpolationType::convertSVGLength(const SVGLength& length)
@@ -92,14 +93,14 @@ InterpolationValue SVGLengthInterpolationType::convertSVGLength(const SVGLength&
     double values[numLengthInterpolatedUnits] = { };
     values[unitType] = value;
 
-    OwnPtr<InterpolableList> listOfValues = InterpolableList::create(numLengthInterpolatedUnits);
+    std::unique_ptr<InterpolableList> listOfValues = InterpolableList::create(numLengthInterpolatedUnits);
     for (size_t i = 0; i < numLengthInterpolatedUnits; ++i)
         listOfValues->set(i, InterpolableNumber::create(values[i]));
 
-    return InterpolationValue(listOfValues.release());
+    return InterpolationValue(std::move(listOfValues));
 }
 
-PassRefPtrWillBeRawPtr<SVGLength> SVGLengthInterpolationType::resolveInterpolableSVGLength(const InterpolableValue& interpolableValue, const SVGLengthContext& lengthContext, SVGLengthMode unitMode, bool negativeValuesForbidden)
+SVGLength* SVGLengthInterpolationType::resolveInterpolableSVGLength(const InterpolableValue& interpolableValue, const SVGLengthContext& lengthContext, SVGLengthMode unitMode, bool negativeValuesForbidden)
 {
     const InterpolableList& listOfValues = toInterpolableList(interpolableValue);
 
@@ -134,9 +135,9 @@ PassRefPtrWillBeRawPtr<SVGLength> SVGLengthInterpolationType::resolveInterpolabl
     if (negativeValuesForbidden && value < 0)
         value = 0;
 
-    RefPtrWillBeRawPtr<SVGLength> result = SVGLength::create(unitMode); // defaults to the length 0
+    SVGLength* result = SVGLength::create(unitMode); // defaults to the length 0
     result->newValueSpecifiedUnits(unitType, value);
-    return result.release();
+    return result;
 }
 
 InterpolationValue SVGLengthInterpolationType::maybeConvertNeutral(const InterpolationValue&, ConversionCheckers&) const
@@ -152,9 +153,9 @@ InterpolationValue SVGLengthInterpolationType::maybeConvertSVGValue(const SVGPro
     return convertSVGLength(toSVGLength(svgValue));
 }
 
-PassRefPtrWillBeRawPtr<SVGPropertyBase> SVGLengthInterpolationType::appliedSVGValue(const InterpolableValue& interpolableValue, const NonInterpolableValue*) const
+SVGPropertyBase* SVGLengthInterpolationType::appliedSVGValue(const InterpolableValue& interpolableValue, const NonInterpolableValue*) const
 {
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     // This function is no longer called, because apply has been overridden.
     return nullptr;
 }

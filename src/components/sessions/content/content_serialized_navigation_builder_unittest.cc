@@ -17,8 +17,8 @@ namespace sessions {
 namespace {
 // Create a NavigationEntry from the test_data constants in
 // serialized_navigation_entry_test_helper.h.
-scoped_ptr<content::NavigationEntry> MakeNavigationEntryForTest() {
-  scoped_ptr<content::NavigationEntry> navigation_entry(
+std::unique_ptr<content::NavigationEntry> MakeNavigationEntryForTest() {
+  std::unique_ptr<content::NavigationEntry> navigation_entry(
       content::NavigationEntry::Create());
   navigation_entry->SetReferrer(content::Referrer(
       test_data::kReferrerURL,
@@ -52,7 +52,7 @@ scoped_ptr<content::NavigationEntry> MakeNavigationEntryForTest() {
 // Create a SerializedNavigationEntry from a NavigationEntry.  All its fields
 // should match the NavigationEntry's.
 TEST(ContentSerializedNavigationBuilderTest, FromNavigationEntry) {
-  const scoped_ptr<content::NavigationEntry> navigation_entry(
+  const std::unique_ptr<content::NavigationEntry> navigation_entry(
       MakeNavigationEntryForTest());
 
   const SerializedNavigationEntry& navigation =
@@ -67,7 +67,8 @@ TEST(ContentSerializedNavigationBuilderTest, FromNavigationEntry) {
   EXPECT_EQ(test_data::kVirtualURL, navigation.virtual_url());
   EXPECT_EQ(test_data::kTitle, navigation.title());
   EXPECT_EQ(test_data::kEncodedPageState, navigation.encoded_page_state());
-  EXPECT_EQ(test_data::kTransitionType, navigation.transition_type());
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      navigation.transition_type(), test_data::kTransitionType));
   EXPECT_EQ(test_data::kHasPostData, navigation.has_post_data());
   EXPECT_EQ(test_data::kPostID, navigation.post_id());
   EXPECT_EQ(test_data::kOriginalRequestURL, navigation.original_request_url());
@@ -87,14 +88,14 @@ TEST(ContentSerializedNavigationBuilderTest, FromNavigationEntry) {
 // except for fields that aren't preserved, which should be set to
 // expected values.
 TEST(ContentSerializedNavigationBuilderTest, ToNavigationEntry) {
-  const scoped_ptr<content::NavigationEntry> old_navigation_entry(
+  const std::unique_ptr<content::NavigationEntry> old_navigation_entry(
       MakeNavigationEntryForTest());
 
   const SerializedNavigationEntry& navigation =
       ContentSerializedNavigationBuilder::FromNavigationEntry(
           test_data::kIndex, *old_navigation_entry);
 
-  const scoped_ptr<content::NavigationEntry> new_navigation_entry(
+  const std::unique_ptr<content::NavigationEntry> new_navigation_entry(
       ContentSerializedNavigationBuilder::ToNavigationEntry(
           &navigation, test_data::kPageID, NULL));
 
@@ -106,8 +107,8 @@ TEST(ContentSerializedNavigationBuilderTest, ToNavigationEntry) {
   EXPECT_EQ(test_data::kEncodedPageState,
             new_navigation_entry->GetPageState().ToEncodedData());
   EXPECT_EQ(test_data::kPageID, new_navigation_entry->GetPageID());
-  EXPECT_EQ(ui::PAGE_TRANSITION_RELOAD,
-            new_navigation_entry->GetTransitionType());
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      new_navigation_entry->GetTransitionType(), ui::PAGE_TRANSITION_RELOAD));
   EXPECT_EQ(test_data::kHasPostData, new_navigation_entry->GetHasPostData());
   EXPECT_EQ(test_data::kPostID, new_navigation_entry->GetPostID());
   EXPECT_EQ(test_data::kOriginalRequestURL,

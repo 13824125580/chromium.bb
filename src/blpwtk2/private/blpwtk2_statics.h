@@ -26,7 +26,6 @@
 #include <blpwtk2_config.h>
 #include <blpwtk2_threadmode.h>
 #include <blpwtk2_toolkitcreateparams.h>
-#include <blpwtk2_pumpmode.h>
 
 #include <base/threading/platform_thread.h>
 
@@ -54,13 +53,6 @@ struct Statics {
     // The thread mode selected by the application.  See blpwtk_toolkit.h
     // for an explanation about this.
     static ThreadMode::Value threadMode;
-
-    // The pump mode selected by the application.
-    static PumpMode::Value pumpMode;
-
-    // Whether or not work messages can be posted while doing work.  Only
-    // used in MANUAL pump mode.
-    static bool workMessageWhileDoingWorkDisabled;
 
     // The id of the application's main thread (i.e. the thread that can enter
     // the blpwtk2 library).

@@ -22,12 +22,14 @@
 goog.provide('framework.common.tcuSurface');
 goog.require('framework.common.tcuTexture');
 goog.require('framework.delibs.debase.deMath');
+goog.require('framework.opengl.gluTextureUtil');
 
 goog.scope(function() {
 
 var tcuSurface = framework.common.tcuSurface;
 var tcuTexture = framework.common.tcuTexture;
 var deMath = framework.delibs.debase.deMath;
+var gluTextureUtil = framework.opengl.gluTextureUtil;
 
 var DE_ASSERT = function(x) {
     if (!x)
@@ -109,6 +111,21 @@ tcuSurface.Surface.prototype.getPixel = function(x, y) {
         color[i] = this.m_pixels[offset + i];
 
     return color;
+};
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @return {number}
+ */
+tcuSurface.Surface.prototype.getPixelUintRGB8 = function(x, y) {
+    DE_ASSERT(deMath.deInBounds32(x, 0, this.m_width));
+    DE_ASSERT(deMath.deInBounds32(y, 0, this.m_height));
+
+    var offset = 4 * (x + y * this.m_width);
+    return (this.m_pixels[offset] << 16) +
+        (this.m_pixels[offset + 1] << 8) +
+        this.m_pixels[offset + 2];
 };
 
 /**

@@ -84,17 +84,17 @@ static bool openJavaScriptDialog(LocalFrame* frame, const String& message, Chrom
     // executing JavaScript.
     ScopedPageLoadDeferrer deferrer;
 
-    InspectorInstrumentationCookie cookie = InspectorInstrumentation::willRunJavaScriptDialog(frame, message, dialogType);
+    InspectorInstrumentation::JavaScriptDialog instrumentation(frame, message, dialogType);
     bool result = delegate();
-    InspectorInstrumentation::didRunJavaScriptDialog(cookie, result);
+    instrumentation.setResult(result);
     return result;
 }
 
 bool ChromeClient::openBeforeUnloadConfirmPanel(const String& message, LocalFrame* frame, bool isReload)
 {
     ASSERT(frame);
-    return openJavaScriptDialog(frame, message, ChromeClient::HTMLDialog, [this, frame, &message, isReload]() {
-        return openBeforeUnloadConfirmPanelDelegate(frame, message, isReload);
+    return openJavaScriptDialog(frame, message, ChromeClient::HTMLDialog, [this, frame, isReload]() {
+        return openBeforeUnloadConfirmPanelDelegate(frame, isReload);
     });
 }
 
@@ -140,14 +140,9 @@ void ChromeClient::mouseDidMoveOverElement(const HitTestResult& result)
 
 void ChromeClient::setToolTip(const HitTestResult& result)
 {
-    // First priority is a potential toolTip representing a spelling or grammar
-    // error.
+    // First priority is a tooltip for element with "title" attribute.
     TextDirection toolTipDirection;
-    String toolTip = result.spellingToolTip(toolTipDirection);
-
-    // Next we'll consider a tooltip for element with "title" attribute.
-    if (toolTip.isEmpty())
-        toolTip = result.title(toolTipDirection);
+    String toolTip = result.title(toolTipDirection);
 
     // Lastly, some elements provide default tooltip strings.  e.g. <input
     // type="file" multiple> shows a tooltip for the selected filenames.

@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "build/build_config.h"
@@ -20,6 +21,8 @@
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl.h"
@@ -40,7 +43,6 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -52,7 +54,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_CONFIGURATION_POLICY) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
 #include "base/callback.h"
 #include "base/run_loop.h"
 #include "base/values.h"
@@ -66,7 +68,7 @@
 
 using testing::_;
 using testing::Return;
-#endif  // defined(ENABLE_CONFIGURATION_POLICY) && !defined(OS_CHROMEOS)
+#endif  // !defined(OS_CHROMEOS)
 
 #if defined(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_navigation_observer.h"
@@ -103,36 +105,6 @@ bool IsWindows10OrNewer() {
   return false;
 #endif
 }
-
-#if defined(OS_WIN)
-// This function is used to verify a callback was successfully invoked.
-void SetTrue(bool* value) {
-  ASSERT_TRUE(value);
-  *value = true;
-}
-
-bool TabStripContainsUrl(TabStripModel* tab_strip, GURL url) {
-  for (int i = 0; i < tab_strip->count(); ++i) {
-    if (tab_strip->GetWebContentsAt(i)->GetURL() == url)
-      return true;
-  }
-  return false;
-}
-
-void ProcessCommandLineAlreadyRunningDefaultProfile(
-    const base::CommandLine& cmdline) {
-  base::FilePath current_dir;
-  ASSERT_TRUE(base::GetCurrentDirectory(&current_dir));
-  base::FilePath user_data_dir =
-      g_browser_process->profile_manager()->user_data_dir();
-  base::FilePath startup_profile_dir =
-      g_browser_process->profile_manager()->GetLastUsedProfileDir(
-          user_data_dir);
-
-  StartupBrowserCreator::ProcessCommandLineAlreadyRunning(cmdline, current_dir,
-                                                          startup_profile_dir);
-}
-#endif  // defined(OS_WIN)
 
 GURL GetSigninPromoURL() {
   return signin::GetPromoURL(
@@ -270,7 +242,8 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
   SessionStartupPref::SetStartupPref(profile, pref);
 
   // Keep the browser process running while browsers are closed.
-  g_browser_process->AddRefModule();
+  ScopedKeepAlive keep_alive(KeepAliveOrigin::BROWSER,
+                             KeepAliveRestartOption::DISABLED);
 
   // Close the browser.
   CloseBrowserAsynchronously(browser());
@@ -330,8 +303,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
     ASSERT_EQ(static_cast<int>(urls.size()),
               new_browser->tab_strip_model()->count());
   }
-
-  g_browser_process->ReleaseModule();
 }
 
 // Verify that startup URLs aren't used when the process already exists
@@ -729,13 +700,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
 
 #if !defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, StartupURLsForTwoProfiles) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   Profile* default_profile = browser()->profile();
 
   ProfileManager* profile_manager = g_browser_process->profile_manager();
@@ -864,13 +828,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, PRE_UpdateWithTwoProfiles) {
 // Disabled because it's flaky. http://crbug.com/379579
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
                        DISABLED_UpdateWithTwoProfiles) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   // Make StartupBrowserCreator::WasRestarted() return true.
   StartupBrowserCreator::was_restarted_read_ = false;
   PrefService* pref_service = g_browser_process->local_state();
@@ -900,7 +857,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
 
   while (SessionRestore::IsRestoring(profile1) ||
          SessionRestore::IsRestoring(profile2))
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
   // The startup URLs are ignored, and instead the last open sessions are
   // restored.
@@ -925,12 +882,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
 
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
                        ProfilesWithoutPagesNotLaunched) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
   ASSERT_TRUE(embedded_test_server()->Start());
 
   Profile* default_profile = browser()->profile();
@@ -1002,7 +953,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
          SessionRestore::IsRestoring(profile_home2) ||
          SessionRestore::IsRestoring(profile_last) ||
          SessionRestore::IsRestoring(profile_urls))
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
   Browser* new_browser = NULL;
   // The last open profile (the profile_home1 in this case) will always be
@@ -1047,13 +998,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
 }
 
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   // After an unclean exit, all profiles will be launched. However, they won't
   // open any pages automatically.
 
@@ -1177,42 +1121,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
 #endif  // !defined(OS_MACOSX) && !defined(GOOGLE_CHROME_BUILD)
 }
 
-#if defined(OS_WIN)
-IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, DefaultBrowserCallback) {
-  bool callback_called = false;
-
-  // Set the default browser callback.
-  StartupBrowserCreator::SetDefaultBrowserCallback(
-      base::Bind(&SetTrue, &callback_called));
-
-  // Set the command line to open the default browser url.
-  base::CommandLine cmdline(base::CommandLine::NO_PROGRAM);
-  cmdline.AppendArgNative(StartupBrowserCreator::GetDefaultBrowserUrl());
-
-  // Open url.
-  ProcessCommandLineAlreadyRunningDefaultProfile(cmdline);
-
-  // The url should have been intercepted and the callback invoked.
-  GURL default_browser_url =
-      GURL(StartupBrowserCreator::GetDefaultBrowserUrl());
-  EXPECT_FALSE(
-      TabStripContainsUrl(browser()->tab_strip_model(), default_browser_url));
-  EXPECT_TRUE(callback_called);
-
-  // Clear default browser callback.
-  callback_called = false;
-  StartupBrowserCreator::ClearDefaultBrowserCallback();
-
-  // Open url.
-  ProcessCommandLineAlreadyRunningDefaultProfile(cmdline);
-
-  // The url should not have been intercepted and the callback not invoked.
-  EXPECT_TRUE(
-      TabStripContainsUrl(browser()->tab_strip_model(), default_browser_url));
-  EXPECT_FALSE(callback_called);
-}
-#endif  // defined(OS_WIN)
-
 class SupervisedUserBrowserCreatorTest : public InProcessBrowserTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -1250,11 +1158,6 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserBrowserCreatorTest,
 // the sync promo exist there.
 #if !defined(OS_CHROMEOS)
 
-// On a branded Linux build, policy is required to suppress the first-run
-// dialog.
-#if !defined(OS_LINUX) || !defined(GOOGLE_CHROME_BUILD) || \
-    defined(ENABLE_CONFIGURATION_POLICY)
-
 class StartupBrowserCreatorFirstRunTest : public InProcessBrowserTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override;
@@ -1265,10 +1168,8 @@ class StartupBrowserCreatorFirstRunTest : public InProcessBrowserTest {
     return !IsWindows10OrNewer();
   }
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   policy::MockConfigurationPolicyProvider provider_;
   policy::PolicyMap policy_map_;
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 };
 
 void StartupBrowserCreatorFirstRunTest::SetUpCommandLine(
@@ -1277,22 +1178,18 @@ void StartupBrowserCreatorFirstRunTest::SetUpCommandLine(
 }
 
 void StartupBrowserCreatorFirstRunTest::SetUpInProcessBrowserTestFixture() {
-#if defined(ENABLE_CONFIGURATION_POLICY)
 #if defined(OS_LINUX) && defined(GOOGLE_CHROME_BUILD)
   // Set a policy that prevents the first-run dialog from being shown.
   policy_map_.Set(policy::key::kMetricsReportingEnabled,
-                  policy::POLICY_LEVEL_MANDATORY,
-                  policy::POLICY_SCOPE_USER,
+                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                   policy::POLICY_SOURCE_CLOUD,
-                  new base::FundamentalValue(false),
-                  NULL);
+                  base::WrapUnique(new base::FundamentalValue(false)), nullptr);
   provider_.UpdateChromePolicy(policy_map_);
 #endif  // defined(OS_LINUX) && defined(GOOGLE_CHROME_BUILD)
 
   EXPECT_CALL(provider_, IsInitializationComplete(_))
       .WillRepeatedly(Return(true));
   policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 }
 
 #if defined(GOOGLE_CHROME_BUILD) && defined(OS_MACOSX)
@@ -1618,7 +1515,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest,
             tab_strip->GetWebContentsAt(0)->GetURL().ExtractFileName());
 }
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
 #if defined(GOOGLE_CHROME_BUILD) && defined(OS_MACOSX)
 // http://crbug.com/314819
 #define MAYBE_RestoreOnStartupURLsPolicySpecified \
@@ -1646,18 +1542,17 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest,
   // * RestoreOnStartup = RestoreOnStartupIsURLs
   // * RestoreOnStartupURLs = [ "/title1.html" ]
   policy_map_.Set(
-      policy::key::kRestoreOnStartup,
-      policy::POLICY_LEVEL_MANDATORY,
-      policy::POLICY_SCOPE_USER,
-      policy::POLICY_SOURCE_CLOUD,
-      new base::FundamentalValue(SessionStartupPref::kPrefValueURLs),
-      NULL);
+      policy::key::kRestoreOnStartup, policy::POLICY_LEVEL_MANDATORY,
+      policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
+      base::WrapUnique(
+          new base::FundamentalValue(SessionStartupPref::kPrefValueURLs)),
+      nullptr);
   base::ListValue startup_urls;
-  startup_urls.Append(new base::StringValue(
-      embedded_test_server()->GetURL("/title1.html").spec()));
+  startup_urls.AppendString(
+      embedded_test_server()->GetURL("/title1.html").spec());
   policy_map_.Set(policy::key::kRestoreOnStartupURLs,
                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                  policy::POLICY_SOURCE_CLOUD, startup_urls.DeepCopy(),
+                  policy::POLICY_SOURCE_CLOUD, startup_urls.CreateDeepCopy(),
                   nullptr);
   provider_.UpdateChromePolicy(policy_map_);
   base::RunLoop().RunUntilIdle();
@@ -1679,9 +1574,54 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest,
   EXPECT_EQ("title1.html",
             tab_strip->GetWebContentsAt(0)->GetURL().ExtractFileName());
 }
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
-#endif  // !defined(OS_LINUX) || !defined(GOOGLE_CHROME_BUILD) ||
-        // defined(ENABLE_CONFIGURATION_POLICY)
+#if defined(GOOGLE_CHROME_BUILD) && defined(OS_MACOSX)
+// http://crbug.com/314819
+#define MAYBE_FirstRunTabsWithRestoreSession \
+    DISABLED_FirstRunTabsWithRestoreSession
+#else
+#define MAYBE_FirstRunTabsWithRestoreSession FirstRunTabsWithRestoreSession
+#endif
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest,
+                       MAYBE_FirstRunTabsWithRestoreSession) {
+  // Simulate the following master_preferences:
+  // {
+  //  "first_run_tabs" : [
+  //    "/title1.html"
+  //  ],
+  //  "session" : {
+  //    "restore_on_startup" : 1
+  //   },
+  //   "sync_promo" : {
+  //     "user_skipped" : true
+  //   }
+  // }
+  ASSERT_TRUE(embedded_test_server()->Start());
+  StartupBrowserCreator browser_creator;
+  browser_creator.AddFirstRunTab(
+      embedded_test_server()->GetURL("/title1.html"));
+  browser()->profile()->GetPrefs()->SetInteger(
+      prefs::kRestoreOnStartup, 1);
+  // We switch off the sign-in promo too because it's behavior varies between
+  // platforms too much.
+  browser()->profile()->GetPrefs()->SetBoolean(
+      prefs::kSignInPromoUserSkipped, true);
+
+  // Do a process-startup browser launch.
+  base::CommandLine dummy(base::CommandLine::NO_PROGRAM);
+  StartupBrowserCreatorImpl launch(base::FilePath(), dummy, &browser_creator,
+                                   chrome::startup::IS_FIRST_RUN);
+  ASSERT_TRUE(launch.Launch(browser()->profile(), std::vector<GURL>(), true));
+
+  // This should have created a new browser window.
+  Browser* new_browser = FindOneOtherBrowser(browser());
+  ASSERT_TRUE(new_browser);
+
+  // Verify that the first-run tab is shown and no other pages are present.
+  TabStripModel* tab_strip = new_browser->tab_strip_model();
+  ASSERT_EQ(1, tab_strip->count());
+  EXPECT_EQ("title1.html",
+            tab_strip->GetWebContentsAt(0)->GetURL().ExtractFileName());
+}
 
 #endif  // !defined(OS_CHROMEOS)

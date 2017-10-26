@@ -28,35 +28,31 @@
 
 #include "bindings/core/v8/ActiveDOMCallback.h"
 #include "bindings/core/v8/ScopedPersistent.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/MutationCallback.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefPtr.h"
 #include <v8.h>
 
 namespace blink {
 
 class ExecutionContext;
+class ScriptState;
 
 class V8MutationCallback final : public MutationCallback, public ActiveDOMCallback {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(V8MutationCallback);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(V8MutationCallback);
+    USING_GARBAGE_COLLECTED_MIXIN(V8MutationCallback);
 public:
-    static PassOwnPtrWillBeRawPtr<V8MutationCallback> create(v8::Local<v8::Function> callback, v8::Local<v8::Object> owner, ScriptState* scriptState)
+    static V8MutationCallback* create(v8::Local<v8::Function> callback, v8::Local<v8::Object> owner, ScriptState* scriptState)
     {
-        return adoptPtrWillBeNoop(new V8MutationCallback(callback, owner, scriptState));
+        return new V8MutationCallback(callback, owner, scriptState);
     }
     ~V8MutationCallback() override;
 
-    void call(const WillBeHeapVector<RefPtrWillBeMember<MutationRecord>>&, MutationObserver*) override;
-    ExecutionContext* executionContext() const override { return ContextLifecycleObserver::executionContext(); }
+    void call(const HeapVector<Member<MutationRecord>>&, MutationObserver*) override;
+    ExecutionContext* getExecutionContext() const override { return ContextLifecycleObserver::getExecutionContext(); }
 
     DECLARE_VIRTUAL_TRACE();
 
 private:
     V8MutationCallback(v8::Local<v8::Function>, v8::Local<v8::Object>, ScriptState*);
-
-    static void setWeakCallback(const v8::WeakCallbackInfo<V8MutationCallback>&);
 
     ScopedPersistent<v8::Function> m_callback;
     RefPtr<ScriptState> m_scriptState;

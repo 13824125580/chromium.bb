@@ -5,10 +5,10 @@
 #ifndef COMPONENTS_HISTORY_CORE_TEST_HISTORY_SERVICE_TEST_UTIL_H_
 #define COMPONENTS_HISTORY_CORE_TEST_HISTORY_SERVICE_TEST_UTIL_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 class FilePath;
@@ -22,9 +22,8 @@ class HistoryService;
 // database; this is useful for testing error conditions.  This method spins the
 // runloop before returning to ensure that any initialization-related tasks are
 // run.
-scoped_ptr<HistoryService> CreateHistoryService(
+std::unique_ptr<HistoryService> CreateHistoryService(
     const base::FilePath& history_dir,
-    const std::string& accept_languages,
     bool create_db);
 
 // Schedules a task on the history backend and runs a nested loop until the task

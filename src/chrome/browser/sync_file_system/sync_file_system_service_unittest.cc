@@ -13,7 +13,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_context.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_service.h"
@@ -141,7 +141,7 @@ class SyncFileSystemServiceTest : public testing::Test {
         BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO),
         BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)));
 
-    scoped_ptr<LocalFileSyncService> local_service =
+    std::unique_ptr<LocalFileSyncService> local_service =
         LocalFileSyncService::CreateForTesting(&profile_, in_memory_env_.get());
     remote_service_ = new StrictMock<MockRemoteFileSyncService>;
     sync_service_.reset(new SyncFileSystemService(&profile_));
@@ -158,7 +158,7 @@ class SyncFileSystemServiceTest : public testing::Test {
 
     sync_service_->Initialize(
         std::move(local_service),
-        scoped_ptr<RemoteFileSyncService>(remote_service_));
+        std::unique_ptr<RemoteFileSyncService>(remote_service_));
 
     // Disable auto sync by default.
     EXPECT_CALL(*mock_remote_service(), SetSyncEnabled(false)).Times(1);
@@ -264,15 +264,15 @@ class SyncFileSystemServiceTest : public testing::Test {
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
   TestingProfile profile_;
-  scoped_ptr<CannedSyncableFileSystem> file_system_;
+  std::unique_ptr<CannedSyncableFileSystem> file_system_;
 
   // Their ownerships are transferred to SyncFileSystemService.
   StrictMock<MockRemoteFileSyncService>* remote_service_;
   StrictMock<MockLocalChangeProcessor> local_change_processor_;
 
-  scoped_ptr<SyncFileSystemService> sync_service_;
+  std::unique_ptr<SyncFileSystemService> sync_service_;
 };
 
 TEST_F(SyncFileSystemServiceTest, InitializeForApp) {

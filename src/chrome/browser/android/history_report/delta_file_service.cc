@@ -30,12 +30,12 @@ void DoTrim(history_report::DeltaFileBackend* backend,
   finished->Signal();
 }
 
-void DoQuery(
-    history_report::DeltaFileBackend* backend,
-    int64_t last_seq_no,
-    int32_t limit,
-    base::WaitableEvent* finished,
-    scoped_ptr<std::vector<history_report::DeltaFileEntryWithData>>* result) {
+void DoQuery(history_report::DeltaFileBackend* backend,
+             int64_t last_seq_no,
+             int32_t limit,
+             base::WaitableEvent* finished,
+             std::unique_ptr<
+                 std::vector<history_report::DeltaFileEntryWithData>>* result) {
   *result = backend->Query(last_seq_no, limit);
   finished->Signal();
 }
@@ -96,7 +96,8 @@ void DeltaFileService::PageDeleted(const GURL& url) {
 
 int64_t DeltaFileService::Trim(int64_t lower_bound) {
   int64_t result;
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   pool->PostSequencedWorkerTaskWithShutdownBehavior(
       worker_pool_token_,
@@ -111,11 +112,12 @@ int64_t DeltaFileService::Trim(int64_t lower_bound) {
   return result;
 }
 
-scoped_ptr<std::vector<DeltaFileEntryWithData>> DeltaFileService::Query(
+std::unique_ptr<std::vector<DeltaFileEntryWithData>> DeltaFileService::Query(
     int64_t last_seq_no,
     int32_t limit) {
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result;
-  base::WaitableEvent finished(false, false);
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result;
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   pool->PostSequencedWorkerTaskWithShutdownBehavior(
       worker_pool_token_,
@@ -133,7 +135,8 @@ scoped_ptr<std::vector<DeltaFileEntryWithData>> DeltaFileService::Query(
 
 bool DeltaFileService::Recreate(const std::vector<std::string>& urls) {
   bool result = false;
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   pool->PostSequencedWorkerTaskWithShutdownBehavior(
       worker_pool_token_,
@@ -160,7 +163,8 @@ void DeltaFileService::Clear() {
 
 std::string DeltaFileService::Dump() {
   std::string dump;
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   pool->PostSequencedWorkerTaskWithShutdownBehavior(
       worker_pool_token_,

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "webrtc/base/constructormagic.h"
+#include "webrtc/base/optional.h"
 #include "webrtc/modules/audio_coding/codecs/opus/opus_interface.h"
 #include "webrtc/modules/audio_coding/codecs/audio_encoder.h"
 
@@ -29,12 +30,19 @@ class AudioEncoderOpus final : public AudioEncoder {
   };
 
   struct Config {
+    Config();
+    Config(const Config&);
+    ~Config();
+    Config& operator=(const Config&);
+
     bool IsOk() const;
+    int GetBitrateBps() const;
+
     int frame_size_ms = 20;
     size_t num_channels = 1;
     int payload_type = 120;
     ApplicationMode application = kVoip;
-    int bitrate_bps = 64000;
+    rtc::Optional<int> bitrate_bps;  // Unset means to use default value.
     bool fec_enabled = false;
     int max_playback_rate_hz = 48000;
     int complexity = kDefaultComplexity;
@@ -54,17 +62,11 @@ class AudioEncoderOpus final : public AudioEncoder {
   explicit AudioEncoderOpus(const CodecInst& codec_inst);
   ~AudioEncoderOpus() override;
 
-  size_t MaxEncodedBytes() const override;
   int SampleRateHz() const override;
   size_t NumChannels() const override;
   size_t Num10MsFramesInNextPacket() const override;
   size_t Max10MsFramesInAPacket() const override;
   int GetTargetBitrate() const override;
-
-  EncodedInfo EncodeInternal(uint32_t rtp_timestamp,
-                             rtc::ArrayView<const int16_t> audio,
-                             size_t max_encoded_bytes,
-                             uint8_t* encoded) override;
 
   void Reset() override;
   bool SetFec(bool enable) override;
@@ -84,9 +86,15 @@ class AudioEncoderOpus final : public AudioEncoder {
   ApplicationMode application() const { return config_.application; }
   bool dtx_enabled() const { return config_.dtx_enabled; }
 
+ protected:
+  EncodedInfo EncodeImpl(uint32_t rtp_timestamp,
+                         rtc::ArrayView<const int16_t> audio,
+                         rtc::Buffer* encoded) override;
+
  private:
   size_t Num10msFramesPerPacket() const;
   size_t SamplesPer10msFrame() const;
+  size_t SufficientOutputBufferSize() const;
   bool RecreateEncoderInstance(const Config& config);
 
   Config config_;

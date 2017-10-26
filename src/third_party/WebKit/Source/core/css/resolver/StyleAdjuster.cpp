@@ -33,6 +33,7 @@
 #include "core/dom/ContainerNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
@@ -42,7 +43,6 @@
 #include "core/html/HTMLTableCellElement.h"
 #include "core/html/HTMLTextAreaElement.h"
 #include "core/frame/LocalFrame.h"
-#include "core/layout/LayoutReplaced.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/style/ComputedStyle.h"
 #include "core/style/ComputedStyleConstants.h"
@@ -113,7 +113,7 @@ static bool doesNotInheritTextDecoration(const ComputedStyle& style, const Eleme
 // element to adjustComputedStyle, so we can't just use element->isInTopLayer().
 static bool isInTopLayer(const Element* element, const ComputedStyle& style)
 {
-    return (element && element->isInTopLayer()) || style.styleType() == BACKDROP;
+    return (element && element->isInTopLayer()) || style.styleType() == PseudoIdBackdrop;
 }
 
 static bool parentStyleForcesZIndexToCreateStackingContext(const ComputedStyle& parentStyle)
@@ -136,16 +136,14 @@ static bool hasWillChangeThatCreatesStackingContext(const ComputedStyle& style)
         case CSSPropertyWebkitMaskBoxImage:
         case CSSPropertyWebkitClipPath:
         case CSSPropertyWebkitBoxReflect:
-        case CSSPropertyWebkitFilter:
+        case CSSPropertyFilter:
+        case CSSPropertyAliasWebkitFilter:
         case CSSPropertyBackdropFilter:
         case CSSPropertyZIndex:
         case CSSPropertyPosition:
-            return true;
         case CSSPropertyMixBlendMode:
         case CSSPropertyIsolation:
-            if (RuntimeEnabledFeatures::cssCompositingEnabled())
                 return true;
-            break;
         default:
             break;
         }
@@ -188,6 +186,9 @@ void StyleAdjuster::adjustComputedStyle(ComputedStyle& style, const ComputedStyl
     if (style.position() == StaticPosition && !parentStyleForcesZIndexToCreateStackingContext(parentStyle))
         style.setHasAutoZIndex();
 
+    if (style.overflowX() != OverflowVisible || style.overflowY() != OverflowVisible)
+        adjustOverflow(style);
+
     // Auto z-index becomes 0 for the root element and transparent objects. This prevents
     // cases where objects that should be blended as a single unit end up with a non-transparent
     // object wedged in between them. Auto z-index also becomes 0 for objects that specify transforms/masks/reflections.
@@ -197,10 +198,10 @@ void StyleAdjuster::adjustComputedStyle(ComputedStyle& style, const ComputedStyl
         || style.hasMask()
         || style.clipPath()
         || style.boxReflect()
-        || style.hasFilter()
+        || style.hasFilterInducingProperty()
         || style.hasBlendMode()
         || style.hasIsolation()
-        || style.position() == FixedPosition
+        || style.hasViewportConstrainedPosition()
         || isInTopLayer(element, style)
         || hasWillChangeThatCreatesStackingContext(style)
         || style.containsPaint()))
@@ -211,9 +212,6 @@ void StyleAdjuster::adjustComputedStyle(ComputedStyle& style, const ComputedStyl
 
     style.applyTextDecorations();
 
-    if (style.overflowX() != OVISIBLE || style.overflowY() != OVISIBLE)
-        adjustOverflow(style);
-
     // Cull out any useless layers and also repeat patterns into additional layers.
     style.adjustBackgroundLayers();
     style.adjustMaskLayers();
@@ -223,14 +221,10 @@ void StyleAdjuster::adjustComputedStyle(ComputedStyle& style, const ComputedStyl
         LayoutTheme::theme().adjustStyle(style, element);
 
     // If we have first-letter pseudo style, transitions, or animations, do not share this style.
-    if (style.hasPseudoStyle(FIRST_LETTER) || style.transitions() || style.animations())
+    if (style.hasPseudoStyle(PseudoIdFirstLetter) || style.transitions() || style.animations())
         style.setUnique();
 
-    // FIXME: when dropping the -webkit prefix on transform-style, we should also have opacity < 1 cause flattening.
-    if (style.preserves3D() && (style.overflowX() != OVISIBLE
-        || style.overflowY() != OVISIBLE
-        || style.hasFilter()))
-        style.setTransformStyle3D(TransformStyle3DFlat);
+    adjustStyleForEditing(style);
 
     bool isSVGElement = element && element->isSVGElement();
     if (isSVGElement) {
@@ -276,9 +270,22 @@ void StyleAdjuster::adjustComputedStyle(ComputedStyle& style, const ComputedStyl
     adjustStyleForAlignment(style, parentStyle);
 }
 
+void StyleAdjuster::adjustStyleForEditing(ComputedStyle& style)
+{
+    if (style.userModify() != READ_WRITE_PLAINTEXT_ONLY)
+        return;
+    // Collapsing whitespace is harmful in plain-text editing.
+    if (style.whiteSpace() == NORMAL)
+        style.setWhiteSpace(PRE_WRAP);
+    else if (style.whiteSpace() == NOWRAP)
+        style.setWhiteSpace(PRE);
+    else if (style.whiteSpace() == PRE_LINE)
+        style.setWhiteSpace(PRE_WRAP);
+}
+
 void StyleAdjuster::adjustStyleForFirstLetter(ComputedStyle& style)
 {
-    if (style.styleType() != FIRST_LETTER)
+    if (style.styleType() != PseudoIdFirstLetter)
         return;
 
     // Force inline display (except for floating first-letters).
@@ -331,10 +338,6 @@ void StyleAdjuster::adjustStyleForHTMLElement(ComputedStyle& style, const Comput
         return;
 
     if (isHTMLTableCellElement(element)) {
-        // FIXME: We shouldn't be overriding start/-webkit-auto like this. Do it in html.css instead.
-        // Table headers with a text-align of -webkit-auto will change the text-align to center.
-        if (element.hasTagName(thTag) && style.textAlign() == TASTART)
-            style.setTextAlign(CENTER);
         if (style.whiteSpace() == KHTML_NOWRAP) {
             // Figure out if we are really nowrapping or if we should just
             // use normal instead. If the width of the cell is fixed, then
@@ -362,6 +365,14 @@ void StyleAdjuster::adjustStyleForHTMLElement(ComputedStyle& style, const Comput
         return;
     }
 
+    if (isHTMLFrameElementBase(element)) {
+        // Frames cannot overflow (they are always the size we ask them to be).
+        // Some compositing code paths may try to draw scrollbars anyhow.
+        style.setOverflowX(OverflowVisible);
+        style.setOverflowY(OverflowVisible);
+        return;
+    }
+
     if (isHTMLRTElement(element)) {
         // Ruby text does not support float or position. This might change with evolution of the specification.
         style.setPosition(StaticPosition);
@@ -371,15 +382,15 @@ void StyleAdjuster::adjustStyleForHTMLElement(ComputedStyle& style, const Comput
 
     if (isHTMLMarqueeElement(element)) {
         // For now, <marquee> requires an overflow clip to work properly.
-        style.setOverflowX(OHIDDEN);
-        style.setOverflowY(OHIDDEN);
+        style.setOverflowX(OverflowHidden);
+        style.setOverflowY(OverflowHidden);
         return;
     }
 
     if (isHTMLTextAreaElement(element)) {
         // Textarea considers overflow visible as auto.
-        style.setOverflowX(style.overflowX() == OVISIBLE ? OAUTO : style.overflowX());
-        style.setOverflowY(style.overflowY() == OVISIBLE ? OAUTO : style.overflowY());
+        style.setOverflowX(style.overflowX() == OverflowVisible ? OverflowAuto : style.overflowX());
+        style.setOverflowY(style.overflowY() == OverflowVisible ? OverflowAuto : style.overflowY());
         return;
     }
 
@@ -391,7 +402,7 @@ void StyleAdjuster::adjustStyleForHTMLElement(ComputedStyle& style, const Comput
 
 void StyleAdjuster::adjustOverflow(ComputedStyle& style)
 {
-    ASSERT(style.overflowX() != OVISIBLE || style.overflowY() != OVISIBLE);
+    ASSERT(style.overflowX() != OverflowVisible || style.overflowY() != OverflowVisible);
 
     if (style.display() == TABLE || style.display() == INLINE_TABLE) {
         // Tables only support overflow:hidden and overflow:visible and ignore anything else,
@@ -399,30 +410,30 @@ void StyleAdjuster::adjustOverflow(ComputedStyle& style)
         // container box the rules for resolving conflicting x and y values in CSS Overflow Module
         // Level 3 do not apply. Arguably overflow-x and overflow-y aren't allowed on tables but
         // all UAs allow it.
-        if (style.overflowX() != OHIDDEN)
-            style.setOverflowX(OVISIBLE);
-        if (style.overflowY() != OHIDDEN)
-            style.setOverflowY(OVISIBLE);
+        if (style.overflowX() != OverflowHidden)
+            style.setOverflowX(OverflowVisible);
+        if (style.overflowY() != OverflowHidden)
+            style.setOverflowY(OverflowVisible);
         // If we are left with conflicting overflow values for the x and y axes on a table then resolve
-        // both to OVISIBLE. This is interoperable behaviour but is not specced anywhere.
-        if (style.overflowX() == OVISIBLE)
-            style.setOverflowY(OVISIBLE);
-        else if (style.overflowY() == OVISIBLE)
-            style.setOverflowX(OVISIBLE);
-    } else if (style.overflowX() == OVISIBLE && style.overflowY() != OVISIBLE) {
+        // both to OverflowVisible. This is interoperable behaviour but is not specced anywhere.
+        if (style.overflowX() == OverflowVisible)
+            style.setOverflowY(OverflowVisible);
+        else if (style.overflowY() == OverflowVisible)
+            style.setOverflowX(OverflowVisible);
+    } else if (style.overflowX() == OverflowVisible && style.overflowY() != OverflowVisible) {
         // If either overflow value is not visible, change to auto.
         // FIXME: Once we implement pagination controls, overflow-x should default to hidden
         // if overflow-y is set to -webkit-paged-x or -webkit-page-y. For now, we'll let it
         // default to auto so we can at least scroll through the pages.
-        style.setOverflowX(OAUTO);
-    } else if (style.overflowY() == OVISIBLE && style.overflowX() != OVISIBLE) {
-        style.setOverflowY(OAUTO);
+        style.setOverflowX(OverflowAuto);
+    } else if (style.overflowY() == OverflowVisible && style.overflowX() != OverflowVisible) {
+        style.setOverflowY(OverflowAuto);
     }
 
     // Menulists should have visible overflow
     if (style.appearance() == MenulistPart) {
-        style.setOverflowX(OVISIBLE);
-        style.setOverflowY(OVISIBLE);
+        style.setOverflowX(OverflowVisible);
+        style.setOverflowY(OverflowVisible);
     }
 }
 
@@ -433,7 +444,7 @@ void StyleAdjuster::adjustStyleForDisplay(ComputedStyle& style, const ComputedSt
 
     // FIXME: Don't support this mutation for pseudo styles like first-letter or first-line, since it's not completely
     // clear how that should work.
-    if (style.display() == INLINE && style.styleType() == NOPSEUDO && style.writingMode() != parentStyle.writingMode())
+    if (style.display() == INLINE && style.styleType() == PseudoIdNone && style.getWritingMode() != parentStyle.getWritingMode())
         style.setDisplay(INLINE_BLOCK);
 
     // After performing the display mutation, check table rows. We do not honor position: relative table rows or cells.
@@ -444,17 +455,23 @@ void StyleAdjuster::adjustStyleForDisplay(ComputedStyle& style, const ComputedSt
         && style.position() == RelativePosition)
         style.setPosition(StaticPosition);
 
+    // Cannot support position: sticky for table columns and column groups because current code is only doing
+    // background painting through columns / column groups
+    if ((style.display() == TABLE_COLUMN_GROUP || style.display() == TABLE_COLUMN)
+        && style.position() == StickyPosition)
+        style.setPosition(StaticPosition);
+
     // writing-mode does not apply to table row groups, table column groups, table rows, and table columns.
     // FIXME: Table cells should be allowed to be perpendicular or flipped with respect to the table, though.
     if (style.display() == TABLE_COLUMN || style.display() == TABLE_COLUMN_GROUP || style.display() == TABLE_FOOTER_GROUP
         || style.display() == TABLE_HEADER_GROUP || style.display() == TABLE_ROW || style.display() == TABLE_ROW_GROUP
         || style.display() == TABLE_CELL)
-        style.setWritingMode(parentStyle.writingMode());
+        style.setWritingMode(parentStyle.getWritingMode());
 
     // FIXME: Since we don't support block-flow on flexible boxes yet, disallow setting
     // of block-flow to anything other than TopToBottomWritingMode.
     // https://bugs.webkit.org/show_bug.cgi?id=46418 - Flexible box support.
-    if (style.writingMode() != TopToBottomWritingMode && (style.display() == BOX || style.display() == INLINE_BOX))
+    if (style.getWritingMode() != TopToBottomWritingMode && (style.display() == BOX || style.display() == INLINE_BOX))
         style.setWritingMode(TopToBottomWritingMode);
 
     if (parentStyle.isDisplayFlexibleOrGridBox()) {

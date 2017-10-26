@@ -5,11 +5,13 @@
 #include "chrome/browser/ui/webui/media_router/media_router_webui_message_handler.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/metrics/user_metrics.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/media/router/issue.h"
@@ -49,20 +51,24 @@ const char kJoinRoute[] = "joinRoute";
 const char kCloseDialog[] = "closeDialog";
 const char kReportBlur[] = "reportBlur";
 const char kReportClickedSinkIndex[] = "reportClickedSinkIndex";
+const char kReportFilter[] = "reportFilter";
 const char kReportInitialAction[] = "reportInitialAction";
 const char kReportInitialState[] = "reportInitialState";
 const char kReportNavigateToView[] = "reportNavigateToView";
+const char kReportRouteCreationOutcome[] = "reportRouteCreationOutcome";
 const char kReportRouteCreation[] = "reportRouteCreation";
 const char kReportSelectedCastMode[] = "reportSelectedCastMode";
 const char kReportSinkCount[] = "reportSinkCount";
 const char kReportTimeToClickSink[] = "reportTimeToClickSink";
 const char kReportTimeToInitialActionClose[] = "reportTimeToInitialActionClose";
+const char kSearchSinksAndCreateRoute[] = "searchSinksAndCreateRoute";
 const char kOnInitialDataReceived[] = "onInitialDataReceived";
 
 // JS function names.
 const char kSetInitialData[] = "media_router.ui.setInitialData";
 const char kOnCreateRouteResponseReceived[] =
     "media_router.ui.onCreateRouteResponseReceived";
+const char kReceiveSearchResult[] = "media_router.ui.receiveSearchResult";
 const char kSetFirstRunFlowData[] = "media_router.ui.setFirstRunFlowData";
 const char kSetIssue[] = "media_router.ui.setIssue";
 const char kSetSinkListAndIdentity[] = "media_router.ui.setSinkListAndIdentity";
@@ -71,10 +77,10 @@ const char kSetCastModeList[] = "media_router.ui.setCastModeList";
 const char kUpdateMaxHeight[] = "media_router.ui.updateMaxHeight";
 const char kWindowOpen[] = "window.open";
 
-scoped_ptr<base::DictionaryValue> SinksAndIdentityToValue(
+std::unique_ptr<base::DictionaryValue> SinksAndIdentityToValue(
     const std::vector<MediaSinkWithCastModes>& sinks,
     const AccountInfo& account_info) {
-  scoped_ptr<base::DictionaryValue> sink_list_and_identity(
+  std::unique_ptr<base::DictionaryValue> sink_list_and_identity(
       new base::DictionaryValue);
   bool show_email = false;
   bool show_domain = false;
@@ -82,13 +88,12 @@ scoped_ptr<base::DictionaryValue> SinksAndIdentityToValue(
   if (account_info.IsValid()) {
     user_domain = account_info.hosted_domain;
     sink_list_and_identity->SetString("userEmail", account_info.email);
-    sink_list_and_identity->SetString("userDomain", user_domain);
   }
 
-  scoped_ptr<base::ListValue> sinks_val(new base::ListValue);
+  std::unique_ptr<base::ListValue> sinks_val(new base::ListValue);
 
   for (const MediaSinkWithCastModes& sink_with_cast_modes : sinks) {
-    scoped_ptr<base::DictionaryValue> sink_val(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> sink_val(new base::DictionaryValue);
 
     const MediaSink& sink = sink_with_cast_modes.sink;
     sink_val->SetString("id", sink.id());
@@ -97,12 +102,14 @@ scoped_ptr<base::DictionaryValue> SinksAndIdentityToValue(
     if (!sink.description().empty())
       sink_val->SetString("description", sink.description());
 
+    bool is_pseudo_sink =
+        base::StartsWith(sink.id(), "pseudo:", base::CompareCase::SENSITIVE);
     if (!user_domain.empty() && !sink.domain().empty()) {
       std::string domain = sink.domain();
       // Convert default domains to user domain
       if (sink.domain() == "default") {
         domain = user_domain;
-        if (domain == "NO_HOSTED_DOMAIN") {
+        if (domain == Profile::kNoHostedDomainFound) {
           // Default domain will be empty for non-dasher accounts.
           domain.clear();
         }
@@ -110,9 +117,10 @@ scoped_ptr<base::DictionaryValue> SinksAndIdentityToValue(
 
       sink_val->SetString("domain", domain);
 
-      show_email = true;
-      if (!domain.empty() && domain != user_domain)
+      show_email = show_email || !is_pseudo_sink;
+      if (!domain.empty() && domain != user_domain) {
         show_domain = true;
+      }
     }
 
     int cast_mode_bits = 0;
@@ -120,7 +128,8 @@ scoped_ptr<base::DictionaryValue> SinksAndIdentityToValue(
       cast_mode_bits |= cast_mode;
 
     sink_val->SetInteger("castModes", cast_mode_bits);
-    sinks_val->Append(sink_val.release());
+    sink_val->SetBoolean("isPseudoSink", is_pseudo_sink);
+    sinks_val->Append(std::move(sink_val));
   }
 
   sink_list_and_identity->Set("sinks", sinks_val.release());
@@ -129,18 +138,24 @@ scoped_ptr<base::DictionaryValue> SinksAndIdentityToValue(
   return sink_list_and_identity;
 }
 
-scoped_ptr<base::DictionaryValue> RouteToValue(
-    const MediaRoute& route, bool canJoin, const std::string& extension_id) {
-  scoped_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue> RouteToValue(
+    const MediaRoute& route,
+    bool can_join,
+    const std::string& extension_id,
+    bool off_the_record,
+    int current_cast_mode) {
+  std::unique_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
   dictionary->SetString("id", route.media_route_id());
   dictionary->SetString("sinkId", route.media_sink_id());
   dictionary->SetString("description", route.description());
   dictionary->SetBoolean("isLocal", route.is_local());
-  dictionary->SetBoolean("canJoin", canJoin);
-  dictionary->SetBoolean("isOffTheRecord", route.off_the_record());
+  dictionary->SetBoolean("canJoin", can_join);
+  if (current_cast_mode > 0) {
+    dictionary->SetInteger("currentCastMode", current_cast_mode);
+  }
 
   const std::string& custom_path = route.custom_controller_path();
-  if (!custom_path.empty()) {
+  if (!off_the_record && !custom_path.empty()) {
     std::string full_custom_controller_path = base::StringPrintf("%s://%s/%s",
         extensions::kExtensionScheme, extension_id.c_str(),
             custom_path.c_str());
@@ -152,41 +167,27 @@ scoped_ptr<base::DictionaryValue> RouteToValue(
   return dictionary;
 }
 
-scoped_ptr<base::ListValue> RoutesToValue(
-    const std::vector<MediaRoute>& routes,
-    const std::vector<MediaRoute::Id>& joinable_route_ids,
-    const std::string& extension_id) {
-  scoped_ptr<base::ListValue> value(new base::ListValue);
-
-  for (const MediaRoute& route : routes) {
-    bool canJoin = ContainsValue(joinable_route_ids, route.media_route_id());
-    scoped_ptr<base::DictionaryValue> route_val(RouteToValue(route,
-        canJoin, extension_id));
-    value->Append(route_val.release());
-  }
-
-  return value;
-}
-
-scoped_ptr<base::ListValue> CastModesToValue(const CastModeSet& cast_modes,
-                                             const std::string& source_host) {
-  scoped_ptr<base::ListValue> value(new base::ListValue);
+std::unique_ptr<base::ListValue> CastModesToValue(
+    const CastModeSet& cast_modes,
+    const std::string& source_host) {
+  std::unique_ptr<base::ListValue> value(new base::ListValue);
 
   for (const MediaCastMode& cast_mode : cast_modes) {
-    scoped_ptr<base::DictionaryValue> cast_mode_val(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> cast_mode_val(
+        new base::DictionaryValue);
     cast_mode_val->SetInteger("type", cast_mode);
     cast_mode_val->SetString(
         "description", MediaCastModeToDescription(cast_mode, source_host));
     cast_mode_val->SetString("host", source_host);
-    value->Append(cast_mode_val.release());
+    value->Append(std::move(cast_mode_val));
   }
 
   return value;
 }
 
 // Returns an Issue dictionary created from |issue| that can be used in WebUI.
-scoped_ptr<base::DictionaryValue> IssueToValue(const Issue& issue) {
-  scoped_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue> IssueToValue(const Issue& issue) {
+  std::unique_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
   dictionary->SetString("id", issue.id());
   dictionary->SetString("title", issue.title());
   dictionary->SetString("message", issue.message());
@@ -198,6 +199,8 @@ scoped_ptr<base::DictionaryValue> IssueToValue(const Issue& issue) {
   if (!issue.route_id().empty())
     dictionary->SetString("routeId", issue.route_id());
   dictionary->SetBoolean("isBlocking", issue.is_blocking());
+  if (issue.help_page_id() > 0)
+    dictionary->SetInteger("helpPageId", issue.help_page_id());
 
   return dictionary;
 }
@@ -230,10 +233,10 @@ std::string GetLearnMoreUrl(const base::DictionaryValue* args) {
 
 MediaRouterWebUIMessageHandler::MediaRouterWebUIMessageHandler(
     MediaRouterUI* media_router_ui)
-    : dialog_closing_(false),
-      media_router_ui_(media_router_ui) {
-  DCHECK(media_router_ui_);
-}
+    : off_the_record_(
+          Profile::FromWebUI(media_router_ui->web_ui())->IsOffTheRecord()),
+      dialog_closing_(false),
+      media_router_ui_(media_router_ui) {}
 
 MediaRouterWebUIMessageHandler::~MediaRouterWebUIMessageHandler() {
 }
@@ -241,28 +244,29 @@ MediaRouterWebUIMessageHandler::~MediaRouterWebUIMessageHandler() {
 void MediaRouterWebUIMessageHandler::UpdateSinks(
     const std::vector<MediaSinkWithCastModes>& sinks) {
   DVLOG(2) << "UpdateSinks";
-  scoped_ptr<base::DictionaryValue> sinks_and_identity_val(
+  std::unique_ptr<base::DictionaryValue> sinks_and_identity_val(
       SinksAndIdentityToValue(sinks, GetAccountInfo()));
-  web_ui()->CallJavascriptFunction(kSetSinkListAndIdentity,
-                                   *sinks_and_identity_val);
+  web_ui()->CallJavascriptFunctionUnsafe(kSetSinkListAndIdentity,
+                                         *sinks_and_identity_val);
 }
 
 void MediaRouterWebUIMessageHandler::UpdateRoutes(
     const std::vector<MediaRoute>& routes,
-    const std::vector<MediaRoute::Id>& joinable_route_ids) {
-  scoped_ptr<base::ListValue> routes_val(RoutesToValue(routes,
-      joinable_route_ids,
-      media_router_ui_->GetRouteProviderExtensionId()));
-  web_ui()->CallJavascriptFunction(kSetRouteList, *routes_val);
+    const std::vector<MediaRoute::Id>& joinable_route_ids,
+    const std::unordered_map<MediaRoute::Id, MediaCastMode>&
+        current_cast_modes) {
+  std::unique_ptr<base::ListValue> routes_val(
+      RoutesToValue(routes, joinable_route_ids, current_cast_modes));
+  web_ui()->CallJavascriptFunctionUnsafe(kSetRouteList, *routes_val);
 }
 
 void MediaRouterWebUIMessageHandler::UpdateCastModes(
     const CastModeSet& cast_modes,
     const std::string& source_host) {
   DVLOG(2) << "UpdateCastModes";
-  scoped_ptr<base::ListValue> cast_modes_val(
+  std::unique_ptr<base::ListValue> cast_modes_val(
       CastModesToValue(cast_modes, source_host));
-  web_ui()->CallJavascriptFunction(kSetCastModeList, *cast_modes_val);
+  web_ui()->CallJavascriptFunctionUnsafe(kSetCastModeList, *cast_modes_val);
 }
 
 void MediaRouterWebUIMessageHandler::OnCreateRouteResponseReceived(
@@ -270,30 +274,39 @@ void MediaRouterWebUIMessageHandler::OnCreateRouteResponseReceived(
     const MediaRoute* route) {
   DVLOG(2) << "OnCreateRouteResponseReceived";
   if (route) {
-    scoped_ptr<base::DictionaryValue> route_value(RouteToValue(*route, false,
-        media_router_ui_->GetRouteProviderExtensionId()));
-    web_ui()->CallJavascriptFunction(
-        kOnCreateRouteResponseReceived,
-        base::StringValue(sink_id), *route_value,
-        base::FundamentalValue(route->for_display()));
+    int current_cast_mode = CurrentCastModeForRouteId(
+        route->media_route_id(), media_router_ui_->current_cast_modes());
+    std::unique_ptr<base::DictionaryValue> route_value(RouteToValue(
+        *route, false, media_router_ui_->GetRouteProviderExtensionId(),
+        off_the_record_, current_cast_mode));
+    web_ui()->CallJavascriptFunctionUnsafe(
+        kOnCreateRouteResponseReceived, base::StringValue(sink_id),
+        *route_value, base::FundamentalValue(route->for_display()));
   } else {
-    web_ui()->CallJavascriptFunction(kOnCreateRouteResponseReceived,
-                                     base::StringValue(sink_id),
-                                     *base::Value::CreateNullValue(),
-                                     base::FundamentalValue(false));
+    web_ui()->CallJavascriptFunctionUnsafe(
+        kOnCreateRouteResponseReceived, base::StringValue(sink_id),
+        *base::Value::CreateNullValue(), base::FundamentalValue(false));
   }
+}
+
+void MediaRouterWebUIMessageHandler::ReturnSearchResult(
+    const std::string& sink_id) {
+  DVLOG(2) << "ReturnSearchResult";
+  web_ui()->CallJavascriptFunctionUnsafe(kReceiveSearchResult,
+                                         base::StringValue(sink_id));
 }
 
 void MediaRouterWebUIMessageHandler::UpdateIssue(const Issue* issue) {
   DVLOG(2) << "UpdateIssue";
-  web_ui()->CallJavascriptFunction(kSetIssue,
+  web_ui()->CallJavascriptFunctionUnsafe(
+      kSetIssue,
       issue ? *IssueToValue(*issue) : *base::Value::CreateNullValue());
 }
 
 void MediaRouterWebUIMessageHandler::UpdateMaxDialogHeight(int height) {
   DVLOG(2) << "UpdateMaxDialogHeight";
-  web_ui()->CallJavascriptFunction(kUpdateMaxHeight,
-                                   base::FundamentalValue(height));
+  web_ui()->CallJavascriptFunctionUnsafe(kUpdateMaxHeight,
+                                         base::FundamentalValue(height));
 }
 
 void MediaRouterWebUIMessageHandler::RegisterMessages() {
@@ -334,6 +347,10 @@ void MediaRouterWebUIMessageHandler::RegisterMessages() {
       base::Bind(&MediaRouterWebUIMessageHandler::OnReportClickedSinkIndex,
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
+      kReportFilter,
+      base::Bind(&MediaRouterWebUIMessageHandler::OnReportFilter,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
       kReportInitialState,
       base::Bind(&MediaRouterWebUIMessageHandler::OnReportInitialState,
                  base::Unretained(this)));
@@ -344,6 +361,10 @@ void MediaRouterWebUIMessageHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       kReportRouteCreation,
       base::Bind(&MediaRouterWebUIMessageHandler::OnReportRouteCreation,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kReportRouteCreationOutcome,
+      base::Bind(&MediaRouterWebUIMessageHandler::OnReportRouteCreationOutcome,
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       kReportSelectedCastMode,
@@ -367,6 +388,10 @@ void MediaRouterWebUIMessageHandler::RegisterMessages() {
           &MediaRouterWebUIMessageHandler::OnReportTimeToInitialActionClose,
           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
+      kSearchSinksAndCreateRoute,
+      base::Bind(&MediaRouterWebUIMessageHandler::OnSearchSinksAndCreateRoute,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
       kOnInitialDataReceived,
       base::Bind(&MediaRouterWebUIMessageHandler::OnInitialDataReceived,
                  base::Unretained(this)));
@@ -382,22 +407,21 @@ void MediaRouterWebUIMessageHandler::OnRequestInitialData(
   initial_data.SetString("deviceMissingUrl",
       base::StringPrintf(kHelpPageUrlPrefix, 3249268));
 
-  scoped_ptr<base::DictionaryValue> sinks_and_identity(
+  std::unique_ptr<base::DictionaryValue> sinks_and_identity(
       SinksAndIdentityToValue(media_router_ui_->sinks(), GetAccountInfo()));
   initial_data.Set("sinksAndIdentity", sinks_and_identity.release());
 
-  scoped_ptr<base::ListValue> routes(RoutesToValue(media_router_ui_->routes(),
-      media_router_ui_->joinable_route_ids(),
-      media_router_ui_->GetRouteProviderExtensionId()));
+  std::unique_ptr<base::ListValue> routes(RoutesToValue(
+      media_router_ui_->routes(), media_router_ui_->joinable_route_ids(),
+      media_router_ui_->current_cast_modes()));
   initial_data.Set("routes", routes.release());
 
   const std::set<MediaCastMode> cast_modes = media_router_ui_->cast_modes();
-  scoped_ptr<base::ListValue> cast_modes_list(
-      CastModesToValue(cast_modes,
-                       media_router_ui_->GetPresentationRequestSourceName()));
+  std::unique_ptr<base::ListValue> cast_modes_list(CastModesToValue(
+      cast_modes, media_router_ui_->GetPresentationRequestSourceName()));
   initial_data.Set("castModes", cast_modes_list.release());
 
-  web_ui()->CallJavascriptFunction(kSetInitialData, initial_data);
+  web_ui()->CallJavascriptFunctionUnsafe(kSetInitialData, initial_data);
   media_router_ui_->UIInitialized();
 }
 
@@ -434,7 +458,7 @@ void MediaRouterWebUIMessageHandler::OnCreateRoute(
         l10n_util::GetStringUTF8(IDS_MEDIA_ROUTER_ISSUE_PENDING_ROUTE),
         std::string(), IssueAction(IssueAction::TYPE_DISMISS),
         std::vector<IssueAction>(), std::string(), Issue::NOTIFICATION,
-        false, std::string());
+        false, -1);
     media_router_ui_->AddIssue(issue);
     return;
   }
@@ -446,8 +470,6 @@ void MediaRouterWebUIMessageHandler::OnCreateRoute(
   // e.g. low-fps-mirror, user-override. (crbug.com/490364)
   if (!media_router_ui->CreateRoute(
           sink_id, static_cast<MediaCastMode>(cast_mode_num))) {
-    // TODO(imcheng): Need to add an issue if failed to initiate a CreateRoute
-    // request.
     DVLOG(1) << "Error initiating route request.";
   }
 }
@@ -529,14 +551,12 @@ void MediaRouterWebUIMessageHandler::OnJoinRoute(const base::ListValue* args) {
         l10n_util::GetStringUTF8(IDS_MEDIA_ROUTER_ISSUE_PENDING_ROUTE),
         std::string(), IssueAction(IssueAction::TYPE_DISMISS),
         std::vector<IssueAction>(), std::string(), Issue::NOTIFICATION,
-        false, std::string());
+        false, -1);
     media_router_ui_->AddIssue(issue);
     return;
   }
 
   if (!media_router_ui_->ConnectRoute(sink_id, route_id)) {
-    // TODO(boetger): Need to add an issue if failed to initiate a JoinRoute
-    // request.
     DVLOG(1) << "Error initiating route join request.";
   }
 }
@@ -593,6 +613,11 @@ void MediaRouterWebUIMessageHandler::OnReportClickedSinkIndex(
   }
   UMA_HISTOGRAM_SPARSE_SLOWLY("MediaRouter.Ui.Action.StartLocalPosition",
                               std::min(index, 100));
+}
+
+void MediaRouterWebUIMessageHandler::OnReportFilter(const base::ListValue*) {
+  DVLOG(1) << "OnReportFilter";
+  base::RecordAction(base::UserMetricsAction("MediaRouter_Ui_Action_Filter"));
 }
 
 void MediaRouterWebUIMessageHandler::OnReportInitialAction(
@@ -654,6 +679,19 @@ void MediaRouterWebUIMessageHandler::OnReportRouteCreation(
                         route_created_successfully);
 }
 
+void MediaRouterWebUIMessageHandler::OnReportRouteCreationOutcome(
+    const base::ListValue* args) {
+  DVLOG(1) << "OnReportRouteCreationOutcome";
+  int outcome;
+  if (!args->GetInteger(0, &outcome)) {
+    DVLOG(1) << "Unable to extract args.";
+    return;
+  }
+
+  media_router::MediaRouterMetrics::RecordRouteCreationOutcome(
+      static_cast<MediaRouterRouteCreationOutcome>(outcome));
+}
+
 void MediaRouterWebUIMessageHandler::OnReportSelectedCastMode(
     const base::ListValue* args) {
   DVLOG(1) << "OnReportSelectedCastMode";
@@ -701,6 +739,39 @@ void MediaRouterWebUIMessageHandler::OnReportTimeToInitialActionClose(
                       base::TimeDelta::FromMillisecondsD(time_to_close));
 }
 
+void MediaRouterWebUIMessageHandler::OnSearchSinksAndCreateRoute(
+    const base::ListValue* args) {
+  DVLOG(1) << "OnSearchSinksAndCreateRoute";
+  const base::DictionaryValue* args_dict = nullptr;
+  std::string sink_id;
+  std::string search_criteria;
+  std::string domain;
+  int cast_mode_num = -1;
+  if (!args->GetDictionary(0, &args_dict) ||
+      !args_dict->GetString("sinkId", &sink_id) ||
+      !args_dict->GetString("searchCriteria", &search_criteria) ||
+      !args_dict->GetString("domain", &domain) ||
+      !args_dict->GetInteger("selectedCastMode", &cast_mode_num)) {
+    DVLOG(1) << "Unable to extract args";
+    return;
+  }
+
+  if (search_criteria.empty()) {
+    DVLOG(1) << "Media Router UI did not provide valid search criteria. "
+                "Aborting.";
+    return;
+  }
+
+  if (!IsValidCastModeNum(cast_mode_num)) {
+    DVLOG(1) << "Invalid cast mode: " << cast_mode_num << ". Aborting.";
+    return;
+  }
+
+  media_router_ui_->SearchSinksAndCreateRoute(
+      sink_id, search_criteria, domain,
+      static_cast<MediaCastMode>(cast_mode_num));
+}
+
 void MediaRouterWebUIMessageHandler::OnInitialDataReceived(
     const base::ListValue* args) {
   DVLOG(1) << "OnInitialDataReceived";
@@ -715,9 +786,9 @@ bool MediaRouterWebUIMessageHandler::ActOnIssueType(
     std::string learn_more_url = GetLearnMoreUrl(args);
     if (learn_more_url.empty())
       return false;
-    scoped_ptr<base::ListValue> open_args(new base::ListValue);
+    std::unique_ptr<base::ListValue> open_args(new base::ListValue);
     open_args->AppendString(learn_more_url);
-    web_ui()->CallJavascriptFunction(kWindowOpen, *open_args);
+    web_ui()->CallJavascriptFunctionUnsafe(kWindowOpen, *open_args);
     return true;
   } else {
     // Do nothing; no other issue action types require any other action.
@@ -735,20 +806,19 @@ void MediaRouterWebUIMessageHandler::MaybeUpdateFirstRunFlowData() {
       pref_service->GetBoolean(prefs::kMediaRouterFirstRunFlowAcknowledged);
   bool show_cloud_pref = false;
 #if defined(GOOGLE_CHROME_BUILD)
-  // Cloud services preference is shown if user is logged in and has sync
-  // enabled. If the user enables sync after acknowledging the first run flow,
-  // this is treated as the user opting into Google services, including cloud
-  // services, if the browser is a Chrome branded build.
-  if (!pref_service->GetBoolean(prefs::kMediaRouterCloudServicesPrefSet) &&
-      profile->IsSyncAllowed()) {
+  // Cloud services preference is shown if user is logged in. If the user
+  // enables sync after acknowledging the first run flow, this is treated as
+  // the user opting into Google services, including cloud services, if the
+  // browser is a Chrome branded build.
+  if (!pref_service->GetBoolean(prefs::kMediaRouterCloudServicesPrefSet)) {
     SigninManagerBase* signin_manager =
         SigninManagerFactory::GetForProfile(profile);
-    if (signin_manager && signin_manager->IsAuthenticated() &&
-        ProfileSyncServiceFactory::GetForProfile(profile)->IsSyncActive()) {
+    if (signin_manager && signin_manager->IsAuthenticated()) {
       // If the user had previously acknowledged the first run flow without
       // being shown the cloud services option, and is now logged in with sync
       // enabled, turn on cloud services.
-      if (first_run_flow_acknowledged) {
+      if (first_run_flow_acknowledged &&
+          ProfileSyncServiceFactory::GetForProfile(profile)->IsSyncActive()) {
         pref_service->SetBoolean(prefs::kMediaRouterEnableCloudServices, true);
         pref_service->SetBoolean(prefs::kMediaRouterCloudServicesPrefSet,
                                  true);
@@ -774,17 +844,51 @@ void MediaRouterWebUIMessageHandler::MaybeUpdateFirstRunFlowData() {
   first_run_flow_data.SetBoolean("wasFirstRunFlowAcknowledged",
                                  first_run_flow_acknowledged);
   first_run_flow_data.SetBoolean("showFirstRunFlowCloudPref", show_cloud_pref);
-  web_ui()->CallJavascriptFunction(kSetFirstRunFlowData, first_run_flow_data);
+  web_ui()->CallJavascriptFunctionUnsafe(kSetFirstRunFlowData,
+                                         first_run_flow_data);
 }
 
 AccountInfo MediaRouterWebUIMessageHandler::GetAccountInfo() {
 #if defined(GOOGLE_CHROME_BUILD)
   SigninManagerBase* signin_manager =
       SigninManagerFactory::GetForProfile(Profile::FromWebUI(web_ui()));
-  return signin_manager->GetAuthenticatedAccountInfo();
-#else
-  return AccountInfo();
+  if (signin_manager)
+    return signin_manager->GetAuthenticatedAccountInfo();
 #endif  // defined(GOOGLE_CHROME_BUILD)
+
+  return AccountInfo();
+}
+
+int MediaRouterWebUIMessageHandler::CurrentCastModeForRouteId(
+    const MediaRoute::Id& route_id,
+    const std::unordered_map<MediaRoute::Id, MediaCastMode>& current_cast_modes)
+    const {
+  auto current_cast_mode_entry = current_cast_modes.find(route_id);
+  int current_cast_mode = current_cast_mode_entry != current_cast_modes.end()
+                              ? current_cast_mode_entry->second
+                              : -1;
+  return current_cast_mode;
+}
+
+std::unique_ptr<base::ListValue> MediaRouterWebUIMessageHandler::RoutesToValue(
+    const std::vector<MediaRoute>& routes,
+    const std::vector<MediaRoute::Id>& joinable_route_ids,
+    const std::unordered_map<MediaRoute::Id, MediaCastMode>& current_cast_modes)
+    const {
+  std::unique_ptr<base::ListValue> value(new base::ListValue);
+  const std::string& extension_id =
+      media_router_ui_->GetRouteProviderExtensionId();
+
+  for (const MediaRoute& route : routes) {
+    bool can_join = ContainsValue(joinable_route_ids, route.media_route_id());
+    int current_cast_mode = CurrentCastModeForRouteId(route.media_route_id(),
+                                                      current_cast_modes);
+    std::unique_ptr<base::DictionaryValue> route_val(RouteToValue(
+        route, can_join, extension_id, off_the_record_, current_cast_mode));
+    value->Append(std::move(route_val));
+  }
+
+  return value;
 }
 
 void MediaRouterWebUIMessageHandler::SetWebUIForTest(content::WebUI* web_ui) {

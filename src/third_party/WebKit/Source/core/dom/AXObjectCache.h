@@ -28,6 +28,7 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/Document.h"
+#include <memory>
 
 typedef unsigned AXID;
 
@@ -39,6 +40,7 @@ class FrameView;
 class HTMLOptionElement;
 class HTMLSelectElement;
 class LayoutMenuList;
+class LineLayoutItem;
 class Page;
 
 class CORE_EXPORT AXObjectCache : public GarbageCollectedFinalized<AXObjectCache> {
@@ -61,6 +63,7 @@ public:
         AXChildrenChanged,
         AXClicked,
         AXDocumentSelectionChanged,
+        AXExpandedChanged,
         AXFocusedUIElementChanged,
         AXHide,
         AXHover,
@@ -95,6 +98,7 @@ public:
     virtual void listboxOptionStateChanged(HTMLOptionElement*) = 0;
     virtual void listboxSelectedChildrenChanged(HTMLSelectElement*) = 0;
     virtual void listboxActiveIndexChanged(HTMLSelectElement*) = 0;
+    virtual void radiobuttonRemovedFromGroup(HTMLInputElement*) = 0;
 
     virtual void remove(LayoutObject*) = 0;
     virtual void remove(Node*) = 0;
@@ -122,7 +126,7 @@ public:
 
     virtual void setCanvasObjectBounds(Element*, const LayoutRect&) = 0;
 
-    virtual void inlineTextBoxesUpdated(LayoutObject*) = 0;
+    virtual void inlineTextBoxesUpdated(LineLayoutItem) = 0;
 
     // Called when the scroll offset changes.
     virtual void handleScrollPositionChanged(FrameView*) = 0;
@@ -151,7 +155,7 @@ class CORE_EXPORT ScopedAXObjectCache {
     USING_FAST_MALLOC(ScopedAXObjectCache);
     WTF_MAKE_NONCOPYABLE(ScopedAXObjectCache);
 public:
-    static PassOwnPtr<ScopedAXObjectCache> create(Document&);
+    static std::unique_ptr<ScopedAXObjectCache> create(Document&);
     ~ScopedAXObjectCache();
 
     AXObjectCache* get();
@@ -159,7 +163,7 @@ public:
 private:
     explicit ScopedAXObjectCache(Document&);
 
-    RefPtrWillBePersistent<Document> m_document;
+    Persistent<Document> m_document;
     Persistent<AXObjectCache> m_cache;
 };
 

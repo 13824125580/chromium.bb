@@ -40,11 +40,11 @@ TextTrackContainer::TextTrackContainer(Document& document)
 {
 }
 
-PassRefPtrWillBeRawPtr<TextTrackContainer> TextTrackContainer::create(Document& document)
+TextTrackContainer* TextTrackContainer::create(Document& document)
 {
-    RefPtrWillBeRawPtr<TextTrackContainer> element = adoptRefWillBeNoop(new TextTrackContainer(document));
-    element->setShadowPseudoId(AtomicString("-webkit-media-text-track-container", AtomicString::ConstructFromLiteral));
-    return element.release();
+    TextTrackContainer* element = new TextTrackContainer(document);
+    element->setShadowPseudoId(AtomicString("-webkit-media-text-track-container"));
+    return element;
 }
 
 LayoutObject* TextTrackContainer::createLayoutObject(const ComputedStyle&)
@@ -54,7 +54,7 @@ LayoutObject* TextTrackContainer::createLayoutObject(const ComputedStyle&)
 
 void TextTrackContainer::updateDisplay(HTMLMediaElement& mediaElement, ExposingControls exposingControls)
 {
-    if (!mediaElement.closedCaptionsVisible()) {
+    if (!mediaElement.textTracksVisible()) {
         removeChildren();
         return;
     }
@@ -115,7 +115,7 @@ void TextTrackContainer::updateDisplay(HTMLMediaElement& mediaElement, ExposingC
     for (size_t i = 0; i < activeCues.size(); ++i) {
         TextTrackCue* cue = activeCues[i].data();
 
-        ASSERT(cue->isActive());
+        DCHECK(cue->isActive());
         if (!cue->track() || !cue->track()->isRendered() || !cue->isActive())
             continue;
 

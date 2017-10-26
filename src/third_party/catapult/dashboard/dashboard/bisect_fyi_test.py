@@ -9,6 +9,7 @@ import webapp2
 import webtest
 
 from dashboard import bisect_fyi
+from dashboard import namespaced_stored_object
 from dashboard import start_try_job
 from dashboard import stored_object
 from dashboard import testing_common
@@ -20,7 +21,8 @@ TEST_FYI_CONFIGS = {
             'bug_id': 111,
             'command': ('python src/tools/perf/run_benchmark -v '
                         '--browser=release_x64 --output-format=chartjson '
-                        '--also-run-disabled-tests blink_perf.bindings'),
+                        '--upload-results --also-run-disabled-tests '
+                        'blink_perf.bindings'),
             'good_revision': '357643',
             'gs_bucket': 'chrome-perf',
             'max_time_minutes': '20',
@@ -40,7 +42,8 @@ TEST_FYI_CONFIGS = {
             'bug_id': 222,
             'command': ('python src/tools/perf/run_benchmark -v '
                         '--browser=release_x64 --output-format=chartjson '
-                        '--also-run-disabled-tests blink_perf.bindings'),
+                        '--upload-results --also-run-disabled-tests '
+                        'blink_perf.bindings'),
             'good_revision': '257643',
             'gs_bucket': 'chrome-perf',
             'max_time_minutes': '20',
@@ -60,17 +63,21 @@ class BisectFYITest(testing_common.TestCase):
 
   def setUp(self):
     super(BisectFYITest, self).setUp()
-    stored_object.Set(
-        bisect_fyi._BISECT_FYI_CONFIGS_KEY, TEST_FYI_CONFIGS)
-    stored_object.Set(
-        start_try_job._TESTER_DIRECTOR_MAP_KEY,
-        {
-            'linux_perf_bisect': 'linux_perf_bisector',
-            'win_x64_perf_bisect': 'linux_perf_bisector',
-        })
     app = webapp2.WSGIApplication(
         [('/bisect_fyi', bisect_fyi.BisectFYIHandler)])
     self.testapp = webtest.TestApp(app)
+    stored_object.Set(
+        bisect_fyi._BISECT_FYI_CONFIGS_KEY, TEST_FYI_CONFIGS)
+    testing_common.SetIsInternalUser('internal@chromium.org', True)
+    self.SetCurrentUser('internal@chromium.org')
+    namespaced_stored_object.Set(
+        start_try_job._TESTER_DIRECTOR_MAP_KEY,
+        {
+            'ChromiumPerf': {
+                'linux_perf_bisect': 'linux_perf_bisector',
+                'win_x64_perf_bisect': 'win_x64_perf_bisect',
+            }
+        })
 
   @mock.patch.object(bisect_fyi.start_try_job, '_PerformBuildbucketBisect')
   def testPost_FailedJobs_BisectFYI(self, mock_perform_bisect):

@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TOOLBAR_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TOOLBAR_LAYER_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/layers/nine_patch_layer.h"
 #include "chrome/browser/android/compositor/layer/layer.h"
 #include "ui/android/resources/resource_manager.h"
@@ -36,7 +37,6 @@ class ToolbarLayer : public Layer {
                     int url_bar_background_resource_id,
                     float url_bar_alpha,
                     bool show_debug,
-                    float brightness,
                     bool clip_shadow);
 
   void UpdateProgressBar(int progress_bar_x,
@@ -65,7 +65,6 @@ class ToolbarLayer : public Layer {
   scoped_refptr<cc::SolidColorLayer> progress_bar_background_layer_;
   scoped_refptr<cc::SolidColorLayer> anonymize_layer_;
   scoped_refptr<cc::SolidColorLayer> debug_layer_;
-  float brightness_;
 
   DISALLOW_COPY_AND_ASSIGN(ToolbarLayer);
 };

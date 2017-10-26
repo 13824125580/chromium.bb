@@ -109,17 +109,16 @@ class NET_EXPORT_PRIVATE QuicReceivedPacketManager
                                     const QuicPacketHeader& header,
                                     QuicTime receipt_time);
 
-  virtual void RecordPacketRevived(QuicPacketNumber packet_number);
-
   // Checks whether |packet_number| is missing and less than largest observed.
   virtual bool IsMissing(QuicPacketNumber packet_number);
 
   // Checks if we're still waiting for the packet with |packet_number|.
   virtual bool IsAwaitingPacket(QuicPacketNumber packet_number);
 
-  // Update the |ack_frame| for an outgoing ack.
-  void UpdateReceivedPacketInfo(QuicAckFrame* ack_frame,
-                                QuicTime approximate_now);
+  // Retrieves a frame containing a QuicAckFrame.  The ack frame may not be
+  // changed outside QuicReceivedPacketManager and must be serialized before
+  // another packet is received, or it will change.
+  const QuicFrame GetUpdatedAckFrame(QuicTime approximate_now);
 
   // QuicReceivedEntropyHashCalculatorInterface
   // Called by QuicFramer, when the outgoing ack gets truncated, to recalculate
@@ -131,12 +130,18 @@ class NET_EXPORT_PRIVATE QuicReceivedPacketManager
   virtual void UpdatePacketInformationSentByPeer(
       const QuicStopWaitingFrame& stop_waiting);
 
+  // Returns true if there are any missing packets.
+  bool HasMissingPackets() const;
+
   // Returns true when there are new missing packets to be reported within 3
   // packets of the largest observed.
   virtual bool HasNewMissingPackets() const;
 
   // Returns the number of packets being tracked in the EntropyTracker.
   size_t NumTrackedPackets() const;
+
+  // Sets the mode of packets set of ack_frame_ based on |version|.
+  void SetVersion(QuicVersion version);
 
   QuicPacketNumber peer_least_packet_awaiting_ack() {
     return peer_least_packet_awaiting_ack_;

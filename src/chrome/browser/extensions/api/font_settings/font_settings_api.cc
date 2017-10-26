@@ -8,6 +8,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
@@ -230,7 +233,7 @@ bool FontSettingsClearFontFunction::RunSync() {
     return false;
   }
 
-  scoped_ptr<fonts::ClearFont::Params> params(
+  std::unique_ptr<fonts::ClearFont::Params> params(
       fonts::ClearFont::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -247,7 +250,7 @@ bool FontSettingsClearFontFunction::RunSync() {
 }
 
 bool FontSettingsGetFontFunction::RunSync() {
-  scoped_ptr<fonts::GetFont::Params> params(
+  std::unique_ptr<fonts::GetFont::Params> params(
       fonts::GetFont::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -270,10 +273,10 @@ bool FontSettingsGetFontFunction::RunSync() {
       extensions::preference_helpers::GetLevelOfControl(
           GetProfile(), extension_id(), pref_path, kIncognito);
 
-  base::DictionaryValue* result = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->SetString(kFontIdKey, font_name);
   result->SetString(kLevelOfControlKey, level_of_control);
-  SetResult(result);
+  SetResult(std::move(result));
   return true;
 }
 
@@ -283,7 +286,7 @@ bool FontSettingsSetFontFunction::RunSync() {
     return false;
   }
 
-  scoped_ptr<fonts::SetFont::Params> params(
+  std::unique_ptr<fonts::SetFont::Params> params(
       fonts::SetFont::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -309,14 +312,14 @@ bool FontSettingsGetFontListFunction::RunAsync() {
 }
 
 void FontSettingsGetFontListFunction::FontListHasLoaded(
-    scoped_ptr<base::ListValue> list) {
+    std::unique_ptr<base::ListValue> list) {
   bool success = CopyFontsToResult(list.get());
   SendResponse(success);
 }
 
 bool FontSettingsGetFontListFunction::CopyFontsToResult(
     base::ListValue* fonts) {
-  scoped_ptr<base::ListValue> result(new base::ListValue());
+  std::unique_ptr<base::ListValue> result(new base::ListValue());
   for (base::ListValue::iterator it = fonts->begin();
        it != fonts->end(); ++it) {
     base::ListValue* font_list_value;
@@ -337,13 +340,14 @@ bool FontSettingsGetFontListFunction::CopyFontsToResult(
       return false;
     }
 
-    base::DictionaryValue* font_name = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> font_name(
+        new base::DictionaryValue());
     font_name->Set(kFontIdKey, new base::StringValue(name));
     font_name->Set(kDisplayNameKey, new base::StringValue(localized_name));
-    result->Append(font_name);
+    result->Append(std::move(font_name));
   }
 
-  SetResult(result.release());
+  SetResult(std::move(result));
   return true;
 }
 
@@ -371,10 +375,10 @@ bool GetFontPrefExtensionFunction::RunSync() {
       extensions::preference_helpers::GetLevelOfControl(
           GetProfile(), extension_id(), GetPrefName(), kIncognito);
 
-  base::DictionaryValue* result = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->Set(GetKey(), pref->GetValue()->DeepCopy());
   result->SetString(kLevelOfControlKey, level_of_control);
-  SetResult(result);
+  SetResult(std::move(result));
   return true;
 }
 

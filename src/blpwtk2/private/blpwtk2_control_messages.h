@@ -39,9 +39,19 @@ IPC_SYNC_MESSAGE_CONTROL1_0(BlpControlHostMsg_Sync,
                             bool /*isFinalSync*/)
 
 // Create a new ProcessHost and return the channelId.
-IPC_SYNC_MESSAGE_CONTROL1_1(BlpControlHostMsg_CreateNewHostChannel,
+IPC_SYNC_MESSAGE_CONTROL4_1(BlpControlHostMsg_CreateNewHostChannel,
                             int /* timeoutInMilliseconds */,
+                            std::string /* dataDir */,
+                            bool /* diskCacheEnabled */,
+                            bool /* cookiePersistenceEnabled */,
                             std::string /* channelInfo */)
+
+// Request MojoIPC tokens from host
+IPC_SYNC_MESSAGE_CONTROL1_3(BlpControlHostMsg_RequestMojoTokens,
+                            int /* renderer pid */,
+                            int /* client file descriptor */,
+                            std::string /* Mojo ipc token */,
+                            std::string /* Mojo service token */)
 
 // Clear the web cache on all renderer processes managed by the ProcessHost.
 IPC_MESSAGE_CONTROL0(BlpControlHostMsg_ClearWebCache)
@@ -60,9 +70,6 @@ IPC_MESSAGE_CONTROL1(BlpControlHostMsg_SetDefaultPrinterName,
                      std::string /* printer name */)
 
 // ============= Messages from host to client =======================
-
-IPC_MESSAGE_CONTROL1(BlpControlMsg_SetInProcessRendererChannelName,
-                     std::string /* channelName */)
 
 
 // ============ Messages from browser to renderer =====================

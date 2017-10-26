@@ -7,9 +7,9 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
-#include "base/memory/scoped_ptr.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/quads/render_pass.h"
 #include "cc/test/fake_layer_tree_host.h"
@@ -58,55 +58,55 @@ class LayerTestCommon {
 
     template <typename T>
     T* AddChildToRoot() {
-      scoped_ptr<T> layer =
+      std::unique_ptr<T> layer =
           T::Create(host_->host_impl()->active_tree(), layer_impl_id_++);
       T* ptr = layer.get();
-      root_layer_impl_->AddChild(std::move(layer));
+      root_layer_for_testing()->test_properties()->AddChild(std::move(layer));
       return ptr;
     }
 
     template <typename T>
     T* AddChild(LayerImpl* parent) {
-      scoped_ptr<T> layer =
+      std::unique_ptr<T> layer =
           T::Create(host_->host_impl()->active_tree(), layer_impl_id_++);
       T* ptr = layer.get();
-      parent->AddChild(std::move(layer));
+      parent->test_properties()->AddChild(std::move(layer));
       return ptr;
     }
 
     template <typename T>
     T* AddReplicaLayer(LayerImpl* origin) {
-      scoped_ptr<T> layer =
+      std::unique_ptr<T> layer =
           T::Create(host_->host_impl()->active_tree(), layer_impl_id_++);
       T* ptr = layer.get();
-      origin->SetReplicaLayer(std::move(layer));
+      origin->test_properties()->SetReplicaLayer(std::move(layer));
       return ptr;
     }
 
     template <typename T, typename A>
     T* AddChildToRoot(const A& a) {
-      scoped_ptr<T> layer =
+      std::unique_ptr<T> layer =
           T::Create(host_->host_impl()->active_tree(), layer_impl_id_++, a);
       T* ptr = layer.get();
-      root_layer_impl_->AddChild(std::move(layer));
+      root_layer_for_testing()->test_properties()->AddChild(std::move(layer));
       return ptr;
     }
 
     template <typename T, typename A, typename B>
     T* AddChildToRoot(const A& a, const B& b) {
-      scoped_ptr<T> layer =
+      std::unique_ptr<T> layer =
           T::Create(host_->host_impl()->active_tree(), layer_impl_id_++, a, b);
       T* ptr = layer.get();
-      root_layer_impl_->AddChild(std::move(layer));
+      root_layer_for_testing()->test_properties()->AddChild(std::move(layer));
       return ptr;
     }
 
     template <typename T, typename A, typename B, typename C, typename D>
     T* AddChildToRoot(const A& a, const B& b, const C& c, const D& d) {
-      scoped_ptr<T> layer = T::Create(host_->host_impl()->active_tree(),
-                                      layer_impl_id_++, a, b, c, d);
+      std::unique_ptr<T> layer = T::Create(host_->host_impl()->active_tree(),
+                                           layer_impl_id_++, a, b, c, d);
       T* ptr = layer.get();
-      root_layer_impl_->AddChild(std::move(layer));
+      root_layer_for_testing()->test_properties()->AddChild(std::move(layer));
       return ptr;
     }
 
@@ -121,10 +121,10 @@ class LayerTestCommon {
                       const C& c,
                       const D& d,
                       const E& e) {
-      scoped_ptr<T> layer = T::Create(host_->host_impl()->active_tree(),
-                                      layer_impl_id_++, a, b, c, d, e);
+      std::unique_ptr<T> layer = T::Create(host_->host_impl()->active_tree(),
+                                           layer_impl_id_++, a, b, c, d, e);
       T* ptr = layer.get();
-      root_layer_impl_->AddChild(std::move(layer));
+      root_layer_for_testing()->test_properties()->AddChild(std::move(layer));
       return ptr;
     }
 
@@ -137,13 +137,17 @@ class LayerTestCommon {
     void AppendSurfaceQuadsWithOcclusion(RenderSurfaceImpl* surface_impl,
                                          const gfx::Rect& occluded);
 
+    void RequestCopyOfOutput();
+
     OutputSurface* output_surface() const {
       return host_->host_impl()->output_surface();
     }
     ResourceProvider* resource_provider() const {
       return host_->host_impl()->resource_provider();
     }
-    LayerImpl* root_layer() const { return root_layer_impl_.get(); }
+    LayerImpl* root_layer_for_testing() const {
+      return host_impl()->active_tree()->root_layer_for_testing();
+    }
     FakeLayerTreeHost* host() { return host_.get(); }
     FakeLayerTreeHostImpl* host_impl() const { return host_->host_impl(); }
     TaskRunnerProvider* task_runner_provider() const {
@@ -153,13 +157,16 @@ class LayerTestCommon {
     scoped_refptr<AnimationTimeline> timeline() { return timeline_; }
     scoped_refptr<AnimationTimeline> timeline_impl() { return timeline_impl_; }
 
+    void SetElementIdsForTesting() {
+      host_impl()->active_tree()->SetElementIdsForTesting();
+    }
+
    private:
     FakeLayerTreeHostClient client_;
     TestTaskGraphRunner task_graph_runner_;
-    scoped_ptr<OutputSurface> output_surface_;
-    scoped_ptr<FakeLayerTreeHost> host_;
-    scoped_ptr<LayerImpl> root_layer_impl_;
-    scoped_ptr<RenderPass> render_pass_;
+    std::unique_ptr<OutputSurface> output_surface_;
+    std::unique_ptr<FakeLayerTreeHost> host_;
+    std::unique_ptr<RenderPass> render_pass_;
     scoped_refptr<AnimationTimeline> timeline_;
     scoped_refptr<AnimationTimeline> timeline_impl_;
     int layer_impl_id_;

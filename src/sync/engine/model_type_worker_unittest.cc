@@ -6,8 +6,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <utility>
 
+#include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "sync/engine/commit_contribution.h"
 #include "sync/internal_api/public/base/model_type.h"
@@ -88,6 +91,8 @@ class ModelTypeWorkerTest : public ::testing::Test {
   void InitializeWithState(const sync_pb::DataTypeState& state,
                            const UpdateResponseDataList& pending_updates);
 
+  ModelTypeWorker* worker() const { return worker_.get(); }
+
   // Introduce a new key that the local cryptographer can't decrypt.
   void NewForeignEncryptionKey();
 
@@ -104,6 +109,9 @@ class ModelTypeWorkerTest : public ::testing::Test {
 
   // Pretends to receive update messages from the server.
   void TriggerTypeRootUpdateFromServer();
+  void TriggerPartialUpdateFromServer(int64_t version_offset,
+                                      const std::string& tag,
+                                      const std::string& value);
   void TriggerUpdateFromServer(int64_t version_offset,
                                const std::string& tag,
                                const std::string& value);
@@ -133,6 +141,12 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // Pretend to successfully commit all outstanding unsynced items.
   // It is safe to call this only if WillCommit() returns true.
   void DoSuccessfulCommit();
+
+  // Callback when processor got disconnected with sync.
+  void DisconnectProcessor();
+
+  bool IsProcessorDisconnected();
+  void ResetWorker();
 
   // Read commit messages the worker_ sent to the emulated server.
   size_t GetNumCommitMessagesOnServer() const;
@@ -207,7 +221,7 @@ class ModelTypeWorkerTest : public ::testing::Test {
   syncer::FakeEncryptor fake_encryptor_;
 
   // The cryptographer itself.  NULL if we're not encrypting the type.
-  scoped_ptr<Cryptographer> cryptographer_;
+  std::unique_ptr<Cryptographer> cryptographer_;
 
   // The number of the most recent foreign encryption key known to our
   // cryptographer.  Note that not all of these will be decryptable.
@@ -218,7 +232,7 @@ class ModelTypeWorkerTest : public ::testing::Test {
   int update_encryption_filter_index_;
 
   // The ModelTypeWorker being tested.
-  scoped_ptr<ModelTypeWorker> worker_;
+  std::unique_ptr<ModelTypeWorker> worker_;
 
   // Non-owned, possibly NULL pointer.  This object belongs to the
   // ModelTypeWorker under test.
@@ -232,13 +246,16 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // A mock to track the number of times the CommitQueue requests to
   // sync.
   syncer::MockNudgeHandler mock_nudge_handler_;
+
+  bool is_processor_disconnected_;
 };
 
 ModelTypeWorkerTest::ModelTypeWorkerTest()
     : foreign_encryption_key_index_(0),
       update_encryption_filter_index_(0),
       mock_type_processor_(NULL),
-      mock_server_(kModelType) {}
+      mock_server_(kModelType),
+      is_processor_disconnected_(false) {}
 
 ModelTypeWorkerTest::~ModelTypeWorkerTest() {}
 
@@ -274,11 +291,13 @@ void ModelTypeWorkerTest::InitializeWithState(
     const UpdateResponseDataList& initial_pending_updates) {
   DCHECK(!worker_);
 
-  // We don't get to own this object.  The |worker_| keeps a scoped_ptr to it.
+  // We don't get to own this object.  The |worker_| keeps a unique_ptr to it.
   mock_type_processor_ = new MockModelTypeProcessor();
-  scoped_ptr<ModelTypeProcessor> proxy(mock_type_processor_);
+  mock_type_processor_->SetDisconnectCallback(base::Bind(
+      &ModelTypeWorkerTest::DisconnectProcessor, base::Unretained(this)));
+  std::unique_ptr<ModelTypeProcessor> proxy(mock_type_processor_);
 
-  scoped_ptr<Cryptographer> cryptographer_copy;
+  std::unique_ptr<Cryptographer> cryptographer_copy;
   if (cryptographer_) {
     cryptographer_copy.reset(new Cryptographer(*cryptographer_));
   }
@@ -330,7 +349,7 @@ void ModelTypeWorkerTest::NewForeignEncryptionKey() {
   // Update the worker with the latest cryptographer.
   if (worker_) {
     worker_->UpdateCryptographer(
-        make_scoped_ptr(new Cryptographer(*cryptographer_)));
+        base::WrapUnique(new Cryptographer(*cryptographer_)));
   }
 }
 
@@ -346,7 +365,7 @@ void ModelTypeWorkerTest::UpdateLocalCryptographer() {
   // Update the worker with the latest cryptographer.
   if (worker_) {
     worker_->UpdateCryptographer(
-        make_scoped_ptr(new Cryptographer(*cryptographer_)));
+        base::WrapUnique(new Cryptographer(*cryptographer_)));
   }
 }
 
@@ -382,12 +401,13 @@ void ModelTypeWorkerTest::TriggerTypeRootUpdateFromServer() {
   worker_->ProcessGetUpdatesResponse(mock_server_.GetProgress(),
                                      mock_server_.GetContext(), entity_list,
                                      &dummy_status);
-  worker_->ApplyUpdates(&dummy_status);
+  worker_->PassiveApplyUpdates(&dummy_status);
 }
 
-void ModelTypeWorkerTest::TriggerUpdateFromServer(int64_t version_offset,
-                                                  const std::string& tag,
-                                                  const std::string& value) {
+void ModelTypeWorkerTest::TriggerPartialUpdateFromServer(
+    int64_t version_offset,
+    const std::string& tag,
+    const std::string& value) {
   sync_pb::SyncEntity entity = mock_server_.UpdateFromServer(
       version_offset, GenerateTagHash(tag), GenerateSpecifics(tag, value));
 
@@ -404,6 +424,13 @@ void ModelTypeWorkerTest::TriggerUpdateFromServer(int64_t version_offset,
   worker_->ProcessGetUpdatesResponse(mock_server_.GetProgress(),
                                      mock_server_.GetContext(), entity_list,
                                      &dummy_status);
+}
+
+void ModelTypeWorkerTest::TriggerUpdateFromServer(int64_t version_offset,
+                                                  const std::string& tag,
+                                                  const std::string& value) {
+  TriggerPartialUpdateFromServer(version_offset, tag, value);
+  StatusController dummy_status;
   worker_->ApplyUpdates(&dummy_status);
 }
 
@@ -445,7 +472,7 @@ void ModelTypeWorkerTest::PumpModelThread() {
 }
 
 bool ModelTypeWorkerTest::WillCommit() {
-  scoped_ptr<CommitContribution> contribution(
+  std::unique_ptr<CommitContribution> contribution(
       worker_->GetContribution(INT_MAX));
 
   if (contribution) {
@@ -462,7 +489,7 @@ bool ModelTypeWorkerTest::WillCommit() {
 // issued and the time when the commit response is received.
 void ModelTypeWorkerTest::DoSuccessfulCommit() {
   DCHECK(WillCommit());
-  scoped_ptr<CommitContribution> contribution(
+  std::unique_ptr<CommitContribution> contribution(
       worker_->GetContribution(INT_MAX));
 
   sync_pb::ClientToServerMessage message;
@@ -474,6 +501,19 @@ void ModelTypeWorkerTest::DoSuccessfulCommit() {
   StatusController dummy_status;
   contribution->ProcessCommitResponse(response, &dummy_status);
   contribution->CleanUp();
+}
+
+void ModelTypeWorkerTest::DisconnectProcessor() {
+  DCHECK(!is_processor_disconnected_);
+  is_processor_disconnected_ = true;
+}
+
+bool ModelTypeWorkerTest::IsProcessorDisconnected() {
+  return is_processor_disconnected_;
+}
+
+void ModelTypeWorkerTest::ResetWorker() {
+  worker_.reset();
 }
 
 size_t ModelTypeWorkerTest::GetNumCommitMessagesOnServer() const {
@@ -658,7 +698,7 @@ TEST_F(ModelTypeWorkerTest, SimpleCommit) {
   ASSERT_TRUE(HasCommitEntityOnServer("tag1"));
   const sync_pb::SyncEntity& entity = GetLatestCommitEntityOnServer("tag1");
   EXPECT_FALSE(entity.id_string().empty());
-  EXPECT_EQ(kUncommittedVersion, entity.version());
+  EXPECT_EQ(0, entity.version());
   EXPECT_NE(0, entity.mtime());
   EXPECT_NE(0, entity.ctime());
   EXPECT_FALSE(entity.name().empty());
@@ -680,6 +720,8 @@ TEST_F(ModelTypeWorkerTest, SimpleCommit) {
 
   EXPECT_EQ(client_tag_hash, commit_response.client_tag_hash);
   EXPECT_LT(0, commit_response.response_version);
+  EXPECT_LT(0, commit_response.sequence_number);
+  EXPECT_FALSE(commit_response.specifics_hash.empty());
 }
 
 TEST_F(ModelTypeWorkerTest, SimpleDelete) {
@@ -751,22 +793,22 @@ TEST_F(ModelTypeWorkerTest, SendInitialSyncDone) {
   EXPECT_EQ(0U, GetNumModelThreadUpdateResponses());
   EXPECT_EQ(1, GetNumInitialDownloadNudges());
 
+  EXPECT_FALSE(worker()->IsInitialSyncEnded());
+
   // Receive an update response that contains only the type root node.
   TriggerTypeRootUpdateFromServer();
 
-  // Two updates:
-  // - One triggered by process updates to forward the type root ID.
-  // - One triggered by apply updates, which the worker interprets to mean
-  //   "initial sync done".  This triggers a model thread update, too.
-  EXPECT_EQ(2U, GetNumModelThreadUpdateResponses());
+  // One update triggered by ApplyUpdates, which the worker interprets to mean
+  // "initial sync done". This triggers a model thread update, too.
+  EXPECT_EQ(1U, GetNumModelThreadUpdateResponses());
 
-  // The type root and initial sync done updates both contain no entities.
+  // The update contains no entities.
   EXPECT_EQ(0U, GetNthModelThreadUpdateResponse(0).size());
-  EXPECT_EQ(0U, GetNthModelThreadUpdateResponse(1).size());
 
-  const sync_pb::DataTypeState& state = GetNthModelThreadUpdateState(1);
+  const sync_pb::DataTypeState& state = GetNthModelThreadUpdateState(0);
   EXPECT_FALSE(state.progress_marker().token().empty());
   EXPECT_TRUE(state.initial_sync_done());
+  EXPECT_TRUE(worker()->IsInitialSyncEnded());
 }
 
 // Commit two new entities in two separate commit messages.
@@ -834,6 +876,33 @@ TEST_F(ModelTypeWorkerTest, ReceiveUpdates) {
   EXPECT_FALSE(entity.is_deleted());
   EXPECT_EQ("tag1", entity.specifics.preference().name());
   EXPECT_EQ("value1", entity.specifics.preference().value());
+}
+
+// Test that an update download coming in multiple parts gets accumulated into
+// one call to the processor.
+TEST_F(ModelTypeWorkerTest, ReceiveMultiPartUpdates) {
+  NormalInitialize();
+
+  // A partial update response doesn't pass anything to the processor.
+  TriggerPartialUpdateFromServer(10, "tag1", "value1");
+  ASSERT_EQ(0U, GetNumModelThreadUpdateResponses());
+
+  // Trigger the completion of the update.
+  TriggerUpdateFromServer(10, "tag2", "value2");
+
+  // Processor received exactly one update with entities in the right order.
+  ASSERT_EQ(1U, GetNumModelThreadUpdateResponses());
+  UpdateResponseDataList updates = GetNthModelThreadUpdateResponse(0);
+  ASSERT_EQ(2U, updates.size());
+  EXPECT_EQ(GenerateTagHash("tag1"), updates[0].entity->client_tag_hash);
+  EXPECT_EQ(GenerateTagHash("tag2"), updates[1].entity->client_tag_hash);
+
+  // A subsequent update doesn't pass the same entities again.
+  TriggerUpdateFromServer(10, "tag3", "value3");
+  ASSERT_EQ(2U, GetNumModelThreadUpdateResponses());
+  updates = GetNthModelThreadUpdateResponse(1);
+  ASSERT_EQ(1U, updates.size());
+  EXPECT_EQ(GenerateTagHash("tag3"), updates[0].entity->client_tag_hash);
 }
 
 // Test commit of encrypted updates.
@@ -1034,7 +1103,7 @@ TEST_F(ModelTypeWorkerTest, RestorePendingEntries) {
   // Verify the item gets decrypted and sent back to the model thread.
   // TODO(maxbogue): crbug.com/529498: Uncomment when pending updates are
   // handled by the worker again.
-  //ASSERT_TRUE(HasUpdateResponseOnModelThread("tag1"));
+  // ASSERT_TRUE(HasUpdateResponseOnModelThread("tag1"));
 }
 
 // Test decryption of pending updates saved across a restart.  This test
@@ -1070,7 +1139,7 @@ TEST_F(ModelTypeWorkerTest, RestoreApplicableEntries) {
   // Verify the item gets decrypted and sent back to the model thread.
   // TODO(maxbogue): crbug.com/529498: Uncomment when pending updates are
   // handled by the worker again.
-  //ASSERT_TRUE(HasUpdateResponseOnModelThread("tag1"));
+  // ASSERT_TRUE(HasUpdateResponseOnModelThread("tag1"));
 }
 
 // Test that undecryptable updates provide sufficient reason to not commit.
@@ -1138,6 +1207,16 @@ TEST_F(ModelTypeWorkerTest, ReceiveCorruptEncryption) {
   SetUpdateEncryptionFilter(1);
   TriggerUpdateFromServer(10, "tag1", "value1");
   EXPECT_TRUE(HasUpdateResponseOnModelThread("tag1"));
+}
+
+// Test that processor has been disconnected from Sync when worker got
+// disconnected.
+TEST_F(ModelTypeWorkerTest, DisconnectProcessorFromSyncTest) {
+  // Initialize the worker with basic state.
+  NormalInitialize();
+  EXPECT_FALSE(IsProcessorDisconnected());
+  ResetWorker();
+  EXPECT_TRUE(IsProcessorDisconnected());
 }
 
 }  // namespace syncer_v2

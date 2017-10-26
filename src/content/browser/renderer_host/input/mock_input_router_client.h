@@ -7,7 +7,8 @@
 
 #include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "content/browser/renderer_host/input/input_router_client.h"
 #include "content/common/input/did_overscroll_params.h"
 #include "content/common/input/input_event.h"
@@ -31,6 +32,9 @@ class MockInputRouterClient : public InputRouterClient {
   void DidFlush() override;
   void DidOverscroll(const DidOverscrollParams& params) override;
   void DidStopFlinging() override;
+  void ForwardGestureEventWithLatencyInfo(
+      const blink::WebGestureEvent& gesture_event,
+      const ui::LatencyInfo& latency_info) override;
 
   bool GetAndResetFilterEventCalled();
   size_t GetAndResetDidFlushCount();
@@ -62,7 +66,7 @@ class MockInputRouterClient : public InputRouterClient {
   InputEventAckState filter_state_;
 
   bool filter_input_event_called_;
-  scoped_ptr<InputEvent> last_filter_event_;
+  std::unique_ptr<InputEvent> last_filter_event_;
 
   size_t did_flush_called_count_;
 

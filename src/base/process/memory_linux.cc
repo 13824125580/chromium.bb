@@ -8,6 +8,8 @@
 
 #include <new>
 
+#include "base/allocator/allocator_shim.h"
+#include "base/allocator/features.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -25,7 +27,6 @@ size_t g_oom_size = 0U;
 
 namespace {
 
-#if !defined(OS_ANDROID)
 void OnNoMemorySize(size_t size) {
   g_oom_size = size;
 
@@ -37,12 +38,15 @@ void OnNoMemorySize(size_t size) {
 void OnNoMemory() {
   OnNoMemorySize(0);
 }
-#endif  // !defined(OS_ANDROID)
 
 }  // namespace
 
+// TODO(primiano): Once the unified shim is on by default (crbug.com/550886)
+// get rid of the code in this entire #if section. The whole termination-on-OOM
+// logic is implemented in the shim.
 #if !defined(ADDRESS_SANITIZER) && !defined(MEMORY_SANITIZER) && \
-    !defined(THREAD_SANITIZER) && !defined(LEAK_SANITIZER)
+    !defined(THREAD_SANITIZER) && !defined(LEAK_SANITIZER) &&    \
+    !BUILDFLAG(USE_EXPERIMENTAL_ALLOCATOR_SHIM)
 
 #if defined(LIBC_GLIBC) && !defined(USE_TCMALLOC)
 
@@ -141,16 +145,14 @@ void EnableTerminationOnHeapCorruption() {
 }
 
 void EnableTerminationOnOutOfMemory() {
-#if defined(OS_ANDROID)
-  // Android doesn't support setting a new handler.
-  DLOG(WARNING) << "Not feasible.";
-#else
   // Set the new-out of memory handler.
   std::set_new_handler(&OnNoMemory);
   // If we're using glibc's allocator, the above functions will override
   // malloc and friends and make them die on out of memory.
-#endif
-#if defined(USE_TCMALLOC)
+
+#if BUILDFLAG(USE_EXPERIMENTAL_ALLOCATOR_SHIM)
+  allocator::SetCallNewHandlerOnMallocFailure(true);
+#elif defined(USE_TCMALLOC)
   // For tcmalloc, we need to tell it to behave like new.
   tc_set_new_mode(1);
 #endif
@@ -194,7 +196,9 @@ bool AdjustOOMScore(ProcessId process, int score) {
 }
 
 bool UncheckedMalloc(size_t size, void** result) {
-#if defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || \
+#if BUILDFLAG(USE_EXPERIMENTAL_ALLOCATOR_SHIM)
+  *result = allocator::UncheckedAlloc(size);
+#elif defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || \
     (!defined(LIBC_GLIBC) && !defined(USE_TCMALLOC))
   *result = malloc(size);
 #elif defined(LIBC_GLIBC) && !defined(USE_TCMALLOC)
@@ -206,31 +210,3 @@ bool UncheckedMalloc(size_t size, void** result) {
 }
 
 }  // namespace base
-
-// This is a workaround for crbug.com/598075. This code never existed in trunk.
-// The problem is that some x86 Android device vendors forgot to provide the
-// posix_memalign symbol in libc even though it is mandated by the NDK.
-// This causes Chrome to crash at load-time, due to the unresolved dependency.
-// Fortunately it is farily easy to reimplement ourselves posix_memalign on
-// top of memalign.
-// This is not a problem in trunk after http://crrev.com/1875043003.
-#if defined(OS_ANDROID) && defined(ARCH_CPU_X86)
-#include <errno.h>
-#include <malloc.h>
-
-extern "C" {
-__attribute__((visibility("default"))) int posix_memalign(void** res,
-                                                          size_t alignment,
-                                                          size_t size) {
-  // posix_memalign is supposed to check the arguments. See tc_posix_memalign()
-  // in tc_malloc.cc.
-  if (((alignment % sizeof(void*)) != 0) ||
-      ((alignment & (alignment - 1)) != 0) || (alignment == 0)) {
-    return EINVAL;
-  }
-  void* ptr = memalign(alignment, size);
-  *res = ptr;
-  return ptr ? 0 : ENOMEM;
-}
-}  // extern "C"
-#endif

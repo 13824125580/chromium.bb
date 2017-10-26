@@ -20,7 +20,11 @@ extra_trybots = [
   {
     "mastername": "tryserver.chromium.mac",
     "buildernames": ["mac_optional_gpu_tests_rel"]
-  }
+  },
+  {
+    "mastername": "tryserver.chromium.linux",
+    "buildernames": ["linux_optional_gpu_tests_rel"]
+  },
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -229,7 +233,7 @@ class AutoRoller(object):
     readme.write(m)
     readme.truncate()
 
-  def PrepareRoll(self, ignore_checks):
+  def PrepareRoll(self, ignore_checks, run_tryjobs):
     # TODO(kjellander): use os.path.normcase, os.path.join etc for all paths for
     # cross platform compatibility.
 
@@ -280,20 +284,20 @@ class AutoRoller(object):
       self._RunCommand(['git', 'cl', 'upload'],
                        extra_env={'EDITOR': 'true'})
 
-      # Kick off tryjobs.
-      base_try_cmd = ['git', 'cl', 'try']
-      self._RunCommand(base_try_cmd)
-
-      if extra_trybots:
-        # Run additional tryjobs.
-        # TODO(kbr): this should not be necessary -- the
-        # CQ_INCLUDE_TRYBOTS directive above should handle it.
-        # http://crbug.com/585237
-        for trybot in extra_trybots:
-          for builder in trybot['buildernames']:
-            self._RunCommand(base_try_cmd + [
-                '-m', trybot['mastername'],
-                '-b', builder])
+      if run_tryjobs:
+        # Kick off tryjobs.
+        base_try_cmd = ['git', 'cl', 'try']
+        self._RunCommand(base_try_cmd)
+        if extra_trybots:
+          # Run additional tryjobs.
+          # TODO(kbr): this should not be necessary -- the
+          # CQ_INCLUDE_TRYBOTS directive above should handle it.
+          # http://crbug.com/585237
+          for trybot in extra_trybots:
+            for builder in trybot['buildernames']:
+              self._RunCommand(base_try_cmd + [
+                  '-m', trybot['mastername'],
+                  '-b', builder])
 
       cl_info = self._GetCLInfo()
       print 'Issue: %d URL: %s' % (cl_info.issue, cl_info.url)
@@ -365,6 +369,10 @@ def main():
       help=('Skips checks for being on the master branch, dirty workspaces and '
             'the updating of the checkout. Will still delete and create local '
             'Git branches.'))
+  parser.add_argument('--run-tryjobs', action='store_true', default=False,
+      help=('Start the dry-run tryjobs for the newly generated CL. Use this '
+            'when you have no need to make changes to the WebGL conformance '
+            'test expectations in the same CL and want to avoid.'))
   parser.add_argument('-v', '--verbose', action='store_true', default=False,
       help='Be extra verbose in printing of log messages.')
   args = parser.parse_args()
@@ -378,7 +386,7 @@ def main():
   if args.abort:
     return autoroller.Abort()
   else:
-    return autoroller.PrepareRoll(args.ignore_checks)
+    return autoroller.PrepareRoll(args.ignore_checks, args.run_tryjobs)
 
 if __name__ == '__main__':
   sys.exit(main())

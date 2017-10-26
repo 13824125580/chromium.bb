@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/media/video_track_recorder.h"
+
 #include <stddef.h>
+
+#include <memory>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/child/child_process.h"
 #include "content/renderer/media/media_stream_video_track.h"
 #include "content/renderer/media/mock_media_stream_video_source.h"
-#include "content/renderer/media/video_track_recorder.h"
 #include "media/base/video_frame.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,9 +40,16 @@ ACTION_P(RunClosure, closure) {
   closure.Run();
 }
 
-const bool kTrackRecorderTestUseVp9OrNot[] = {false, true};
+const VideoTrackRecorder::CodecId kTrackRecorderTestCodec[] = {
+    VideoTrackRecorder::CodecId::VP8,
+    VideoTrackRecorder::CodecId::VP9
+#if BUILDFLAG(RTC_USE_H264)
+    , VideoTrackRecorder::CodecId::H264
+#endif
+};
 
-class VideoTrackRecorderTest : public TestWithParam<bool> {
+class VideoTrackRecorderTest
+    : public TestWithParam<VideoTrackRecorder::CodecId> {
  public:
   VideoTrackRecorderTest()
       : mock_source_(new MockMediaStreamVideoSource(false)) {
@@ -56,15 +65,16 @@ class VideoTrackRecorderTest : public TestWithParam<bool> {
     track_ = new MediaStreamVideoTrack(mock_source_, constraints,
                                        MediaStreamSource::ConstraintsCallback(),
                                        true /* enabled */);
-    blink_track_.setExtraData(track_);
+    blink_track_.setTrackData(track_);
 
     video_track_recorder_.reset(new VideoTrackRecorder(
-        GetParam() /* use_vp9 */, blink_track_,
+        GetParam() /* codec */, blink_track_,
         base::Bind(&VideoTrackRecorderTest::OnEncodedVideo,
                    base::Unretained(this)),
         0 /* bits_per_second */));
     // Paranoia checks.
-    EXPECT_EQ(blink_track_.source().extraData(), blink_source_.extraData());
+    EXPECT_EQ(blink_track_.source().getExtraData(),
+              blink_source_.getExtraData());
     EXPECT_TRUE(message_loop_.IsCurrent());
   }
 
@@ -81,7 +91,7 @@ class VideoTrackRecorderTest : public TestWithParam<bool> {
                     base::TimeTicks timestamp,
                     bool keyframe));
   void OnEncodedVideo(const scoped_refptr<VideoFrame>& video_frame,
-                      scoped_ptr<std::string> encoded_data,
+                      std::unique_ptr<std::string> encoded_data,
                       base::TimeTicks timestamp,
                       bool is_key_frame) {
     DoOnEncodedVideo(video_frame, *encoded_data, timestamp, is_key_frame);
@@ -105,7 +115,7 @@ class VideoTrackRecorderTest : public TestWithParam<bool> {
   MediaStreamVideoTrack* track_;
   blink::WebMediaStreamTrack blink_track_;
 
-  scoped_ptr<VideoTrackRecorder> video_track_recorder_;
+  std::unique_ptr<VideoTrackRecorder> video_track_recorder_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(VideoTrackRecorderTest);
@@ -160,7 +170,7 @@ TEST_P(VideoTrackRecorderTest, VideoEncoding) {
 
   run_loop.Run();
 
-  const size_t kEncodedSizeThreshold = 18;
+  const size_t kEncodedSizeThreshold = 14;
   EXPECT_GE(first_frame_encoded_data.size(), kEncodedSizeThreshold);
   EXPECT_GE(second_frame_encoded_data.size(), kEncodedSizeThreshold);
   EXPECT_GE(third_frame_encoded_data.size(), kEncodedSizeThreshold);
@@ -170,6 +180,6 @@ TEST_P(VideoTrackRecorderTest, VideoEncoding) {
 
 INSTANTIATE_TEST_CASE_P(,
                         VideoTrackRecorderTest,
-                        ValuesIn(kTrackRecorderTestUseVp9OrNot));
+                        ValuesIn(kTrackRecorderTestCodec));
 
 }  // namespace content

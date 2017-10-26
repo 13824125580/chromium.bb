@@ -7,13 +7,13 @@
 
 #include "platform/heap/Handle.h"
 #include "public/platform/WebCallbacks.h"
-#include "public/platform/WebPassOwnPtr.h"
 #include "public/platform/WebVector.h"
 #include "public/platform/modules/permissions/WebPermissionStatus.h"
 #include "public/platform/modules/permissions/WebPermissionType.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -24,24 +24,24 @@ class ScriptPromiseResolver;
 // the callback. It takes a WebPermissionType in its constructor and will pass
 // it to the PermissionStatus.
 class PermissionsCallback final
-    : public WebCallbacks<WebPassOwnPtr<WebVector<WebPermissionStatus>>, void> {
+    : public WebCallbacks<std::unique_ptr<WebVector<WebPermissionStatus>>, void> {
 public:
-    PermissionsCallback(ScriptPromiseResolver*, PassOwnPtr<Vector<WebPermissionType>>, PassOwnPtr<Vector<int>>);
+    PermissionsCallback(ScriptPromiseResolver*, std::unique_ptr<Vector<WebPermissionType>>, std::unique_ptr<Vector<int>>);
     ~PermissionsCallback() = default;
 
-    void onSuccess(WebPassOwnPtr<WebVector<WebPermissionStatus>>) override;
+    void onSuccess(std::unique_ptr<WebVector<WebPermissionStatus>>) override;
     void onError() override;
 
 private:
     Persistent<ScriptPromiseResolver> m_resolver;
 
     // The permission types which were passed to the client to be requested.
-    OwnPtr<Vector<WebPermissionType>> m_internalPermissions;
+    std::unique_ptr<Vector<WebPermissionType>> m_internalPermissions;
 
     // Maps each index in the caller vector to the corresponding index in the
     // internal vector (i.e. the vector passsed to the client) such that both
     // indices have the same WebPermissionType.
-    OwnPtr<Vector<int>> m_callerIndexToInternalIndex;
+    std::unique_ptr<Vector<int>> m_callerIndexToInternalIndex;
 
     WTF_MAKE_NONCOPYABLE(PermissionsCallback);
 };

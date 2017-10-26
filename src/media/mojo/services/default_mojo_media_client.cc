@@ -4,6 +4,8 @@
 
 #include "media/mojo/services/default_mojo_media_client.h"
 
+#include "media/base/cdm_factory.h"
+
 namespace media {
 
 DefaultMojoMediaClient::DefaultMojoMediaClient() {}
@@ -14,8 +16,8 @@ void DefaultMojoMediaClient::Initialize() {
   // TODO(jrummell): Do one-time initialization work here.
 }
 
-scoped_ptr<CdmFactory> DefaultMojoMediaClient::CreateCdmFactory(
-    mojo::shell::mojom::InterfaceProvider* /* interface_provider */) {
+std::unique_ptr<CdmFactory> DefaultMojoMediaClient::CreateCdmFactory(
+    shell::mojom::InterfaceProvider* /* interface_provider */) {
   DVLOG(1) << __FUNCTION__;
   // TODO(jrummell): Return a CdmFactory that can create CdmAdapter here.
   return nullptr;

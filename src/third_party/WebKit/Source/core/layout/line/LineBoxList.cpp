@@ -202,10 +202,11 @@ bool LineBoxList::hitTest(LineLayoutBoxModel layoutObject, HitTestResult& result
         return false;
 
     LayoutPoint point = locationInContainer.point();
+    IntRect hitSearchBoundingBox = locationInContainer.boundingBox();
 
     CullRect cullRect(firstLineBox()->isHorizontal() ?
-        IntRect(point.x(), point.y() - locationInContainer.topPadding(), 1, locationInContainer.topPadding() + locationInContainer.bottomPadding() + 1) :
-        IntRect(point.x() - locationInContainer.leftPadding(), point.y(), locationInContainer.rightPadding() + locationInContainer.leftPadding() + 1, 1));
+        IntRect(point.x(), hitSearchBoundingBox.y(), 1, hitSearchBoundingBox.height()) :
+        IntRect(hitSearchBoundingBox.x(), point.y(), hitSearchBoundingBox.width(), 1));
 
     if (!anyLineIntersectsRect(layoutObject, cullRect, accumulatedOffset))
         return false;
@@ -227,7 +228,7 @@ bool LineBoxList::hitTest(LineLayoutBoxModel layoutObject, HitTestResult& result
     return false;
 }
 
-void LineBoxList::dirtyLinesFromChangedChild(LineLayoutItem container, LineLayoutItem child)
+void LineBoxList::dirtyLinesFromChangedChild(LineLayoutItem container, LineLayoutItem child, bool canDirtyAncestors)
 {
     if (!container.parent() || (container.isLayoutBlock() && (container.selfNeedsLayout() || !container.isLayoutBlockFlow())))
         return;
@@ -239,7 +240,7 @@ void LineBoxList::dirtyLinesFromChangedChild(LineLayoutItem container, LineLayou
     if (!firstBox) {
         // For an empty inline, go ahead and propagate the check up to our parent, unless the parent
         // is already dirty.
-        if (container.isInline() && !container.ancestorLineBoxDirty()) {
+        if (container.isInline() && !container.ancestorLineBoxDirty() && canDirtyAncestors) {
             container.parent().dirtyLinesFromChangedChild(container);
             container.setAncestorLineBoxDirty(); // Mark the container to avoid dirtying the same lines again across multiple destroy() calls of the same subtree.
         }
@@ -256,15 +257,15 @@ void LineBoxList::dirtyLinesFromChangedChild(LineLayoutItem container, LineLayou
             continue;
 
         if (curr.isAtomicInlineLevel()) {
-            InlineBox* wrapper = toLayoutBox(curr)->inlineBoxWrapper();
+            InlineBox* wrapper = LineLayoutBox(curr).inlineBoxWrapper();
             if (wrapper)
                 box = &wrapper->root();
         } else if (curr.isText()) {
-            InlineTextBox* textBox = toLayoutText(curr)->lastTextBox();
+            InlineTextBox* textBox = LineLayoutText(curr).lastTextBox();
             if (textBox)
                 box = &textBox->root();
         } else if (curr.isLayoutInline()) {
-            InlineBox* lastSiblingBox = toLayoutInline(curr)->lastLineBoxIncludingCulling();
+            InlineBox* lastSiblingBox = LineLayoutInline(curr).lastLineBoxIncludingCulling();
             if (lastSiblingBox)
                 box = &lastSiblingBox->root();
         }
@@ -279,7 +280,7 @@ void LineBoxList::dirtyLinesFromChangedChild(LineLayoutItem container, LineLayou
             // we won't find a previous sibling, but firstBox can be pointing to a following sibling.
             // This isn't good enough, since we won't locate the root line box that encloses the removed
             // <br>. We have to just over-invalidate a bit and go up to our parent.
-            if (!inlineContainer.ancestorLineBoxDirty()) {
+            if (!inlineContainer.ancestorLineBoxDirty() && canDirtyAncestors) {
                 inlineContainer.parent().dirtyLinesFromChangedChild(inlineContainer);
                 inlineContainer.setAncestorLineBoxDirty(); // Mark the container to avoid dirtying the same lines again across multiple destroy() calls of the same subtree.
             }

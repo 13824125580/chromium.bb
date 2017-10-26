@@ -9,12 +9,6 @@
 #include "platform/heap/ThreadState.h"
 #include "platform/heap/Visitor.h"
 #include "wtf/Allocator.h"
-#include "wtf/Functional.h"
-#include "wtf/HashFunctions.h"
-#include "wtf/Locker.h"
-#include "wtf/RawPtr.h"
-#include "wtf/RefCounted.h"
-#include "wtf/TypeTraits.h"
 
 namespace blink {
 
@@ -34,19 +28,22 @@ protected:
         // the dangling pointer.
         // Release builds don't have the ASSERT, but it is OK because
         // release builds will crash in the following header->isMarked()
-        // because all the entries of the orphaned heaps are zapped.
+        // because all the entries of the orphaned arenas are zapped.
         ASSERT(!pageFromObject(objectPointer)->orphaned());
 
         if (header->isMarked())
             return;
 
         ASSERT(ThreadState::current()->isInGC());
-        ASSERT(toDerived()->markingMode() != Visitor::WeakProcessing);
+        ASSERT(toDerived()->getMarkingMode() != Visitor::WeakProcessing);
+
+        // A GC should only mark the objects that belong in its heap.
+        DCHECK(&pageFromObject(objectPointer)->arena()->getThreadState()->heap() == &toDerived()->heap());
 
         header->mark();
 
         if (callback)
-            Heap::pushTraceCallback(const_cast<void*>(objectPointer), callback);
+            toDerived()->heap().pushTraceCallback(const_cast<void*>(objectPointer), callback);
     }
 
     inline void mark(const void* objectPointer, TraceCallback callback)
@@ -59,29 +56,29 @@ protected:
 
     inline void registerDelayedMarkNoTracing(const void* objectPointer)
     {
-        ASSERT(toDerived()->markingMode() != Visitor::WeakProcessing);
-        Heap::pushPostMarkingCallback(const_cast<void*>(objectPointer), &markNoTracingCallback);
+        ASSERT(toDerived()->getMarkingMode() != Visitor::WeakProcessing);
+        toDerived()->heap().pushPostMarkingCallback(const_cast<void*>(objectPointer), &markNoTracingCallback);
     }
 
     inline void registerWeakMembers(const void* closure, const void* objectPointer, WeakCallback callback)
     {
-        ASSERT(toDerived()->markingMode() != Visitor::WeakProcessing);
+        ASSERT(toDerived()->getMarkingMode() != Visitor::WeakProcessing);
         // We don't want to run weak processings when taking a snapshot.
-        if (toDerived()->markingMode() == Visitor::SnapshotMarking)
+        if (toDerived()->getMarkingMode() == Visitor::SnapshotMarking)
             return;
-        Heap::pushThreadLocalWeakCallback(const_cast<void*>(closure), const_cast<void*>(objectPointer), callback);
+        toDerived()->heap().pushThreadLocalWeakCallback(const_cast<void*>(closure), const_cast<void*>(objectPointer), callback);
     }
 
     inline void registerWeakTable(const void* closure, EphemeronCallback iterationCallback, EphemeronCallback iterationDoneCallback)
     {
-        ASSERT(toDerived()->markingMode() != Visitor::WeakProcessing);
-        Heap::registerWeakTable(const_cast<void*>(closure), iterationCallback, iterationDoneCallback);
+        ASSERT(toDerived()->getMarkingMode() != Visitor::WeakProcessing);
+        toDerived()->heap().registerWeakTable(const_cast<void*>(closure), iterationCallback, iterationDoneCallback);
     }
 
 #if ENABLE(ASSERT)
     inline bool weakTableRegistered(const void* closure)
     {
-        return Heap::weakTableRegistered(closure);
+        return toDerived()->heap().weakTableRegistered(closure);
     }
 #endif
 
@@ -107,19 +104,18 @@ protected:
         return true;
     }
 
+    inline void registerWeakCellWithCallback(void** cell, WeakCallback callback)
+    {
+        ASSERT(toDerived()->getMarkingMode() != Visitor::WeakProcessing);
+        // We don't want to run weak processings when taking a snapshot.
+        if (toDerived()->getMarkingMode() == Visitor::SnapshotMarking)
+            return;
+        toDerived()->heap().pushGlobalWeakCallback(cell, callback);
+    }
+
     Derived* toDerived()
     {
         return static_cast<Derived*>(this);
-    }
-
-protected:
-    inline void registerWeakCellWithCallback(void** cell, WeakCallback callback)
-    {
-        ASSERT(toDerived()->markingMode() != Visitor::WeakProcessing);
-        // We don't want to run weak processings when taking a snapshot.
-        if (toDerived()->markingMode() == Visitor::SnapshotMarking)
-            return;
-        Heap::pushGlobalWeakCallback(cell, callback);
     }
 
 private:

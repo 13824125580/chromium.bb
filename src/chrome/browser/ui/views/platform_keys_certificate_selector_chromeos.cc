@@ -43,11 +43,11 @@ void PlatformKeysCertificateSelector::Init() {
   const base::string16 text = l10n_util::GetStringFUTF16(
       IDS_PLATFORM_KEYS_SELECT_CERT_DIALOG_TEXT, name, &offset);
 
-  scoped_ptr<views::StyledLabel> label(
+  std::unique_ptr<views::StyledLabel> label(
       new views::StyledLabel(text, nullptr /* no listener */));
 
   views::StyledLabel::RangeStyleInfo bold_style;
-  bold_style.font_style = gfx::Font::BOLD;
+  bold_style.weight = gfx::Font::Weight::BOLD;
   label->AddStyleRange(gfx::Range(offset, offset + name.size()), bold_style);
   CertificateSelector::InitWithText(std::move(label));
 }

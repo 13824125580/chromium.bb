@@ -37,6 +37,8 @@ CommandType CommandFromString(const std::string& source) {
   RETURN_IF_IS(CAP_SQUARE);
   RETURN_IF_IS(MOVE_TO);
   RETURN_IF_IS(R_MOVE_TO);
+  RETURN_IF_IS(ARC_TO);
+  RETURN_IF_IS(R_ARC_TO);
   RETURN_IF_IS(LINE_TO);
   RETURN_IF_IS(R_LINE_TO);
   RETURN_IF_IS(H_LINE_TO);
@@ -100,7 +102,8 @@ void PaintPath(Canvas* canvas,
 
     SkPath& path = paths.back();
     SkPaint& paint = paints.back();
-    switch (path_elements[i].type) {
+    CommandType command_type = path_elements[i].type;
+    switch (command_type) {
       // Handled above.
       case NEW_PATH:
         continue;
@@ -142,6 +145,30 @@ void PaintPath(Canvas* canvas,
         SkScalar x = path_elements[++i].arg;
         SkScalar y = path_elements[++i].arg;
         path.rMoveTo(x, y);
+        break;
+      }
+
+      case ARC_TO:
+      case R_ARC_TO: {
+        SkScalar rx = path_elements[++i].arg;
+        SkScalar ry = path_elements[++i].arg;
+        SkScalar angle = path_elements[++i].arg;
+        SkScalar large_arc_flag = path_elements[++i].arg;
+        SkScalar arc_sweep_flag = path_elements[++i].arg;
+        SkScalar x = path_elements[++i].arg;
+        SkScalar y = path_elements[++i].arg;
+
+        auto path_fn =
+            command_type == ARC_TO
+                ? static_cast<void (SkPath::*)(
+                      SkScalar, SkScalar, SkScalar, SkPath::ArcSize,
+                      SkPath::Direction, SkScalar, SkScalar)>(&SkPath::arcTo)
+                : &SkPath::rArcTo;
+        (path.*path_fn)(
+            rx, ry, angle,
+            large_arc_flag ? SkPath::kLarge_ArcSize : SkPath::kSmall_ArcSize,
+            arc_sweep_flag ? SkPath::kCW_Direction : SkPath::kCCW_Direction,
+            x, y);
         break;
       }
 
@@ -309,6 +336,10 @@ class VectorIconSource : public CanvasImageSource {
   ~VectorIconSource() override {}
 
   // CanvasImageSource:
+  bool HasRepresentationAtAllScales() const override {
+    return id_ != VectorIconId::VECTOR_ICON_NONE;
+  }
+
   void Draw(gfx::Canvas* canvas) override {
     if (path_.empty()) {
       PaintVectorIcon(canvas, id_, size_.width(), color_);
@@ -392,6 +423,13 @@ void PaintVectorIcon(Canvas* canvas,
   PaintPath(canvas, path, dip_size, color);
 }
 
+ImageSkia CreateVectorIcon(VectorIconId id, SkColor color) {
+  const PathElement* one_x_path = GetPathForVectorIconAt1xScale(id);
+  size_t size = one_x_path[0].type == CANVAS_DIMENSIONS ? one_x_path[1].arg
+                                                        : kReferenceSizeDip;
+  return CreateVectorIcon(id, size, color);
+}
+
 ImageSkia CreateVectorIcon(VectorIconId id, size_t dip_size, SkColor color) {
   return CreateVectorIconWithBadge(id, dip_size, color,
                                    VectorIconId::VECTOR_ICON_NONE);
@@ -401,7 +439,10 @@ ImageSkia CreateVectorIconWithBadge(VectorIconId id,
                                     size_t dip_size,
                                     SkColor color,
                                     VectorIconId badge_id) {
-  return g_icon_cache.Get().GetOrCreateIcon(id, dip_size, color, badge_id);
+  return (id == VectorIconId::VECTOR_ICON_NONE)
+             ? gfx::ImageSkia()
+             : g_icon_cache.Get().GetOrCreateIcon(id, dip_size, color,
+                                                  badge_id);
 }
 
 ImageSkia CreateVectorIconFromSource(const std::string& source,

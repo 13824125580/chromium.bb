@@ -7,11 +7,13 @@
 
 #include <wayland-client-core.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
 
 struct wl_buffer;
 struct wl_compositor;
+struct wl_pointer;
 struct wl_registry;
+struct wl_seat;
 struct wl_shm;
 struct wl_shm_pool;
 struct wl_surface;
@@ -42,9 +44,21 @@ struct ObjectTraits<wl_display> {
 };
 
 template <>
+struct ObjectTraits<wl_pointer> {
+  static const wl_interface* interface;
+  static void (*deleter)(wl_pointer*);
+};
+
+template <>
 struct ObjectTraits<wl_registry> {
   static const wl_interface* interface;
   static void (*deleter)(wl_registry*);
+};
+
+template <>
+struct ObjectTraits<wl_seat> {
+  static const wl_interface* interface;
+  static void (*deleter)(wl_seat*);
 };
 
 template <>
@@ -85,14 +99,14 @@ struct Deleter {
 };
 
 template <typename T>
-class Object : public scoped_ptr<T, Deleter> {
+class Object : public std::unique_ptr<T, Deleter> {
  public:
   Object() {}
-  explicit Object(T* obj) : scoped_ptr<T, Deleter>(obj) {}
+  explicit Object(T* obj) : std::unique_ptr<T, Deleter>(obj) {}
 
   uint32_t id() {
     return wl_proxy_get_id(
-        reinterpret_cast<wl_proxy*>(scoped_ptr<T, Deleter>::get()));
+        reinterpret_cast<wl_proxy*>(std::unique_ptr<T, Deleter>::get()));
   }
 };
 

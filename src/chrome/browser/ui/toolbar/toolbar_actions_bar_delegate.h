@@ -7,11 +7,13 @@
 
 #include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "ui/gfx/animation/tween.h"
 #include "ui/gfx/geometry/size.h"
 
 class ToolbarActionViewController;
+class ToolbarActionsBarBubbleDelegate;
 
 namespace extensions {
 class ExtensionMessageBubbleController;
@@ -43,14 +45,9 @@ class ToolbarActionsBarDelegate {
   virtual void Redraw(bool order_changed) = 0;
 
   // Resizes the view to the |target_width| and animates with the given
-  // |tween_type|. |suppress_chevron| indicates if the chevron should not be
-  // shown during the animation.
+  // |tween_type|.
   virtual void ResizeAndAnimate(gfx::Tween::Type tween_type,
-                                int target_width,
-                                bool suppress_chevron) = 0;
-
-  // Sets the overflow chevron's visibility.
-  virtual void SetChevronVisibility(bool chevron_visible) = 0;
+                                int target_width) = 0;
 
   // Returns the width of the view according to |get_width_time|.
   virtual int GetWidth(GetWidthTime get_width_time) const = 0;
@@ -61,15 +58,10 @@ class ToolbarActionsBarDelegate {
   // Stops the current animation (width remains where it currently is).
   virtual void StopAnimating() = 0;
 
-  // Returns the width (including padding) for the overflow chevron.
-  virtual int GetChevronWidth() const = 0;
-
-  // Displays the bubble for the passed ExtensionMessageBubbleController,
-  // anchored to |anchor_action|. If |anchor_action| is null, it should be
-  // anchored to the hotdog menu.
-  virtual void ShowExtensionMessageBubble(
-      scoped_ptr<extensions::ExtensionMessageBubbleController> controller,
-      ToolbarActionViewController* anchor_action) = 0;
+  // Shows the given |bubble|. Must not be called if another bubble is showing
+  // or if the toolbar is animating.
+  virtual void ShowToolbarActionBubble(
+      std::unique_ptr<ToolbarActionsBarBubbleDelegate> bubble) = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_TOOLBAR_TOOLBAR_ACTIONS_BAR_DELEGATE_H_

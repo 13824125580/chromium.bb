@@ -22,16 +22,15 @@ namespace intelligibility {
 
 namespace {
 
+const float kMinFactor = 0.01f;
+const float kMaxFactor = 100.f;
+
 // Return |current| changed towards |target|, with the relative change being at
 // most |limit|.
 float UpdateFactor(float target, float current, float limit) {
   float gain = target / (current + std::numeric_limits<float>::epsilon());
-  if (gain < 1.f - limit) {
-    gain = 1.f - limit;
-  } else if (gain > 1.f + limit) {
-    gain = 1.f + limit;
-  }
-  return current * gain + std::numeric_limits<float>::epsilon();
+  gain = std::min(std::max(gain, 1.f - limit), 1.f + limit);
+  return std::min(std::max(current * gain, kMinFactor), kMaxFactor);;
 }
 
 }  // namespace
@@ -54,13 +53,8 @@ template class PowerEstimator<std::complex<float>>;
 GainApplier::GainApplier(size_t freqs, float relative_change_limit)
     : num_freqs_(freqs),
       relative_change_limit_(relative_change_limit),
-      target_(new float[freqs]()),
-      current_(new float[freqs]()) {
-  for (size_t i = 0; i < freqs; ++i) {
-    target_[i] = 1.f;
-    current_[i] = 1.f;
-  }
-}
+      target_(freqs, 1.f),
+      current_(freqs, 1.f) {}
 
 void GainApplier::Apply(const std::complex<float>* in_block,
                         std::complex<float>* out_block) {

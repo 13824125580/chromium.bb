@@ -9,8 +9,10 @@
 #include <utility>
 
 #include "base/files/file_path.h"
+#include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
@@ -22,9 +24,9 @@
 #include "chrome/browser/chromeos/fileapi/file_system_backend.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/file_manager_private.h"
+#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/file_errors.h"
-#include "components/drive/file_system_interface.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_url.h"
@@ -53,7 +55,7 @@ void OnDriveGetFile(const base::FilePath& path,
                     const LocalPathCallback& callback,
                     drive::FileError error,
                     const base::FilePath& local_file_path,
-                    scoped_ptr<drive::ResourceEntry> entry) {
+                    std::unique_ptr<drive::ResourceEntry> entry) {
   if (error != drive::FILE_ERROR_OK)
     DLOG(ERROR) << "Failed to get " << path.value() << " with: " << error;
   callback.Run(local_file_path);
@@ -103,13 +105,15 @@ void GetFileNativeLocalPathForSaving(Profile* profile,
 }
 
 // Forward declarations of helper functions for GetSelectedFileInfo().
-void ContinueGetSelectedFileInfo(Profile* profile,
-                                 scoped_ptr<GetSelectedFileInfoParams> params,
-                                 const base::FilePath& local_file_path);
+void ContinueGetSelectedFileInfo(
+    Profile* profile,
+    std::unique_ptr<GetSelectedFileInfoParams> params,
+    const base::FilePath& local_file_path);
 
 // Part of GetSelectedFileInfo().
-void GetSelectedFileInfoInternal(Profile* profile,
-                                 scoped_ptr<GetSelectedFileInfoParams> params) {
+void GetSelectedFileInfoInternal(
+    Profile* profile,
+    std::unique_ptr<GetSelectedFileInfoParams> params) {
   DCHECK(profile);
 
   for (size_t i = params->selected_files.size();
@@ -152,9 +156,10 @@ void GetSelectedFileInfoInternal(Profile* profile,
 }
 
 // Part of GetSelectedFileInfo().
-void ContinueGetSelectedFileInfo(Profile* profile,
-                                 scoped_ptr<GetSelectedFileInfoParams> params,
-                                 const base::FilePath& local_path) {
+void ContinueGetSelectedFileInfo(
+    Profile* profile,
+    std::unique_ptr<GetSelectedFileInfoParams> params,
+    const base::FilePath& local_path) {
   if (local_path.empty()) {
     params->callback.Run(std::vector<ui::SelectedFileInfo>());
     return;
@@ -330,7 +335,8 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
   DCHECK(render_frame_host);
   DCHECK(profile);
 
-  scoped_ptr<GetSelectedFileInfoParams> params(new GetSelectedFileInfoParams);
+  std::unique_ptr<GetSelectedFileInfoParams> params(
+      new GetSelectedFileInfoParams);
   params->local_path_option = local_path_option;
   params->callback = callback;
 
@@ -344,7 +350,7 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
     }
   }
 
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&GetSelectedFileInfoInternal, profile, base::Passed(&params)));
 }

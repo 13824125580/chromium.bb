@@ -11,6 +11,7 @@ from common import network_metrics
 from common.chrome_proxy_metrics import ChromeProxyMetricException
 from telemetry.page import page_test
 from telemetry.value import scalar
+from telemetry.value import histogram_util
 from metrics import Metric
 
 class ChromeProxyMetric(network_metrics.NetworkMetric):
@@ -223,6 +224,10 @@ class ChromeProxyMetric(network_metrics.NetworkMetric):
     for resp in self.IterResponses(tab):
       if 'favicon.ico' in resp.response.url:
         continue
+      if not resp.response.url.endswith('png'):
+        continue
+      if not resp.response.request_headers:
+        continue
 
       if resp.HasChromeProxyLoFiRequest():
         lo_fi_request_count += 1
@@ -256,9 +261,51 @@ class ChromeProxyMetric(network_metrics.NetworkMetric):
         results.current_page, 'lo_fi_response', 'count', lo_fi_response_count))
     super(ChromeProxyMetric, self).AddResults(tab, results)
 
+
+  def AddResultsForLoFiCache(self, tab, results, is_lo_fi):
+    request_count = 0
+    response_count = 0
+
+    for resp in self.IterResponses(tab):
+      if not resp.response.url.endswith('png'):
+        continue
+      if not resp.response.request_headers:
+        continue
+
+      if is_lo_fi != resp.HasChromeProxyLoFiRequest():
+        raise ChromeProxyMetricException, (
+            '%s: LoFi %s expected in request header.' % (resp.response.url,
+                    '' if is_lo_fi else 'not'))
+      else:
+        request_count += 1
+
+      if is_lo_fi != resp.HasChromeProxyLoFiResponse():
+        raise ChromeProxyMetricException, (
+            '%s: LoFi %s expected in response header.' % (resp.response.url,
+                    '' if is_lo_fi else 'not'))
+      else:
+        response_count += 1
+
+      if is_lo_fi != (resp.content_length < 100):
+        raise ChromeProxyMetricException, (
+            'Image %s is %d bytes. Expecting %s than 100 bytes.' %
+            (resp.response.url, resp.content_length,
+             'less' if is_lo_fi else 'more'))
+
+    if request_count == 0:
+      raise ChromeProxyMetricException, (
+          'Expected at least one %s LoFi request, but zero such requests were '
+          'sent.' % ('' if is_lo_fi else 'non'))
+    if response_count == 0:
+      raise ChromeProxyMetricException, (
+          'Expected at least one %s LoFi response, but zero such responses '
+          'were received.' % ('' if is_lo_fi else 'non'))
+
+    super(ChromeProxyMetric, self).AddResults(tab, results)
+
   def AddResultsForLoFiPreview(self, tab, results):
-    lo_fi_request_count = 0
     lo_fi_preview_request_count = 0
+    lo_fi_preview_exp_request_count = 0
     lo_fi_preview_response_count = 0
 
     for resp in self.IterResponses(tab):
@@ -271,19 +318,26 @@ class ChromeProxyMetric(network_metrics.NetworkMetric):
 
       if resp.HasChromeProxyLoFiPreviewRequest():
         lo_fi_preview_request_count += 1
-      elif resp.HasChromeProxyLoFiRequest():
-        lo_fi_request_count += 1
-      else:
-        raise ChromeProxyMetricException, (
-            '%s: LoFi not in request header.' % (resp.response.url))
+
+      if resp.HasChromeProxyLoFiPreviewExpRequest():
+        lo_fi_preview_exp_request_count += 1
 
       if resp.HasChromeProxyLoFiPreviewResponse():
         lo_fi_preview_response_count += 1
+
+      if resp.HasChromeProxyLoFiRequest():
+        raise ChromeProxyMetricException, (
+        '%s: Lo-Fi directive should not be in preview request header.' %
+        (resp.response.url))
 
     if lo_fi_preview_request_count == 0:
       raise ChromeProxyMetricException, (
           'Expected at least one LoFi preview request, but zero such requests '
           'were sent.')
+    if lo_fi_preview_exp_request_count == 0:
+      raise ChromeProxyMetricException, (
+          'Expected at least one LoFi preview exp=ignore_preview_blacklist '
+          'request, but zero such requests were sent.')
     if lo_fi_preview_response_count == 0:
       raise ChromeProxyMetricException, (
           'Expected at least one LoFi preview response, but zero such '
@@ -295,8 +349,8 @@ class ChromeProxyMetric(network_metrics.NetworkMetric):
             'count', lo_fi_preview_request_count))
     results.AddValue(
         scalar.ScalarValue(
-            results.current_page, 'lo_fi_request',
-            'count', lo_fi_request_count))
+            results.current_page, 'lo_fi_preview_exp_request',
+            'count', lo_fi_preview_exp_request_count))
     results.AddValue(
         scalar.ScalarValue(
             results.current_page, 'lo_fi_preview_response',
@@ -765,6 +819,58 @@ class ChromeProxyMetric(network_metrics.NetworkMetric):
         results.current_page, 'new_auth', 'count', resources_with_new_auth))
     results.AddValue(scalar.ScalarValue(
         results.current_page, 'old_auth', 'count', resources_with_old_auth))
+
+  def AddResultsForPingback(self, tab, results):
+    # Force the pingback by loading a new page.
+    tab.Navigate('http://check.googlezip.net/test.html')
+    histogram_type = histogram_util.BROWSER_HISTOGRAM
+    # This histogram should be synchronously created when the Navigate occurs.
+    attempted = histogram_util.GetHistogramSum(
+        histogram_type,
+        'DataReductionProxy.Pingback.Attempted',
+        tab)
+    # Verify that a pingback URLFetcher was created.
+    if attempted != 1:
+      raise ChromeProxyMetricException, (
+          'Expected one pingback attempt, but '
+          'received %d.' % attempted)
+    count = 0
+    seconds_slept = 0
+    # This test relies on the proxy server responding to the pingback after
+    # receiving it. This should very likely take under 10 seconds for the
+    # integration test.
+    max_seconds_to_sleep = 10
+    while count < 1 and seconds_slept < max_seconds_to_sleep:
+      # This histogram will be created when the URLRequest either fails or
+      # succeeds.
+      count = histogram_util.GetHistogramCount(
+        histogram_type,
+        'DataReductionProxy.Pingback.Succeeded',
+        tab)
+      if count < 1:
+        time.sleep(1)
+        seconds_slept += 1
+
+    # The pingback should always succeed. Successful pingbacks contribute to the
+    # sum of samples in the histogram, whereas failures only contribute to the
+    # count of samples. Since DataReductionProxy.Pingback.Succeeded is a boolean
+    # histogram, the sum of all samples in that histogram is equal to the
+    # number of successful pingbacks.
+    succeeded = histogram_util.GetHistogramSum(
+      histogram_type,
+      'DataReductionProxy.Pingback.Succeeded',
+      tab)
+    if succeeded != 1 or count != 1:
+      raise ChromeProxyMetricException, (
+          'Expected 1 pingback success and no failures, but '
+          'there were %d succesful pingbacks and %d failed pingback attempts'
+          % (succeeded, count - succeeded))
+    results.AddValue(scalar.ScalarValue(
+        results.current_page, 'attempted', 'count', attempted))
+    results.AddValue(scalar.ScalarValue(
+        results.current_page, 'succeeded_count', 'count', count))
+    results.AddValue(scalar.ScalarValue(
+        results.current_page, 'succeeded_sum', 'count', succeeded))
 
 PROXIED = 'proxied'
 DIRECT = 'direct'

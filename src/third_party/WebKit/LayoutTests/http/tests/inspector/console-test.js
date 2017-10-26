@@ -3,15 +3,32 @@ var initialize_ConsoleTest = function() {
 InspectorTest.preloadModule("source_frame");
 InspectorTest.preloadPanel("console");
 
-InspectorTest.evaluateInConsole = function(code, callback)
+InspectorTest.selectMainExecutionContext = function()
 {
+    var executionContexts = InspectorTest.mainTarget.runtimeModel.executionContexts();
+    for (var context of executionContexts) {
+        if (context.isDefault) {
+            WebInspector.context.setFlavor(WebInspector.ExecutionContext, context);
+            return;
+        }
+    }
+}
+
+InspectorTest.evaluateInConsole = function(code, callback, dontForceMainContext)
+{
+    if (!dontForceMainContext)
+        InspectorTest.selectMainExecutionContext();
     callback = InspectorTest.safeWrap(callback);
 
     var consoleView = WebInspector.ConsoleView.instance();
     consoleView.visible = true;
     consoleView._prompt.setText(code);
-    var event = document.createEvent("KeyboardEvent");
-    event.initKeyboardEvent("keydown", true, true, null, "Enter", "");
+    var event = new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyIdentifier: "Enter",
+        bubbles: true,
+        cancelable: true
+    });
     consoleView._prompt.proxyElementForTests().dispatchEvent(event);
     InspectorTest.addConsoleViewSniffer(function(commandResult) {
         callback(commandResult.toMessageElement().deepTextContent());
@@ -27,18 +44,17 @@ InspectorTest.addConsoleViewSniffer = function(override, opt_sticky)
     InspectorTest.addSniffer(WebInspector.ConsoleView.prototype, "_consoleMessageAddedForTest", sniffer, opt_sticky);
 }
 
-InspectorTest.evaluateInConsoleAndDump = function(code, callback)
+InspectorTest.evaluateInConsoleAndDump = function(code, callback, dontForceMainContext)
 {
     callback = InspectorTest.safeWrap(callback);
 
     function mycallback(text)
     {
         text = text.replace(/\bVM\d+/g, "VM");
-        text = text.replace(/(?:InjectedScript\.)?_?evaluate\w* @ VM:\d+/g, "");
         InspectorTest.addResult(code + " = " + text);
         callback(text);
     }
-    InspectorTest.evaluateInConsole(code, mycallback);
+    InspectorTest.evaluateInConsole(code, mycallback, dontForceMainContext);
 }
 
 InspectorTest.prepareConsoleMessageText = function(messageElement, consoleMessage)
@@ -46,12 +62,6 @@ InspectorTest.prepareConsoleMessageText = function(messageElement, consoleMessag
     var messageText = messageElement.deepTextContent().replace(/\u200b/g, "");
     // Replace scriptIds with generic scriptId string to avoid flakiness.
     messageText = messageText.replace(/VM\d+/g, "VM");
-    // Strip out InjectedScript line numbers from stack traces to avoid rebaselining each time InjectedScriptSource is edited.
-    messageText = messageText.replace(/(?:InjectedScript\.)?_?evaluate\w* @ VM:\d+/g, "");
-    // Strip out InjectedScript line numbers from console message anchor.
-    var functionName = consoleMessage && consoleMessage.stackTrace && consoleMessage.stackTrace.callFrames[0] && consoleMessage.stackTrace.callFrames[0].functionName || "";
-    if (functionName.indexOf("InjectedScript") !== -1)
-        messageText = messageText.replace(/\bVM:\d+/, ""); // Only first replace.
     if (messageText.startsWith("Navigated to")) {
         var fileName = messageText.split(" ").pop().split("/").pop();
         messageText = "Navigated to " + fileName;
@@ -113,6 +123,7 @@ InspectorTest.dumpConsoleMessagesIntoArray = function(printOriginatingCommand, d
                 result.push(classNames.join(" > "));
         } else {
             var messageText = formatter(element, message);
+            messageText = messageText.replace(/VM\d+/g, "VM");
             result.push(messageText + (dumpClassNames ? " " + classNames.join(" > ") : ""));
         }
 
@@ -133,7 +144,6 @@ InspectorTest.formatterIgnoreStackFrameUrls = function(messageFormatter, node)
     {
         var buffer = string.replace(/\u200b/g, "");
         buffer = buffer.replace(/VM\d+/g, "VM");
-        buffer = buffer.replace(/(?:InjectedScript\.)?_?evaluate\w* @ VM:\d+/g, "");
         return buffer.replace(/^\s+at [^\]]+(]?)$/, "$1");
     }
 
@@ -236,13 +246,14 @@ InspectorTest.dumpConsoleCounters = function()
 
 InspectorTest.expandConsoleMessages = function(callback, deepFilter, sectionFilter)
 {
+    WebInspector.ConsoleView.instance()._viewportThrottler.flush();
     var messageViews = WebInspector.ConsoleView.instance()._visibleViewMessages;
 
     // Initiate round-trips to fetch necessary data for further rendering.
     for (var i = 0; i < messageViews.length; ++i)
         messageViews[i].contentElement();
 
-    InspectorTest.runAfterPendingDispatches(expandTreeElements);
+    InspectorTest.deprecatedRunAfterPendingDispatches(expandTreeElements);
 
     function expandTreeElements()
     {
@@ -268,7 +279,7 @@ InspectorTest.expandConsoleMessages = function(callback, deepFilter, sectionFilt
                 }
             }
         }
-        InspectorTest.runAfterPendingDispatches(callback);
+        InspectorTest.deprecatedRunAfterPendingDispatches(callback);
     }
 }
 
@@ -295,7 +306,7 @@ InspectorTest.expandGettersInConsoleMessages = function(callback)
         if (propertiesCount === 0) {
             for (var i = 0; i < properties.length; ++i)
                 properties[i].click();
-            InspectorTest.runAfterPendingDispatches(callback);
+            InspectorTest.deprecatedRunAfterPendingDispatches(callback);
         } else {
             InspectorTest.addSniffer(WebInspector.ObjectPropertyTreeElement.prototype, "_updateExpandable", propertyExpandableUpdated);
         }
@@ -308,7 +319,7 @@ InspectorTest.expandConsoleMessagesErrorParameters = function(callback)
     // Initiate round-trips to fetch necessary data for further rendering.
     for (var i = 0; i < messageViews.length; ++i)
         messageViews[i].contentElement();
-    InspectorTest.runAfterPendingDispatches(expandErrorParameters);
+    InspectorTest.deprecatedRunAfterPendingDispatches(expandErrorParameters);
     function expandErrorParameters()
     {
         for (var i = 0; i < messageViews.length; ++i) {
@@ -332,7 +343,7 @@ InspectorTest.waitForRemoteObjectsConsoleMessages = function(callback)
     var messages = WebInspector.ConsoleView.instance()._visibleViewMessages;
     for (var i = 0; i < messages.length; ++i)
         messages[i].toMessageElement();
-    InspectorTest.runAfterPendingDispatches(callback);
+    InspectorTest.deprecatedRunAfterPendingDispatches(callback);
 }
 
 InspectorTest.checkConsoleMessagesDontHaveParameters = function()

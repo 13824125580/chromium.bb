@@ -8,6 +8,8 @@
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
 #include "base/time/default_tick_clock.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
@@ -49,8 +51,8 @@
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(ENABLE_RLZ)
-#include "components/rlz/rlz_tracker.h"
-#include "ios/chrome/browser/rlz/rlz_tracker_delegate_impl.h"
+#include "components/rlz/rlz_tracker.h"                        // nogncheck
+#include "ios/chrome/browser/rlz/rlz_tracker_delegate_impl.h"  // nogncheck
 #endif
 
 IOSChromeMainParts::IOSChromeMainParts(
@@ -105,7 +107,7 @@ void IOSChromeMainParts::PreCreateThreads() {
 
   // Initialize tracking synchronizer system.
   tracking_synchronizer_ = new metrics::TrackingSynchronizer(
-      make_scoped_ptr(new base::DefaultTickClock()),
+      base::WrapUnique(new base::DefaultTickClock()),
       base::Bind(&metrics::IOSTrackingSynchronizerDelegate::Create));
 
   // Now the command line has been mutated based on about:flags, we can setup
@@ -149,7 +151,7 @@ void IOSChromeMainParts::PreMainMessageLoopRun() {
       FirstRun::GetPingDelayPrefName());
   // Negative ping delay means to send ping immediately after a first search is
   // recorded.
-  rlz::RLZTracker::SetRlzDelegate(make_scoped_ptr(new RLZTrackerDelegateImpl));
+  rlz::RLZTracker::SetRlzDelegate(base::WrapUnique(new RLZTrackerDelegateImpl));
   rlz::RLZTracker::InitRlzDelayed(
       FirstRun::IsChromeFirstRun(), ping_delay < 0,
       base::TimeDelta::FromMilliseconds(abs(ping_delay)),
@@ -188,6 +190,9 @@ void IOSChromeMainParts::PostDestroyThreads() {
 
 // This will be called after the command-line has been mutated by about:flags
 void IOSChromeMainParts::SetUpMetricsAndFieldTrials() {
+  base::SetRecordActionTaskRunner(
+      web::WebThread::GetTaskRunnerForThread(web::WebThread::UI));
+
   // Must initialize metrics after labs have been converted into switches,
   // but before field trials are set up (so that client ID is available for
   // one-time randomized field trials).
@@ -221,7 +226,7 @@ void IOSChromeMainParts::SetUpMetricsAndFieldTrials() {
     CHECK(result) << "Invalid --" << switches::kIOSForceVariationIds
                   << " list specified.";
   }
-  scoped_ptr<base::FeatureList> feature_list(new base::FeatureList);
+  std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
   feature_list->InitializeFromCommandLine(
       command_line->GetSwitchValueASCII(switches::kEnableIOSFeatures),
       command_line->GetSwitchValueASCII(switches::kDisableIOSFeatures));

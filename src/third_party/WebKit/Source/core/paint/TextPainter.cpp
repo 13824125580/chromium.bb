@@ -47,14 +47,14 @@ void TextPainter::setEmphasisMark(const AtomicString& emphasisMark, TextEmphasis
     if (emphasisMark.isNull()) {
         m_emphasisMarkOffset = 0;
     } else if (position == TextEmphasisPositionOver) {
-        m_emphasisMarkOffset = -m_font.fontMetrics().ascent() - m_font.emphasisMarkDescent(emphasisMark);
+        m_emphasisMarkOffset = -m_font.getFontMetrics().ascent() - m_font.emphasisMarkDescent(emphasisMark);
     } else {
         ASSERT(position == TextEmphasisPositionUnder);
-        m_emphasisMarkOffset = m_font.fontMetrics().descent() + m_font.emphasisMarkAscent(emphasisMark);
+        m_emphasisMarkOffset = m_font.getFontMetrics().descent() + m_font.emphasisMarkAscent(emphasisMark);
     }
 }
 
-void TextPainter::paint(int startOffset, int endOffset, int length, const Style& textStyle, TextBlobPtr* cachedTextBlob)
+void TextPainter::paint(unsigned startOffset, unsigned endOffset, unsigned length, const Style& textStyle, TextBlobPtr* cachedTextBlob)
 {
     GraphicsContextStateSaver stateSaver(m_graphicsContext, false);
     updateGraphicsContext(textStyle, stateSaver);
@@ -109,7 +109,7 @@ void TextPainter::updateGraphicsContext(GraphicsContext& context, const Style& t
     }
 }
 
-static Color textColorForWhiteBackground(Color textColor)
+Color TextPainter::textColorForWhiteBackground(Color textColor)
 {
     int distanceFromWhite = differenceSquared(textColor, Color::white);
     // semi-arbitrarily chose 65025 (255^2) value here after a few tests;
@@ -164,11 +164,11 @@ TextPainter::Style TextPainter::selectionPaintingStyle(LineLayoutItem lineLayout
 
     if (haveSelection) {
         if (!usesTextAsClip) {
-            selectionStyle.fillColor = layoutObject.selectionForegroundColor(paintInfo.globalPaintFlags());
-            selectionStyle.emphasisMarkColor = layoutObject.selectionEmphasisMarkColor(paintInfo.globalPaintFlags());
+            selectionStyle.fillColor = layoutObject.selectionForegroundColor(paintInfo.getGlobalPaintFlags());
+            selectionStyle.emphasisMarkColor = layoutObject.selectionEmphasisMarkColor(paintInfo.getGlobalPaintFlags());
         }
 
-        if (const ComputedStyle* pseudoStyle = layoutObject.getCachedPseudoStyle(SELECTION)) {
+        if (const ComputedStyle* pseudoStyle = layoutObject.getCachedPseudoStyle(PseudoIdSelection)) {
             selectionStyle.strokeColor = usesTextAsClip ? Color::black : layoutObject.resolveColor(*pseudoStyle, CSSPropertyWebkitTextStrokeColor);
             selectionStyle.strokeWidth = pseudoStyle->textStrokeWidth();
             selectionStyle.shadow = usesTextAsClip ? 0 : pseudoStyle->textShadow();
@@ -183,7 +183,7 @@ TextPainter::Style TextPainter::selectionPaintingStyle(LineLayoutItem lineLayout
 }
 
 template <TextPainter::PaintInternalStep step>
-void TextPainter::paintInternalRun(TextRunPaintInfo& textRunPaintInfo, int from, int to)
+void TextPainter::paintInternalRun(TextRunPaintInfo& textRunPaintInfo, unsigned from, unsigned to)
 {
     ASSERT(from <= textRunPaintInfo.run.length());
     ASSERT(to <= textRunPaintInfo.run.length());
@@ -201,7 +201,7 @@ void TextPainter::paintInternalRun(TextRunPaintInfo& textRunPaintInfo, int from,
 }
 
 template <TextPainter::PaintInternalStep Step>
-void TextPainter::paintInternal(int startOffset, int endOffset, int truncationPoint, TextBlobPtr* cachedTextBlob)
+void TextPainter::paintInternal(unsigned startOffset, unsigned endOffset, unsigned truncationPoint, TextBlobPtr* cachedTextBlob)
 {
     TextRunPaintInfo textRunPaintInfo(m_run);
     textRunPaintInfo.bounds = FloatRect(m_textBounds);
@@ -221,7 +221,7 @@ void TextPainter::paintEmphasisMarkForCombinedText()
 {
     ASSERT(m_combinedText);
     TextRun placeholderTextRun(&ideographicFullStopCharacter, 1);
-    FloatPoint emphasisMarkTextOrigin(m_textBounds.x().toFloat(), m_textBounds.y().toFloat() + m_font.fontMetrics().ascent() + m_emphasisMarkOffset);
+    FloatPoint emphasisMarkTextOrigin(m_textBounds.x().toFloat(), m_textBounds.y().toFloat() + m_font.getFontMetrics().ascent() + m_emphasisMarkOffset);
     TextRunPaintInfo textRunPaintInfo(placeholderTextRun);
     textRunPaintInfo.bounds = FloatRect(m_textBounds);
     m_graphicsContext.concatCTM(rotation(m_textBounds, Clockwise));

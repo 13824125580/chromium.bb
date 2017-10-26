@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -33,7 +34,8 @@ class SettingsStorageQuotaEnforcer : public ValueStore {
     size_t max_items;
   };
 
-  SettingsStorageQuotaEnforcer(const Limits& limits, ValueStore* delegate);
+  SettingsStorageQuotaEnforcer(const Limits& limits,
+                               std::unique_ptr<ValueStore> delegate);
 
   ~SettingsStorageQuotaEnforcer() override;
 
@@ -70,7 +72,7 @@ class SettingsStorageQuotaEnforcer : public ValueStore {
   const Limits limits_;
 
   // The delegate storage area.
-  scoped_ptr<ValueStore> const delegate_;
+  std::unique_ptr<ValueStore> const delegate_;
 
   // Total bytes in used by |delegate_|. Includes both key lengths and
   // JSON-encoded values.

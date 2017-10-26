@@ -78,10 +78,20 @@ BrowserContextImpl* BrowserContextImplManager::obtainBrowserContextImpl(
         }
     }
     else {
-        result = new BrowserContextImpl(dataDir,
-                                        diskCacheEnabled,
-                                        cookiePersistenceEnabled);
-        d_incognitoBrowserContexts.push_back(result);
+        if (d_incognitoBrowserContexts.empty()) {
+            result = new BrowserContextImpl(dataDir,
+                                            diskCacheEnabled,
+                                            cookiePersistenceEnabled);
+            d_incognitoBrowserContexts.push_back(result);
+        }
+        else {
+            // TODO(imran): Ideally we don't want to return an existing
+            // browser context when in incognito mode. Please make sure the
+            // RenderProcess host can consistently reference the same context
+            // so we don't have to aggressively return the one and only one
+            // context from this function.
+            return d_incognitoBrowserContexts.front();
+        }
     }
 
     return result;

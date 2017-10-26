@@ -6,12 +6,12 @@
 #define FetchRequestData_h
 
 #include "platform/heap/Handle.h"
+#include "platform/network/EncodedFormData.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/Referrer.h"
 #include "platform/weborigin/ReferrerPolicy.h"
 #include "public/platform/WebURLRequest.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerRequest.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/text/AtomicString.h"
 #include "wtf/text/WTFString.h"
@@ -21,7 +21,9 @@ namespace blink {
 class BodyStreamBuffer;
 class ExecutionContext;
 class FetchHeaderList;
+class PasswordCredential;
 class SecurityOrigin;
+class ScriptState;
 class WebServiceWorkerRequest;
 
 class FetchRequestData final : public GarbageCollectedFinalized<FetchRequestData> {
@@ -30,10 +32,10 @@ public:
     enum Tainting { BasicTainting, CORSTainting, OpaqueTainting };
 
     static FetchRequestData* create();
-    static FetchRequestData* create(ExecutionContext*, const WebServiceWorkerRequest&);
+    static FetchRequestData* create(ScriptState*, const WebServiceWorkerRequest&);
     // Call Request::refreshBody() after calling clone() or pass().
-    FetchRequestData* clone(ExecutionContext*);
-    FetchRequestData* pass(ExecutionContext*);
+    FetchRequestData* clone(ScriptState*);
+    FetchRequestData* pass(ScriptState*);
     ~FetchRequestData();
 
     void setMethod(AtomicString method) { m_method = method; }
@@ -56,12 +58,12 @@ public:
     void setReferrerPolicy(ReferrerPolicy p) { m_referrer.referrerPolicy = p; }
     void setMode(WebURLRequest::FetchRequestMode mode) { m_mode = mode; }
     WebURLRequest::FetchRequestMode mode() const { return m_mode; }
-    void setCredentials(WebURLRequest::FetchCredentialsMode credentials) { m_credentials = credentials; }
+    void setCredentials(WebURLRequest::FetchCredentialsMode);
     WebURLRequest::FetchCredentialsMode credentials() const { return m_credentials; }
     void setRedirect(WebURLRequest::FetchRedirectMode redirect) { m_redirect = redirect; }
     WebURLRequest::FetchRedirectMode redirect() const { return m_redirect; }
     void setResponseTainting(Tainting tainting) { m_responseTainting = tainting; }
-    Tainting tainting() const { return m_responseTainting; }
+    Tainting responseTainting() const { return m_responseTainting; }
     FetchHeaderList* headerList() const { return m_headerList.get(); }
     void setHeaderList(FetchHeaderList* headerList) { m_headerList = headerList; }
     BodyStreamBuffer* buffer() const { return m_buffer; }
@@ -71,10 +73,12 @@ public:
     void setMIMEType(const String& type) { m_mimeType = type; }
     String integrity() const { return m_integrity; }
     void setIntegrity(const String& integrity) { m_integrity = integrity; }
+    PassRefPtr<EncodedFormData> attachedCredential() const { return m_attachedCredential; }
+    void setAttachedCredential(PassRefPtr<EncodedFormData> attachedCredential) { m_attachedCredential = attachedCredential; }
 
     // We use these strings instead of "no-referrer" and "client" in the spec.
     static AtomicString noReferrerString() { return AtomicString(); }
-    static AtomicString clientReferrerString() { return AtomicString("about:client", AtomicString::ConstructFromLiteral); }
+    static AtomicString clientReferrerString() { return AtomicString("about:client"); }
 
     DECLARE_TRACE();
 
@@ -107,6 +111,7 @@ private:
     Member<BodyStreamBuffer> m_buffer;
     String m_mimeType;
     String m_integrity;
+    RefPtr<EncodedFormData> m_attachedCredential;
 };
 
 } // namespace blink

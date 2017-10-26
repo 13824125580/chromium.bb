@@ -101,6 +101,26 @@
       ],
     },
     {
+      # GN version: //ppapi:blink_deprecated_test_plugin
+      'target_name': 'blink_deprecated_test_plugin',
+      'type': 'loadable_module',
+      'sources': [
+        'tests/blink_deprecated_test_plugin.cc',
+      ],
+      'dependencies': [
+        '../base/base.gyp:base',
+        'ppapi.gyp:ppapi_cpp',
+        'ppapi_internal.gyp:ppapi_shared',
+      ],
+      'conditions': [
+        ['OS=="mac"', {
+          'mac_bundle': 1,
+          'product_name': 'blink_deprecated_test_plugin',
+          'product_extension': 'plugin',
+        }],
+      ],
+    },
+    {
       # GN version: //ppapi:blink_test_plugin
       'target_name': 'blink_test_plugin',
       'type': 'loadable_module',
@@ -108,6 +128,7 @@
         'tests/blink_test_plugin.cc',
       ],
       'dependencies': [
+        '../base/base.gyp:base',
         'ppapi.gyp:ppapi_cpp',
         'ppapi_internal.gyp:ppapi_shared',
       ],
@@ -130,6 +151,7 @@
         '../base/base.gyp:test_support_base',
         '../ipc/ipc.gyp:ipc',
         '../ipc/ipc.gyp:test_support_ipc',
+        '../mojo/mojo_edk.gyp:mojo_system_impl',
         '../testing/gmock.gyp:gmock',
         '../testing/gtest.gyp:gtest',
       ],
@@ -157,6 +179,7 @@
         'ppapi_shared',
         'ppapi_unittest_shared',
         '../base/base.gyp:test_support_base',
+        '../mojo/mojo_edk.gyp:mojo_system_impl',
         '../testing/gtest.gyp:gtest',
       ],
       'sources': [
@@ -176,10 +199,10 @@
         'ppapi_proxy',
         'ppapi_shared',
         'ppapi_unittest_shared',
-        '../base/base.gyp:run_all_unittests',
         '../base/base.gyp:test_support_base',
-        '../gpu/gpu.gyp:gpu_ipc',
+        '../gpu/gpu.gyp:gpu_ipc_common',
         '../ipc/ipc.gyp:ipc',
+        '../ipc/ipc.gyp:ipc_run_all_unittests',
         '../ipc/ipc.gyp:test_support_ipc',
         '../media/media.gyp:shared_memory_support',
         '../skia/skia.gyp:skia',

@@ -215,7 +215,7 @@ void ExtensionManagementPrefUpdaterBase::SetPref(base::DictionaryValue* pref) {
   pref_.reset(pref);
 }
 
-scoped_ptr<base::DictionaryValue>
+std::unique_ptr<base::DictionaryValue>
 ExtensionManagementPrefUpdaterBase::TakePref() {
   return std::move(pref_);
 }
@@ -261,11 +261,12 @@ ExtensionManagementPolicyUpdater::ExtensionManagementPolicyUpdater(
 }
 
 ExtensionManagementPolicyUpdater::~ExtensionManagementPolicyUpdater() {
-  policies_->Get(policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME,
-                                         std::string()))
+  policies_
+      ->Get(
+          policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string()))
       .Set(policy::key::kExtensionSettings, policy::POLICY_LEVEL_MANDATORY,
-           policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-           TakePref().release(), nullptr);
+           policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD, TakePref(),
+           nullptr);
   provider_->UpdatePolicy(std::move(policies_));
 }
 

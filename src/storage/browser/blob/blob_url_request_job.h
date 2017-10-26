@@ -8,14 +8,15 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_request_job.h"
+#include "storage/browser/blob/blob_reader.h"
 #include "storage/browser/storage_browser_export.h"
 
 namespace base {
@@ -30,7 +31,6 @@ class IOBuffer;
 namespace storage {
 
 class BlobDataHandle;
-class BlobReader;
 class FileStreamReader;
 class FileSystemContext;
 
@@ -62,6 +62,7 @@ class STORAGE_EXPORT BlobURLRequestJob
   // For preparing for read: get the size, apply the range and perform seek.
   void DidStart();
   void DidCalculateSize(int result);
+  void DidReadMetadata(BlobReader::Status result);
   void DidReadRawData(int result);
 
   void NotifyFailure(int);
@@ -73,9 +74,9 @@ class STORAGE_EXPORT BlobURLRequestJob
   bool byte_range_set_;
   net::HttpByteRange byte_range_;
 
-  scoped_ptr<BlobDataHandle> blob_handle_;
-  scoped_ptr<BlobReader> blob_reader_;
-  scoped_ptr<net::HttpResponseInfo> response_info_;
+  std::unique_ptr<BlobDataHandle> blob_handle_;
+  std::unique_ptr<BlobReader> blob_reader_;
+  std::unique_ptr<net::HttpResponseInfo> response_info_;
 
   base::WeakPtrFactory<BlobURLRequestJob> weak_factory_;
 

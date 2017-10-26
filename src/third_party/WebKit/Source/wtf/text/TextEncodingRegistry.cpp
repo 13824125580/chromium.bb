@@ -31,7 +31,6 @@
 #include "wtf/CurrentTime.h"
 #include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
-#include "wtf/MainThread.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/StringExtras.h"
 #include "wtf/ThreadingPrimitives.h"
@@ -43,6 +42,7 @@
 #include "wtf/text/TextCodecUTF8.h"
 #include "wtf/text/TextCodecUserDefined.h"
 #include "wtf/text/TextEncoding.h"
+#include <memory>
 
 namespace WTF {
 
@@ -55,19 +55,10 @@ struct TextEncodingNameHash {
         char c1;
         char c2;
         do {
-#if defined(_MSC_FULL_VER) && _MSC_FULL_VER == 170051106
-            // Workaround for a bug in the VS2012 Update 1 optimizer, remove once the fix is released.
-            // https://connect.microsoft.com/VisualStudio/feedback/details/777533/vs2012-c-optimizing-bug-when-using-inline-and-char-return-type-x86-target-only
-            c1 = toASCIILower(*s1++);
-            c2 = toASCIILower(*s2++);
-            if (c1 != c2)
-                return false;
-#else
             c1 = *s1++;
             c2 = *s2++;
             if (toASCIILower(c1) != toASCIILower(c2))
                 return false;
-#endif
         } while (c1 && c2);
         return !c1 && !c2;
     }
@@ -150,7 +141,7 @@ static void checkExistingName(const char* alias, const char* atomicName)
         && strcmp(oldAtomicName, "ISO-8859-8-I") == 0
         && strcasecmp(atomicName, "iso-8859-8") == 0)
         return;
-    WTF_LOG_ERROR("alias %s maps to %s already, but someone is trying to make it map to %s", alias, oldAtomicName, atomicName);
+    LOG(ERROR) << "alias " << alias << " maps to " << oldAtomicName << " already, but someone is trying to make it map to " << atomicName;
 }
 
 #endif
@@ -253,7 +244,7 @@ static void extendTextCodecMaps()
     pruneBlacklistedCodecs();
 }
 
-PassOwnPtr<TextCodec> newTextCodec(const TextEncoding& encoding)
+std::unique_ptr<TextCodec> newTextCodec(const TextEncoding& encoding)
 {
     MutexLocker lock(encodingRegistryMutex());
 

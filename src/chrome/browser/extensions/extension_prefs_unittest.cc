@@ -6,6 +6,7 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -66,7 +67,7 @@ void ExtensionPrefsTest::TearDown() {
   prefs_.RecreateExtensionPrefs();
   Verify();
   prefs_.pref_service()->CommitPendingWrite();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Tests the LastPingDay/SetLastPingDay functions.
@@ -167,13 +168,13 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
 
     api_perm_set1_.insert(APIPermission::kTab);
     api_perm_set1_.insert(APIPermission::kBookmark);
-    scoped_ptr<APIPermission> permission(
+    std::unique_ptr<APIPermission> permission(
         permission_info->CreateAPIPermission());
     {
-      scoped_ptr<base::ListValue> value(new base::ListValue());
-      value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-      value->Append(new base::StringValue("udp-bind::8080"));
-      value->Append(new base::StringValue("udp-send-to::8888"));
+      std::unique_ptr<base::ListValue> value(new base::ListValue());
+      value->AppendString("tcp-connect:*.example.com:80");
+      value->AppendString("udp-bind::8080");
+      value->AppendString("udp-send-to::8888");
       ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
     }
     api_perm_set1_.insert(permission.release());
@@ -217,7 +218,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
           extension_id_,
           PermissionSet(api_perm_set1_, empty_manifest_permissions,
                         empty_extent, empty_extent));
-      scoped_ptr<const PermissionSet> granted_permissions =
+      std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_TRUE(granted_permissions.get());
       EXPECT_FALSE(granted_permissions->IsEmpty());
@@ -231,7 +232,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       prefs()->AddGrantedPermissions(
           extension_id_, PermissionSet(empty_set, empty_manifest_permissions,
                                        ehost_perm_set1_, empty_extent));
-      scoped_ptr<const PermissionSet> granted_permissions =
+      std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_FALSE(granted_permissions->IsEmpty());
       EXPECT_FALSE(granted_permissions->HasEffectiveFullAccess());
@@ -245,7 +246,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       prefs()->AddGrantedPermissions(
           extension_id_, PermissionSet(empty_set, empty_manifest_permissions,
                                        empty_extent, shost_perm_set1_));
-      scoped_ptr<const PermissionSet> granted_permissions =
+      std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_FALSE(granted_permissions->IsEmpty());
       EXPECT_FALSE(granted_permissions->HasEffectiveFullAccess());
@@ -266,7 +267,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
           PermissionSet(api_perm_set2_, empty_manifest_permissions,
                         ehost_perm_set2_, shost_perm_set2_));
 
-      scoped_ptr<const PermissionSet> granted_permissions =
+      std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_TRUE(granted_permissions.get());
       EXPECT_FALSE(granted_permissions->IsEmpty());
@@ -280,7 +281,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
   }
 
   void Verify() override {
-    scoped_ptr<const PermissionSet> permissions =
+    std::unique_ptr<const PermissionSet> permissions =
         prefs()->GetGrantedPermissions(extension_id_);
     EXPECT_TRUE(permissions.get());
     EXPECT_FALSE(permissions->HasEffectiveFullAccess());
@@ -333,7 +334,7 @@ class ExtensionPrefsActivePermissions : public ExtensionPrefsTest {
                                           ehosts, shosts));
 
     // Make sure the active permissions start empty.
-    scoped_ptr<const PermissionSet> active =
+    std::unique_ptr<const PermissionSet> active =
         prefs()->GetActivePermissions(extension_id_);
     EXPECT_TRUE(active->IsEmpty());
 
@@ -347,14 +348,14 @@ class ExtensionPrefsActivePermissions : public ExtensionPrefsTest {
   }
 
   void Verify() override {
-    scoped_ptr<const PermissionSet> permissions =
+    std::unique_ptr<const PermissionSet> permissions =
         prefs()->GetActivePermissions(extension_id_);
     EXPECT_EQ(*active_perms_, *permissions);
   }
 
  private:
   std::string extension_id_;
-  scoped_ptr<const PermissionSet> active_perms_;
+  std::unique_ptr<const PermissionSet> active_perms_;
 };
 TEST_F(ExtensionPrefsActivePermissions, SetAndGetActivePermissions) {}
 
@@ -466,7 +467,7 @@ class ExtensionPrefsDelayedInstallInfo : public ExtensionPrefsTest {
   // Verifies that we get back expected idle install information previously
   // set by SetIdleInfo.
   void VerifyIdleInfo(const std::string& id, int num) {
-    scoped_ptr<ExtensionInfo> info(prefs()->GetDelayedInstallInfo(id));
+    std::unique_ptr<ExtensionInfo> info(prefs()->GetDelayedInstallInfo(id));
     ASSERT_TRUE(info);
     std::string version;
     ASSERT_TRUE(info->extension_manifest->GetString("version", &version));
@@ -497,7 +498,7 @@ class ExtensionPrefsDelayedInstallInfo : public ExtensionPrefsTest {
     SetIdleInfo(id2_, 2);
     VerifyIdleInfo(id1_, 1);
     VerifyIdleInfo(id2_, 2);
-    scoped_ptr<ExtensionPrefs::ExtensionsInfo> info(
+    std::unique_ptr<ExtensionPrefs::ExtensionsInfo> info(
         prefs()->GetAllDelayedInstallInfo());
     EXPECT_EQ(2u, info->size());
     EXPECT_TRUE(HasInfoForId(info.get(), id1_));
@@ -529,7 +530,7 @@ class ExtensionPrefsDelayedInstallInfo : public ExtensionPrefsTest {
 
   void Verify() override {
     // Make sure the info for the 3 extensions we expect is present.
-    scoped_ptr<ExtensionPrefs::ExtensionsInfo> info(
+    std::unique_ptr<ExtensionPrefs::ExtensionsInfo> info(
         prefs()->GetAllDelayedInstallInfo());
     EXPECT_EQ(3u, info->size());
     EXPECT_TRUE(HasInfoForId(info.get(), id1_));
@@ -570,7 +571,7 @@ class ExtensionPrefsFinishDelayedInstallInfo : public ExtensionPrefsTest {
     base::DictionaryValue manifest;
     manifest.SetString(manifest_keys::kName, "test");
     manifest.SetString(manifest_keys::kVersion, "0.2");
-    scoped_ptr<base::ListValue> scripts(new base::ListValue);
+    std::unique_ptr<base::ListValue> scripts(new base::ListValue);
     scripts->AppendString("test.js");
     manifest.Set(manifest_keys::kBackgroundScripts, scripts.release());
     base::FilePath path =
@@ -922,9 +923,10 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
     // Adding a component extension.
     component_extension_ =
         ExtensionBuilder()
-            .SetManifest(std::move(DictionaryBuilder()
-                                       .Set(manifest_keys::kName, "a")
-                                       .Set(manifest_keys::kVersion, "0.1")))
+            .SetManifest(DictionaryBuilder()
+                             .Set(manifest_keys::kName, "a")
+                             .Set(manifest_keys::kVersion, "0.1")
+                             .Build())
             .SetLocation(Manifest::COMPONENT)
             .SetPath(prefs_.extensions_dir().AppendASCII("a"))
             .Build();
@@ -933,9 +935,10 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
     // Adding a non component extension.
     no_component_extension_ =
         ExtensionBuilder()
-            .SetManifest(std::move(DictionaryBuilder()
-                                       .Set(manifest_keys::kName, "b")
-                                       .Set(manifest_keys::kVersion, "0.1")))
+            .SetManifest(DictionaryBuilder()
+                             .Set(manifest_keys::kName, "b")
+                             .Set(manifest_keys::kVersion, "0.1")
+                             .Build())
             .SetLocation(Manifest::INTERNAL)
             .SetPath(prefs_.extensions_dir().AppendASCII("b"))
             .Build();
@@ -961,12 +964,12 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
 
   void Verify() override {
     // Component extension can access chrome://print/*.
-    scoped_ptr<const PermissionSet> component_permissions =
+    std::unique_ptr<const PermissionSet> component_permissions =
         prefs()->GetActivePermissions(component_extension_->id());
     EXPECT_EQ(1u, component_permissions->scriptable_hosts().size());
 
     // Non Component extension can not access chrome://print/*.
-    scoped_ptr<const PermissionSet> no_component_permissions =
+    std::unique_ptr<const PermissionSet> no_component_permissions =
         prefs()->GetActivePermissions(no_component_extension_->id());
     EXPECT_EQ(0u, no_component_permissions->scriptable_hosts().size());
 
@@ -986,7 +989,7 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
   }
 
  private:
-  scoped_ptr<const PermissionSet> active_perms_;
+  std::unique_ptr<const PermissionSet> active_perms_;
   scoped_refptr<Extension> component_extension_;
   scoped_refptr<Extension> no_component_extension_;
 };

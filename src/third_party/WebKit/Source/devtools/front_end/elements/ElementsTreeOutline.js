@@ -71,7 +71,7 @@ WebInspector.ElementsTreeOutline = function(domModel, omitRootDOMNode, selectEna
     this._visible = false;
 
     this._popoverHelper = new WebInspector.PopoverHelper(this._element, this._getPopoverAnchor.bind(this), this._showPopover.bind(this));
-    this._popoverHelper.setTimeout(0);
+    this._popoverHelper.setTimeout(0, 100);
 
     /** @type {!Map<!WebInspector.DOMNode, !WebInspector.ElementsTreeOutline.UpdateRecord>} */
     this._updateRecords = new Map();
@@ -665,7 +665,7 @@ WebInspector.ElementsTreeOutline.prototype = {
     /**
      * @param {?TreeElement} treeElement
      */
-    setHoverEffect: function (treeElement)
+    setHoverEffect: function(treeElement)
     {
         if (this._previousHoveredElement === treeElement)
             return;
@@ -747,7 +747,7 @@ WebInspector.ElementsTreeOutline.prototype = {
         treeElement.listItemElement.classList.add("elements-drag-over");
         this._dragOverTreeElement = treeElement;
         event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
+        event.dataTransfer.dropEffect = "move";
         return false;
     },
 
@@ -884,12 +884,12 @@ WebInspector.ElementsTreeOutline.prototype = {
             return;
 
         if (WebInspector.KeyboardShortcut.eventHasCtrlOrMeta(event) && node.parentNode) {
-            if (event.keyIdentifier === "Up" && node.previousSibling) {
+            if (event.key === "ArrowUp" && node.previousSibling) {
                 node.moveTo(node.parentNode, node.previousSibling, this.selectNodeAfterEdit.bind(this, treeElement.expanded));
                 event.handled = true;
                 return;
             }
-            if (event.keyIdentifier === "Down" && node.nextSibling) {
+            if (event.key === "ArrowDown" && node.nextSibling) {
                 node.moveTo(node.parentNode, node.nextSibling.nextSibling, this.selectNodeAfterEdit.bind(this, treeElement.expanded));
                 event.handled = true;
                 return;
@@ -1321,11 +1321,13 @@ WebInspector.ElementsTreeOutline.prototype = {
     {
         var visibleChildren = WebInspector.ElementsTreeElement.visibleShadowRoots(node);
 
-        if (node.importedDocument())
-            visibleChildren.push(node.importedDocument());
+        var importedDocument = node.importedDocument();
+        if (importedDocument)
+            visibleChildren.push(importedDocument);
 
-        if (node.templateContent())
-            visibleChildren.push(node.templateContent());
+        var templateContent = node.templateContent();
+        if (templateContent)
+            visibleChildren.push(templateContent);
 
         var beforePseudoElement = node.beforePseudoElement();
         if (beforePseudoElement)

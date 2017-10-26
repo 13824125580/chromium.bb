@@ -4,13 +4,14 @@
 
 #include "core/dom/CompositorProxiedPropertySet.h"
 
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<CompositorProxiedPropertySet> CompositorProxiedPropertySet::create()
+std::unique_ptr<CompositorProxiedPropertySet> CompositorProxiedPropertySet::create()
 {
-    return adoptPtr(new CompositorProxiedPropertySet);
+    return wrapUnique(new CompositorProxiedPropertySet);
 }
 
 CompositorProxiedPropertySet::CompositorProxiedPropertySet()
@@ -37,7 +38,7 @@ void CompositorProxiedPropertySet::decrement(uint32_t mutableProperties)
 {
     for (int i = 0; i < CompositorMutableProperty::kNumProperties; ++i) {
         if (mutableProperties & (1 << i)) {
-            ASSERT(m_counts[i]);
+            DCHECK(m_counts[i]);
             --m_counts[i];
         }
     }

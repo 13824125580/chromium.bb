@@ -63,7 +63,6 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'SessionStorageTest.*',
     'SqlDatabaseTest.*',
     'SvgDocumentTest.testClickOnSvgElement',
-    'TakesScreenshotTest.testShouldCaptureScreenshot',
     'TakesScreenshotTest.testShouldCaptureScreenshotAtIFramePage',
     'TakesScreenshotTest.testShouldCaptureScreenshotWithLongX',
     'TakesScreenshotTest.testShouldCaptureScreenshotWithLongY',
@@ -97,7 +96,6 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'DragAndDropTest.testShouldAllowUsersToDragAndDropToElementsOffTheCurrentViewPort',
     'DragAndDropTest.testElementInDiv',
 ]
-
 
 _OS_NEGATIVE_FILTER = {}
 _OS_NEGATIVE_FILTER['win'] = [
@@ -193,9 +191,6 @@ _OS_NEGATIVE_FILTER['android:chrome'] = [
     'CorrectEventFiringTest.testShouldEmitOnClickEventsWhenSelectingElements',
     'CorrectEventFiringTest.testSendingKeysToAnotherElementShouldCauseTheBlurEventToFire',
 
-    # https://code.google.com/p/chromedriver/issues/detail?id=998	
-    'ImplicitWaitTest.testShouldImplicitlyWaitForASingleElement',
-
     # https://code.google.com/p/chromedriver/issues/detail?id=1176
     'ChromeDriverTests.clientLogShouldBeEnabledByDefault',
 
@@ -204,7 +199,11 @@ _OS_NEGATIVE_FILTER['android:chrome'] = [
     'CombinedInputActionsTest.testMouseMovementWorksWhenNavigatingToAnotherPage',
 ]
 _OS_NEGATIVE_FILTER['android:chrome_stable'] = (
-    _OS_NEGATIVE_FILTER['android:chrome'])
+    _OS_NEGATIVE_FILTER['android:chrome'] + [
+         # https://bugs.chromium.org/p/chromedriver/issues/detail?id=998
+        'ImplicitWaitTest.testShouldImplicitlyWaitForASingleElement',
+    ]
+)
 
 _OS_NEGATIVE_FILTER['android:chromium'] = (
     _OS_NEGATIVE_FILTER['android:chrome'] + [
@@ -218,6 +217,8 @@ _OS_NEGATIVE_FILTER['android:chrome_beta'] = (
         'BasicMouseInterfaceTest.testDragAndDrop',
         'BasicMouseInterfaceTest.testDraggingElementWithMouseFiresEvents',
         'BasicMouseInterfaceTest.testDraggingElementWithMouseMovesItToAnotherList',
+         # https://bugs.chromium.org/p/chromedriver/issues/detail?id=998
+        'ImplicitWaitTest.testShouldImplicitlyWaitForASingleElement',
     ]
 )
 _OS_NEGATIVE_FILTER['android:chromedriver_webview_shell'] = (
@@ -232,6 +233,8 @@ _OS_NEGATIVE_FILTER['android:chromedriver_webview_shell'] = (
         'ClickScrollingTest.testShouldBeAbleToClickElementThatIsOutOfViewInANestedFrameThatIsOutOfView',
          # Not applicable on ChromeDriverWebViewShell (doesn't support tabs).
         'WindowSwitchingTest.*',
+
+        'TakesScreenshotTest.testShouldCaptureScreenshot',
     ]
 )
 

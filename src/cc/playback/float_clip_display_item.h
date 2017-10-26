@@ -7,9 +7,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "cc/base/cc_export.h"
 #include "cc/playback/display_item.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -17,7 +18,6 @@
 class SkCanvas;
 
 namespace cc {
-class ImageSerializationProcessor;
 
 class CC_EXPORT FloatClipDisplayItem : public DisplayItem {
  public:
@@ -25,18 +25,14 @@ class CC_EXPORT FloatClipDisplayItem : public DisplayItem {
   explicit FloatClipDisplayItem(const proto::DisplayItem& proto);
   ~FloatClipDisplayItem() override;
 
-  void ToProtobuf(proto::DisplayItem* proto,
-                  ImageSerializationProcessor* image_serialization_processor)
-      const override;
+  void ToProtobuf(proto::DisplayItem* proto) const override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_target_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
   size_t ExternalMemoryUsage() const override;
 
   int ApproximateOpCount() const { return 1; }
-  bool IsSuitableForGpuRasterization() const { return true; }
 
  private:
   void SetNew(const gfx::RectF& clip_rect);
@@ -50,22 +46,18 @@ class CC_EXPORT EndFloatClipDisplayItem : public DisplayItem {
   explicit EndFloatClipDisplayItem(const proto::DisplayItem& proto);
   ~EndFloatClipDisplayItem() override;
 
-  static scoped_ptr<EndFloatClipDisplayItem> Create() {
-    return make_scoped_ptr(new EndFloatClipDisplayItem());
+  static std::unique_ptr<EndFloatClipDisplayItem> Create() {
+    return base::WrapUnique(new EndFloatClipDisplayItem());
   }
 
-  void ToProtobuf(proto::DisplayItem* proto,
-                  ImageSerializationProcessor* image_serialization_processor)
-      const override;
+  void ToProtobuf(proto::DisplayItem* proto) const override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_target_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
   size_t ExternalMemoryUsage() const override;
 
   int ApproximateOpCount() const { return 0; }
-  bool IsSuitableForGpuRasterization() const { return true; }
 };
 
 }  // namespace cc

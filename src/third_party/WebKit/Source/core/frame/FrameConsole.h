@@ -31,39 +31,33 @@
 
 #include "bindings/core/v8/ScriptState.h"
 #include "core/CoreExport.h"
-#include "core/frame/ConsoleTypes.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
 class ConsoleMessage;
-class ConsoleMessageStorage;
 class DocumentLoader;
 class ResourceError;
 class ResourceResponse;
-class ScriptCallStack;
-class WorkerGlobalScopeProxy;
 
 // FrameConsole takes per-frame console messages and routes them up through the FrameHost to the ChromeClient and Inspector.
 // It's meant as an abstraction around ChromeClient calls and the way that Blink core/ can add messages to the console.
-class CORE_EXPORT FrameConsole final : public NoBaseWillBeGarbageCollected<FrameConsole> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(FrameConsole);
-    DECLARE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(FrameConsole);
+class CORE_EXPORT FrameConsole final : public GarbageCollected<FrameConsole> {
 public:
-    static PassOwnPtrWillBeRawPtr<FrameConsole> create(LocalFrame& frame)
+    static FrameConsole* create(LocalFrame& frame)
     {
-        return adoptPtrWillBeNoop(new FrameConsole(frame));
+        return new FrameConsole(frame);
     }
 
-    void addMessage(PassRefPtrWillBeRawPtr<ConsoleMessage>);
-    void adoptWorkerMessagesAfterTermination(WorkerGlobalScopeProxy*);
+    void addMessage(ConsoleMessage*);
+    bool addMessageToStorage(ConsoleMessage*);
+    void reportMessageToClient(ConsoleMessage*);
+
+    void reportWorkerMessage(ConsoleMessage*);
+    void adoptWorkerMessage(ConsoleMessage*);
 
     void reportResourceResponseReceived(DocumentLoader*, unsigned long requestIdentifier, const ResourceResponse&);
-
-    static void mute();
-    static void unmute();
 
     void clearMessages();
 
@@ -80,9 +74,7 @@ private:
         return *m_frame;
     }
 
-    ConsoleMessageStorage* messageStorage();
-
-    RawPtrWillBeMember<LocalFrame> m_frame;
+    Member<LocalFrame> m_frame;
 };
 
 } // namespace blink

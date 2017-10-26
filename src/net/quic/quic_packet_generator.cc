@@ -6,15 +6,12 @@
 
 #include "base/logging.h"
 #include "net/quic/quic_bug_tracker.h"
-#include "net/quic/quic_fec_group.h"
 #include "net/quic/quic_flags.h"
 #include "net/quic/quic_utils.h"
 
 using base::StringPiece;
 
 namespace net {
-
-class QuicAckNotifier;
 
 QuicPacketGenerator::QuicPacketGenerator(QuicConnectionId connection_id,
                                          QuicFramer* framer,
@@ -29,20 +26,10 @@ QuicPacketGenerator::QuicPacketGenerator(QuicConnectionId connection_id,
                       delegate),
       batch_mode_(false),
       should_send_ack_(false),
-      should_send_stop_waiting_(false),
-      max_packet_length_(kDefaultMaxPacketSize) {}
+      should_send_stop_waiting_(false) {}
 
 QuicPacketGenerator::~QuicPacketGenerator() {
   QuicUtils::DeleteFrames(&queued_control_frames_);
-}
-
-void QuicPacketGenerator::OnCongestionWindowChange(
-    QuicPacketCount max_packets_in_flight) {
-  packet_creator_.OnCongestionWindowChange(max_packets_in_flight);
-}
-
-void QuicPacketGenerator::OnRttChange(QuicTime::Delta rtt) {
-  packet_creator_.OnRttChange(rtt);
 }
 
 void QuicPacketGenerator::SetShouldSendAck(bool also_send_stop_waiting) {
@@ -58,12 +45,12 @@ void QuicPacketGenerator::SetShouldSendAck(bool also_send_stop_waiting) {
 
   should_send_ack_ = true;
   should_send_stop_waiting_ = also_send_stop_waiting;
-  SendQueuedFrames(/*flush=*/false, /*is_fec_timeout=*/false);
+  SendQueuedFrames(/*flush=*/false);
 }
 
 void QuicPacketGenerator::AddControlFrame(const QuicFrame& frame) {
   queued_control_frames_.push_back(frame);
-  SendQueuedFrames(/*flush=*/false, /*is_fec_timeout=*/false);
+  SendQueuedFrames(/*flush=*/false);
 }
 
 QuicConsumedData QuicPacketGenerator::ConsumeData(
@@ -71,14 +58,15 @@ QuicConsumedData QuicPacketGenerator::ConsumeData(
     QuicIOVector iov,
     QuicStreamOffset offset,
     bool fin,
-    FecProtection fec_protection,
     QuicAckListenerInterface* listener) {
-  bool has_handshake = id == kCryptoStreamId;
+  bool has_handshake = (id == kCryptoStreamId);
+  QUIC_BUG_IF(has_handshake && fin)
+      << "Handshake packets should never send a fin";
   // To make reasoning about crypto frames easier, we don't combine them with
   // other retransmittable frames in a single packet.
   const bool flush =
       has_handshake && packet_creator_.HasPendingRetransmittableFrames();
-  SendQueuedFrames(flush, /*is_fec_timeout=*/false);
+  SendQueuedFrames(flush);
 
   size_t total_bytes_consumed = 0;
   bool fin_consumed = false;
@@ -97,7 +85,7 @@ QuicConsumedData QuicPacketGenerator::ConsumeData(
     QuicFrame frame;
     if (!packet_creator_.ConsumeData(id, iov, total_bytes_consumed,
                                      offset + total_bytes_consumed, fin,
-                                     has_handshake, &frame, fec_protection)) {
+                                     has_handshake, &frame)) {
       // The creator is always flushed if there's not enough room for a new
       // stream frame before ConsumeData, so ConsumeData should always succeed.
       QUIC_BUG << "Failed to ConsumeData, stream:" << id;
@@ -105,7 +93,7 @@ QuicConsumedData QuicPacketGenerator::ConsumeData(
     }
 
     // A stream frame is created and added.
-    size_t bytes_consumed = frame.stream_frame->frame_length;
+    size_t bytes_consumed = frame.stream_frame->data_length;
     if (listener != nullptr) {
       packet_creator_.AddAckListener(listener, bytes_consumed);
     }
@@ -115,9 +103,6 @@ QuicConsumedData QuicPacketGenerator::ConsumeData(
            (bytes_consumed > 0 && packet_creator_.HasPendingFrames()));
 
     if (!InBatchMode()) {
-      // TODO(rtenneti): remove MaybeSendFecPacketAndCloseGroup() from inside
-      // SerializeAndSendPacket() and make it an explicit call here (and
-      // elsewhere where we call SerializeAndSendPacket?).
       packet_creator_.Flush();
     }
 
@@ -133,24 +118,47 @@ QuicConsumedData QuicPacketGenerator::ConsumeData(
 
   // Don't allow the handshake to be bundled with other retransmittable frames.
   if (has_handshake) {
-    SendQueuedFrames(/*flush=*/true, /*is_fec_timeout=*/false);
+    SendQueuedFrames(/*flush=*/true);
   }
-
-  // Try to close FEC group since we've either run out of data to send or we're
-  // blocked.
-  packet_creator_.MaybeSendFecPacketAndCloseGroup(/*force_send_fec=*/false,
-                                                  /*is_fec_timeout=*/false);
 
   DCHECK(InBatchMode() || !packet_creator_.HasPendingFrames());
   return QuicConsumedData(total_bytes_consumed, fin_consumed);
+}
+
+QuicConsumedData QuicPacketGenerator::ConsumeDataFastPath(
+    QuicStreamId id,
+    const QuicIOVector& iov,
+    QuicStreamOffset offset,
+    bool fin,
+    QuicAckListenerInterface* listener) {
+  DCHECK_NE(id, kCryptoStreamId);
+  size_t total_bytes_consumed = 0;
+  while (total_bytes_consumed < iov.total_length &&
+         delegate_->ShouldGeneratePacket(HAS_RETRANSMITTABLE_DATA,
+                                         NOT_HANDSHAKE)) {
+    // Serialize and encrypt the packet.
+    ALIGNAS(64) char encrypted_buffer[kMaxPacketSize];
+    size_t bytes_consumed = 0;
+    packet_creator_.CreateAndSerializeStreamFrame(
+        id, iov, total_bytes_consumed, offset + total_bytes_consumed, fin,
+        listener, encrypted_buffer, kMaxPacketSize, &bytes_consumed);
+    total_bytes_consumed += bytes_consumed;
+  }
+
+  return QuicConsumedData(total_bytes_consumed,
+                          fin && (total_bytes_consumed == iov.total_length));
 }
 
 void QuicPacketGenerator::GenerateMtuDiscoveryPacket(
     QuicByteCount target_mtu,
     QuicAckListenerInterface* listener) {
   // MTU discovery frames must be sent by themselves.
-  DCHECK(!InBatchMode() && !packet_creator_.HasPendingFrames());
-  const QuicByteCount current_mtu = GetMaxPacketLength();
+  if (!packet_creator_.CanSetMaxPacketLength()) {
+    QUIC_BUG << "MTU discovery packets should only be sent when no other "
+             << "frames needs to be sent.";
+    return;
+  }
+  const QuicByteCount current_mtu = GetCurrentMaxPacketLength();
 
   // The MTU discovery frame is allocated on the stack, since it is going to be
   // serialized within this function.
@@ -158,7 +166,7 @@ void QuicPacketGenerator::GenerateMtuDiscoveryPacket(
   QuicFrame frame(mtu_discovery_frame);
 
   // Send the probe packet with the new length.
-  SetMaxPacketLength(target_mtu, /*force=*/true);
+  SetMaxPacketLength(target_mtu);
   const bool success = packet_creator_.AddPaddedSavedFrame(frame);
   if (listener != nullptr) {
     packet_creator_.AddAckListener(listener, 0);
@@ -169,7 +177,7 @@ void QuicPacketGenerator::GenerateMtuDiscoveryPacket(
   DCHECK(success);
 
   // Reset the packet length back.
-  SetMaxPacketLength(current_mtu, /*force=*/true);
+  SetMaxPacketLength(current_mtu);
 }
 
 bool QuicPacketGenerator::CanSendWithNextPendingFrameAddition() const {
@@ -184,7 +192,7 @@ bool QuicPacketGenerator::CanSendWithNextPendingFrameAddition() const {
   return delegate_->ShouldGeneratePacket(retransmittable, NOT_HANDSHAKE);
 }
 
-void QuicPacketGenerator::SendQueuedFrames(bool flush, bool is_fec_timeout) {
+void QuicPacketGenerator::SendQueuedFrames(bool flush) {
   // Only add pending frames if we are SURE we can then send the whole packet.
   while (HasPendingFrames() &&
          (flush || CanSendWithNextPendingFrameAddition())) {
@@ -193,23 +201,6 @@ void QuicPacketGenerator::SendQueuedFrames(bool flush, bool is_fec_timeout) {
   if (flush || !InBatchMode()) {
     packet_creator_.Flush();
   }
-  packet_creator_.MaybeSendFecPacketAndCloseGroup(flush, is_fec_timeout);
-}
-
-void QuicPacketGenerator::OnFecTimeout() {
-  DCHECK(!InBatchMode());
-  if (!packet_creator_.ShouldSendFec(true)) {
-    QUIC_BUG << "No FEC packet to send on FEC timeout.";
-    return;
-  }
-  // Flush out any pending frames in the generator and the creator, and then
-  // send out FEC packet.
-  SendQueuedFrames(/*flush=*/true, /*is_fec_timeout=*/true);
-}
-
-QuicTime::Delta QuicPacketGenerator::GetFecTimeout(
-    QuicPacketNumber packet_number) {
-  return packet_creator_.GetFecTimeout(packet_number);
 }
 
 bool QuicPacketGenerator::InBatchMode() {
@@ -222,15 +213,19 @@ void QuicPacketGenerator::StartBatchOperations() {
 
 void QuicPacketGenerator::FinishBatchOperations() {
   batch_mode_ = false;
-  SendQueuedFrames(/*flush=*/false, /*is_fec_timeout=*/false);
+  SendQueuedFrames(/*flush=*/false);
 }
 
 void QuicPacketGenerator::FlushAllQueuedFrames() {
-  SendQueuedFrames(/*flush=*/true, /*is_fec_timeout=*/false);
+  SendQueuedFrames(/*flush=*/true);
 }
 
 bool QuicPacketGenerator::HasQueuedFrames() const {
   return packet_creator_.HasPendingFrames() || HasPendingFrames();
+}
+
+bool QuicPacketGenerator::IsPendingPacketEmpty() const {
+  return !packet_creator_.HasPendingFrames();
 }
 
 bool QuicPacketGenerator::HasPendingFrames() const {
@@ -240,12 +235,8 @@ bool QuicPacketGenerator::HasPendingFrames() const {
 
 bool QuicPacketGenerator::AddNextPendingFrame() {
   if (should_send_ack_) {
-    delegate_->PopulateAckFrame(&pending_ack_frame_);
-    // If we can't this add the frame now, then we still need to do so later.
     should_send_ack_ =
-        !packet_creator_.AddSavedFrame(QuicFrame(&pending_ack_frame_));
-    // Return success if we have cleared out this flag (i.e., added the frame).
-    // If we still need to send, then the frame is full, and we have failed.
+        !packet_creator_.AddSavedFrame(delegate_->GetUpdatedAckFrame());
     return !should_send_ack_;
   }
 
@@ -273,33 +264,22 @@ void QuicPacketGenerator::StopSendingVersion() {
   packet_creator_.StopSendingVersion();
 }
 
-QuicPacketNumber QuicPacketGenerator::packet_number() const {
-  return packet_creator_.packet_number();
+void QuicPacketGenerator::SetDiversificationNonce(
+    const DiversificationNonce nonce) {
+  packet_creator_.SetDiversificationNonce(nonce);
 }
 
-QuicByteCount QuicPacketGenerator::GetMaxPacketLength() const {
-  return max_packet_length_;
+QuicPacketNumber QuicPacketGenerator::packet_number() const {
+  return packet_creator_.packet_number();
 }
 
 QuicByteCount QuicPacketGenerator::GetCurrentMaxPacketLength() const {
   return packet_creator_.max_packet_length();
 }
 
-void QuicPacketGenerator::SetMaxPacketLength(QuicByteCount length, bool force) {
-  // If we cannot immediately set new maximum packet length, and the |force|
-  // flag is set, we have to flush the contents of the queue and close existing
-  // FEC group.
-  if (!packet_creator_.CanSetMaxPacketLength() && force) {
-    SendQueuedFrames(/*flush=*/true, /*is_fec_timeout=*/false);
-    packet_creator_.MaybeSendFecPacketAndCloseGroup(/*force_send_fec=*/true,
-                                                    /*is_fec_timeout=*/false);
-    DCHECK(packet_creator_.CanSetMaxPacketLength());
-  }
-
-  max_packet_length_ = length;
-  if (packet_creator_.CanSetMaxPacketLength()) {
-    packet_creator_.SetMaxPacketLength(length);
-  }
+void QuicPacketGenerator::SetMaxPacketLength(QuicByteCount length) {
+  DCHECK(packet_creator_.CanSetMaxPacketLength());
+  packet_creator_.SetMaxPacketLength(length);
 }
 
 QuicEncryptedPacket* QuicPacketGenerator::SerializeVersionNegotiationPacket(
@@ -324,10 +304,6 @@ void QuicPacketGenerator::UpdateSequenceNumberLength(
 void QuicPacketGenerator::SetConnectionIdLength(uint32_t length) {
   if (length == 0) {
     packet_creator_.set_connection_id_length(PACKET_0BYTE_CONNECTION_ID);
-  } else if (length == 1) {
-    packet_creator_.set_connection_id_length(PACKET_1BYTE_CONNECTION_ID);
-  } else if (length <= 4) {
-    packet_creator_.set_connection_id_length(PACKET_4BYTE_CONNECTION_ID);
   } else {
     packet_creator_.set_connection_id_length(PACKET_8BYTE_CONNECTION_ID);
   }
@@ -348,20 +324,6 @@ void QuicPacketGenerator::SetCurrentPath(
     QuicPacketCount max_packets_in_flight) {
   packet_creator_.SetCurrentPath(path_id, least_packet_awaited_by_peer,
                                  max_packets_in_flight);
-}
-
-void QuicPacketGenerator::set_rtt_multiplier_for_fec_timeout(
-    float rtt_multiplier_for_fec_timeout) {
-  packet_creator_.set_rtt_multiplier_for_fec_timeout(
-      rtt_multiplier_for_fec_timeout);
-}
-
-FecSendPolicy QuicPacketGenerator::fec_send_policy() {
-  return packet_creator_.fec_send_policy();
-}
-
-void QuicPacketGenerator::set_fec_send_policy(FecSendPolicy fec_send_policy) {
-  packet_creator_.set_fec_send_policy(fec_send_policy);
 }
 
 }  // namespace net

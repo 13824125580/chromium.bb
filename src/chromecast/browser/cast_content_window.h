@@ -5,8 +5,9 @@
 #ifndef CHROMECAST_BROWSER_CAST_CONTENT_WINDOW_H_
 #define CHROMECAST_BROWSER_CAST_CONTENT_WINDOW_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/browser/web_contents_observer.h"
 
 namespace aura {
@@ -36,12 +37,10 @@ class CastContentWindow : public content::WebContentsObserver {
   // CreateWindowTree).
   void SetTransparent() { transparent_ = true; }
 
-  // Create a window with the given size for |web_contents|.
-  void CreateWindowTree(const gfx::Size& initial_size,
-                        content::WebContents* web_contents);
+  // Create a full-screen window for |web_contents|.
+  void CreateWindowTree(content::WebContents* web_contents);
 
-  scoped_ptr<content::WebContents> CreateWebContents(
-      const gfx::Size& initial_size,
+  std::unique_ptr<content::WebContents> CreateWebContents(
       content::BrowserContext* browser_context);
 
   // content::WebContentsObserver implementation:
@@ -52,7 +51,7 @@ class CastContentWindow : public content::WebContentsObserver {
 
  private:
 #if defined(USE_AURA)
-  scoped_ptr<aura::WindowTreeHost> window_tree_host_;
+  std::unique_ptr<aura::WindowTreeHost> window_tree_host_;
 #endif
   bool transparent_;
 

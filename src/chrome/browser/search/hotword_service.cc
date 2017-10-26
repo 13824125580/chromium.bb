@@ -12,13 +12,12 @@
 #include "base/i18n/case_conversion.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -295,7 +294,7 @@ bool HotwordService::IsHotwordHardwareAvailable() {
     chromeos::AudioDeviceList devices;
     chromeos::CrasAudioHandler::Get()->GetAudioDevices(&devices);
     for (size_t i = 0; i < devices.size(); ++i) {
-      if (devices[i].type == chromeos::AUDIO_TYPE_AOKR) {
+      if (devices[i].type == chromeos::AUDIO_TYPE_HOTWORD) {
         DCHECK(devices[i].is_input);
         return true;
       }
@@ -367,7 +366,7 @@ HotwordService::HotwordService(Profile* profile)
                  weak_factory_.GetWeakPtr()));
 
   SetAudioHistoryHandler(new HotwordAudioHistoryHandler(
-      profile_, base::MessageLoop::current()->task_runner()));
+      profile_, base::ThreadTaskRunnerHandle::Get()));
 
   if (HotwordServiceFactory::IsAlwaysOnAvailable() &&
       IsHotwordAllowed()) {
@@ -402,7 +401,7 @@ HotwordService::HotwordService(Profile* profile)
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
       base::Bind(&HotwordService::InitializeMicrophoneObserver,
-                 base::Unretained(this)));
+                 weak_factory_.GetWeakPtr()));
 }
 
 HotwordService::~HotwordService() {

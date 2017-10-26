@@ -18,10 +18,14 @@
 #include "content/renderer/render_view_impl.h"
 #include "content/test/fake_compositor_dependencies.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/WebEffectiveConnectionType.h"
+#include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebFrameOwnerProperties.h"
 #include "third_party/WebKit/public/web/WebHistoryItem.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
+
+using blink::WebString;
 
 namespace {
 const int32_t kSubframeRouteId = 20;
@@ -80,6 +84,11 @@ class RenderFrameImplTest : public RenderViewTest {
     frame->is_using_lofi_ = is_using_lofi;
   }
 
+  void SetEffectionConnectionType(RenderFrameImpl* frame,
+                                  blink::WebEffectiveConnectionType type) {
+    frame->effective_connection_type_ = type;
+  }
+
   RenderFrameImpl* GetMainRenderFrame() {
     return static_cast<RenderFrameImpl*>(view_->GetMainRenderFrame());
   }
@@ -102,8 +111,10 @@ class RenderFrameTestObserver : public RenderFrameObserver {
 
   ~RenderFrameTestObserver() override {}
 
+  // RenderFrameObserver implementation.
   void WasShown() override { visible_ = true; }
   void WasHidden() override { visible_ = false; }
+  void OnDestruct() override { delete this; }
 
   bool visible() { return visible_; }
 
@@ -128,20 +139,7 @@ class RenderFrameTestObserver : public RenderFrameObserver {
 // RenderWidget.
 TEST_F(RenderFrameImplTest, MAYBE_SubframeWidget) {
   EXPECT_TRUE(frame_widget());
-  // We can't convert to RenderWidget* directly, because
-  // it and RenderView are two unrelated base classes
-  // of RenderViewImpl. If a class has multiple base classes,
-  // each base class pointer will be distinct, and direct casts
-  // between unrelated base classes are undefined, even if they share
-  // a common derived class. The compiler has no way in general of
-  // determining the displacement between the two classes, so these
-  // types of casts cannot be implemented in a type safe way.
-  // To overcome this, we make two legal static casts:
-  // first, downcast from RenderView* to RenderViewImpl*,
-  // then upcast from RenderViewImpl* to RenderWidget*.
-  EXPECT_NE(frame_widget(),
-            static_cast<content::RenderWidget*>(
-                static_cast<content::RenderViewImpl*>((view_))));
+  EXPECT_NE(frame_widget(), view_->GetWidget());
 }
 
 // Verify a subframe RenderWidget properly processes its viewport being
@@ -204,10 +202,11 @@ TEST_F(RenderFrameImplTest, LoFiNotUpdatedOnSubframeCommits) {
   // The main frame's and subframe's LoFi states should stay the same on
   // navigations within the page.
   frame()->didNavigateWithinPage(frame()->GetWebFrame(), item,
-                                 blink::WebStandardCommit);
+                                 blink::WebStandardCommit, true);
   EXPECT_TRUE(frame()->IsUsingLoFi());
   GetMainRenderFrame()->didNavigateWithinPage(
-      GetMainRenderFrame()->GetWebFrame(), item, blink::WebStandardCommit);
+      GetMainRenderFrame()->GetWebFrame(), item, blink::WebStandardCommit,
+      true);
   EXPECT_TRUE(GetMainRenderFrame()->IsUsingLoFi());
 
   // The subframe's LoFi state should not be reset on commit.
@@ -234,6 +233,114 @@ TEST_F(RenderFrameImplTest, LoFiNotUpdatedOnSubframeCommits) {
   // The subframe would be deleted here after a cross-document navigation. It
   // happens to be left around in this test because this does not simulate the
   // frame detach.
+}
+
+// Test that effective connection type only updates for new main frame
+// documents.
+TEST_F(RenderFrameImplTest, EffectiveConnectionType) {
+  EXPECT_EQ(blink::WebEffectiveConnectionType::TypeUnknown,
+            frame()->getEffectiveConnectionType());
+  EXPECT_EQ(blink::WebEffectiveConnectionType::TypeUnknown,
+            GetMainRenderFrame()->getEffectiveConnectionType());
+
+  const struct {
+    blink::WebEffectiveConnectionType type;
+  } tests[] = {{blink::WebEffectiveConnectionType::TypeUnknown},
+               {blink::WebEffectiveConnectionType::Type2G},
+               {blink::WebEffectiveConnectionType::TypeBroadband}};
+
+  for (size_t i = 0; i < arraysize(tests); ++i) {
+    SetEffectionConnectionType(GetMainRenderFrame(), tests[i].type);
+    SetEffectionConnectionType(frame(), tests[i].type);
+
+    EXPECT_EQ(tests[i].type, frame()->getEffectiveConnectionType());
+    EXPECT_EQ(tests[i].type,
+              GetMainRenderFrame()->getEffectiveConnectionType());
+
+    blink::WebHistoryItem item;
+    item.initialize();
+
+    // The main frame's and subframe's effective connection type should stay the
+    // same on navigations within the page.
+    frame()->didNavigateWithinPage(frame()->GetWebFrame(), item,
+                                   blink::WebStandardCommit, true);
+    EXPECT_EQ(tests[i].type, frame()->getEffectiveConnectionType());
+    GetMainRenderFrame()->didNavigateWithinPage(
+        GetMainRenderFrame()->GetWebFrame(), item, blink::WebStandardCommit,
+        true);
+    EXPECT_EQ(tests[i].type, frame()->getEffectiveConnectionType());
+
+    // The subframe's effective connection type should not be reset on commit.
+    DocumentState* document_state =
+        DocumentState::FromDataSource(frame()->GetWebFrame()->dataSource());
+    static_cast<NavigationStateImpl*>(document_state->navigation_state())
+        ->set_was_within_same_page(false);
+
+    frame()->didCommitProvisionalLoad(frame()->GetWebFrame(), item,
+                                      blink::WebStandardCommit);
+    EXPECT_EQ(tests[i].type, frame()->getEffectiveConnectionType());
+
+    // The main frame's effective connection type should be reset on commit.
+    document_state = DocumentState::FromDataSource(
+        GetMainRenderFrame()->GetWebFrame()->dataSource());
+    static_cast<NavigationStateImpl*>(document_state->navigation_state())
+        ->set_was_within_same_page(false);
+
+    GetMainRenderFrame()->didCommitProvisionalLoad(
+        GetMainRenderFrame()->GetWebFrame(), item, blink::WebStandardCommit);
+    EXPECT_EQ(blink::WebEffectiveConnectionType::TypeUnknown,
+              GetMainRenderFrame()->getEffectiveConnectionType());
+
+    // The subframe would be deleted here after a cross-document navigation.
+    // It happens to be left around in this test because this does not simulate
+    // the frame detach.
+  }
+}
+
+TEST_F(RenderFrameImplTest, SaveImageFromDataURL) {
+  const IPC::Message* msg1 = render_thread_->sink().GetFirstMessageMatching(
+      FrameHostMsg_SaveImageFromDataURL::ID);
+  EXPECT_FALSE(msg1);
+  render_thread_->sink().ClearMessages();
+
+  const std::string image_data_url =
+      "data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=";
+
+  frame()->saveImageFromDataURL(WebString::fromUTF8(image_data_url));
+  ProcessPendingMessages();
+  const IPC::Message* msg2 = render_thread_->sink().GetFirstMessageMatching(
+      FrameHostMsg_SaveImageFromDataURL::ID);
+  EXPECT_TRUE(msg2);
+
+  FrameHostMsg_SaveImageFromDataURL::Param param1;
+  FrameHostMsg_SaveImageFromDataURL::Read(msg2, &param1);
+  EXPECT_EQ(std::get<2>(param1), image_data_url);
+
+  ProcessPendingMessages();
+  render_thread_->sink().ClearMessages();
+
+  const std::string large_data_url(1024 * 1024 * 20 - 1, 'd');
+
+  frame()->saveImageFromDataURL(WebString::fromUTF8(large_data_url));
+  ProcessPendingMessages();
+  const IPC::Message* msg3 = render_thread_->sink().GetFirstMessageMatching(
+      FrameHostMsg_SaveImageFromDataURL::ID);
+  EXPECT_TRUE(msg3);
+
+  FrameHostMsg_SaveImageFromDataURL::Param param2;
+  FrameHostMsg_SaveImageFromDataURL::Read(msg3, &param2);
+  EXPECT_EQ(std::get<2>(param2), large_data_url);
+
+  ProcessPendingMessages();
+  render_thread_->sink().ClearMessages();
+
+  const std::string exceeded_data_url(1024 * 1024 * 20 + 1, 'd');
+
+  frame()->saveImageFromDataURL(WebString::fromUTF8(exceeded_data_url));
+  ProcessPendingMessages();
+  const IPC::Message* msg4 = render_thread_->sink().GetFirstMessageMatching(
+      FrameHostMsg_SaveImageFromDataURL::ID);
+  EXPECT_FALSE(msg4);
 }
 
 }  // namespace

@@ -109,8 +109,8 @@ void PolicyLoaderIOS::InitOnBackgroundThread() {
                                                 taskRunner:task_runner()]);
 }
 
-scoped_ptr<PolicyBundle> PolicyLoaderIOS::Load() {
-  scoped_ptr<PolicyBundle> bundle(new PolicyBundle());
+std::unique_ptr<PolicyBundle> PolicyLoaderIOS::Load() {
+  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
   NSDictionary* configuration = [[NSUserDefaults standardUserDefaults]
       dictionaryForKey:kConfigurationKey];
   id chromePolicy = configuration[kChromePolicyKey];
@@ -152,7 +152,7 @@ scoped_ptr<PolicyBundle> PolicyLoaderIOS::Load() {
   size_t count = bundle->Get(chrome_ns).size();
   UMA_HISTOGRAM_COUNTS_100("Enterprise.IOSPolicies", count);
 
-  return bundle.Pass();
+  return bundle;
 }
 
 base::Time PolicyLoaderIOS::LastModificationTime() {
@@ -173,7 +173,7 @@ void PolicyLoaderIOS::LoadNSDictionaryToPolicyBundle(NSDictionary* dictionary,
                                                      PolicyBundle* bundle) {
   // NSDictionary is toll-free bridged to CFDictionaryRef, which is a
   // CFPropertyListRef.
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       PropertyToValue(static_cast<CFPropertyListRef>(dictionary));
   base::DictionaryValue* dict = NULL;
   if (value && value->GetAsDictionary(&dict)) {

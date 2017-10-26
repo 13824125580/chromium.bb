@@ -4,6 +4,8 @@
 
 #include "chrome/common/extensions/manifest_handlers/linked_app_icons.h"
 
+#include <memory>
+
 #include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -55,7 +57,7 @@ LinkedAppIconsHandler::~LinkedAppIconsHandler() {
 }
 
 bool LinkedAppIconsHandler::Parse(Extension* extension, base::string16* error) {
-  scoped_ptr<LinkedAppIcons> linked_app_icons(new LinkedAppIcons);
+  std::unique_ptr<LinkedAppIcons> linked_app_icons(new LinkedAppIcons);
 
   const base::Value* icons_value = nullptr;
   const base::ListValue* icons_list = nullptr;
@@ -66,7 +68,7 @@ bool LinkedAppIconsHandler::Parse(Extension* extension, base::string16* error) {
       return false;
     }
 
-    for (const base::Value* icon_value : *icons_list) {
+    for (const auto& icon_value : *icons_list) {
       const base::DictionaryValue* icon_dict = nullptr;
       if (!icon_value->GetAsDictionary(&icon_dict)) {
         *error = base::UTF8ToUTF16(

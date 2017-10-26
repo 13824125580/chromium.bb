@@ -7,14 +7,13 @@
 #include <string>
 #include <vector>
 
+#include "ash/common/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ash/wm/window_util.h"
 #include "base/logging.h"
 #include "chrome/browser/chromeos/input_method/mode_indicator_controller.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/chromeos/ime/infolist_window.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/widget/widget.h"
 
 namespace chromeos {

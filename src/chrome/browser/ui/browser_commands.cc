@@ -64,10 +64,10 @@
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/translate/core/browser/language_state.h"
-#include "components/ui/zoom/page_zoom.h"
-#include "components/ui/zoom/zoom_controller.h"
 #include "components/version_info/version_info.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/zoom/page_zoom.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -89,6 +89,7 @@
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/tab_helper.h"
+#include "chrome/browser/ui/extensions/settings_api_bubble_helpers.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
@@ -214,7 +215,7 @@ WebContents* GetTabAndRevertIfNecessary(Browser* browser,
 
 void ReloadInternal(Browser* browser,
                     WindowOpenDisposition disposition,
-                    bool ignore_cache) {
+                    bool bypass_cache) {
   // As this is caused by a user action, give the focus to the page.
   //
   // Also notify RenderViewHostDelegate of the user gesture; this is
@@ -226,11 +227,11 @@ void ReloadInternal(Browser* browser,
 
   DevToolsWindow* devtools =
       DevToolsWindow::GetInstanceForInspectedWebContents(new_tab);
-  if (devtools && devtools->ReloadInspectedWebContents(ignore_cache))
+  if (devtools && devtools->ReloadInspectedWebContents(bypass_cache))
     return;
 
-  if (ignore_cache)
-    new_tab->GetController().ReloadIgnoringCache(true);
+  if (bypass_cache)
+    new_tab->GetController().ReloadBypassingCache(true);
   else
     new_tab->GetController().Reload(true);
 }
@@ -426,8 +427,8 @@ void Reload(Browser* browser, WindowOpenDisposition disposition) {
   ReloadInternal(browser, disposition, false);
 }
 
-void ReloadIgnoringCache(Browser* browser, WindowOpenDisposition disposition) {
-  content::RecordAction(UserMetricsAction("ReloadIgnoringCache"));
+void ReloadBypassingCache(Browser* browser, WindowOpenDisposition disposition) {
+  content::RecordAction(UserMetricsAction("ReloadBypassingCache"));
   ReloadInternal(browser, disposition, true);
 }
 
@@ -467,6 +468,9 @@ void Home(Browser* browser, WindowOpenDisposition disposition) {
 
     url = extensions::AppLaunchInfo::GetLaunchWebURL(extension);
   }
+
+  if (disposition == CURRENT_TAB || disposition == NEW_FOREGROUND_TAB)
+    extensions::MaybeShowExtensionControlledHomeNotification(browser);
 #endif
 
   OpenURLParams params(
@@ -488,8 +492,6 @@ void OpenCurrentURL(Browser* browser) {
   GURL url(location_bar->GetDestinationURL());
 
   ui::PageTransition page_transition = location_bar->GetPageTransition();
-  ui::PageTransition page_transition_without_qualifier(
-      ui::PageTransitionStripQualifier(page_transition));
   WindowOpenDisposition open_disposition =
       location_bar->GetWindowOpenDisposition();
   // A PAGE_TRANSITION_TYPED means the user has typed a URL. We do not want to
@@ -499,8 +501,10 @@ void OpenCurrentURL(Browser* browser) {
   // Instant should also not handle PAGE_TRANSITION_RELOAD because its knowledge
   // of the omnibox text may be stale if the user focuses in the omnibox and
   // presses enter without typing anything.
-  if (page_transition_without_qualifier != ui::PAGE_TRANSITION_TYPED &&
-      page_transition_without_qualifier != ui::PAGE_TRANSITION_RELOAD &&
+  if (!ui::PageTransitionCoreTypeIs(page_transition,
+                                    ui::PAGE_TRANSITION_TYPED) &&
+      !ui::PageTransitionCoreTypeIs(page_transition,
+                                    ui::PAGE_TRANSITION_RELOAD) &&
       browser->instant_controller() &&
       browser->instant_controller()->OpenInstant(open_disposition, url))
     return;
@@ -575,21 +579,20 @@ void CloseTab(Browser* browser) {
 }
 
 bool CanZoomIn(content::WebContents* contents) {
-  ui_zoom::ZoomController* zoom_controller =
-      ui_zoom::ZoomController::FromWebContents(contents);
-  return zoom_controller->GetZoomPercent() != contents->GetMaximumZoomPercent();
+  return contents && !contents->IsCrashed() &&
+         zoom::ZoomController::FromWebContents(contents)->GetZoomPercent() !=
+             contents->GetMaximumZoomPercent();
 }
 
 bool CanZoomOut(content::WebContents* contents) {
-  ui_zoom::ZoomController* zoom_controller =
-      ui_zoom::ZoomController::FromWebContents(contents);
-  return zoom_controller->GetZoomPercent() !=
-      contents->GetMinimumZoomPercent();
+  return contents && !contents->IsCrashed() &&
+         zoom::ZoomController::FromWebContents(contents)->GetZoomPercent() !=
+             contents->GetMinimumZoomPercent();
 }
 
 bool CanResetZoom(content::WebContents* contents) {
-  ui_zoom::ZoomController* zoom_controller =
-      ui_zoom::ZoomController::FromWebContents(contents);
+  zoom::ZoomController* zoom_controller =
+      zoom::ZoomController::FromWebContents(contents);
   return !zoom_controller->IsAtDefaultZoom() ||
          !zoom_controller->PageScaleFactorIsOne();
 }
@@ -877,14 +880,17 @@ void Print(Browser* browser) {
 
 bool CanPrint(Browser* browser) {
   // Do not print when printing is disabled via pref or policy.
+  // Do not print when a page has crashed.
   // Do not print when a constrained window is showing. It's confusing.
   // TODO(gbillock): Need to re-assess the call to
   // IsShowingWebContentsModalDialog after a popup management policy is
   // refined -- we will probably want to just queue the print request, not
   // block it.
+  WebContents* current_tab = browser->tab_strip_model()->GetActiveWebContents();
   return browser->profile()->GetPrefs()->GetBoolean(prefs::kPrintingEnabled) &&
+      (current_tab && !current_tab->IsCrashed()) &&
       !(IsShowingWebContentsModalDialog(browser) ||
-      GetContentRestrictions(browser) & CONTENT_RESTRICTION_PRINT);
+        GetContentRestrictions(browser) & CONTENT_RESTRICTION_PRINT);
 }
 
 #if defined(ENABLE_BASIC_PRINTING)
@@ -894,27 +900,17 @@ void BasicPrint(Browser* browser) {
 
 bool CanBasicPrint(Browser* browser) {
   // If printing is not disabled via pref or policy, it is always possible to
-  // advanced print when the print preview is visible.  The exception to this
-  // is under Win8 ash, since showing the advanced print dialog will open it
-  // modally on the Desktop and hang the browser.
-#if defined(OS_WIN)
-  if (chrome::GetActiveDesktop() == chrome::HOST_DESKTOP_TYPE_ASH)
-    return false;
-#endif
-
+  // advanced print when the print preview is visible.
   return browser->profile()->GetPrefs()->GetBoolean(prefs::kPrintingEnabled) &&
       (PrintPreviewShowing(browser) || CanPrint(browser));
 }
 #endif  // ENABLE_BASIC_PRINTING
 
 bool CanRouteMedia(Browser* browser) {
-  Profile* profile = browser->profile();
-  if (profile->IsOffTheRecord() || !media_router::MediaRouterEnabled(profile))
-    return false;
-
   // Do not allow user to open Media Router dialog when there is already an
   // active modal dialog. This avoids overlapping dialogs.
-  return !IsShowingWebContentsModalDialog(browser);
+  return media_router::MediaRouterEnabled(browser->profile()) &&
+         !IsShowingWebContentsModalDialog(browser);
 }
 
 void RouteMedia(Browser* browser) {
@@ -993,8 +989,8 @@ void FindInPage(Browser* browser, bool find_next, bool forward_direction) {
 }
 
 void Zoom(Browser* browser, content::PageZoom zoom) {
-  ui_zoom::PageZoom::Zoom(browser->tab_strip_model()->GetActiveWebContents(),
-                          zoom);
+  zoom::PageZoom::Zoom(browser->tab_strip_model()->GetActiveWebContents(),
+                       zoom);
 }
 
 void FocusToolbar(Browser* browser) {

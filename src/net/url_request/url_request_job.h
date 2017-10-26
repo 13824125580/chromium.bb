@@ -7,11 +7,11 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/power_monitor/power_observer.h"
@@ -139,12 +139,6 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   // false and leaves |endpoint| unchanged if it is unavailable.
   virtual bool GetRemoteEndpoint(IPEndPoint* endpoint) const;
 
-  // Returns the cookie values included in the response, if applicable.
-  // Returns true if applicable.
-  // NOTE: This removes the cookies from the job, so it will only return
-  //       useful results once per job.
-  virtual bool GetResponseCookies(std::vector<std::string>* cookies);
-
   // Populates the network error details of the most recent origin that the
   // network stack makes the request to.
   virtual void PopulateNetErrorDetails(NetErrorDetails* details) const;
@@ -155,7 +149,7 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   // This class takes ownership of the returned Filter.
   //
   // The default implementation returns NULL.
-  virtual Filter* SetupFilter() const;
+  virtual std::unique_ptr<Filter> SetupFilter() const;
 
   // Called to determine if this response is a redirect.  Only makes sense
   // for some types of requests.  This method returns true if the response
@@ -221,6 +215,10 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
 
   // Whether we have processed the response for that request yet.
   bool has_response_started() const { return has_handled_response_; }
+
+  // The number of bytes read before passing to the filter. This value reflects
+  // bytes read even when there is no filter.
+  int64_t prefilter_bytes_read() const { return prefilter_bytes_read_; }
 
   // These methods are not applicable to all connections.
   virtual bool GetMimeType(std::string* mime_type) const;
@@ -340,10 +338,6 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   // Set the proxy server that was used, if any.
   void SetProxyServer(const HostPortPair& proxy_server);
 
-  // The number of bytes read before passing to the filter. This value reflects
-  // bytes read even when there is no filter.
-  int64_t prefilter_bytes_read() const { return prefilter_bytes_read_; }
-
   // The number of bytes read after passing through the filter. This value
   // reflects bytes read even when there is no filter.
   int64_t postfilter_bytes_read() const { return postfilter_bytes_read_; }
@@ -431,7 +425,7 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   int64_t postfilter_bytes_read_;
 
   // The data stream filter which is enabled on demand.
-  scoped_ptr<Filter> filter_;
+  std::unique_ptr<Filter> filter_;
 
   // If the filter filled its output buffer, then there is a change that it
   // still has internal data to emit, and this flag is set.

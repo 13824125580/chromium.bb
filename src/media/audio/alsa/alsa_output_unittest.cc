@@ -5,7 +5,10 @@
 #include <stdint.h>
 
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/test_message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/audio/alsa/alsa_output.h"
 #include "media/audio/alsa/alsa_wrapper.h"
 #include "media/audio/alsa/audio_manager_alsa.h"
@@ -72,17 +75,24 @@ class MockAlsaWrapper : public AlsaWrapper {
 
 class MockAudioManagerAlsa : public AudioManagerAlsa {
  public:
-  MockAudioManagerAlsa() : AudioManagerAlsa(&fake_audio_log_factory_) {}
+  MockAudioManagerAlsa()
+      : AudioManagerAlsa(base::ThreadTaskRunnerHandle::Get(),
+                         base::ThreadTaskRunnerHandle::Get(),
+                         &fake_audio_log_factory_) {}
   MOCK_METHOD0(Init, void());
   MOCK_METHOD0(HasAudioOutputDevices, bool());
   MOCK_METHOD0(HasAudioInputDevices, bool());
-  MOCK_METHOD1(MakeLinearOutputStream, AudioOutputStream*(
-      const AudioParameters& params));
-  MOCK_METHOD2(MakeLowLatencyOutputStream, AudioOutputStream*(
-      const AudioParameters& params,
-      const std::string& device_id));
-  MOCK_METHOD2(MakeLowLatencyInputStream, AudioInputStream*(
-      const AudioParameters& params, const std::string& device_id));
+  MOCK_METHOD2(MakeLinearOutputStream,
+               AudioOutputStream*(const AudioParameters& params,
+                                  const LogCallback& log_callback));
+  MOCK_METHOD3(MakeLowLatencyOutputStream,
+               AudioOutputStream*(const AudioParameters& params,
+                                  const std::string& device_id,
+                                  const LogCallback& log_callback));
+  MOCK_METHOD3(MakeLowLatencyInputStream,
+               AudioInputStream*(const AudioParameters& params,
+                                 const std::string& device_id,
+                                 const LogCallback& log_callback));
 
   // We need to override this function in order to skip the checking the number
   // of active output streams. It is because the number of active streams
@@ -91,12 +101,6 @@ class MockAudioManagerAlsa : public AudioManagerAlsa {
   void ReleaseOutputStream(AudioOutputStream* stream) override {
     DCHECK(stream);
     delete stream;
-  }
-
-  // We don't mock this method since all tests will do the same thing
-  // and use the current task runner.
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() override {
-    return base::MessageLoop::current()->task_runner();
   }
 
  private:
@@ -168,9 +172,10 @@ class AlsaPcmOutputStreamTest : public testing::Test {
   static void* kFakeHints[];
   static char kGenericSurround50[];
 
+  base::TestMessageLoop message_loop_;
   StrictMock<MockAlsaWrapper> mock_alsa_wrapper_;
-  scoped_ptr<StrictMock<MockAudioManagerAlsa> > mock_manager_;
-  base::MessageLoop message_loop_;
+  std::unique_ptr<StrictMock<MockAudioManagerAlsa>, AudioManagerDeleter>
+      mock_manager_;
   scoped_refptr<media::DataBuffer> packet_;
 
  private:
@@ -442,7 +447,7 @@ TEST_F(AlsaPcmOutputStreamTest, StartStop) {
   // call Stop() immediately after to ensure we don't run the message loop
   // forever.
   test_stream->Stop();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_CALL(mock_alsa_wrapper_, PcmClose(kFakeHandle))
       .WillOnce(Return(0));

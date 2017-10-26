@@ -17,7 +17,7 @@
 #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "components/favicon/core/favicon_driver_observer.h"
-#include "components/ui/zoom/zoom_observer.h"
+#include "components/zoom/zoom_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/event_router.h"
 
@@ -39,7 +39,7 @@ class TabsEventRouter : public TabStripModelObserver,
                         public BrowserTabStripTrackerDelegate,
                         public chrome::BrowserListObserver,
                         public favicon::FaviconDriverObserver,
-                        public ui_zoom::ZoomObserver {
+                        public zoom::ZoomObserver {
  public:
   explicit TabsEventRouter(Profile* profile);
   ~TabsEventRouter() override;
@@ -79,7 +79,7 @@ class TabsEventRouter : public TabStripModelObserver,
 
   // ZoomObserver:
   void OnZoomChanged(
-      const ui_zoom::ZoomController::ZoomChangedEventData& data) override;
+      const zoom::ZoomController::ZoomChangedEventData& data) override;
 
   // favicon::FaviconDriverObserver:
   void OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,
@@ -107,14 +107,14 @@ class TabsEventRouter : public TabStripModelObserver,
   void DispatchEvent(Profile* profile,
                      events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     scoped_ptr<base::ListValue> args,
+                     std::unique_ptr<base::ListValue> args,
                      EventRouter::UserGestureState user_gesture);
 
   void DispatchEventsAcrossIncognito(
       Profile* profile,
       const std::string& event_name,
-      scoped_ptr<base::ListValue> event_args,
-      scoped_ptr<base::ListValue> cross_incognito_args);
+      std::unique_ptr<base::ListValue> event_args,
+      std::unique_ptr<base::ListValue> cross_incognito_args);
 
   // Packages |changed_property_names| as a tab updated event for the tab
   // |contents| and dispatches the event to the extension.
@@ -185,7 +185,7 @@ class TabsEventRouter : public TabStripModelObserver,
   // nullptr if not.
   TabEntry* GetTabEntry(content::WebContents* contents);
 
-  using TabEntryMap = std::map<int, scoped_ptr<TabEntry>>;
+  using TabEntryMap = std::map<int, std::unique_ptr<TabEntry>>;
   TabEntryMap tab_entries_;
 
   // The main profile that owns this event router.

@@ -29,11 +29,11 @@
 #include "SkMatrix44.h"
 #include "platform/geometry/FloatPoint.h"
 #include "platform/geometry/FloatPoint3D.h"
-#include "platform/geometry/IntPoint.h"
 #include "wtf/Alignment.h"
 #include "wtf/Allocator.h"
 #include "wtf/CPU.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 #include <string.h> // for memcpy
 
 namespace blink {
@@ -44,6 +44,7 @@ class LayoutRect;
 class FloatRect;
 class FloatQuad;
 class FloatBox;
+struct Rotation;
 #if CPU(X86_64)
 #define TRANSFORMATION_MATRIX_USE_X86_64_SSE2
 #endif
@@ -61,24 +62,24 @@ public:
     typedef double Matrix4[4][4];
 #endif
 
-    static PassOwnPtr<TransformationMatrix> create()
+    static std::unique_ptr<TransformationMatrix> create()
     {
-        return adoptPtr(new TransformationMatrix());
+        return wrapUnique(new TransformationMatrix());
     }
-    static PassOwnPtr<TransformationMatrix> create(const TransformationMatrix& t)
+    static std::unique_ptr<TransformationMatrix> create(const TransformationMatrix& t)
     {
-        return adoptPtr(new TransformationMatrix(t));
+        return wrapUnique(new TransformationMatrix(t));
     }
-    static PassOwnPtr<TransformationMatrix> create(double a, double b, double c, double d, double e, double f)
+    static std::unique_ptr<TransformationMatrix> create(double a, double b, double c, double d, double e, double f)
     {
-        return adoptPtr(new TransformationMatrix(a, b, c, d, e, f));
+        return wrapUnique(new TransformationMatrix(a, b, c, d, e, f));
     }
-    static PassOwnPtr<TransformationMatrix> create(double m11, double m12, double m13, double m14,
+    static std::unique_ptr<TransformationMatrix> create(double m11, double m12, double m13, double m14,
         double m21, double m22, double m23, double m24,
         double m31, double m32, double m33, double m34,
         double m41, double m42, double m43, double m44)
     {
-        return adoptPtr(new TransformationMatrix(m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44));
+        return wrapUnique(new TransformationMatrix(m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44));
     }
 
     TransformationMatrix()
@@ -104,6 +105,14 @@ public:
     {
         checkAlignment();
         setMatrix(m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44);
+    }
+    TransformationMatrix(const SkMatrix44& matrix)
+    {
+        setMatrix(
+            matrix.get(0, 0), matrix.get(1, 0), matrix.get(2, 0), matrix.get(3, 0),
+            matrix.get(0, 1), matrix.get(1, 1), matrix.get(2, 1), matrix.get(3, 1),
+            matrix.get(0, 2), matrix.get(1, 2), matrix.get(2, 2), matrix.get(3, 2),
+            matrix.get(0, 3), matrix.get(1, 3), matrix.get(2, 3), matrix.get(3, 3));
     }
 
     void setMatrix(double a, double b, double c, double d, double e, double f)
@@ -254,7 +263,7 @@ public:
     double f() const { return m_matrix[3][1]; }
     void setF(double f) { m_matrix[3][1] = f; }
 
-    // this = mat * this.
+    // *this = *this * mat.
     TransformationMatrix& multiply(const TransformationMatrix&);
 
     TransformationMatrix& scale(double);
@@ -262,7 +271,9 @@ public:
     TransformationMatrix& scale3d(double sx, double sy, double sz);
 
     TransformationMatrix& rotate(double d) { return rotate3d(0, 0, d); }
+    // Angles are in degrees.
     TransformationMatrix& rotate3d(double rx, double ry, double rz);
+    TransformationMatrix& rotate3d(const Rotation&);
 
     // The vector (x,y,z) is normalized if it's not already. A vector of
     // (0,0,0) uses a vector of (0,0,1).
@@ -318,6 +329,10 @@ public:
     void makeAffine();
 
     AffineTransform toAffineTransform() const;
+
+    // Flatten into a 2-D transformation (non-invertable).
+    // Same as gfx::Transform::FlattenTo2d(); see the docs for that function for details and discussion.
+    void flattenTo2d();
 
     bool operator==(const TransformationMatrix& m2) const
     {

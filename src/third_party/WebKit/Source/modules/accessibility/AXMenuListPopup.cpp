@@ -82,7 +82,7 @@ int AXMenuListPopup::getSelectedIndex() const
     if (!m_parent)
         return -1;
 
-    Node* parentNode = m_parent->node();
+    Node* parentNode = m_parent->getNode();
     if (!isHTMLSelectElement(parentNode))
         return -1;
 
@@ -105,7 +105,7 @@ void AXMenuListPopup::addChildren()
     if (!m_parent)
         return;
 
-    Node* parentNode = m_parent->node();
+    Node* parentNode = m_parent->getNode();
     if (!isHTMLSelectElement(parentNode))
         return;
 
@@ -115,7 +115,7 @@ void AXMenuListPopup::addChildren()
     if (m_activeIndex == -1)
         m_activeIndex = getSelectedIndex();
 
-    const WillBeHeapVector<RawPtrWillBeMember<HTMLElement>>& listItems = htmlSelectElement->listItems();
+    const HeapVector<Member<HTMLElement>>& listItems = htmlSelectElement->listItems();
     unsigned length = listItems.size();
     for (unsigned i = 0; i < length; i++) {
         AXMenuListOption* option = menuListOptionAXObject(listItems[i]);
@@ -147,7 +147,7 @@ void AXMenuListPopup::didUpdateActiveOption(int optionIndex)
 
     if (optionIndex >= 0 && optionIndex < static_cast<int>(m_children.size())) {
         AXObject* child = m_children[optionIndex].get();
-        cache.postNotification(child, AXObjectCacheImpl::AXFocusedUIElementChanged);
+        cache.postNotification(this, AXObjectCacheImpl::AXActiveDescendantChanged);
         cache.postNotification(child, AXObjectCacheImpl::AXMenuListItemSelected);
     }
 
@@ -158,8 +158,8 @@ void AXMenuListPopup::didHide()
 {
     AXObjectCacheImpl& cache = axObjectCache();
     cache.postNotification(this, AXObjectCacheImpl::AXHide);
-    if (activeChild())
-        cache.postNotification(activeChild(), AXObjectCacheImpl::AXMenuListItemUnselected);
+    if (activeDescendant())
+        cache.postNotification(activeDescendant(), AXObjectCacheImpl::AXMenuListItemUnselected);
 }
 
 void AXMenuListPopup::didShow()
@@ -176,7 +176,7 @@ void AXMenuListPopup::didShow()
         cache.postNotification(m_parent, AXObjectCacheImpl::AXFocusedUIElementChanged);
 }
 
-AXObject* AXMenuListPopup::activeChild()
+AXObject* AXMenuListPopup::activeDescendant()
 {
     if (m_activeIndex < 0 || m_activeIndex >= static_cast<int>(children().size()))
         return nullptr;

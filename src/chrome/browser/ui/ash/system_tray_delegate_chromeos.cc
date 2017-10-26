@@ -5,39 +5,40 @@
 #include "chrome/browser/ui/ash/system_tray_delegate_chromeos.h"
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/login_status.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/session/session_state_observer.h"
+#include "ash/common/shell_window_ids.h"
+#include "ash/common/system/chromeos/bluetooth/bluetooth_observer.h"
+#include "ash/common/system/chromeos/power/power_status.h"
+#include "ash/common/system/chromeos/session/logout_button_observer.h"
+#include "ash/common/system/chromeos/shutdown_policy_observer.h"
+#include "ash/common/system/date/clock_observer.h"
+#include "ash/common/system/ime/ime_observer.h"
+#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/system/tray/system_tray_notifier.h"
+#include "ash/common/system/tray_accessibility.h"
+#include "ash/common/system/update/update_observer.h"
+#include "ash/common/system/user/user_observer.h"
+#include "ash/common/system/volume_control_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ash/desktop_background/desktop_background_controller.h"
-#include "ash/display/display_manager.h"
-#include "ash/metrics/user_metrics_recorder.h"
-#include "ash/session/session_state_delegate.h"
-#include "ash/session/session_state_observer.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
-#include "ash/shell_window_ids.h"
-#include "ash/system/bluetooth/bluetooth_observer.h"
-#include "ash/system/chromeos/power/power_status.h"
-#include "ash/system/chromeos/session/logout_button_observer.h"
-#include "ash/system/chromeos/shutdown_policy_observer.h"
-#include "ash/system/date/clock_observer.h"
-#include "ash/system/ime/ime_observer.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
-#include "ash/system/tray/system_tray_notifier.h"
-#include "ash/system/tray_accessibility.h"
-#include "ash/system/user/login_status.h"
-#include "ash/system/user/update_observer.h"
-#include "ash/system/user/user_observer.h"
-#include "ash/volume_control_delegate.h"
 #include "ash/wm/lock_state_controller.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -81,7 +82,6 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -146,15 +146,15 @@ void ExtractIMEInfo(const input_method::InputMethodDescriptor& ime,
   info->third_party = extension_ime_util::IsExtensionIME(ime.id());
 }
 
-gfx::NativeWindow GetNativeWindowByStatus(ash::user::LoginStatus login_status,
+gfx::NativeWindow GetNativeWindowByStatus(ash::LoginStatus login_status,
                                           bool session_started) {
-  bool isUserAddingRunning = ash::Shell::GetInstance()
-                                 ->session_state_delegate()
-                                 ->IsInSecondaryLoginScreen();
+  ash::WmShell* wm_shell = ash::WmShell::Get();
+  const bool is_in_secondary_login_screen =
+      wm_shell->GetSessionStateDelegate()->IsInSecondaryLoginScreen();
 
   int container_id =
-      (!session_started || login_status == ash::user::LOGGED_IN_NONE ||
-       login_status == ash::user::LOGGED_IN_LOCKED || isUserAddingRunning)
+      (!session_started || login_status == ash::LoginStatus::NOT_LOGGED_IN ||
+       login_status == ash::LoginStatus::LOCKED || is_in_secondary_login_screen)
           ? ash::kShellWindowId_LockSystemModalContainer
           : ash::kShellWindowId_SystemModalContainer;
   return ash::Shell::GetContainer(ash::Shell::GetPrimaryRootWindow(),
@@ -169,10 +169,10 @@ void BluetoothDeviceConnectError(
     device::BluetoothDevice::ConnectErrorCode error_code) {
 }
 
-scoped_ptr<ash::CastConfigDelegate> CreateCastConfigDelegate() {
+std::unique_ptr<ash::CastConfigDelegate> CreateCastConfigDelegate() {
   if (CastConfigDelegateMediaRouter::IsEnabled())
-    return make_scoped_ptr(new CastConfigDelegateMediaRouter());
-  return make_scoped_ptr(new CastConfigDelegateChromeos());
+    return base::WrapUnique(new CastConfigDelegateMediaRouter());
+  return base::WrapUnique(new CastConfigDelegateChromeos());
 }
 
 void ShowSettingsSubPageForActiveUser(const std::string& sub_page) {
@@ -211,7 +211,7 @@ SystemTrayDelegateChromeOS::SystemTrayDelegateChromeOS()
   registrar_->Add(this,
                   chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED,
                   content::NotificationService::AllSources());
-  if (GetUserLoginStatus() == ash::user::LOGGED_IN_NONE) {
+  if (GetUserLoginStatus() == ash::LoginStatus::NOT_LOGGED_IN) {
     registrar_->Add(this,
                     chrome::NOTIFICATION_SESSION_STARTED,
                     content::NotificationService::AllSources());
@@ -238,6 +238,7 @@ void SystemTrayDelegateChromeOS::Initialize() {
   DBusThreadManager::Get()->GetSessionManagerClient()->AddObserver(this);
 
   input_method::InputMethodManager::Get()->AddObserver(this);
+  input_method::InputMethodManager::Get()->AddImeMenuObserver(this);
   ui::ime::InputMethodMenuManager::GetInstance()->AddObserver(this);
 
   g_browser_process->platform_part()->GetSystemClock()->AddObserver(this);
@@ -248,16 +249,12 @@ void SystemTrayDelegateChromeOS::Initialize() {
       base::Bind(&SystemTrayDelegateChromeOS::InitializeOnAdapterReady,
                  weak_ptr_factory_.GetWeakPtr()));
 
-  ash::Shell::GetInstance()->session_state_delegate()->AddSessionStateObserver(
-      this);
+  ash::WmShell::Get()->GetSessionStateDelegate()->AddSessionStateObserver(this);
 
   if (CrasAudioHandler::IsInitialized())
     CrasAudioHandler::Get()->AddAudioObserver(this);
 
   BrowserList::AddObserver(this);
-}
-
-void SystemTrayDelegateChromeOS::Shutdown() {
 }
 
 void SystemTrayDelegateChromeOS::InitializeOnAdapterReady(
@@ -306,9 +303,8 @@ SystemTrayDelegateChromeOS::~SystemTrayDelegateChromeOS() {
   input_method::InputMethodManager::Get()->RemoveObserver(this);
   ui::ime::InputMethodMenuManager::GetInstance()->RemoveObserver(this);
   bluetooth_adapter_->RemoveObserver(this);
-  ash::Shell::GetInstance()
-      ->session_state_delegate()
-      ->RemoveSessionStateObserver(this);
+  ash::WmShell::Get()->GetSessionStateDelegate()->RemoveSessionStateObserver(
+      this);
 
   if (CrasAudioHandler::IsInitialized())
     CrasAudioHandler::Get()->RemoveAudioObserver(this);
@@ -333,35 +329,33 @@ bool SystemTrayDelegateChromeOS::GetTrayVisibilityOnStartup() {
   return LoginState::Get()->IsUserLoggedIn();
 }
 
-ash::user::LoginStatus SystemTrayDelegateChromeOS::GetUserLoginStatus() const {
-  // All non-logged in ChromeOS specific LOGGED_IN states map to the same
-  // Ash specific LOGGED_IN state.
+ash::LoginStatus SystemTrayDelegateChromeOS::GetUserLoginStatus() const {
   if (!LoginState::Get()->IsUserLoggedIn())
-    return ash::user::LOGGED_IN_NONE;
+    return ash::LoginStatus::NOT_LOGGED_IN;
 
   if (screen_locked_)
-    return ash::user::LOGGED_IN_LOCKED;
+    return ash::LoginStatus::LOCKED;
 
   LoginState::LoggedInUserType user_type =
       LoginState::Get()->GetLoggedInUserType();
   switch (user_type) {
     case LoginState::LOGGED_IN_USER_NONE:
-      return ash::user::LOGGED_IN_NONE;
+      return ash::LoginStatus::NOT_LOGGED_IN;
     case LoginState::LOGGED_IN_USER_REGULAR:
-      return ash::user::LOGGED_IN_USER;
+      return ash::LoginStatus::USER;
     case LoginState::LOGGED_IN_USER_OWNER:
-      return ash::user::LOGGED_IN_OWNER;
+      return ash::LoginStatus::OWNER;
     case LoginState::LOGGED_IN_USER_GUEST:
-      return ash::user::LOGGED_IN_GUEST;
+      return ash::LoginStatus::GUEST;
     case LoginState::LOGGED_IN_USER_PUBLIC_ACCOUNT:
-      return ash::user::LOGGED_IN_PUBLIC;
+      return ash::LoginStatus::PUBLIC;
     case LoginState::LOGGED_IN_USER_SUPERVISED:
-      return ash::user::LOGGED_IN_SUPERVISED;
+      return ash::LoginStatus::SUPERVISED;
     case LoginState::LOGGED_IN_USER_KIOSK_APP:
-      return ash::user::LOGGED_IN_KIOSK_APP;
+      return ash::LoginStatus::KIOSK_APP;
   }
   NOTREACHED();
-  return ash::user::LOGGED_IN_NONE;
+  return ash::LoginStatus::NOT_LOGGED_IN;
 }
 
 void SystemTrayDelegateChromeOS::ChangeProfilePicture() {
@@ -428,10 +422,9 @@ void SystemTrayDelegateChromeOS::ShowSettings() {
 }
 
 bool SystemTrayDelegateChromeOS::ShouldShowSettings() {
+  ash::WmShell* wm_shell = ash::WmShell::Get();
   return ChromeUserManager::Get()->GetCurrentUserFlow()->ShouldShowSettings() &&
-         !ash::Shell::GetInstance()
-              ->session_state_delegate()
-              ->IsInSecondaryLoginScreen();
+         !wm_shell->GetSessionStateDelegate()->IsInSecondaryLoginScreen();
 }
 
 void SystemTrayDelegateChromeOS::ShowDateSettings() {
@@ -449,26 +442,18 @@ void SystemTrayDelegateChromeOS::ShowSetTimeDialog() {
 
 void SystemTrayDelegateChromeOS::ShowNetworkSettingsForGuid(
     const std::string& guid) {
-  bool userAddingRunning = ash::Shell::GetInstance()
-                               ->session_state_delegate()
-                               ->IsInSecondaryLoginScreen();
-
-  if (!LoginState::Get()->IsUserLoggedIn() || userAddingRunning)
-    return;
-  std::string page = chrome::kInternetOptionsSubPage;
-  if (!guid.empty())
-    page += "?guid=" + net::EscapeUrlEncodedData(guid, true);
-  content::RecordAction(base::UserMetricsAction("OpenInternetOptionsDialog"));
-  ShowSettingsSubPageForActiveUser(page);
+  ash::WmShell* wm_shell = ash::WmShell::Get();
+  if (LoginState::Get()->IsUserLoggedIn() &&
+      !wm_shell->GetSessionStateDelegate()->IsInSecondaryLoginScreen()) {
+    std::string page = chrome::kInternetOptionsSubPage;
+    if (!guid.empty())
+      page += "?guid=" + net::EscapeUrlEncodedData(guid, true);
+    content::RecordAction(base::UserMetricsAction("OpenInternetOptionsDialog"));
+    ShowSettingsSubPageForActiveUser(page);
+  }
 }
 
 void SystemTrayDelegateChromeOS::ShowDisplaySettings() {
-  // TODO(michaelpg): Allow display settings to be shown when they are updated
-  // to work for 3+ displays. See issue 467195.
-  if (ash::Shell::GetInstance()->display_manager()->num_connected_displays() >
-      2) {
-    return;
-  }
   content::RecordAction(base::UserMetricsAction("ShowDisplayOptions"));
   ShowSettingsSubPageForActiveUser(kDisplaySettingsSubPageName);
 }
@@ -516,7 +501,6 @@ void SystemTrayDelegateChromeOS::ShowIMESettings() {
 
 void SystemTrayDelegateChromeOS::ShowHelp() {
   chrome::ShowHelpForProfile(ProfileManager::GetActiveUserProfile(),
-                             chrome::HOST_DESKTOP_TYPE_ASH,
                              chrome::HELP_SOURCE_MENU);
 }
 
@@ -546,13 +530,11 @@ void SystemTrayDelegateChromeOS::ShowSupervisedUserInfo() {
 }
 
 void SystemTrayDelegateChromeOS::ShowEnterpriseInfo() {
-  ash::user::LoginStatus status = GetUserLoginStatus();
-  bool userAddingRunning = ash::Shell::GetInstance()
-                               ->session_state_delegate()
-                               ->IsInSecondaryLoginScreen();
-
-  if (status == ash::user::LOGGED_IN_NONE ||
-      status == ash::user::LOGGED_IN_LOCKED || userAddingRunning) {
+  ash::LoginStatus status = GetUserLoginStatus();
+  ash::WmShell* wm_shell = ash::WmShell::Get();
+  if (status == ash::LoginStatus::NOT_LOGGED_IN ||
+      status == ash::LoginStatus::LOCKED ||
+      wm_shell->GetSessionStateDelegate()->IsInSecondaryLoginScreen()) {
     scoped_refptr<chromeos::HelpAppLauncher> help_app(
         new chromeos::HelpAppLauncher(GetNativeWindow()));
     help_app->ShowHelpTopic(chromeos::HelpAppLauncher::HELP_ENTERPRISE);
@@ -566,6 +548,7 @@ void SystemTrayDelegateChromeOS::ShowEnterpriseInfo() {
 
 void SystemTrayDelegateChromeOS::ShowUserLogin() {
   ash::Shell* shell = ash::Shell::GetInstance();
+  ash::WmShell* wm_shell = ash::WmShell::Get();
   if (!shell->delegate()->IsMultiProfilesEnabled())
     return;
 
@@ -577,8 +560,9 @@ void SystemTrayDelegateChromeOS::ShowUserLogin() {
 
   if (static_cast<int>(
           user_manager::UserManager::Get()->GetLoggedInUsers().size()) >=
-      shell->session_state_delegate()->GetMaximumNumberOfLoggedInUsers())
+      wm_shell->GetSessionStateDelegate()->GetMaximumNumberOfLoggedInUsers()) {
     return;
+  }
 
   // Launch sign in screen to add another user to current session.
   if (user_manager::UserManager::Get()
@@ -624,6 +608,10 @@ void SystemTrayDelegateChromeOS::RequestRestartForUpdate() {
   chrome::NotifyAndTerminate(true /* fast path */);
 }
 
+void SystemTrayDelegateChromeOS::RequestShutdown() {
+  ash::Shell::GetInstance()->lock_state_controller()->RequestShutdown();
+}
+
 void SystemTrayDelegateChromeOS::GetAvailableBluetoothDevices(
     ash::BluetoothDeviceList* list) {
   device::BluetoothAdapter::DeviceList devices =
@@ -632,7 +620,7 @@ void SystemTrayDelegateChromeOS::GetAvailableBluetoothDevices(
     device::BluetoothDevice* device = devices[i];
     ash::BluetoothDeviceInfo info;
     info.address = device->GetAddress();
-    info.display_name = device->GetName();
+    info.display_name = device->GetNameForDisplay();
     info.connected = device->IsConnected();
     info.connecting = device->IsConnecting();
     info.paired = device->IsPaired();
@@ -674,13 +662,13 @@ void SystemTrayDelegateChromeOS::ConnectToBluetoothDevice(
   if (device->IsPaired() && !device->IsConnectable())
     return;
   if (device->IsPaired() || !device->IsPairable()) {
-    ash::Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+    ash::WmShell::Get()->RecordUserMetricsAction(
         ash::UMA_STATUS_AREA_BLUETOOTH_CONNECT_KNOWN_DEVICE);
     device->Connect(NULL,
                     base::Bind(&base::DoNothing),
                     base::Bind(&BluetoothDeviceConnectError));
   } else {  // Show paring dialog for the unpaired device.
-    ash::Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+    ash::WmShell::Get()->RecordUserMetricsAction(
         ash::UMA_STATUS_AREA_BLUETOOTH_CONNECT_UNKNOWN_DEVICE);
     BluetoothPairingDialog* dialog =
         new BluetoothPairingDialog(GetNativeWindow(), device);
@@ -707,7 +695,7 @@ void SystemTrayDelegateChromeOS::GetAvailableIMEList(ash::IMEInfoList* list) {
   input_method::InputMethodManager* manager =
       input_method::InputMethodManager::Get();
   input_method::InputMethodUtil* util = manager->GetInputMethodUtil();
-  scoped_ptr<input_method::InputMethodDescriptors> ime_descriptors(
+  std::unique_ptr<input_method::InputMethodDescriptors> ime_descriptors(
       manager->GetActiveIMEState()->GetActiveInputMethods());
   std::string current =
       manager->GetActiveIMEState()->GetCurrentInputMethod().id();
@@ -783,7 +771,7 @@ bool SystemTrayDelegateChromeOS::GetBluetoothDiscovering() {
 }
 
 void SystemTrayDelegateChromeOS::ChangeProxySettings() {
-  CHECK(GetUserLoginStatus() == ash::user::LOGGED_IN_NONE);
+  CHECK(GetUserLoginStatus() == ash::LoginStatus::NOT_LOGGED_IN);
   LoginDisplayHost::default_host()->OpenProxySettings();
 }
 
@@ -804,7 +792,7 @@ SystemTrayDelegateChromeOS::GetVolumeControlDelegate() const {
 }
 
 void SystemTrayDelegateChromeOS::SetVolumeControlDelegate(
-    scoped_ptr<ash::VolumeControlDelegate> delegate) {
+    std::unique_ptr<ash::VolumeControlDelegate> delegate) {
   volume_control_delegate_.swap(delegate);
 }
 
@@ -890,7 +878,7 @@ ash::SystemTray* SystemTrayDelegateChromeOS::GetPrimarySystemTray() {
 }
 
 ash::SystemTrayNotifier* SystemTrayDelegateChromeOS::GetSystemTrayNotifier() {
-  return ash::Shell::GetInstance()->system_tray_notifier();
+  return ash::WmShell::Get()->system_tray_notifier();
 }
 
 void SystemTrayDelegateChromeOS::SetProfile(Profile* profile) {
@@ -926,18 +914,15 @@ void SystemTrayDelegateChromeOS::SetProfile(Profile* profile) {
   user_pref_registrar_->Add(
       prefs::kAccessibilityLargeCursorEnabled,
       base::Bind(&SystemTrayDelegateChromeOS::OnAccessibilityModeChanged,
-                 base::Unretained(this),
-                 ui::A11Y_NOTIFICATION_NONE));
+                 base::Unretained(this), ash::A11Y_NOTIFICATION_NONE));
   user_pref_registrar_->Add(
       prefs::kAccessibilityAutoclickEnabled,
       base::Bind(&SystemTrayDelegateChromeOS::OnAccessibilityModeChanged,
-                 base::Unretained(this),
-                 ui::A11Y_NOTIFICATION_NONE));
+                 base::Unretained(this), ash::A11Y_NOTIFICATION_NONE));
   user_pref_registrar_->Add(
       prefs::kShouldAlwaysShowAccessibilityMenu,
       base::Bind(&SystemTrayDelegateChromeOS::OnAccessibilityModeChanged,
-                 base::Unretained(this),
-                 ui::A11Y_NOTIFICATION_NONE));
+                 base::Unretained(this), ash::A11Y_NOTIFICATION_NONE));
   user_pref_registrar_->Add(
       prefs::kPerformanceTracingEnabled,
       base::Bind(&SystemTrayDelegateChromeOS::UpdatePerformanceTracing,
@@ -1069,8 +1054,8 @@ void SystemTrayDelegateChromeOS::ScreenIsUnlocked() {
 }
 
 gfx::NativeWindow SystemTrayDelegateChromeOS::GetNativeWindow() const {
-  bool session_started = ash::Shell::GetInstance()
-                             ->session_state_delegate()
+  bool session_started = ash::WmShell::Get()
+                             ->GetSessionStateDelegate()
                              ->IsActiveUserSessionStarted();
   return GetNativeWindowByStatus(GetUserLoginStatus(), session_started);
 }
@@ -1090,7 +1075,7 @@ void SystemTrayDelegateChromeOS::Observe(
     case chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED: {
       // This notification is also sent on login screen when user avatar
       // is loaded from file.
-      if (GetUserLoginStatus() != ash::user::LOGGED_IN_NONE) {
+      if (GetUserLoginStatus() != ash::LoginStatus::NOT_LOGGED_IN) {
         GetSystemTrayNotifier()->NotifyUserUpdate();
       }
       break;
@@ -1128,7 +1113,7 @@ void SystemTrayDelegateChromeOS::OnLanguageRemapSearchKeyToChanged() {
 }
 
 void SystemTrayDelegateChromeOS::OnAccessibilityModeChanged(
-    ui::AccessibilityNotificationVisibility notify) {
+    ash::AccessibilityNotificationVisibility notify) {
   GetSystemTrayNotifier()->NotifyAccessibilityModeChanged(notify);
 }
 
@@ -1221,7 +1206,7 @@ void SystemTrayDelegateChromeOS::DeviceRemoved(
 }
 
 void SystemTrayDelegateChromeOS::OnStartBluetoothDiscoverySession(
-    scoped_ptr<device::BluetoothDiscoverySession> discovery_session) {
+    std::unique_ptr<device::BluetoothDiscoverySession> discovery_session) {
   // If the discovery session was returned after a request to stop discovery
   // (e.g. the user dismissed the Bluetooth detailed view before the call
   // returned), don't claim the discovery session and let it clean up.
@@ -1293,6 +1278,16 @@ void SystemTrayDelegateChromeOS::OnShutdownPolicyChanged(
   FOR_EACH_OBSERVER(ash::ShutdownPolicyObserver, shutdown_policy_observers_,
                     OnShutdownPolicyChanged(reboot_on_shutdown));
 }
+
+void SystemTrayDelegateChromeOS::ImeMenuActivationChanged(bool is_active) {
+  GetSystemTrayNotifier()->NotifyRefreshIMEMenu(is_active);
+}
+
+void SystemTrayDelegateChromeOS::ImeMenuListChanged() {}
+
+void SystemTrayDelegateChromeOS::ImeMenuItemsChanged(
+    const std::string& engine_id,
+    const std::vector<input_method::InputMethodManager::MenuItem>& items) {}
 
 const base::string16
 SystemTrayDelegateChromeOS::GetLegacySupervisedUserMessage() const {

@@ -35,7 +35,7 @@ const ui::EventFlags kPlatformModifier = ui::EF_CONTROL_DOWN;
 // http://blogs.msdn.com/b/oldnewthing/archive/2004/03/29/101121.aspx
 const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_LEFT, ui::EF_ALT_DOWN, IDC_BACK },
-  { ui::VKEY_BACK, ui::EF_NONE, IDC_BACK },
+  { ui::VKEY_BACK, ui::EF_NONE, IDC_BACKSPACE_BACK },
   { ui::VKEY_D, ui::EF_CONTROL_DOWN, IDC_BOOKMARK_PAGE },
   { ui::VKEY_D, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
     IDC_BOOKMARK_ALL_TABS },
@@ -52,7 +52,7 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_B, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_FOCUS_BOOKMARKS },
   { ui::VKEY_A, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_FOCUS_INFOBARS },
   { ui::VKEY_RIGHT, ui::EF_ALT_DOWN, IDC_FORWARD },
-  { ui::VKEY_BACK, ui::EF_SHIFT_DOWN, IDC_FORWARD },
+  { ui::VKEY_BACK, ui::EF_SHIFT_DOWN, IDC_BACKSPACE_FORWARD },
   { ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN, IDC_DEV_TOOLS },
   { ui::VKEY_F12, ui::EF_NONE, IDC_DEV_TOOLS_TOGGLE },
   { ui::VKEY_J, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
@@ -66,7 +66,7 @@ const AcceleratorMapping kAcceleratorMap[] = {
 #endif  // ENABLE_BASIC_PRINTING
   { ui::VKEY_R, ui::EF_CONTROL_DOWN, IDC_RELOAD },
   { ui::VKEY_R, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
-    IDC_RELOAD_IGNORING_CACHE },
+    IDC_RELOAD_BYPASSING_CACHE },
   { ui::VKEY_HOME, ui::EF_ALT_DOWN, IDC_HOME },
   { ui::VKEY_S, ui::EF_CONTROL_DOWN, IDC_SAVE_PAGE },
   { ui::VKEY_9, kPlatformModifier, IDC_SELECT_LAST_TAB },
@@ -140,8 +140,8 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_F4, ui::EF_CONTROL_DOWN, IDC_CLOSE_TAB },
   { ui::VKEY_F4, ui::EF_ALT_DOWN, IDC_CLOSE_WINDOW },
   { ui::VKEY_F5, ui::EF_NONE, IDC_RELOAD },
-  { ui::VKEY_F5, ui::EF_CONTROL_DOWN, IDC_RELOAD_IGNORING_CACHE },
-  { ui::VKEY_F5, ui::EF_SHIFT_DOWN, IDC_RELOAD_IGNORING_CACHE },
+  { ui::VKEY_F5, ui::EF_CONTROL_DOWN, IDC_RELOAD_BYPASSING_CACHE },
+  { ui::VKEY_F5, ui::EF_SHIFT_DOWN, IDC_RELOAD_BYPASSING_CACHE },
   { ui::VKEY_F6, ui::EF_NONE, IDC_FOCUS_NEXT_PANE },
   { ui::VKEY_F6, ui::EF_SHIFT_DOWN, IDC_FOCUS_PREVIOUS_PANE },
   { ui::VKEY_F10, ui::EF_NONE, IDC_FOCUS_MENU_BAR },
@@ -153,8 +153,8 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_BROWSER_FORWARD, ui::EF_NONE, IDC_FORWARD },
   { ui::VKEY_BROWSER_HOME, ui::EF_NONE, IDC_HOME },
   { ui::VKEY_BROWSER_REFRESH, ui::EF_NONE, IDC_RELOAD },
-  { ui::VKEY_BROWSER_REFRESH, ui::EF_CONTROL_DOWN, IDC_RELOAD_IGNORING_CACHE },
-  { ui::VKEY_BROWSER_REFRESH, ui::EF_SHIFT_DOWN, IDC_RELOAD_IGNORING_CACHE },
+  { ui::VKEY_BROWSER_REFRESH, ui::EF_CONTROL_DOWN, IDC_RELOAD_BYPASSING_CACHE },
+  { ui::VKEY_BROWSER_REFRESH, ui::EF_SHIFT_DOWN, IDC_RELOAD_BYPASSING_CACHE },
 #endif  // defined(OS_LINUX)
 
 #if defined(OS_CHROMEOS)
@@ -232,12 +232,9 @@ std::vector<AcceleratorMapping> GetAcceleratorList() {
 }
 
 bool GetAshAcceleratorForCommandId(int command_id,
-                                   HostDesktopType host_desktop_type,
                                    ui::Accelerator* accelerator) {
 #if defined(USE_ASH)
-  if (host_desktop_type != chrome::HOST_DESKTOP_TYPE_ASH)
-    return false;
-  for (size_t i = 0; i <  kChromeCmdId2AshActionIdLength; ++i) {
+  for (size_t i = 0; i < kChromeCmdId2AshActionIdLength; ++i) {
     if (command_id == kChromeCmdId2AshActionId[i].chrome_cmd_id) {
       for (size_t j = 0; j < ash::kAcceleratorDataLength; ++j) {
         if (kChromeCmdId2AshActionId[i].ash_action_id ==

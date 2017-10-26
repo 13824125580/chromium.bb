@@ -106,6 +106,12 @@ class STORAGE_EXPORT BlobDataBuilder {
   void AppendDiskCacheEntry(const scoped_refptr<DataHandle>& data_handle,
                             disk_cache::Entry* disk_cache_entry,
                             int disk_cache_stream_index);
+  // The content of the side data is accessible with BlobReader::ReadSideData().
+  void AppendDiskCacheEntryWithSideData(
+      const scoped_refptr<DataHandle>& data_handle,
+      disk_cache::Entry* disk_cache_entry,
+      int disk_cache_stream_index,
+      int disk_cache_side_stream_index);
 
   void set_content_type(const std::string& content_type) {
     content_type_ = content_type;
@@ -165,12 +171,20 @@ inline bool operator==(const BlobDataSnapshot& a, const BlobDataBuilder& b) {
   return true;
 }
 
+inline bool operator==(const BlobDataBuilder& a, const BlobDataSnapshot& b) {
+  return b == a;
+}
+
 inline bool operator!=(const BlobDataSnapshot& a, const BlobDataBuilder& b) {
   return !(a == b);
 }
 
 inline bool operator!=(const BlobDataBuilder& a, const BlobDataBuilder& b) {
   return !(a == b);
+}
+
+inline bool operator!=(const BlobDataBuilder& a, const BlobDataSnapshot& b) {
+  return b != a;
 }
 
 #endif  // defined(UNIT_TEST)

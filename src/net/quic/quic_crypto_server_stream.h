@@ -5,12 +5,13 @@
 #ifndef NET_QUIC_QUIC_CRYPTO_SERVER_STREAM_H_
 #define NET_QUIC_QUIC_CRYPTO_SERVER_STREAM_H_
 
-#include <stdint.h>
-
+#include <cstdint>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "net/quic/crypto/crypto_handshake.h"
+#include "net/quic/crypto/quic_compressed_certs_cache.h"
 #include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/proto/source_address_token.pb.h"
 #include "net/quic/quic_config.h"
@@ -22,7 +23,7 @@ class CachedNetworkParameters;
 class CryptoHandshakeMessage;
 class QuicCryptoServerConfig;
 class QuicCryptoServerStreamBase;
-class QuicSession;
+class QuicServerSessionBase;
 
 namespace test {
 class CryptoTestUtils;
@@ -52,9 +53,7 @@ class NET_EXPORT_PRIVATE ServerHelloNotifier : public QuicAckListenerInterface {
 // various code and test refactoring.
 class NET_EXPORT_PRIVATE QuicCryptoServerStreamBase : public QuicCryptoStream {
  public:
-  // |crypto_config| must outlive the stream.
-  explicit QuicCryptoServerStreamBase(QuicSession* session)
-      : QuicCryptoStream(session) {}
+  explicit QuicCryptoServerStreamBase(QuicServerSessionBase* session);
   ~QuicCryptoServerStreamBase() override {}
 
   // Cancel any outstanding callbacks, such as asynchronous validation of client
@@ -86,6 +85,11 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStreamBase : public QuicCryptoStream {
       const = 0;
   virtual void SetPreviousCachedNetworkParams(
       CachedNetworkParameters cached_network_params) = 0;
+
+  // Checks the options on the handshake-message to see whether the
+  // peer supports stateless-rejects.
+  static bool DoesPeerSupportStatelessRejects(
+      const CryptoHandshakeMessage& message);
 };
 
 class NET_EXPORT_PRIVATE QuicCryptoServerStream
@@ -93,7 +97,9 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStream
  public:
   // |crypto_config| must outlive the stream.
   QuicCryptoServerStream(const QuicCryptoServerConfig* crypto_config,
-                         QuicSession* session);
+                         QuicCompressedCertsCache* compressed_certs_cache,
+                         bool use_stateless_rejects_if_peer_supported,
+                         QuicServerSessionBase* session);
   ~QuicCryptoServerStream() override;
 
   // From QuicCryptoServerStreamBase
@@ -119,6 +125,7 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStream
       const CryptoHandshakeMessage& message,
       const ValidateClientHelloResultCallback::Result& result,
       CryptoHandshakeMessage* reply,
+      DiversificationNonce* out_diversification_nonce,
       std::string* error_details);
 
   // Hook that allows the server to set QuicConfig defaults just
@@ -157,17 +164,20 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStream
       const CryptoHandshakeMessage& message,
       const ValidateClientHelloResultCallback::Result& result);
 
-  // Checks the options on the handshake-message to see whether the
-  // peer supports stateless-rejects.
-  static bool DoesPeerSupportStatelessRejects(
-      const CryptoHandshakeMessage& message);
-
   // crypto_config_ contains crypto parameters for the handshake.
   const QuicCryptoServerConfig* crypto_config_;
+
+  // compressed_certs_cache_ contains a set of most recently compressed certs.
+  // Owned by QuicDispatcher.
+  QuicCompressedCertsCache* compressed_certs_cache_;
 
   // Server's certificate chain and signature of the server config, as provided
   // by ProofSource::GetProof.
   QuicCryptoProof crypto_proof_;
+
+  // Hash of the last received CHLO message which can be used for generating
+  // server config update messages.
+  std::string chlo_hash_;
 
   // Pointer to the active callback that will receive the result of
   // the client hello validation request and forward it to
@@ -189,7 +199,7 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStream
   // If the client provides CachedNetworkParameters in the STK in the CHLO, then
   // store here, and send back in future STKs if we have no better bandwidth
   // estimate to send.
-  scoped_ptr<CachedNetworkParameters> previous_cached_network_params_;
+  std::unique_ptr<CachedNetworkParameters> previous_cached_network_params_;
 
   // Contains any source address tokens which were present in the CHLO.
   SourceAddressTokens previous_source_address_tokens_;

@@ -48,6 +48,22 @@ deMath.deInBounds32 = function(a, mn, mx) {
 deMath.deFloatFrac = function(a) { return a - Math.floor(a); };
 
 /**
+ * Transform a 64-bit float number into a 32-bit float number.
+ * Native dEQP uses 32-bit numbers, so sometimes 64-bit floating numbers in JS should be transformed into 32-bit ones to ensure the correctness of the result.
+ * @param {number} a
+ * @return {number}
+ */
+deMath.toFloat32 = (function() {
+    var FLOAT32ARRAY1 = new Float32Array(1);
+    return function(a) {
+        FLOAT32ARRAY1[0] = a;
+        return FLOAT32ARRAY1[0];
+    };
+})();
+
+/** @const */ deMath.INV_LOG_2_FLOAT32 = deMath.toFloat32(1.44269504089); /** 1.0 / log_e(2.0) */
+
+/**
  * Check if a value is a power-of-two.
  * @param {number} a Input value.
  * @return {boolean} return True if input is a power-of-two value, false otherwise.
@@ -568,6 +584,19 @@ deMath.split32 = function(x) {
 };
 
 /**
+ * Split a signed number's low 32bit dwords into low and high 16bit dwords.
+ * @param {number} x
+ * @return {Array<number>}
+ */
+deMath.split16 = function(x) {
+    var ret = [];
+    x = x & 0xffffffff;
+    ret[1] = Math.floor(x / 0x10000);
+    ret[0] = x - ret[1] * 0x10000;
+    return ret;
+};
+
+/**
  * Recontruct a number from high and low 32 bit dwords
  * @param {Array<number>} x
  * @return {number}
@@ -969,19 +998,22 @@ deMath.deFloatLdExp = function(a, exponent) {
  * @param {number} value
  * @return {Array<number>}
  */
-deMath.frexp = function(value) {
-   if (value === 0) return [value, 0];
+deMath.frexp = (function() {
    var data = new DataView(new ArrayBuffer(8));
-   data.setFloat64(0, value);
-   var bits = (data.getUint32(0) >>> 20) & 0x7FF;
-   if (bits === 0) {
-       data.setFloat64(0, value * Math.pow(2, 64));
-       bits = ((data.getUint32(0) >>> 20) & 0x7FF) - 64;
+
+   return function(value) {
+       if (value === 0) return [value, 0];
+       data.setFloat64(0, value);
+       var bits = (data.getUint32(0) >>> 20) & 0x7FF;
+       if (bits === 0) {
+           data.setFloat64(0, value * Math.pow(2, 64));
+           bits = ((data.getUint32(0) >>> 20) & 0x7FF) - 64;
+       }
+       var exponent = bits - 1022,
+           mantissa = deMath.ldexp(value, -exponent);
+       return [mantissa, exponent];
    }
-   var exponent = bits - 1022,
-       mantissa = deMath.ldexp(value, -exponent);
-   return [mantissa, exponent];
-};
+})();
 
 /**
  * @param {number} mantissa

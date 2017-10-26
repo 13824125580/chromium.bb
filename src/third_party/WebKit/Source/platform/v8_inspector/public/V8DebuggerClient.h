@@ -5,8 +5,9 @@
 #ifndef V8DebuggerClient_h
 #define V8DebuggerClient_h
 
-#include "platform/PlatformExport.h"
-#include "platform/v8_inspector/public/V8EventListenerInfo.h"
+#include "platform/inspector_protocol/Platform.h"
+#include "platform/v8_inspector/public/V8ConsoleTypes.h"
+#include "platform/v8_inspector/public/V8ContextInfo.h"
 
 #include <v8.h>
 
@@ -17,20 +18,34 @@ public:
     virtual ~V8DebuggerClient() { }
     virtual void runMessageLoopOnPause(int contextGroupId) = 0;
     virtual void quitMessageLoopOnPause() = 0;
+    // TODO(dgozman): we don't really need to mute warnings and deprecations.
     virtual void muteWarningsAndDeprecations() = 0;
     virtual void unmuteWarningsAndDeprecations() = 0;
-    virtual void eventListeners(v8::Local<v8::Value>, V8EventListenerInfoMap&) = 0;
+    virtual void beginUserGesture() = 0;
+    virtual void endUserGesture() = 0;
     virtual bool callingContextCanAccessContext(v8::Local<v8::Context> calling, v8::Local<v8::Context> target) = 0;
-
-    virtual v8::MaybeLocal<v8::Object> instantiateObject(v8::Local<v8::Function>) = 0;
-    virtual v8::MaybeLocal<v8::Value> runCompiledScript(v8::Local<v8::Context>, v8::Local<v8::Script>) = 0;
-    virtual v8::MaybeLocal<v8::Value> compileAndRunInternalScript(v8::Local<v8::String>) = 0;
-    virtual v8::MaybeLocal<v8::Value> callFunction(v8::Local<v8::Function>, v8::Local<v8::Context>, v8::Local<v8::Value> receiver, int argc, v8::Local<v8::Value> info[]) = 0;
-    virtual v8::MaybeLocal<v8::Value> callInternalFunction(v8::Local<v8::Function>, v8::Local<v8::Value> receiver, int argc, v8::Local<v8::Value> info[]) = 0;
-
-    virtual String valueSubtype(v8::Local<v8::Value>) = 0;
+    virtual String16 valueSubtype(v8::Local<v8::Value>) = 0;
     virtual bool formatAccessorsAsProperties(v8::Local<v8::Value>) = 0;
-    virtual bool hasRecursionLevel() = 0;
+    virtual bool isExecutionAllowed() = 0;
+    virtual double currentTimeMS() = 0;
+    virtual v8::Local<v8::Context> ensureDefaultContextInGroup(int contextGroupId) = 0;
+    virtual bool isInspectableHeapObject(v8::Local<v8::Object>) = 0;
+    virtual void enableAsyncInstrumentation() = 0;
+    virtual void disableAsyncInstrumentation() = 0;
+
+    virtual void installAdditionalCommandLineAPI(v8::Local<v8::Context>, v8::Local<v8::Object>) = 0;
+
+    virtual void consoleTime(const String16& title) = 0;
+    virtual void consoleTimeEnd(const String16& title) = 0;
+    virtual void consoleTimeStamp(const String16& title) = 0;
+    // TODO(dgozman: route all messages through here, remove FrameConsole.
+    virtual void messageAddedToConsole(int contextGroupId, MessageSource, MessageLevel, const String16& message, const String16& url, unsigned lineNumber, unsigned columnNumber, V8StackTrace*) = 0;
+
+    virtual v8::MaybeLocal<v8::Value> memoryInfo(v8::Isolate*, v8::Local<v8::Context>) = 0;
+
+    typedef void (*TimerCallback)(void*);
+    virtual void startRepeatingTimer(double, TimerCallback, void* data) = 0;
+    virtual void cancelTimer(void* data) = 0;
 };
 
 } // namespace blink

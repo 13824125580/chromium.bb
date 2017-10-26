@@ -15,12 +15,13 @@
 #include "base/path_service.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "content/common/media/media_stream_options.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/renderer/media/media_stream_audio_processor.h"
 #include "content/renderer/media/media_stream_audio_processor_options.h"
 #include "content/renderer/media/mock_constraint_factory.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_parameters.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebMediaConstraints.h"
@@ -91,17 +92,17 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
     const int packet_size =
         params.frames_per_buffer() * 2 * params.channels();
     const size_t length = packet_size * kNumberOfPacketsForTest;
-    scoped_ptr<char[]> capture_data(new char[length]);
+    std::unique_ptr<char[]> capture_data(new char[length]);
     ReadDataFromSpeechFile(capture_data.get(), length);
     const int16_t* data_ptr =
         reinterpret_cast<const int16_t*>(capture_data.get());
-    scoped_ptr<media::AudioBus> data_bus = media::AudioBus::Create(
-        params.channels(), params.frames_per_buffer());
+    std::unique_ptr<media::AudioBus> data_bus =
+        media::AudioBus::Create(params.channels(), params.frames_per_buffer());
 
     // |data_bus_playout| is used if the number of capture channels is larger
     // that max allowed playout channels. |data_bus_playout_to_use| points to
     // the AudioBus to use, either |data_bus| or |data_bus_playout|.
-    scoped_ptr<media::AudioBus> data_bus_playout;
+    std::unique_ptr<media::AudioBus> data_bus_playout;
     media::AudioBus* data_bus_playout_to_use = data_bus.get();
     if (params.channels() > kMaxNumberOfPlayoutDataChannels) {
       data_bus_playout =
@@ -122,7 +123,7 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
       // |audio_processor| does nothing when the audio processing is off in
       // the processor.
       webrtc::AudioProcessing* ap = audio_processor->audio_processing_.get();
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
       const bool is_aec_enabled = ap && ap->echo_control_mobile()->is_enabled();
       // AEC should be turned off for mobiles.
       DCHECK(!ap || !ap->echo_cancellation()->is_enabled());
@@ -169,7 +170,7 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
     EXPECT_TRUE(audio_processing->echo_control_mobile()->routing_mode() ==
         webrtc::EchoControlMobile::kSpeakerphone);
     EXPECT_FALSE(audio_processing->echo_cancellation()->is_enabled());
-#elif !defined(OS_IOS)
+#else
     EXPECT_TRUE(audio_processing->echo_cancellation()->is_enabled());
     EXPECT_TRUE(audio_processing->echo_cancellation()->suppression_level() ==
         webrtc::EchoCancellation::kHighSuppression);
@@ -183,7 +184,7 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
         webrtc::NoiseSuppression::kHigh);
     EXPECT_TRUE(audio_processing->high_pass_filter()->is_enabled());
     EXPECT_TRUE(audio_processing->gain_control()->is_enabled());
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
     EXPECT_TRUE(audio_processing->gain_control()->mode() ==
         webrtc::GainControl::kFixedDigital);
     EXPECT_FALSE(audio_processing->voice_detection()->is_enabled());
@@ -207,6 +208,7 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
 #define MAYBE_WithAudioProcessing WithAudioProcessing
 #endif
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
+  base::MessageLoop message_loop;
   MockConstraintFactory constraint_factory;
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new WebRtcAudioDeviceImpl());
@@ -222,9 +224,10 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
                              kAudioProcessingSampleRate,
                              kAudioProcessingNumberOfChannel,
                              kAudioProcessingSampleRate / 100);
-  // Set |audio_processor| to NULL to make sure |webrtc_audio_device| outlives
-  // |audio_processor|.
-  audio_processor = NULL;
+
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 TEST_F(MediaStreamAudioProcessorTest, VerifyTabCaptureWithoutAudioProcessing) {
@@ -258,9 +261,9 @@ TEST_F(MediaStreamAudioProcessorTest, VerifyTabCaptureWithoutAudioProcessing) {
       input_device_params_, webrtc_audio_device.get());
   EXPECT_FALSE(audio_processor->has_audio_processing());
 
-  // Set |audio_processor| to NULL to make sure |webrtc_audio_device| outlives
-  // |audio_processor|.
-  audio_processor = NULL;
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 TEST_F(MediaStreamAudioProcessorTest, TurnOffDefaultConstraints) {
@@ -280,9 +283,10 @@ TEST_F(MediaStreamAudioProcessorTest, TurnOffDefaultConstraints) {
                              params_.sample_rate(),
                              params_.channels(),
                              params_.sample_rate() / 100);
-  // Set |audio_processor| to NULL to make sure |webrtc_audio_device| outlives
-  // |audio_processor|.
-  audio_processor = NULL;
+
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 TEST_F(MediaStreamAudioProcessorTest, VerifyConstraints) {
@@ -340,6 +344,35 @@ TEST_F(MediaStreamAudioProcessorTest, ValidateGoodConstraints) {
   MediaAudioConstraints audio_constraints(
       constraint_factory.CreateWebMediaConstraints(), 0);
   EXPECT_TRUE(audio_constraints.IsValid());
+}
+
+TEST_F(MediaStreamAudioProcessorTest, NoEchoTurnsOffProcessing) {
+  {
+    MockConstraintFactory constraint_factory;
+    MediaAudioConstraints audio_constraints(
+        constraint_factory.CreateWebMediaConstraints(), 0);
+    // The default value for echo cancellation is true, except when all
+    // audio processing has been turned off.
+    EXPECT_TRUE(audio_constraints.default_audio_processing_constraint_value());
+  }
+  // Turning off audio processing via a mandatory constraint.
+  {
+    MockConstraintFactory constraint_factory;
+    constraint_factory.basic().echoCancellation.setExact(false);
+    MediaAudioConstraints audio_constraints(
+        constraint_factory.CreateWebMediaConstraints(), 0);
+    // The default value for echo cancellation is true, except when all
+    // audio processing has been turned off.
+    EXPECT_FALSE(audio_constraints.default_audio_processing_constraint_value());
+  }
+  // Turning off audio processing via an optional constraint.
+  {
+    MockConstraintFactory constraint_factory;
+    constraint_factory.AddAdvanced().echoCancellation.setExact(false);
+    MediaAudioConstraints audio_constraints(
+        constraint_factory.CreateWebMediaConstraints(), 0);
+    EXPECT_FALSE(audio_constraints.default_audio_processing_constraint_value());
+  }
 }
 
 MediaAudioConstraints MakeMediaAudioConstraints(
@@ -410,6 +443,7 @@ TEST_F(MediaStreamAudioProcessorTest, SelectsConstraintsArrayGeometryIfExists) {
 #define MAYBE_TestAllSampleRates TestAllSampleRates
 #endif
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestAllSampleRates) {
+  base::MessageLoop message_loop;
   MockConstraintFactory constraint_factory;
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new WebRtcAudioDeviceImpl());
@@ -437,9 +471,9 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestAllSampleRates) {
                                kAudioProcessingSampleRate / 100);
   }
 
-  // Set |audio_processor| to NULL to make sure |webrtc_audio_device|
-  // outlives |audio_processor|.
-  audio_processor = NULL;
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 // Test that if we have an AEC dump message filter created, we are getting it
@@ -461,7 +495,9 @@ TEST_F(MediaStreamAudioProcessorTest, GetAecDumpMessageFilter) {
 
   EXPECT_TRUE(audio_processor->aec_dump_message_filter_.get());
 
-  audio_processor = NULL;
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
@@ -487,12 +523,12 @@ TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
   // Construct left and right channels, and assign different values to the
   // first data of the left channel and right channel.
   const int size = media::AudioBus::CalculateMemorySize(source_params);
-  scoped_ptr<float, base::AlignedFreeDeleter> left_channel(
+  std::unique_ptr<float, base::AlignedFreeDeleter> left_channel(
       static_cast<float*>(base::AlignedAlloc(size, 32)));
-  scoped_ptr<float, base::AlignedFreeDeleter> right_channel(
+  std::unique_ptr<float, base::AlignedFreeDeleter> right_channel(
       static_cast<float*>(base::AlignedAlloc(size, 32)));
-  scoped_ptr<media::AudioBus> wrapper = media::AudioBus::CreateWrapper(
-      source_params.channels());
+  std::unique_ptr<media::AudioBus> wrapper =
+      media::AudioBus::CreateWrapper(source_params.channels());
   wrapper->set_frames(source_params.frames_per_buffer());
   wrapper->SetChannelData(0, left_channel.get());
   wrapper->SetChannelData(1, right_channel.get());
@@ -519,9 +555,9 @@ TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
     EXPECT_EQ(pushed_capture_delay, capture_delay);
   }
 
-  // Set |audio_processor| to NULL to make sure |webrtc_audio_device| outlives
-  // |audio_processor|.
-  audio_processor = NULL;
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 // Disabled on android clang builds due to crbug.com/470499
@@ -530,8 +566,8 @@ TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
 #else
 #define MAYBE_TestWithKeyboardMicChannel TestWithKeyboardMicChannel
 #endif
-
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestWithKeyboardMicChannel) {
+  base::MessageLoop message_loop;
   MockConstraintFactory constraint_factory;
   constraint_factory.basic().googExperimentalNoiseSuppression.setExact(true);
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
@@ -551,9 +587,10 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestWithKeyboardMicChannel) {
                              kAudioProcessingSampleRate,
                              kAudioProcessingNumberOfChannel,
                              kAudioProcessingSampleRate / 100);
-  // Set |audio_processor| to NULL to make sure |webrtc_audio_device| outlives
-  // |audio_processor|.
-  audio_processor = NULL;
+
+  // Stop |audio_processor| so that it removes itself from
+  // |webrtc_audio_device| and clears its pointer to it.
+  audio_processor->Stop();
 }
 
 }  // namespace content

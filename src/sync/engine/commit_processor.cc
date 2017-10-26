@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/metrics/histogram_macros.h"
 #include "sync/engine/commit_contribution.h"
 #include "sync/engine/commit_contributor.h"
 #include "sync/protocol/sync.pb.h"
@@ -24,6 +25,8 @@ CommitProcessor::~CommitProcessor() {}
 void CommitProcessor::GatherCommitContributions(
     ModelTypeSet commit_types,
     size_t max_entries,
+    bool cookie_jar_mismatch,
+    bool cookie_jar_empty,
     Commit::ContributionMap* contributions) {
   size_t num_entries = 0;
   for (ModelTypeSet::Iterator it = commit_types.First();
@@ -37,11 +40,20 @@ void CommitProcessor::GatherCommitContributions(
       continue;
     }
     size_t spaces_remaining = max_entries - num_entries;
-    scoped_ptr<CommitContribution> contribution =
+    std::unique_ptr<CommitContribution> contribution =
         cm_it->second->GetContribution(spaces_remaining);
     if (contribution) {
       num_entries += contribution->GetNumEntries();
       contributions->insert(std::make_pair(it.Get(), std::move(contribution)));
+
+      if (it.Get() == SESSIONS) {
+        UMA_HISTOGRAM_BOOLEAN("Sync.CookieJarMatchOnNavigation",
+                              !cookie_jar_mismatch);
+        if (cookie_jar_mismatch) {
+          UMA_HISTOGRAM_BOOLEAN("Sync.CookieJarEmptyOnMismatch",
+                                cookie_jar_empty);
+        }
+      }
     }
     if (num_entries >= max_entries) {
       DCHECK_EQ(num_entries, max_entries)

@@ -26,7 +26,7 @@ class DrmOverlayManager : public OverlayManagerOzone {
   ~DrmOverlayManager() override;
 
   // OverlayManagerOzone:
-  scoped_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
+  std::unique_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
       gfx::AcceleratedWidget w) override;
 
   void ResetCache();
@@ -55,10 +55,7 @@ class DrmOverlayManager : public OverlayManagerOzone {
 
   // List of all OverlayCheck_Params which have been validated in GPU side.
   // Value is set to true if we are waiting for validation results from GPU.
-  base::MRUCacheBase<std::vector<OverlayCheck_Params>,
-                     bool,
-                     base::MRUCacheNullDeletor<bool>>
-      cache_;
+  base::MRUCache<std::vector<OverlayCheck_Params>, bool> cache_;
 
   DISALLOW_COPY_AND_ASSIGN(DrmOverlayManager);
 };

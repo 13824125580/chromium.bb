@@ -643,13 +643,16 @@ static const GLEnums::EnumToString enum_to_string_table[] = {
         0x78F2, "GL_READ_WRITE_CHROMIUM",
     },
     {
-        0x78FA, "GL_RGB_YUV_420_CHROMIUM",
+        0x78FA, "GL_RGB_YCRCB_420_CHROMIUM",
     },
     {
         0x78FB, "GL_RGB_YCBCR_422_CHROMIUM",
     },
     {
         0x78FC, "GL_RGB_YCBCR_420V_CHROMIUM",
+    },
+    {
+        0x78FD, "GL_GPU_MEMORY_BUFFER_ID",
     },
     {
         0x8, "GL_CA_LAYER_EDGE_TOP_CHROMIUM",
@@ -2999,12 +3002,6 @@ static const GLEnums::EnumToString enum_to_string_table[] = {
     },
     {
         0x924A, "GL_OVERLAY_TRANSFORM_ROTATE_270_CHROMIUM",
-    },
-    {
-        0x924B, "GL_SUBSCRIBED_VALUES_BUFFER_CHROMIUM",
-    },
-    {
-        0x924C, "GL_MOUSE_POSITION_CHROMIUM",
     },
     {
         0x9250, "GL_SHADER_BINARY_DMP",

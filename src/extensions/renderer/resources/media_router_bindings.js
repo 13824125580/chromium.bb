@@ -7,8 +7,8 @@ var mediaRouter;
 define('media_router_bindings', [
     'mojo/public/js/bindings',
     'mojo/public/js/core',
-    'content/public/renderer/service_provider',
-    'chrome/browser/media/router/media_router.mojom',
+    'content/public/renderer/frame_service_registry',
+    'chrome/browser/media/router/mojo/media_router.mojom',
     'extensions/common/mojo/keep_alive.mojom',
     'mojo/public/js/connection',
     'mojo/public/js/router',
@@ -153,10 +153,8 @@ define('media_router_bindings', [
    * @return {!mediaRouterMojom.RouteRequestResultCode}
    */
   function getRouteRequestResultCode_(error) {
-    if (error.message.startsWith('timeout'))
-      return mediaRouterMojom.RouteRequestResultCode.TIMED_OUT;
-    else
-      return mediaRouterMojom.RouteRequestResultCode.UNKNOWN_ERROR;
+    return error.errorCode ? error.errorCode :
+      mediaRouterMojom.RouteRequestResultCode.UNKNOWN_ERROR;
   }
 
   /**
@@ -172,13 +170,13 @@ define('media_router_bindings', [
   }
 
   /**
-   * Creates and returns a error route response from given Error object
+   * Creates and returns a error route response from given Error object.
    * @param {!Error} error
    * @return {!Object}
    */
   function toErrorRouteResponse_(error) {
     return {
-        error_text: 'Error creating route: ' + error.message,
+        error_text: error.message,
         result_code: getRouteRequestResultCode_(error)
     };
   }
@@ -275,6 +273,20 @@ define('media_router_bindings', [
   };
 
   /**
+   * Called by the provider manager when a sink is found to notify the MR of the
+   * sink's ID. The actual sink will be returned through the normal sink list
+   * update process, so this helps the MR identify the search result in the
+   * list.
+   * @param {string} pseudoSinkId  ID of the pseudo sink that started the
+   *     search.
+   * @param {string} sinkId ID of the newly-found sink.
+   */
+  MediaRouter.prototype.onSearchSinkIdReceived = function(
+      pseudoSinkId, sinkId) {
+    this.service_.onSearchSinkIdReceived(pseudoSinkId, sinkId);
+  };
+
+  /**
    * Called by the provider manager to keep the extension from suspending
    * if it enters a state where suspension is undesirable (e.g. there is an
    * active MediaRoute.)
@@ -315,10 +327,6 @@ define('media_router_bindings', [
 
     function issueActionToMojo_(action) {
       switch (action) {
-        case 'ok':
-          return mediaRouterMojom.Issue.ActionType.OK;
-        case 'cancel':
-          return mediaRouterMojom.Issue.ActionType.CANCEL;
         case 'dismiss':
           return mediaRouterMojom.Issue.ActionType.DISMISS;
         case 'learn_more':
@@ -339,7 +347,7 @@ define('media_router_bindings', [
       'message': issue.message,
       'default_action': issueActionToMojo_(issue.defaultAction),
       'secondary_actions': secondaryActions,
-      'help_url': issue.helpUrl,
+      'help_page_id': issue.helpPageId,
       'is_blocking': issue.isBlocking
     }));
   };
@@ -402,6 +410,15 @@ define('media_router_bindings', [
   };
 
   /**
+   * @param {string} routeId
+   * @param {!Array<!RouteMessage>} mesages
+   */
+  MediaRouter.prototype.onRouteMessagesReceived = function(routeId, messages) {
+    this.service_.onRouteMessagesReceived(
+        routeId, messages.map(messageToMojo_));
+  };
+
+  /**
    * Object containing callbacks set by the provider manager.
    *
    * @constructor
@@ -409,7 +426,7 @@ define('media_router_bindings', [
    */
   function MediaRouterHandlers() {
     /**
-     * @type {function(!string, !string, !string, !string, !number}
+     * @type {function(!string, !string, !string, !string, !number)}
      */
     this.createRoute = null;
 
@@ -419,7 +436,7 @@ define('media_router_bindings', [
     this.joinRoute = null;
 
     /**
-     * @type {function(string)}
+     * @type {function(string): Promise}
      */
     this.terminateRoute = null;
 
@@ -444,10 +461,16 @@ define('media_router_bindings', [
     this.sendRouteBinaryMessage = null;
 
     /**
+     * TODO(imcheng): Remove in M55 (crbug.com/626395).
      * @type {function(string):
      *     Promise.<{messages: Array.<RouteMessage>, error: boolean}>}
      */
     this.listenForRouteMessages = null;
+
+    /**
+     * @type {function(string)}
+     */
+    this.startlisteningForRouteMessages = null;
 
     /**
      * @type {function(string)}
@@ -478,6 +501,16 @@ define('media_router_bindings', [
      * @type {function()}
      */
     this.enableMdnsDiscovery = null;
+
+    /**
+     * @type {function()}
+     */
+    this.updateMediaSinks = null;
+
+    /**
+     * @type {function(!string, !string, !SinkSearchCriteria): !string}
+     */
+    this.searchSinks = null;
   };
 
   /**
@@ -517,7 +550,7 @@ define('media_router_bindings', [
       'startObservingMediaRoutes',
       'sendRouteMessage',
       'sendRouteBinaryMessage',
-      'listenForRouteMessages',
+      'startListeningForRouteMessages',
       'stopListeningForRouteMessages',
       'detachRoute',
       'terminateRoute',
@@ -527,6 +560,8 @@ define('media_router_bindings', [
       'startObservingMediaRoutes',
       'connectRouteByRouteId',
       'enableMdnsDiscovery',
+      'updateMediaSinks',
+      'searchSinks',
     ];
     requiredHandlers.forEach(function(nextHandler) {
       if (handlers[nextHandler] === undefined) {
@@ -630,15 +665,18 @@ define('media_router_bindings', [
    * @param {!number} timeoutMillis If positive, the timeout duration for the
    *     request, measured in seconds. Otherwise, the default duration will be
    *     used.
+   * @param {!boolean} offTheRecord If true, the route is being requested by
+   *     an off the record (incognito) profile.
    * @return {!Promise.<!Object>} A Promise resolving to an object describing
    *     the newly created media route, or rejecting with an error message on
    *     failure.
    */
   MediaRouteProvider.prototype.connectRouteByRouteId =
       function(sourceUrn, routeId, presentationId, origin, tabId,
-          timeoutMillis) {
+               timeoutMillis, offTheRecord) {
     return this.handlers_.connectRouteByRouteId(
-        sourceUrn, routeId, presentationId, origin, tabId, timeoutMillis)
+        sourceUrn, routeId, presentationId, origin, tabId, timeoutMillis,
+        offTheRecord)
         .then(function(route) {
           return toSuccessRouteResponse_(route);
         },
@@ -650,9 +688,25 @@ define('media_router_bindings', [
   /**
    * Terminates the route specified by |routeId|.
    * @param {!string} routeId
+   * @return {!Promise<!Object>} A Promise resolving to an object describing
+   *    the result of the terminate operation, or rejecting with an error
+   *    message and code if the operation failed.
    */
   MediaRouteProvider.prototype.terminateRoute = function(routeId) {
-    this.handlers_.terminateRoute(routeId);
+    // TODO(crbug.com/627967): Remove code path that doesn't expect a Promise
+    // in M56.
+    var maybePromise = this.handlers_.terminateRoute(routeId);
+    var successResult = {
+        result_code: mediaRouterMojom.RouteRequestResultCode.OK
+    };
+    if (maybePromise) {
+      return maybePromise.then(
+        function() { return successResult; },
+        function(err) { return toErrorRouteResponse_(err); }
+      );
+    } else {
+      return Promise.resolve(successResult);
+    }
   };
 
   /**
@@ -690,29 +744,47 @@ define('media_router_bindings', [
   };
 
   /**
-   * Listen for next batch of messages from one of the routeIds.
+   * Listen for messages from a route.
    * @param {!string} routeId
-   * @return {!Promise.<{messages: Array.<RouteMessage>, error: boolean}>}
-   *     Resolved with a list of messages, and a boolean indicating if an error
-   *     occurred.
    */
-  MediaRouteProvider.prototype.listenForRouteMessages = function(routeId) {
-    return this.handlers_.listenForRouteMessages(routeId)
+  MediaRouteProvider.prototype.startListeningForRouteMessages = function(
+      routeId) {
+    if (this.handlers_.startListeningForRouteMessages) {
+      this.handlers_.startListeningForRouteMessages(routeId);
+    } else {
+      // Old API.
+      this.listenForRouteMessagesOld(routeId);
+    }
+  };
+
+
+  /**
+   * A hack to adapt new MR messaging API to old extension messaging API.
+   * TODO(imcheng): Remove in M55 (crbug.com/626395).
+   * @param {!string} routeId
+   */
+  MediaRouteProvider.prototype.listenForRouteMessagesOld = function(routeId) {
+    this.handlers_.listenForRouteMessages(routeId)
         .then(function(messages) {
-          return {'messages': messages.map(messageToMojo_), 'error': false};
-        }, function() {
-          return {'messages': [], 'error': true};
-        });
+          // If messages is empty, then stopListeningForRouteMessages has been
+          // called. We don't need to send it back to MR.
+          if (messages.length > 0) {
+            // Send the messages back to MR, and listen for next batch of
+            // messages.
+            this.mediaRouter_.onRouteMessagesReceived(routeId, messages);
+            this.listenForRouteMessagesOld(routeId);
+          }
+        }.bind(this), function() {
+          // Ignore rejections.
+        }.bind(this));
   };
 
   /**
-   * If there is an outstanding |listenForRouteMessages| promise for
-   * |routeId|, resolve that promise with an empty array.
    * @param {!string} routeId
    */
   MediaRouteProvider.prototype.stopListeningForRouteMessages = function(
       routeId) {
-    return this.handlers_.stopListeningForRouteMessages(routeId);
+    this.handlers_.stopListeningForRouteMessages(routeId);
   };
 
   /**
@@ -748,6 +820,40 @@ define('media_router_bindings', [
    */
   MediaRouteProvider.prototype.enableMdnsDiscovery = function() {
     this.handlers_.enableMdnsDiscovery();
+  };
+
+  /**
+   * Requests that the provider manager update media sinks.
+   * @param {!string} sourceUrn
+   */
+  MediaRouteProvider.prototype.updateMediaSinks = function(sourceUrn) {
+    this.handlers_.updateMediaSinks(sourceUrn);
+  };
+
+  /**
+   * Requests that the provider manager search its providers for a sink matching
+   * |searchCriteria| that is compatible with |sourceUrn|. If a sink is found
+   * that can be used immediately for route creation, its ID is returned.
+   * Otherwise the empty string is returned.
+   *
+   * @param {string} sinkId Sink ID of the pseudo sink generating the request.
+   * @param {string} sourceUrn Media source to be used with the sink.
+   * @param {!SinkSearchCriteria} searchCriteria Search criteria for the route
+   *     providers.
+   * @return {!Promise.<!{sink_id: !string}>} A Promise resolving to either the
+   *     sink ID of the sink found by the search that can be used for route
+   *     creation, or the empty string if no route can be immediately created.
+   */
+  MediaRouteProvider.prototype.searchSinks = function(
+      sinkId, sourceUrn, searchCriteria) {
+    // TODO(btolsch): Remove this check when we no longer expect old extensions
+    // to be missing this API.
+    if (!this.handlers_.searchSinks) {
+      return Promise.resolve({'sink_id': ''});
+    }
+    return Promise.resolve({
+      'sink_id': this.handlers_.searchSinks(sinkId, sourceUrn, searchCriteria)
+    });
   };
 
   mediaRouter = new MediaRouter(connector.bindHandleToProxy(

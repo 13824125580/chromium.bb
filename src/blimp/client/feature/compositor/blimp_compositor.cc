@@ -6,16 +6,17 @@
 
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "blimp/client/feature/compositor/blimp_context_provider.h"
 #include "blimp/client/feature/compositor/blimp_output_surface.h"
+#include "cc/animation/animation_host.h"
 #include "cc/layers/layer.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/output/output_surface.h"
 #include "cc/proto/compositor_message.pb.h"
 #include "cc/trees/layer_tree_host.h"
@@ -106,15 +107,15 @@ void BlimpCompositor::WillCommit() {}
 
 void BlimpCompositor::DidCommit() {}
 
-void BlimpCompositor::DidCommitAndDrawFrame() {}
+void BlimpCompositor::DidCommitAndDrawFrame() {
+  client_->DidCommitAndDrawFrame();
+}
 
-void BlimpCompositor::DidCompleteSwapBuffers() {}
+void BlimpCompositor::DidCompleteSwapBuffers() {
+  client_->DidCompleteSwapBuffers();
+}
 
 void BlimpCompositor::DidCompletePageScaleAnimation() {}
-
-void BlimpCompositor::RecordFrameTimingEvents(
-    scoped_ptr<cc::FrameTimingTracker::CompositeTimingSet> composite_events,
-    scoped_ptr<cc::FrameTimingTracker::MainFrameTimingSet> main_frame_events) {}
 
 void BlimpCompositor::SetProtoReceiver(ProtoReceiver* receiver) {
   remote_proto_channel_receiver_ = receiver;
@@ -126,7 +127,7 @@ void BlimpCompositor::SendCompositorProto(
 }
 
 void BlimpCompositor::OnCompositorMessageReceived(
-    scoped_ptr<cc::proto::CompositorMessage> message) {
+    std::unique_ptr<cc::proto::CompositorMessage> message) {
   DCHECK(message->has_to_impl());
   const cc::proto::CompositorMessageToImpl& to_impl_proto =
       message->to_impl();
@@ -166,6 +167,9 @@ void BlimpCompositor::SetVisibleInternal(bool visible) {
   if (!host_)
     return;
 
+  VLOG(1) << "Setting visibility to: " << visible
+          << " for render widget: " << render_widget_id_;
+
   if (visible && window_ != gfx::kNullAcceleratedWidget) {
     // If we're supposed to be visible and we have a valid
     // gfx::AcceleratedWidget make our compositor visible. If the compositor
@@ -187,6 +191,7 @@ void BlimpCompositor::SetVisibleInternal(bool visible) {
 void BlimpCompositor::CreateLayerTreeHost(
     const cc::proto::InitializeImpl& initialize_message) {
   DCHECK(!host_);
+  VLOG(1) << "Creating LayerTreeHost for render widget: " << render_widget_id_;
 
   // Create the LayerTreeHost
   cc::LayerTreeHost::InitParams params;
@@ -197,6 +202,7 @@ void BlimpCompositor::CreateLayerTreeHost(
   params.image_serialization_processor =
       client_->GetImageSerializationProcessor();
   params.settings = client_->GetLayerTreeSettings();
+  params.animation_host = cc::AnimationHost::CreateMainInstance();
 
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner =
       client_->GetCompositorTaskRunner();
@@ -218,6 +224,8 @@ void BlimpCompositor::CreateLayerTreeHost(
 
 void BlimpCompositor::DestroyLayerTreeHost() {
   DCHECK(host_);
+  VLOG(1) << "Destroying LayerTreeHost for render widget: "
+          << render_widget_id_;
   // Tear down the output surface connection with the old LayerTreeHost
   // instance.
   SetVisibleInternal(false);
@@ -252,7 +260,7 @@ void BlimpCompositor::HandlePendingOutputSurfaceRequest() {
                                    client_->GetGpuMemoryBufferManager());
 
   host_->SetOutputSurface(
-      make_scoped_ptr(new BlimpOutputSurface(context_provider)));
+      base::WrapUnique(new BlimpOutputSurface(context_provider)));
   output_surface_request_pending_ = false;
 }
 

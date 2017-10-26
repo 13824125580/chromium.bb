@@ -12,6 +12,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/server_backed_device_state.h"
@@ -74,9 +75,8 @@ class AutoEnrollmentClientTest : public testing::Test {
     client_.reset(new AutoEnrollmentClient(
         base::Bind(&AutoEnrollmentClientTest::ProgressCallback,
                    base::Unretained(this)),
-        service_.get(), local_state_,
-        new net::TestURLRequestContextGetter(
-            base::MessageLoop::current()->task_runner()),
+        service_.get(), local_state_, new net::TestURLRequestContextGetter(
+                                          base::ThreadTaskRunnerHandle::Get()),
         state_key, power_initial, power_limit));
   }
 
@@ -192,8 +192,8 @@ class AutoEnrollmentClientTest : public testing::Test {
   content::TestBrowserThreadBundle browser_threads_;
   ScopedTestingLocalState scoped_testing_local_state_;
   TestingPrefServiceSimple* local_state_;
-  scoped_ptr<MockDeviceManagementService> service_;
-  scoped_ptr<AutoEnrollmentClient> client_;
+  std::unique_ptr<MockDeviceManagementService> service_;
+  std::unique_ptr<AutoEnrollmentClient> client_;
   em::DeviceManagementRequest last_request_;
   AutoEnrollmentState state_;
 

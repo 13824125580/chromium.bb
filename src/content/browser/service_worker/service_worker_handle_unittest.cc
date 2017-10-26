@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+#include <vector>
+
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/browser/service_worker/embedded_worker_registry.h"
@@ -34,8 +37,8 @@ void VerifyStateChangedMessage(int expected_handle_id,
   ServiceWorkerMsg_ServiceWorkerStateChanged::Param param;
   ASSERT_TRUE(ServiceWorkerMsg_ServiceWorkerStateChanged::Read(
       message, &param));
-  EXPECT_EQ(expected_handle_id, base::get<1>(param));
-  EXPECT_EQ(expected_state, base::get<2>(param));
+  EXPECT_EQ(expected_handle_id, std::get<1>(param));
+  EXPECT_EQ(expected_state, std::get<2>(param));
 }
 
 }  // namespace
@@ -104,8 +107,9 @@ class ServiceWorkerHandleTest : public testing::Test {
 
     provider_host_.reset(new ServiceWorkerProviderHost(
         helper_->mock_render_process_id(), kRenderFrameId, 1,
-        SERVICE_WORKER_PROVIDER_FOR_WINDOW, helper_->context()->AsWeakPtr(),
-        dispatcher_host_.get()));
+        SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+        ServiceWorkerProviderHost::FrameSecurityLevel::SECURE,
+        helper_->context()->AsWeakPtr(), dispatcher_host_.get()));
 
     helper_->SimulateAddProcessToPattern(pattern,
                                          helper_->mock_render_process_id());
@@ -124,8 +128,8 @@ class ServiceWorkerHandleTest : public testing::Test {
   TestBrowserThreadBundle browser_thread_bundle_;
   MockResourceContext resource_context_;
 
-  scoped_ptr<EmbeddedWorkerTestHelper> helper_;
-  scoped_ptr<ServiceWorkerProviderHost> provider_host_;
+  std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
+  std::unique_ptr<ServiceWorkerProviderHost> provider_host_;
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
   scoped_refptr<TestingServiceWorkerDispatcherHost> dispatcher_host_;
@@ -135,14 +139,14 @@ class ServiceWorkerHandleTest : public testing::Test {
 };
 
 TEST_F(ServiceWorkerHandleTest, OnVersionStateChanged) {
-  scoped_ptr<ServiceWorkerHandle> handle =
+  std::unique_ptr<ServiceWorkerHandle> handle =
       ServiceWorkerHandle::Create(helper_->context()->AsWeakPtr(),
-                                  provider_host_->AsWeakPtr(),
-                                  version_.get());
+                                  provider_host_->AsWeakPtr(), version_.get());
 
   // Start the worker, and then...
   ServiceWorkerStatusCode status = SERVICE_WORKER_ERROR_FAILED;
-  version_->StartWorker(CreateReceiverOnCurrentThread(&status));
+  version_->StartWorker(ServiceWorkerMetrics::EventType::UNKNOWN,
+                        CreateReceiverOnCurrentThread(&status));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(SERVICE_WORKER_OK, status);
 

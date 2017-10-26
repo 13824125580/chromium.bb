@@ -58,8 +58,9 @@ NotificationDatabase::Status LevelDBStatusToStatus(
     return NotificationDatabase::STATUS_IO_ERROR;
   else if (status.IsNotSupportedError())
     return NotificationDatabase::STATUS_NOT_SUPPORTED;
+  else if (status.IsInvalidArgument())
+    return NotificationDatabase::STATUS_INVALID_ARGUMENT;
 
-  // TODO(cmumford): Once leveldb 1.19 is released add IsInvalidArgument().
   return NotificationDatabase::STATUS_ERROR_FAILED;
 }
 
@@ -301,7 +302,8 @@ NotificationDatabase::ReadAllNotificationDataInternal(
   leveldb::Slice prefix_slice(prefix);
 
   NotificationDatabaseData notification_database_data;
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> iter(
+      db_->NewIterator(leveldb::ReadOptions()));
   for (iter->Seek(prefix_slice); iter->Valid(); iter->Next()) {
     if (!iter->key().starts_with(prefix_slice))
       break;
@@ -338,7 +340,8 @@ NotificationDatabase::DeleteAllNotificationDataInternal(
   leveldb::WriteBatch batch;
 
   NotificationDatabaseData notification_database_data;
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> iter(
+      db_->NewIterator(leveldb::ReadOptions()));
   for (iter->Seek(prefix_slice); iter->Valid(); iter->Next()) {
     if (!iter->key().starts_with(prefix_slice))
       break;

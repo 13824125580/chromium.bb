@@ -6,16 +6,17 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel_factory.h"
 #include "ipc/ipc_listener.h"
@@ -58,7 +59,8 @@ void ChannelProxy::Context::ClearIPCTaskRunner() {
   ipc_task_runner_ = NULL;
 }
 
-void ChannelProxy::Context::CreateChannel(scoped_ptr<ChannelFactory> factory) {
+void ChannelProxy::Context::CreateChannel(
+    std::unique_ptr<ChannelFactory> factory) {
   base::AutoLock l(channel_lifetime_lock_);
   DCHECK(!channel_);
   channel_id_ = factory->GetName();
@@ -183,7 +185,7 @@ void ChannelProxy::Context::Clear() {
 }
 
 // Called on the IPC::Channel thread
-void ChannelProxy::Context::OnSendMessage(scoped_ptr<Message> message) {
+void ChannelProxy::Context::OnSendMessage(std::unique_ptr<Message> message) {
   // TODO(pkasting): Remove ScopedTracker below once crbug.com/477117 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
@@ -266,24 +268,13 @@ void ChannelProxy::Context::AddFilter(MessageFilter* filter) {
 
 // Called on the listener's thread
 void ChannelProxy::Context::OnDispatchMessage(const Message& message) {
-#if defined(IPC_MESSAGE_LOG_ENABLED)
-  Logging* logger = Logging::GetInstance();
-  std::string name;
-  logger->GetMessageText(message.type(), &name, &message, NULL);
-  TRACE_EVENT1("ipc", "ChannelProxy::Context::OnDispatchMessage",
-               "name", name);
-#else
-  TRACE_EVENT2("ipc", "ChannelProxy::Context::OnDispatchMessage",
-               "class", IPC_MESSAGE_ID_CLASS(message.type()),
-               "line", IPC_MESSAGE_ID_LINE(message.type()));
-#endif
-
   if (!listener_)
     return;
 
   OnDispatchConnected();
 
 #ifdef IPC_MESSAGE_LOG_ENABLED
+  Logging* logger = Logging::GetInstance();
   if (message.type() == IPC_LOGGING_ID) {
     logger->OnReceivedLoggingMessage(message);
     return;
@@ -346,7 +337,7 @@ void ChannelProxy::Context::Send(Message* message) {
 
   ipc_task_runner()->PostTask(
       FROM_HERE, base::Bind(&ChannelProxy::Context::OnSendMessage, this,
-                            base::Passed(scoped_ptr<Message>(message))));
+                            base::Passed(base::WrapUnique(message))));
 }
 
 bool ChannelProxy::Context::IsChannelSendThreadSafe() const {
@@ -356,22 +347,24 @@ bool ChannelProxy::Context::IsChannelSendThreadSafe() const {
 //-----------------------------------------------------------------------------
 
 // static
-scoped_ptr<ChannelProxy> ChannelProxy::Create(
+std::unique_ptr<ChannelProxy> ChannelProxy::Create(
     const IPC::ChannelHandle& channel_handle,
     Channel::Mode mode,
     Listener* listener,
     const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
-  scoped_ptr<ChannelProxy> channel(new ChannelProxy(listener, ipc_task_runner));
+  std::unique_ptr<ChannelProxy> channel(
+      new ChannelProxy(listener, ipc_task_runner));
   channel->Init(channel_handle, mode, true);
   return channel;
 }
 
 // static
-scoped_ptr<ChannelProxy> ChannelProxy::Create(
-    scoped_ptr<ChannelFactory> factory,
+std::unique_ptr<ChannelProxy> ChannelProxy::Create(
+    std::unique_ptr<ChannelFactory> factory,
     Listener* listener,
     const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
-  scoped_ptr<ChannelProxy> channel(new ChannelProxy(listener, ipc_task_runner));
+  std::unique_ptr<ChannelProxy> channel(
+      new ChannelProxy(listener, ipc_task_runner));
   channel->Init(std::move(factory), true);
   return channel;
 }
@@ -414,7 +407,7 @@ void ChannelProxy::Init(const IPC::ChannelHandle& channel_handle,
   Init(ChannelFactory::Create(channel_handle, mode), create_pipe_now);
 }
 
-void ChannelProxy::Init(scoped_ptr<ChannelFactory> factory,
+void ChannelProxy::Init(std::unique_ptr<ChannelFactory> factory,
                         bool create_pipe_now) {
   DCHECK(CalledOnValidThread());
   DCHECK(!did_init_);
@@ -488,7 +481,7 @@ void ChannelProxy::RemoveFilter(MessageFilter* filter) {
 
   context_->ipc_task_runner()->PostTask(
       FROM_HERE, base::Bind(&Context::OnRemoveFilter, context_.get(),
-                            make_scoped_refptr(filter)));
+                            base::RetainedRef(filter)));
 }
 
 void ChannelProxy::ClearIPCTaskRunner() {
@@ -502,6 +495,7 @@ base::ProcessId ChannelProxy::GetPeerPID() const {
 }
 
 void ChannelProxy::OnSetAttachmentBrokerEndpoint() {
+  CHECK(!did_init_);
   context()->set_attachment_broker_endpoint(is_attachment_broker_endpoint());
 }
 

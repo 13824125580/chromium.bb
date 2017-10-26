@@ -5,9 +5,6 @@
 /**
  * @fileoverview
  * 'settings-touchpad' is the settings subpage with touchpad settings.
- *
- * @group Chrome Settings Elements
- * @element settings-touchpad
  */
 Polymer({
   is: 'settings-touchpad',
@@ -18,5 +15,14 @@ Polymer({
       type: Object,
       notify: true,
     },
+  },
+
+  /**
+   * Prevents the link from activating its parent paper-radio-button.
+   * @param {!Event} e
+   * @private
+   */
+  onLearnMoreLinkActivated_: function(e) {
+    settings.DevicePageBrowserProxyImpl.getInstance().handleLinkEvent(e);
   },
 });

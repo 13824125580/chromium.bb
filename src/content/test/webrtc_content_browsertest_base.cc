@@ -20,10 +20,6 @@
 #include "chromeos/audio/cras_audio_handler.h"
 #endif
 
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
-
 namespace content {
 
 void WebRtcContentBrowserTest::SetUpCommandLine(
@@ -67,9 +63,8 @@ void WebRtcContentBrowserTest::AppendUseFakeUIForMediaStreamFlag() {
 std::string WebRtcContentBrowserTest::ExecuteJavascriptAndReturnResult(
     const std::string& javascript) {
   std::string result;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell()->web_contents(), javascript, &result))
-          << "Failed to execute javascript " << javascript << ".";
+  EXPECT_TRUE(ExecuteScriptAndExtractString(shell(), javascript, &result))
+      << "Failed to execute javascript " << javascript << ".";
   return result;
 }
 
@@ -114,14 +109,6 @@ std::string WebRtcContentBrowserTest::GenerateGetUserMediaCall(
       max_height,
       min_frame_rate,
       max_frame_rate);
-}
-
-bool WebRtcContentBrowserTest::OnWinXp() const {
-#if defined(OS_WIN)
-  return base::win::GetVersion() <= base::win::VERSION_XP;
-#else
-  return false;
-#endif
 }
 
 }  // namespace content

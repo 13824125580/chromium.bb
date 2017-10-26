@@ -48,7 +48,7 @@ void ResetProfileSettingsHandler::InitializeHandler() {
 }
 
 void ResetProfileSettingsHandler::InitializePage() {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ResetProfileSettingsOverlay.setResettingState",
       base::FundamentalValue(resetter_->IsActive()));
 }
@@ -144,14 +144,15 @@ void ResetProfileSettingsHandler::HandleResetProfileSettings(
 
 void ResetProfileSettingsHandler::OnResetProfileSettingsDone(
     bool send_feedback) {
-  web_ui()->CallJavascriptFunction("ResetProfileSettingsOverlay.doneResetting");
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "ResetProfileSettingsOverlay.doneResetting");
   if (send_feedback && setting_snapshot_) {
     Profile* profile = Profile::FromWebUI(web_ui());
     ResettableSettingsSnapshot current_snapshot(profile);
     int difference = setting_snapshot_->FindDifferentFields(current_snapshot);
     if (difference) {
       setting_snapshot_->Subtract(current_snapshot);
-      scoped_ptr<reset_report::ChromeResetReport> report_proto =
+      std::unique_ptr<reset_report::ChromeResetReport> report_proto =
           SerializeSettingsReportToProto(*setting_snapshot_, difference);
       if (report_proto)
         SendSettingsFeedbackProto(*report_proto, profile);
@@ -195,7 +196,7 @@ void ResetProfileSettingsHandler::ResetProfile(bool send_settings) {
   DCHECK(resetter_);
   DCHECK(!resetter_->IsActive());
 
-  scoped_ptr<BrandcodedDefaultSettings> default_settings;
+  std::unique_ptr<BrandcodedDefaultSettings> default_settings;
   if (config_fetcher_) {
     DCHECK(!config_fetcher_->IsActive());
     default_settings = config_fetcher_->GetSettings();
@@ -219,14 +220,12 @@ void ResetProfileSettingsHandler::ResetProfile(bool send_settings) {
 void ResetProfileSettingsHandler::UpdateFeedbackUI() {
   if (!setting_snapshot_)
     return;
-  scoped_ptr<base::ListValue> list = GetReadableFeedbackForSnapshot(
-      Profile::FromWebUI(web_ui()),
-      *setting_snapshot_);
+  std::unique_ptr<base::ListValue> list = GetReadableFeedbackForSnapshot(
+      Profile::FromWebUI(web_ui()), *setting_snapshot_);
   base::DictionaryValue feedback_info;
   feedback_info.Set("feedbackInfo", list.release());
-  web_ui()->CallJavascriptFunction(
-      "ResetProfileSettingsOverlay.setFeedbackInfo",
-      feedback_info);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "ResetProfileSettingsOverlay.setFeedbackInfo", feedback_info);
 }
 
 }  // namespace options

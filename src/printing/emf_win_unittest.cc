@@ -9,12 +9,12 @@
 #include <wingdi.h>
 #include <winspool.h>
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/win/scoped_hdc.h"
 #include "printing/printing_context.h"
@@ -57,7 +57,7 @@ TEST(EmfTest, DC) {
   {
     Emf emf;
     EXPECT_TRUE(emf.Init());
-    EXPECT_TRUE(emf.context() != NULL);
+    EXPECT_TRUE(emf.context());
     // An empty EMF is invalid, so we put at least a rectangle in it.
     ::Rectangle(emf.context(), 10, 10, 190, 190);
     EXPECT_TRUE(emf.FinishDocument());
@@ -88,7 +88,7 @@ TEST_F(EmfPrintingTest, Enumerate) {
   settings.set_device_name(L"UnitTest Printer");
 
   // Initialize it.
-  scoped_ptr<PrintingContext> context(PrintingContext::Create(this));
+  std::unique_ptr<PrintingContext> context(PrintingContext::Create(this));
   EXPECT_EQ(context->InitWithSettings(settings), PrintingContext::OK);
 
   base::FilePath emf_file;
@@ -139,10 +139,10 @@ TEST_F(EmfPrintingTest, PageBreak) {
   {
     Emf emf;
     EXPECT_TRUE(emf.Init());
-    EXPECT_TRUE(emf.context() != NULL);
+    EXPECT_TRUE(emf.context());
     int pages = 3;
     while (pages) {
-      EXPECT_TRUE(emf.StartPage(gfx::Size(), gfx::Rect(), 1));
+      emf.StartPage(gfx::Size(), gfx::Rect(), 1);
       ::Rectangle(emf.context(), 10, 10, 190, 190);
       EXPECT_TRUE(emf.FinishPage());
       --pages;
@@ -184,7 +184,7 @@ TEST(EmfTest, FileBackedEmf) {
   {
     Emf emf;
     EXPECT_TRUE(emf.InitToFile(metafile_path));
-    EXPECT_TRUE(emf.context() != NULL);
+    EXPECT_TRUE(emf.context());
     // An empty EMF is invalid, so we put at least a rectangle in it.
     ::Rectangle(emf.context(), 10, 10, 190, 190);
     EXPECT_TRUE(emf.FinishDocument());
@@ -210,7 +210,7 @@ TEST(EmfTest, FileBackedEmf) {
 TEST(EmfTest, RasterizeMetafile) {
   Emf emf;
   EXPECT_TRUE(emf.Init());
-  EXPECT_TRUE(emf.context() != NULL);
+  EXPECT_TRUE(emf.context());
   HBRUSH brush = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
   for (int i = 0; i < 4; ++i) {
     RECT rect = { 5 + i, 5 + i, 5 + i + 1, 5 + i + 2};
@@ -218,7 +218,7 @@ TEST(EmfTest, RasterizeMetafile) {
   }
   EXPECT_TRUE(emf.FinishDocument());
 
-  scoped_ptr<Emf> raster(emf.RasterizeMetafile(1));
+  std::unique_ptr<Emf> raster(emf.RasterizeMetafile(1));
   // Just 1px bitmap but should be stretched to the same bounds.
   EXPECT_EQ(emf.GetPageBounds(1), raster->GetPageBounds(1));
 

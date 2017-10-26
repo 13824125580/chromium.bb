@@ -17,7 +17,6 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.preference.PreferenceManager;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.view.Menu;
@@ -29,6 +28,8 @@ import android.widget.ListView;
 import android.widget.TextView;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.ContextUtils;
+import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeApplication;
@@ -47,6 +48,8 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
     public static final int NOTIFICATION_REFERER = 1;
     public static final int OPTIN_REFERER = 2;
     public static final int PREFERENCE_REFERER = 3;
+    public static final int DIAGNOSTICS_REFERER = 4;
+    public static final int REFERER_BOUNDARY = 5;
     private static final String TAG = "PhysicalWeb";
     private static final String PREFS_VERSION_KEY =
             "org.chromium.chrome.browser.physicalweb.VERSION";
@@ -111,11 +114,10 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
             }
         });
 
-        mPwsClient = new PwsClientImpl();
+        mPwsClient = new PwsClientImpl(this);
         int referer = getIntent().getIntExtra(REFERER_KEY, 0);
-        if (savedInstanceState == null  // Ensure this is a newly-created activity.
-                && referer == NOTIFICATION_REFERER) {
-            PhysicalWebUma.onNotificationPressed(this);
+        if (savedInstanceState == null) {  // Ensure this is a newly-created activity.
+            PhysicalWebUma.onActivityReferral(this, referer);
         }
         mIsInitialDisplayRecorded = false;
         mIsRefreshing = false;
@@ -126,33 +128,34 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        Drawable tintedRefresh = ContextCompat.getDrawable(this, R.drawable.btn_toolbar_reload);
         int tintColor = ContextCompat.getColor(this, R.color.light_normal_color);
+
+        Drawable tintedRefresh = ContextCompat.getDrawable(this, R.drawable.btn_toolbar_reload);
         tintedRefresh.setColorFilter(tintColor, PorterDuff.Mode.SRC_IN);
+        menu.add(0, R.id.menu_id_refresh, 1, R.string.physical_web_refresh)
+                .setIcon(tintedRefresh)
+                .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
-        MenuItem refreshItem = menu.add(R.string.physical_web_refresh);
-        refreshItem.setIcon(tintedRefresh);
-        refreshItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-        refreshItem.setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
-            @Override
-            public boolean onMenuItemClick(MenuItem item) {
-                startRefresh(true, false);
-                return true;
-            }
-        });
+        menu.add(0, R.id.menu_id_close, 2, R.string.close)
+                .setIcon(R.drawable.btn_close)
+                .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
-        MenuItem closeItem = menu.add(R.string.close);
-        closeItem.setIcon(R.drawable.btn_close);
-        closeItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-        closeItem.setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
-            @Override
-            public boolean onMenuItemClick(MenuItem item) {
-                finish();
-                return true;
-            }
-        });
+        return super.onCreateOptionsMenu(menu);
+    }
 
-        return true;
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
+        if (id == R.id.menu_id_close) {
+            finish();
+            return true;
+        } else if (id == R.id.menu_id_refresh) {
+            startRefresh(true, false);
+            return true;
+        }
+
+        Log.e(TAG, "Unknown menu item selected");
+        return super.onOptionsItemSelected(item);
     }
 
     private void foregroundSubscribe() {
@@ -199,13 +202,17 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
         super.onStop();
     }
 
-    private void resolve(Collection<String> urls) {
+    private void resolve(Collection<UrlInfo> urls, final boolean isUserInitiated) {
         final long timestamp = SystemClock.elapsedRealtime();
         mPwsClient.resolve(urls, new PwsClient.ResolveScanCallback() {
             @Override
             public void onPwsResults(Collection<PwsResult> pwsResults) {
                 long duration = SystemClock.elapsedRealtime() - timestamp;
-                PhysicalWebUma.onForegroundPwsResolution(ListUrlsActivity.this, duration);
+                if (isUserInitiated) {
+                    PhysicalWebUma.onRefreshPwsResolution(ListUrlsActivity.this, duration);
+                } else {
+                    PhysicalWebUma.onForegroundPwsResolution(ListUrlsActivity.this, duration);
+                }
 
                 // filter out duplicate site URLs.
                 for (PwsResult pwsResult : pwsResults) {
@@ -245,8 +252,8 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
      * @param urls The set of newly-found nearby URLs.
      */
     @Override
-    public void onDisplayableUrlsAdded(Collection<String> urls) {
-        resolve(urls);
+    public void onDisplayableUrlsAdded(Collection<UrlInfo> urls) {
+        resolve(urls, false);
     }
 
     private void startRefresh(boolean isUserInitiated, boolean isSwipeInitiated) {
@@ -260,7 +267,7 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
         // Clear the list adapter to trigger the empty list display.
         mAdapter.clear();
 
-        Collection<String> urls = UrlManager.getInstance(this).getUrls(true);
+        Collection<UrlInfo> urls = UrlManager.getInstance(this).getUrls(true);
 
         // Check the Physical Web preference to ensure we do not resolve URLs when Physical Web is
         // off or onboarding. Normally the user will not reach this activity unless the preference
@@ -284,7 +291,7 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
                     (AnimationDrawable) mScanningImageView.getDrawable();
             animationDrawable.start();
 
-            resolve(urls);
+            resolve(urls, isUserInitiated);
         }
     }
 
@@ -345,7 +352,7 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
     }
 
     private void initSharedPreferences() {
-        mSharedPrefs = PreferenceManager.getDefaultSharedPreferences(this);
+        mSharedPrefs = ContextUtils.getAppSharedPreferences();
         int prefsVersion = mSharedPrefs.getInt(PREFS_VERSION_KEY, 0);
 
         if (prefsVersion == PREFS_VERSION) {
@@ -374,10 +381,10 @@ public class ListUrlsActivity extends AppCompatActivity implements AdapterView.O
             url = pwsResult.requestUrl;
         }
 
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.addCategory(Intent.CATEGORY_BROWSABLE);
-        intent.setData(Uri.parse(url));
-        return intent;
+        return new Intent(Intent.ACTION_VIEW)
+                .addCategory(Intent.CATEGORY_BROWSABLE)
+                .setData(Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
     }
 
     @VisibleForTesting

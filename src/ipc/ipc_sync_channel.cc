@@ -6,16 +6,18 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/synchronization/waitable_event_watcher.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_local.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "ipc/ipc_channel_factory.h"
 #include "ipc/ipc_logging.h"
@@ -80,7 +82,7 @@ class SyncChannel::ReceivedSyncMsgQueue :
     if (!was_task_pending) {
       listener_task_runner_->PostTask(
           FROM_HERE, base::Bind(&ReceivedSyncMsgQueue::DispatchMessagesTask,
-                                this, scoped_refptr<SyncContext>(context)));
+                                this, base::RetainedRef(context)));
     }
   }
 
@@ -188,14 +190,14 @@ class SyncChannel::ReceivedSyncMsgQueue :
 
   // See the comment in SyncChannel::SyncChannel for why this event is created
   // as manual reset.
-  ReceivedSyncMsgQueue() :
-      message_queue_version_(0),
-      dispatch_event_(true, false),
+  ReceivedSyncMsgQueue()
+      : message_queue_version_(0),
+        dispatch_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED),
       listener_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       task_pending_(false),
       listener_count_(0),
-      top_send_done_watcher_(NULL) {
-  }
+        top_send_done_watcher_(NULL) {}
 
   ~ReceivedSyncMsgQueue() {}
 
@@ -237,7 +239,8 @@ SyncChannel::SyncContext::SyncContext(
     WaitableEvent* shutdown_event)
     : ChannelProxy::Context(listener, ipc_task_runner),
       received_sync_msgs_(ReceivedSyncMsgQueue::AddContext()),
-      peek_messages_event_(true, false),
+      peek_messages_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED),
       shutdown_event_(shutdown_event),
       restrict_dispatch_group_(kRestrictDispatchGroup_None) {
 }
@@ -259,9 +262,10 @@ void SyncChannel::SyncContext::Push(SyncMessage* sync_msg) {
   // OnObjectSignalled, another Send can happen which would stop the watcher
   // from being called.  The event would get watched later, when the nested
   // Send completes, so the event will need to remain set.
-  PendingSyncMsg pending(SyncMessage::GetMessageId(*sync_msg),
-                         sync_msg->GetReplyDeserializer(),
-                         new WaitableEvent(true, false));
+  PendingSyncMsg pending(
+      SyncMessage::GetMessageId(*sync_msg), sync_msg->GetReplyDeserializer(),
+      new WaitableEvent(base::WaitableEvent::ResetPolicy::MANUAL,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED));
   base::AutoLock auto_lock(deserializers_lock_);
 #if defined(OS_WIN)
   if (deserializers_.empty()) {
@@ -324,7 +328,13 @@ bool SyncChannel::SyncContext::TryToUnblockListener(const Message* msg) {
   } else {
     DVLOG(1) << "Received error reply";
   }
-  deserializers_.back().done_event->Signal();
+
+  base::WaitableEvent* done_event = deserializers_.back().done_event;
+  TRACE_EVENT_FLOW_BEGIN0(
+      TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+      "SyncChannel::SyncContext::TryToUnblockListener", done_event);
+
+  done_event->Signal();
 
   return true;
 }
@@ -376,18 +386,6 @@ void SyncChannel::SyncContext::OnChannelClosed() {
   Context::OnChannelClosed();
 }
 
-void SyncChannel::SyncContext::OnSendTimeout(int message_id) {
-  base::AutoLock auto_lock(deserializers_lock_);
-  PendingSyncMessageQueue::iterator iter;
-  DVLOG(1) << "Send timeout";
-  for (iter = deserializers_.begin(); iter != deserializers_.end(); iter++) {
-    if (iter->id == message_id) {
-      iter->done_event->Signal();
-      break;
-    }
-  }
-}
-
 void SyncChannel::SyncContext::SchedulePeekMessageTimeout() {
   peek_messages_event_.Reset();
   ipc_task_runner()->PostDelayedTask(
@@ -404,8 +402,12 @@ void SyncChannel::SyncContext::CancelPendingSends() {
   base::AutoLock auto_lock(deserializers_lock_);
   PendingSyncMessageQueue::iterator iter;
   DVLOG(1) << "Canceling pending sends";
-  for (iter = deserializers_.begin(); iter != deserializers_.end(); iter++)
+  for (iter = deserializers_.begin(); iter != deserializers_.end(); iter++) {
+    TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+                            "SyncChannel::SyncContext::CancelPendingSends",
+                            iter->done_event);
     iter->done_event->Signal();
+  }
 }
 
 void SyncChannel::SyncContext::OnWaitableEventSignaled(WaitableEvent* event) {
@@ -426,7 +428,7 @@ base::WaitableEventWatcher::EventCallback
 }
 
 // static
-scoped_ptr<SyncChannel> SyncChannel::Create(
+std::unique_ptr<SyncChannel> SyncChannel::Create(
     const IPC::ChannelHandle& channel_handle,
     Channel::Mode mode,
     Listener* listener,
@@ -434,31 +436,31 @@ scoped_ptr<SyncChannel> SyncChannel::Create(
     bool create_pipe_now,
     base::WaitableEvent* shutdown_event) {
   LOG(INFO) << "Creating SyncChannel: " << channel_handle.name;
-  scoped_ptr<SyncChannel> channel =
+  std::unique_ptr<SyncChannel> channel =
       Create(listener, ipc_task_runner, shutdown_event);
   channel->Init(channel_handle, mode, create_pipe_now);
   return channel;
 }
 
 // static
-scoped_ptr<SyncChannel> SyncChannel::Create(
-    scoped_ptr<ChannelFactory> factory,
+std::unique_ptr<SyncChannel> SyncChannel::Create(
+    std::unique_ptr<ChannelFactory> factory,
     Listener* listener,
     const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
     bool create_pipe_now,
     base::WaitableEvent* shutdown_event) {
-  scoped_ptr<SyncChannel> channel =
+  std::unique_ptr<SyncChannel> channel =
       Create(listener, ipc_task_runner, shutdown_event);
   channel->Init(std::move(factory), create_pipe_now);
   return channel;
 }
 
 // static
-scoped_ptr<SyncChannel> SyncChannel::Create(
+std::unique_ptr<SyncChannel> SyncChannel::Create(
     Listener* listener,
     const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
     WaitableEvent* shutdown_event) {
-  return make_scoped_ptr(
+  return base::WrapUnique(
       new SyncChannel(listener, ipc_task_runner, shutdown_event));
 }
 
@@ -522,6 +524,9 @@ bool SyncChannel::Send(Message* message) {
   // Wait for reply, or for any other incoming synchronous messages.
   // *this* might get deleted, so only call static functions at this point.
   WaitForReply(context.get(), pump_messages_event);
+
+  TRACE_EVENT_FLOW_END0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+                        "SyncChannel::Send", context->GetSendDoneEvent());
 
   return context->Pop();
 }

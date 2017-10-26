@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/filters/h264_parser.h"
+
+#include <limits>
+#include <memory>
+
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
-
 #include "media/base/decrypt_config.h"
-#include "media/filters/h264_parser.h"
 
 namespace media {
 
@@ -318,7 +320,15 @@ H264Parser::Result H264Parser::ReadUE(int* val) {
     return kInvalidStream;
 
   // Calculate exp-Golomb code value of size num_bits.
-  *val = (1 << num_bits) - 1;
+  // Special case for |num_bits| == 31 to avoid integer overflow. The only
+  // valid representation as an int is 2^31 - 1, so the remaining bits must
+  // be 0 or else the number is too large.
+  *val = (1u << num_bits) - 1u;
+
+  if (num_bits == 31) {
+    READ_BITS_OR_RETURN(num_bits, &rest);
+    return (rest == 0) ? kOk : kInvalidStream;
+  }
 
   if (num_bits > 0) {
     READ_BITS_OR_RETURN(num_bits, &rest);
@@ -773,7 +783,7 @@ H264Parser::Result H264Parser::ParseSPS(int* sps_id) {
 
   *sps_id = -1;
 
-  scoped_ptr<H264SPS> sps(new H264SPS());
+  std::unique_ptr<H264SPS> sps(new H264SPS());
 
   READ_BITS_OR_RETURN(8, &sps->profile_idc);
   READ_BOOL_OR_RETURN(&sps->constraint_set0_flag);
@@ -892,7 +902,7 @@ H264Parser::Result H264Parser::ParsePPS(int* pps_id) {
 
   *pps_id = -1;
 
-  scoped_ptr<H264PPS> pps(new H264PPS());
+  std::unique_ptr<H264PPS> pps(new H264PPS());
 
   READ_UE_OR_RETURN(&pps->pic_parameter_set_id);
   READ_UE_OR_RETURN(&pps->seq_parameter_set_id);

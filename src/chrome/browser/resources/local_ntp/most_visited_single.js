@@ -67,6 +67,19 @@ var USE_ICONS = false;
  */
 var NUM_TITLE_LINES = 1;
 
+/**
+ * Type of the impression provider for a generic client-provided suggestion.
+ * @type {string}
+ * @const
+ */
+var CLIENT_PROVIDER_NAME = 'client';
+
+/**
+ * Type of the impression provider for a generic server-provided suggestion.
+ * @type {string}
+ * @const
+ */
+var SERVER_PROVIDER_NAME = 'server';
 
 /**
  * The origin of this request.
@@ -110,6 +123,27 @@ var logEvent = function(eventType) {
   chrome.embeddedSearch.newTabPage.logEvent(eventType);
 };
 
+/**
+ * Log impression of a most visited tile on the NTP.
+ * @param {number} tileIndex position of the tile, >= 0 and < NUMBER_OF_TILES
+ * @param {string} provider specifies the UMA histogram to be reported
+ *     (NewTabPage.SuggestionsImpression.{provider})
+ */
+function logMostVisitedImpression(tileIndex, provider) {
+  chrome.embeddedSearch.newTabPage.logMostVisitedImpression(tileIndex,
+                                                            provider);
+}
+
+/**
+ * Log click on a most visited tile on the NTP.
+ * @param {number} tileIndex position of the tile, >= 0 and < NUMBER_OF_TILES
+ * @param {string} provider specifies the UMA histogram to be reported
+ *     (NewTabPage.SuggestionsImpression.{provider})
+ */
+function logMostVisitedNavigation(tileIndex, provider) {
+  chrome.embeddedSearch.newTabPage.logMostVisitedNavigation(tileIndex,
+                                                            provider);
+}
 
 /**
  * Down counts the DOM elements that we are waiting for the page to load.
@@ -271,15 +305,7 @@ var showTiles = function() {
   tiles = document.createElement('div');
 
   if (impressionUrl) {
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(impressionUrl);
-    } else {
-      // if sendBeacon is not enabled, we fallback to "a ping".
-      var a = document.createElement('a');
-      a.href = '#';
-      a.ping = impressionUrl;
-      a.click();
-    }
+    navigator.sendBeacon(impressionUrl);
     impressionUrl = null;
   }
 };
@@ -292,21 +318,34 @@ var showTiles = function() {
  * @param {object} args Data for the tile to be rendered.
  */
 var addTile = function(args) {
-  if (args.rid) {
+  if (isFinite(args.rid)) {
+    // If a valid number passed in |args.rid|: a local chrome suggestion.
     var data = chrome.embeddedSearch.searchBox.getMostVisitedItemData(args.rid);
+    if (!data)
+      return;
+
     data.tid = data.rid;
+    data.provider = CLIENT_PROVIDER_NAME;
     if (!data.faviconUrl) {
       data.faviconUrl = 'chrome-search://favicon/size/16@' +
           window.devicePixelRatio + 'x/' + data.renderViewId + '/' + data.tid;
     }
+    logEvent(LOG_TYPE.NTP_CLIENT_SIDE_SUGGESTION);
     tiles.appendChild(renderTile(data));
-  } else if (args.id) {
+  } else if (args.url) {
+    // If a URL is passed: a server-side suggestion.
+    args.provider = args.provider || SERVER_PROVIDER_NAME;
+    // check sanity of the arguments
+    if (/^javascript:/i.test(args.url) ||
+        /^javascript:/i.test(args.thumbnailUrl) ||
+        !/^[a-z0-9]{0,8}$/i.test(args.provider))
+      return;
+    logEvent(LOG_TYPE.NTP_SERVER_SIDE_SUGGESTION);
     tiles.appendChild(renderTile(args));
-  } else {
+  } else {  // an empty tile
     tiles.appendChild(renderTile(null));
   }
 };
-
 
 /**
  * Called when the user decided to add a tile to the blacklist.
@@ -327,6 +366,17 @@ var blacklistTile = function(tile) {
 
 
 /**
+ * Returns whether the given URL has a known, safe scheme.
+ * @param {string} url URL to check.
+ */
+var isSchemeAllowed = function(url) {
+  return url.startsWith('http://') || url.startsWith('https://') ||
+         url.startsWith('ftp://') || url.startsWith('file://') ||
+         url.startsWith('chrome-extension://');
+};
+
+
+/**
  * Renders a MostVisited tile to the DOM.
  * @param {object} data Object containing rid, url, title, favicon, thumbnail.
  *     data is null if you want to construct an empty tile.
@@ -340,49 +390,41 @@ var renderTile = function(data) {
   }
 
   logEvent(LOG_TYPE.NTP_TILE);
+  // The tile will be appended to tiles.
+  var position = tiles.children.length;
+  if (data.provider) {
+    logMostVisitedImpression(position, data.provider);
+  }
 
   tile.className = 'mv-tile';
   tile.setAttribute('data-tid', data.tid);
-  var tooltip = queryArgs['removeTooltip'] || '';
   var html = [];
   if (!USE_ICONS) {
     html.push('<div class="mv-favicon"></div>');
   }
   html.push('<div class="mv-title"></div><div class="mv-thumb"></div>');
-  html.push('<div title="' + tooltip + '" class="mv-x"></div>');
+  html.push('<div class="mv-x"></div>');
   tile.innerHTML = html.join('');
+  tile.lastElementChild.title = queryArgs['removeTooltip'] || '';
 
-  tile.href = data.url;
+  if (isSchemeAllowed(data.url)) {
+    tile.href = data.url;
+  }
   tile.title = data.title;
   if (data.impressionUrl) {
     impressionUrl = data.impressionUrl;
   }
   if (data.pingUrl) {
     tile.addEventListener('click', function(ev) {
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(data.pingUrl);
-      } else {
-        // if sendBeacon is not enabled, we fallback to "a ping".
-        var a = document.createElement('a');
-        a.href = '#';
-        a.ping = data.pingUrl;
-        a.click();
-      }
+      navigator.sendBeacon(data.pingUrl);
     });
   }
-  // For local suggestions, we use navigateContentWindow instead of the default
-  // action, since it includes support for file:// urls.
-  if (data.rid) {
-    tile.addEventListener('click', function(ev) {
-      ev.preventDefault();
-      var disp = chrome.embeddedSearch.newTabPage.getDispositionFromClick(
-        ev.button == 1,  // MIDDLE BUTTON
-        ev.altKey, ev.ctrlKey, ev.metaKey, ev.shiftKey);
 
-      window.chrome.embeddedSearch.newTabPage.navigateContentWindow(data.rid,
-                                                                    disp);
-    });
-  }
+  tile.addEventListener('click', function(ev) {
+    if (data.provider) {
+      logMostVisitedNavigation(position, data.provider);
+    }
+  });
 
   tile.addEventListener('keydown', function(event) {
     if (event.keyCode == 46 /* DELETE */ ||
@@ -395,58 +437,31 @@ var renderTile = function(data) {
       event.preventDefault();
       this.click();
     } else if (event.keyCode >= 37 && event.keyCode <= 40 /* ARROWS */) {
-      var tiles = document.querySelectorAll('#mv-tiles .mv-tile');
-      var nextTile = null;
-      // Use the location of the tile to find the next one in the
-      // appropriate direction.
-      // For LEFT and UP we keep iterating until we find the last element
-      // that fulfills the conditions.
-      // For RIGHT and DOWN we accept the first element that works.
-      if (event.keyCode == 37 /* LEFT */) {
-        for (var i = 0; i < tiles.length; i++) {
-          var tile = tiles[i];
-          if (tile.offsetTop == this.offsetTop &&
-              tile.offsetLeft < this.offsetLeft) {
-            if (!nextTile || tile.offsetLeft > nextTile.offsetLeft) {
-              nextTile = tile;
-            }
-          }
-        }
-      }
-      if (event.keyCode == 38 /* UP */) {
-        for (var i = 0; i < tiles.length; i++) {
-          var tile = tiles[i];
-          if (tile.offsetTop < this.offsetTop &&
-              tile.offsetLeft == this.offsetLeft) {
-            if (!nextTile || tile.offsetTop > nextTile.offsetTop) {
-              nextTile = tile;
-            }
-          }
-        }
-      }
-      if (event.keyCode == 39 /* RIGHT */) {
-        for (var i = 0; i < tiles.length; i++) {
-          var tile = tiles[i];
-          if (tile.offsetTop == this.offsetTop &&
-              tile.offsetLeft > this.offsetLeft) {
-            if (!nextTile || tile.offsetLeft < nextTile.offsetLeft) {
-              nextTile = tile;
-            }
-          }
-        }
-      }
-      if (event.keyCode == 40 /* DOWN */) {
-        for (var i = 0; i < tiles.length; i++) {
-          var tile = tiles[i];
-          if (tile.offsetTop > this.offsetTop &&
-              tile.offsetLeft == this.offsetLeft) {
-            if (!nextTile || tile.offsetTop < nextTile.offsetTop) {
-              nextTile = tile;
-            }
-          }
-        }
-      }
+      // specify the direction of movement
+      var inArrowDirection = function(origin, target) {
+        return (event.keyCode == 37 /* LEFT */ &&
+                origin.offsetTop == target.offsetTop &&
+                origin.offsetLeft > target.offsetLeft) ||
+                (event.keyCode == 38 /* UP */ &&
+                origin.offsetTop > target.offsetTop &&
+                origin.offsetLeft == target.offsetLeft) ||
+                (event.keyCode == 39 /* RIGHT */ &&
+                origin.offsetTop == target.offsetTop &&
+                origin.offsetLeft < target.offsetLeft) ||
+                (event.keyCode == 40 /* DOWN */ &&
+                origin.offsetTop < target.offsetTop &&
+                origin.offsetLeft == target.offsetLeft);
+      };
 
+      var nonEmptyTiles = document.querySelectorAll('#mv-tiles .mv-tile');
+      var nextTile = null;
+      // Find the closest tile in the appropriate direction.
+      for (var i = 0; i < nonEmptyTiles.length; i++) {
+        if (inArrowDirection(this, nonEmptyTiles[i]) &&
+            (!nextTile || inArrowDirection(nonEmptyTiles[i], nextTile))) {
+          nextTile = nonEmptyTiles[i];
+        }
+      }
       if (nextTile) {
         nextTile.focus();
       }

@@ -7,12 +7,13 @@
 #include <stddef.h>
 
 #include <iostream>
+#include <memory>
 #include <sstream>
 
 #include "base/callback.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -204,7 +205,7 @@ void PreferencesBrowserTest::SetUserPolicies(
   policy::PolicyMap map;
   for (size_t i = 0; i < names.size(); ++i) {
     map.Set(names[i], level, policy::POLICY_SCOPE_USER,
-            policy::POLICY_SOURCE_CLOUD, values[i]->DeepCopy(), nullptr);
+            policy::POLICY_SOURCE_CLOUD, values[i]->CreateDeepCopy(), nullptr);
   }
   policy_provider_.UpdateChromePolicy(map);
 }
@@ -264,7 +265,8 @@ void PreferencesBrowserTest::VerifyObservedPref(const std::string& json,
                                                 const std::string& controlledBy,
                                                 bool disabled,
                                                 bool uncommitted) {
-  scoped_ptr<base::Value> observed_value_ptr = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> observed_value_ptr =
+      base::JSONReader::Read(json);
   const base::DictionaryValue* observed_dict;
   ASSERT_TRUE(observed_value_ptr.get());
   ASSERT_TRUE(observed_value_ptr->GetAsDictionary(&observed_dict));
@@ -278,7 +280,8 @@ void PreferencesBrowserTest::VerifyObservedPrefs(
     const std::string& controlledBy,
     bool disabled,
     bool uncommitted) {
-  scoped_ptr<base::Value> observed_value_ptr = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> observed_value_ptr =
+      base::JSONReader::Read(json);
   const base::DictionaryValue* observed_dict;
   ASSERT_TRUE(observed_value_ptr.get());
   ASSERT_TRUE(observed_value_ptr->GetAsDictionary(&observed_dict));
@@ -346,7 +349,7 @@ void PreferencesBrowserTest::SetPref(const std::string& name,
                                      const base::Value* value,
                                      bool commit,
                                      std::string* observed_json) {
-  scoped_ptr<base::Value> commit_ptr(new base::FundamentalValue(commit));
+  std::unique_ptr<base::Value> commit_ptr(new base::FundamentalValue(commit));
   std::stringstream javascript;
   javascript << "testEnv.runAndReply(function() {"
              << "  Preferences.set" << type << "Pref("
@@ -466,8 +469,8 @@ void PreferencesBrowserTest::UseDefaultTestPrefs(bool includeListPref) {
     pref_names_.push_back(prefs::kURLsToRestoreOnStartup);
     policy_names_.push_back(policy::key::kRestoreOnStartupURLs);
     base::ListValue* list = new base::ListValue;
-    list->Append(new base::StringValue("http://www.example.com"));
-    list->Append(new base::StringValue("http://example.com"));
+    list->AppendString("http://www.example.com");
+    list->AppendString("http://example.com");
     non_default_values_.push_back(list);
   }
 
@@ -719,7 +722,7 @@ class ManagedPreferencesBrowserTest : public PreferencesBrowserTest {
   // PreferencesBrowserTest implementation:
   void SetUpInProcessBrowserTestFixture() override {
     // Set up fake install attributes.
-    scoped_ptr<policy::StubEnterpriseInstallAttributes> attributes(
+    std::unique_ptr<policy::StubEnterpriseInstallAttributes> attributes(
         new policy::StubEnterpriseInstallAttributes());
     attributes->SetDomain("example.com");
     attributes->SetRegistrationUser("user@example.com");
@@ -819,7 +822,7 @@ class ProxyPreferencesBrowserTest : public PreferencesBrowserTest {
     SetupNetworkEnvironment();
     content::RunAllPendingInMessageLoop();
 
-    scoped_ptr<base::DictionaryValue> proxy_config_dict(
+    std::unique_ptr<base::DictionaryValue> proxy_config_dict(
         ProxyConfigDictionary::CreateFixedServers("127.0.0.1:8080",
                                                   "*.google.com, 1.2.3.4:22"));
 
@@ -878,12 +881,9 @@ class ProxyPreferencesBrowserTest : public PreferencesBrowserTest {
         "}";
 
     policy::PolicyMap map;
-    map.Set(policy_name,
-            policy::POLICY_LEVEL_MANDATORY,
-            scope,
+    map.Set(policy_name, policy::POLICY_LEVEL_MANDATORY, scope,
             policy::POLICY_SOURCE_CLOUD,
-            new base::StringValue(onc_policy),
-            NULL);
+            base::WrapUnique(new base::StringValue(onc_policy)), nullptr);
     policy_provider_.UpdateChromePolicy(map);
 
     content::RunAllPendingInMessageLoop();
@@ -920,11 +920,9 @@ class ProxyPreferencesBrowserTest : public PreferencesBrowserTest {
     const chromeos::NetworkState* network = GetDefaultNetwork();
     ASSERT_TRUE(network);
     onc::ONCSource actual_source;
-    scoped_ptr<ProxyConfigDictionary> proxy_dict =
+    std::unique_ptr<ProxyConfigDictionary> proxy_dict =
         chromeos::proxy_config::GetProxyConfigForNetwork(
-            pref_service_,
-            g_browser_process->local_state(),
-            *network,
+            pref_service_, g_browser_process->local_state(), *network,
             &actual_source);
     ASSERT_TRUE(proxy_dict);
     std::string actual_proxy_server;

@@ -19,6 +19,8 @@ struct MainThreadScrollingReason {
   enum : uint32_t { kScrollbarScrolling = 1 << 3 };
   enum : uint32_t { kPageOverlay = 1 << 4 };
   enum : uint32_t { kAnimatingScrollOnMainThread = 1 << 13 };
+  enum : uint32_t { kHasStickyPositionObjects = 1 << 14 };
+  enum : uint32_t { kCustomScrollbarScrolling = 1 << 15 };
 
   // Transient scrolling reasons. These are computed for each scroll begin.
   enum : uint32_t { kNonFastScrollableRegion = 1 << 5 };
@@ -31,7 +33,7 @@ struct MainThreadScrollingReason {
   enum : uint32_t { kPageBasedScrolling = 1 << 12 };
 
   // The number of flags in this struct (excluding itself).
-  enum : uint32_t { kMainThreadScrollingReasonCount = 15 };
+  enum : uint32_t { kMainThreadScrollingReasonCount = 17 };
 
   // Returns true if the given MainThreadScrollingReason can be set by the main
   // thread.
@@ -39,7 +41,8 @@ struct MainThreadScrollingReason {
     uint32_t reasons_set_by_main_thread =
         kNotScrollingOnMain | kHasBackgroundAttachmentFixedObjects |
         kHasNonLayerViewportConstrainedObjects | kThreadedScrollingDisabled |
-        kScrollbarScrolling | kPageOverlay | kAnimatingScrollOnMainThread;
+        kScrollbarScrolling | kPageOverlay | kAnimatingScrollOnMainThread |
+        kHasStickyPositionObjects | kCustomScrollbarScrolling;
     return (reasons & reasons_set_by_main_thread) == reasons;
   }
 

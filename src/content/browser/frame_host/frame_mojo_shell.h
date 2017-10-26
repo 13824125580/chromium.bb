@@ -5,46 +5,50 @@
 #ifndef CONTENT_BROWSER_FRAME_HOST_FRAME_MOJO_SHELL_H_
 #define CONTENT_BROWSER_FRAME_HOST_FRAME_MOJO_SHELL_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/shell/public/interfaces/shell.mojom.h"
+#include "services/shell/public/interfaces/connector.mojom.h"
+
+namespace shell {
+class InterfaceRegistry;
+}
 
 namespace content {
-
 class RenderFrameHost;
-class ServiceRegistryImpl;
 
-// This provides the |mojo::shell::mojom::Shell| service interface to each
-// frame's ServiceRegistry, giving frames the ability to connect to Mojo
-// applications.
-class FrameMojoShell : public mojo::shell::mojom::Connector {
+// This provides the |shell::mojom::Connector| interface interface to each
+// frame's shell::InterfaceRegistry, giving frames the ability to connect to
+// Mojo services.
+class FrameMojoShell : public shell::mojom::Connector {
  public:
   explicit FrameMojoShell(RenderFrameHost* frame_host);
   ~FrameMojoShell() override;
 
-  void BindRequest(mojo::shell::mojom::ConnectorRequest request);
+  void BindRequest(shell::mojom::ConnectorRequest request);
 
  private:
-  // mojo::Connector:
+  // shell::Connector:
   void Connect(
-      const mojo::String& application_url,
-      uint32_t user_id,
-      mojo::shell::mojom::InterfaceProviderRequest services,
-      mojo::shell::mojom::InterfaceProviderPtr exposed_services,
-      const mojo::shell::mojom::Connector::ConnectCallback& callback) override;
-  void Clone(mojo::shell::mojom::ConnectorRequest request) override;
+      shell::mojom::IdentityPtr target,
+      shell::mojom::InterfaceProviderRequest services,
+      shell::mojom::InterfaceProviderPtr exposed_services,
+      shell::mojom::ClientProcessConnectionPtr client_process_connection,
+      const shell::mojom::Connector::ConnectCallback& callback) override;
+  void Clone(shell::mojom::ConnectorRequest request) override;
 
-  ServiceRegistryImpl* GetServiceRegistry();
+  shell::InterfaceRegistry* GetInterfaceRegistry();
 
   RenderFrameHost* frame_host_;
-  mojo::BindingSet<mojo::shell::mojom::Connector> connectors_;
+  mojo::BindingSet<shell::mojom::Connector> connectors_;
 
-  // ServiceRegistry providing browser services to connected applications.
-  scoped_ptr<ServiceRegistryImpl> service_registry_;
-  mojo::BindingSet<mojo::shell::mojom::InterfaceProvider>
-      service_provider_bindings_;
+  // shell::InterfaceRegistry providing browser interfaces to connected
+  // applications.
+  std::unique_ptr<shell::InterfaceRegistry> interface_registry_;
+  mojo::BindingSet<shell::mojom::InterfaceProvider>
+      interface_provider_bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameMojoShell);
 };

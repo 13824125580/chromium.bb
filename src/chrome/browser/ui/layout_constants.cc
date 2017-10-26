@@ -10,12 +10,11 @@
 
 int GetLayoutConstant(LayoutConstant constant) {
   const int kFindBarVerticalOffset[] = {1, 6, 6};
-  const int kIconLabelViewInternalPadding[] = {3, 2, 2};
-  const int kIconLabelViewTrailingPadding[] = {2, 8, 8};
   const int kLocationBarBorderThickness[] = {2, 1, 1};
   const int kLocationBarBubbleFontVerticalPadding[] = {1, 2, 4};
-  const int kLocationBarBubbleHorizontalPadding[] = {1, 4, 4};
+  const int kLocationBarBubbleHorizontalPadding[] = {1, 0, 0};
   const int kLocationBarBubbleVerticalPadding[] = {1, 3, 3};
+  const int kLocationBarBubbleAnchorVerticalInset[] = {5, 6, 8};
   const int kLocationBarHeight[] = {27, 28, 32};
   const int kLocationBarHorizontalPadding[] = {3, 6, 6};
   const int kLocationBarVerticalPadding[] = {0, 1, 1};
@@ -34,21 +33,17 @@ int GetLayoutConstant(LayoutConstant constant) {
   const int kTabstripNewTabButtonOverlap[] = {11, 5, 6};
   const int kTabstripTabOverlap[] = {26, 16, 16};
 #endif
+  const int kToolbarStandardSpacing[] = {3, 4, 8};
   const int kTabstripToolbarOverlap[] = {3, 0, 0};
   const int kToolbarContentShadowHeight[] = {0, 0, 0};
   const int kToolbarContentShadowHeightAsh[] = {2, 0, 0};
   const int kToolbarElementPadding[] = {0, 0, 8};
   const int kToolbarLocationBarRightPadding[] = {0, 4, 8};
-  const int kToolbarStandardSpacing[] = {3, 4, 8};
 
   const int mode = ui::MaterialDesignController::GetMode();
   switch (constant) {
     case FIND_BAR_TOOLBAR_OVERLAP:
       return kFindBarVerticalOffset[mode];
-    case ICON_LABEL_VIEW_INTERNAL_PADDING:
-      return kIconLabelViewInternalPadding[mode];
-    case ICON_LABEL_VIEW_TRAILING_PADDING:
-      return kIconLabelViewTrailingPadding[mode];
     case LOCATION_BAR_BORDER_THICKNESS:
       return kLocationBarBorderThickness[mode];
     case LOCATION_BAR_BUBBLE_FONT_VERTICAL_PADDING:
@@ -57,6 +52,8 @@ int GetLayoutConstant(LayoutConstant constant) {
       return kLocationBarBubbleHorizontalPadding[mode];
     case LOCATION_BAR_BUBBLE_VERTICAL_PADDING:
       return kLocationBarBubbleVerticalPadding[mode];
+    case LOCATION_BAR_BUBBLE_ANCHOR_VERTICAL_INSET:
+      return kLocationBarBubbleAnchorVerticalInset[mode];
     case LOCATION_BAR_HEIGHT:
       return kLocationBarHeight[mode];
     case LOCATION_BAR_HORIZONTAL_PADDING:
@@ -120,18 +117,12 @@ gfx::Insets GetLayoutInsets(LayoutInset inset) {
     case AVATAR_ICON:
       return gfx::Insets(0, kAvatarLeftPadding[mode],
                          kAvatarBottomPadding[mode], kAvatarRightPadding[mode]);
-    case OMNIBOX_DROPDOWN: {
-      const int padding = kOmniboxDropdownPadding[mode];
-      return gfx::Insets(padding, 0, padding, 0);
-    }
-    case OMNIBOX_DROPDOWN_ICON: {
-      const int padding = kOmniboxDropdownIconPadding[mode];
-      return gfx::Insets(padding, 0, padding, 0);
-    }
-    case OMNIBOX_DROPDOWN_TEXT: {
-      const int padding = kOmniboxDropdownTextPadding[mode];
-      return gfx::Insets(padding, 0, padding, 0);
-    }
+    case OMNIBOX_DROPDOWN:
+      return gfx::Insets(kOmniboxDropdownPadding[mode], 0);
+    case OMNIBOX_DROPDOWN_ICON:
+      return gfx::Insets(kOmniboxDropdownIconPadding[mode], 0);
+    case OMNIBOX_DROPDOWN_TEXT:
+      return gfx::Insets(kOmniboxDropdownTextPadding[mode], 0);
     case TAB:
       return gfx::Insets(kTabTopPadding[mode], kTabLeftPadding[mode],
                          kTabBottomPadding[mode], kTabRightPadding[mode]);
@@ -139,10 +130,8 @@ gfx::Insets GetLayoutInsets(LayoutInset inset) {
       return gfx::Insets(kToolbarTopPadding[mode], kToolbarLeftPadding[mode],
                          kToolbarBottomPadding[mode],
                          kToolbarRightPadding[mode]);
-    case TOOLBAR_BUTTON: {
-      const int inset = kToolbarButtonPadding[mode];
-      return gfx::Insets(inset, inset, inset, inset);
-    }
+    case TOOLBAR_BUTTON:
+      return gfx::Insets(kToolbarButtonPadding[mode]);
   }
   NOTREACHED();
   return gfx::Insets();

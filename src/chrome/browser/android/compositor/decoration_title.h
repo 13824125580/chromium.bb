@@ -7,10 +7,11 @@
 
 #include <jni.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "cc/resources/ui_resource_client.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/transform.h"
 
@@ -26,12 +27,9 @@ class ResourceManager;
 namespace chrome {
 namespace android {
 
-class LayerTitleCache;
-
 class DecorationTitle {
  public:
-  DecorationTitle(LayerTitleCache* layer_title_cache,
-                  ui::ResourceManager* resource_manager,
+  DecorationTitle(ui::ResourceManager* resource_manager,
                   int title_resource_id,
                   int favicon_resource_id,
                   int spinner_resource_id,
@@ -83,11 +81,9 @@ class DecorationTitle {
   bool is_incognito_;
   bool is_rtl_;
   bool is_loading_;
-  scoped_ptr<gfx::Transform> transform_;
+  std::unique_ptr<gfx::Transform> transform_;
 
   ui::ResourceManager* resource_manager_;
-
-  LayerTitleCache* layer_title_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(DecorationTitle);
 };

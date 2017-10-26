@@ -64,8 +64,8 @@
       'sources': [
         'test/error_callback_support.cc',
         'test/error_callback_support.h',
-        'test/scoped_error_ignorer.cc',
-        'test/scoped_error_ignorer.h',
+        'test/scoped_error_expecter.cc',
+        'test/scoped_error_expecter.h',
         'test/test_helpers.cc',
         'test/test_helpers.h',
       ],
@@ -110,6 +110,18 @@
           'dependencies': [
             '../testing/android/native_test.gyp:native_test_native_code',
           ],
+        }],
+        ['OS == "ios"', {
+          'actions': [{
+            'action_name': 'copy_test_data',
+            'variables': {
+              'test_data_files': [
+                'test/data',
+              ],
+              'test_data_prefix' : 'sql',
+            },
+            'includes': [ '../build/copy_test_data_ios.gypi' ],
+          }],
         }],
       ],
       # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.

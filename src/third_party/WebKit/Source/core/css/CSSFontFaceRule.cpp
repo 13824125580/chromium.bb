@@ -36,10 +36,6 @@ CSSFontFaceRule::CSSFontFaceRule(StyleRuleFontFace* fontFaceRule, CSSStyleSheet*
 
 CSSFontFaceRule::~CSSFontFaceRule()
 {
-#if !ENABLE(OILPAN)
-    if (m_propertiesCSSOMWrapper)
-        m_propertiesCSSOMWrapper->clearParentRule();
-#endif
 }
 
 CSSStyleDeclaration* CSSFontFaceRule::style() const
@@ -52,7 +48,7 @@ CSSStyleDeclaration* CSSFontFaceRule::style() const
 String CSSFontFaceRule::cssText() const
 {
     StringBuilder result;
-    result.appendLiteral("@font-face { ");
+    result.append("@font-face { ");
     String descs = m_fontFaceRule->properties().asText();
     result.append(descs);
     if (!descs.isEmpty())

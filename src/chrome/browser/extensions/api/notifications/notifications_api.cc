@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/guid.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -156,14 +157,14 @@ class NotificationsApiDelegate : public NotificationDelegate {
     EventRouter::UserGestureState gesture =
         by_user ? EventRouter::USER_GESTURE_ENABLED
                 : EventRouter::USER_GESTURE_NOT_ENABLED;
-    scoped_ptr<base::ListValue> args(CreateBaseEventArgs());
-    args->Append(new base::FundamentalValue(by_user));
+    std::unique_ptr<base::ListValue> args(CreateBaseEventArgs());
+    args->AppendBoolean(by_user);
     SendEvent(events::NOTIFICATIONS_ON_CLOSED,
               notifications::OnClosed::kEventName, gesture, std::move(args));
   }
 
   void Click() override {
-    scoped_ptr<base::ListValue> args(CreateBaseEventArgs());
+    std::unique_ptr<base::ListValue> args(CreateBaseEventArgs());
     SendEvent(events::NOTIFICATIONS_ON_CLICKED,
               notifications::OnClicked::kEventName,
               EventRouter::USER_GESTURE_ENABLED, std::move(args));
@@ -178,8 +179,8 @@ class NotificationsApiDelegate : public NotificationDelegate {
   }
 
   void ButtonClick(int index) override {
-    scoped_ptr<base::ListValue> args(CreateBaseEventArgs());
-    args->Append(new base::FundamentalValue(index));
+    std::unique_ptr<base::ListValue> args(CreateBaseEventArgs());
+    args->AppendInteger(index);
     SendEvent(events::NOTIFICATIONS_ON_BUTTON_CLICKED,
               notifications::OnButtonClicked::kEventName,
               EventRouter::USER_GESTURE_ENABLED, std::move(args));
@@ -193,11 +194,12 @@ class NotificationsApiDelegate : public NotificationDelegate {
   void SendEvent(events::HistogramValue histogram_value,
                  const std::string& name,
                  EventRouter::UserGestureState user_gesture,
-                 scoped_ptr<base::ListValue> args) {
+                 std::unique_ptr<base::ListValue> args) {
     if (!event_router_)
       return;
 
-    scoped_ptr<Event> event(new Event(histogram_value, name, std::move(args)));
+    std::unique_ptr<Event> event(
+        new Event(histogram_value, name, std::move(args)));
     event->user_gesture = user_gesture;
     event_router_->DispatchEventToExtension(extension_id_, std::move(event));
   }
@@ -207,9 +209,9 @@ class NotificationsApiDelegate : public NotificationDelegate {
     shutdown_notifier_subscription_.reset();
   }
 
-  scoped_ptr<base::ListValue> CreateBaseEventArgs() {
-    scoped_ptr<base::ListValue> args(new base::ListValue());
-    args->Append(new base::StringValue(id_));
+  std::unique_ptr<base::ListValue> CreateBaseEventArgs() {
+    std::unique_ptr<base::ListValue> args(new base::ListValue());
+    args->AppendString(id_);
     return args;
   }
 
@@ -224,7 +226,7 @@ class NotificationsApiDelegate : public NotificationDelegate {
   const std::string id_;
   const std::string scoped_id_;
 
-  scoped_ptr<KeyedServiceShutdownNotifier::Subscription>
+  std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>
       shutdown_notifier_subscription_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationsApiDelegate);
@@ -322,9 +324,9 @@ bool NotificationsApiFunction::CreateNotification(
 
     for (size_t i = 0; i < number_of_buttons; i++) {
       message_center::ButtonInfo info(
-          base::UTF8ToUTF16((*options->buttons)[i]->title));
+          base::UTF8ToUTF16((*options->buttons)[i].title));
       extensions::api::notifications::NotificationBitmap* icon_bitmap_ptr =
-          (*options->buttons)[i]->icon_bitmap.get();
+          (*options->buttons)[i].icon_bitmap.get();
       if (icon_bitmap_ptr) {
         NotificationConversionHelper::NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.button_icon_size, *icon_bitmap_ptr,
@@ -373,12 +375,10 @@ bool NotificationsApiFunction::CreateNotification(
 
   if (has_list_items) {
     using api::notifications::NotificationItem;
-    std::vector<linked_ptr<NotificationItem> >::iterator i;
-    for (i = options->items->begin(); i != options->items->end(); ++i) {
-      message_center::NotificationItem item(
-          base::UTF8ToUTF16(i->get()->title),
-          base::UTF8ToUTF16(i->get()->message));
-      optional_fields.items.push_back(item);
+    for (const NotificationItem& api_item : *options->items) {
+      optional_fields.items.push_back(message_center::NotificationItem(
+          base::UTF8ToUTF16(api_item.title),
+          base::UTF8ToUTF16(api_item.message)));
     }
   }
 
@@ -464,9 +464,9 @@ bool NotificationsApiFunction::UpdateNotification(
     std::vector<message_center::ButtonInfo> buttons;
     for (size_t i = 0; i < number_of_buttons; i++) {
       message_center::ButtonInfo button(
-          base::UTF8ToUTF16((*options->buttons)[i]->title));
+          base::UTF8ToUTF16((*options->buttons)[i].title));
       extensions::api::notifications::NotificationBitmap* icon_bitmap_ptr =
-          (*options->buttons)[i]->icon_bitmap.get();
+          (*options->buttons)[i].icon_bitmap.get();
       if (icon_bitmap_ptr) {
         NotificationConversionHelper::NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.button_icon_size, *icon_bitmap_ptr,
@@ -521,12 +521,10 @@ bool NotificationsApiFunction::UpdateNotification(
 
     std::vector<message_center::NotificationItem> items;
     using api::notifications::NotificationItem;
-    std::vector<linked_ptr<NotificationItem> >::iterator i;
-    for (i = options->items->begin(); i != options->items->end(); ++i) {
-      message_center::NotificationItem item(
-          base::UTF8ToUTF16(i->get()->title),
-          base::UTF8ToUTF16(i->get()->message));
-      items.push_back(item);
+    for (const NotificationItem& api_item : *options->items) {
+      items.push_back(message_center::NotificationItem(
+          base::UTF8ToUTF16(api_item.title),
+          base::UTF8ToUTF16(api_item.message)));
     }
     notification->set_items(items);
   }
@@ -609,7 +607,7 @@ bool NotificationsCreateFunction::RunNotificationsApi() {
       notification_id = base::RandBytesAsString(16);
   }
 
-  SetResult(new base::StringValue(notification_id));
+  SetResult(base::MakeUnique<base::StringValue>(notification_id));
 
   // TODO(dewittj): Add more human-readable error strings if this fails.
   if (!CreateNotification(notification_id, &params_->options))
@@ -637,7 +635,7 @@ bool NotificationsUpdateFunction::RunNotificationsApi() {
           CreateScopedIdentifier(extension_->id(), params_->notification_id),
           NotificationUIManager::GetProfileID(GetProfile()));
   if (!matched_notification) {
-    SetResult(new base::FundamentalValue(false));
+    SetResult(base::MakeUnique<base::FundamentalValue>(false));
     SendResponse(true);
     return true;
   }
@@ -651,7 +649,8 @@ bool NotificationsUpdateFunction::RunNotificationsApi() {
   // TODO(dewittj): Add more human-readable error strings if this fails.
   bool could_update_notification = UpdateNotification(
       params_->notification_id, &params_->options, &notification);
-  SetResult(new base::FundamentalValue(could_update_notification));
+  SetResult(
+      base::MakeUnique<base::FundamentalValue>(could_update_notification));
   if (!could_update_notification)
     return false;
 
@@ -675,7 +674,7 @@ bool NotificationsClearFunction::RunNotificationsApi() {
       CreateScopedIdentifier(extension_->id(), params_->notification_id),
       NotificationUIManager::GetProfileID(GetProfile()));
 
-  SetResult(new base::FundamentalValue(cancel_result));
+  SetResult(base::MakeUnique<base::FundamentalValue>(cancel_result));
   SendResponse(true);
 
   return true;
@@ -692,7 +691,7 @@ bool NotificationsGetAllFunction::RunNotificationsApi() {
       notification_ui_manager->GetAllIdsByProfileAndSourceOrigin(
           NotificationUIManager::GetProfileID(GetProfile()), extension_->url());
 
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
 
   for (std::set<std::string>::iterator iter = notification_ids.begin();
        iter != notification_ids.end(); iter++) {
@@ -700,7 +699,7 @@ bool NotificationsGetAllFunction::RunNotificationsApi() {
         StripScopeFromIdentifier(extension_->id(), *iter), true);
   }
 
-  SetResult(result.release());
+  SetResult(std::move(result));
   SendResponse(true);
 
   return true;
@@ -722,7 +721,8 @@ bool NotificationsGetPermissionLevelFunction::RunNotificationsApi() {
           ? api::notifications::PERMISSION_LEVEL_GRANTED
           : api::notifications::PERMISSION_LEVEL_DENIED;
 
-  SetResult(new base::StringValue(api::notifications::ToString(result)));
+  SetResult(base::MakeUnique<base::StringValue>(
+      api::notifications::ToString(result)));
   SendResponse(true);
 
   return true;

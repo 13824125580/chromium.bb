@@ -51,17 +51,17 @@ void DOMWindowFileSystem::webkitRequestFileSystem(DOMWindow& windowArg, int type
     if (!document)
         return;
 
-    if (SchemeRegistry::schemeShouldBypassContentSecurityPolicy(document->securityOrigin()->protocol()))
+    if (SchemeRegistry::schemeShouldBypassContentSecurityPolicy(document->getSecurityOrigin()->protocol()))
         UseCounter::count(document, UseCounter::RequestFileSystemNonWebbyOrigin);
 
-    if (!document->securityOrigin()->canAccessFileSystem()) {
-        DOMFileSystem::scheduleCallback(document, errorCallback, FileError::create(FileError::SECURITY_ERR));
+    if (!document->getSecurityOrigin()->canAccessFileSystem()) {
+        DOMFileSystem::reportError(document, errorCallback, FileError::create(FileError::SECURITY_ERR));
         return;
     }
 
     FileSystemType fileSystemType = static_cast<FileSystemType>(type);
     if (!DOMFileSystemBase::isValidType(fileSystemType)) {
-        DOMFileSystem::scheduleCallback(document, errorCallback, FileError::create(FileError::INVALID_MODIFICATION_ERR));
+        DOMFileSystem::reportError(document, errorCallback, FileError::create(FileError::INVALID_MODIFICATION_ERR));
         return;
     }
 
@@ -78,15 +78,15 @@ void DOMWindowFileSystem::webkitResolveLocalFileSystemURL(DOMWindow& windowArg, 
     if (!document)
         return;
 
-    SecurityOrigin* securityOrigin = document->securityOrigin();
+    SecurityOrigin* securityOrigin = document->getSecurityOrigin();
     KURL completedURL = document->completeURL(url);
     if (!securityOrigin->canAccessFileSystem() || !securityOrigin->canRequest(completedURL)) {
-        DOMFileSystem::scheduleCallback(document, errorCallback, FileError::create(FileError::SECURITY_ERR));
+        DOMFileSystem::reportError(document, errorCallback, FileError::create(FileError::SECURITY_ERR));
         return;
     }
 
     if (!completedURL.isValid()) {
-        DOMFileSystem::scheduleCallback(document, errorCallback, FileError::create(FileError::ENCODING_ERR));
+        DOMFileSystem::reportError(document, errorCallback, FileError::create(FileError::ENCODING_ERR));
         return;
     }
 

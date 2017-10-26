@@ -38,6 +38,7 @@ class RenderViewObserverImpl : public content::RenderViewObserver {
   public:
     RenderViewObserverImpl(content::RenderView* renderView);
     virtual ~RenderViewObserverImpl();
+    void OnDestruct() override;
 
   private:
     DISALLOW_COPY_AND_ASSIGN(RenderViewObserverImpl);

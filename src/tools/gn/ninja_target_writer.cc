@@ -13,7 +13,9 @@
 #include "tools/gn/filesystem_utils.h"
 #include "tools/gn/ninja_action_target_writer.h"
 #include "tools/gn/ninja_binary_target_writer.h"
+#include "tools/gn/ninja_bundle_data_target_writer.h"
 #include "tools/gn/ninja_copy_target_writer.h"
+#include "tools/gn/ninja_create_bundle_target_writer.h"
 #include "tools/gn/ninja_group_target_writer.h"
 #include "tools/gn/ninja_utils.h"
 #include "tools/gn/output_file.h"
@@ -57,7 +59,13 @@ void NinjaTargetWriter::RunAndWriteFile(const Target* target) {
   std::stringstream file;
 
   // Call out to the correct sub-type of writer.
-  if (target->output_type() == Target::COPY_FILES) {
+  if (target->output_type() == Target::BUNDLE_DATA) {
+    NinjaBundleDataTargetWriter writer(target, file);
+    writer.Run();
+  } else if (target->output_type() == Target::CREATE_BUNDLE) {
+    NinjaCreateBundleTargetWriter writer(target, file);
+    writer.Run();
+  } else if (target->output_type() == Target::COPY_FILES) {
     NinjaCopyTargetWriter writer(target, file);
     writer.Run();
   } else if (target->output_type() == Target::ACTION ||
@@ -157,9 +165,13 @@ OutputFile NinjaTargetWriter::WriteInputDepsStampAndGetDep(
       target_->output_type() == Target::ACTION_FOREACH)
     input_deps_sources.push_back(&target_->action_values().script());
 
-  // Input files.
-  for (const auto& input : target_->inputs())
-    input_deps_sources.push_back(&input);
+  // Input files are only considered for non-binary targets which use an
+  // implicit dependency instead. The implicit depedency in this case is
+  // handled separately by the binary target writer.
+  if (!target_->IsBinary()) {
+    for (const auto& input : target_->inputs())
+      input_deps_sources.push_back(&input);
+  }
 
   // For an action (where we run a script only once) the sources are the same
   // as the inputs. For action_foreach, the sources will be operated on

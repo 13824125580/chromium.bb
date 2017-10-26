@@ -41,6 +41,10 @@ AURA_EXPORT extern const WindowProperty<bool>* const kConstrainedWindowKey;
 // attention.
 AURA_EXPORT extern const aura::WindowProperty<bool>* const kDrawAttentionKey;
 
+// A property key to indicate that a window should be excluded from the most
+// recently used windows list.
+AURA_EXPORT extern const aura::WindowProperty<bool>* const kExcludeFromMruKey;
+
 // A property key to store the host window of a window. This lets
 // WebContentsViews find the windows that should constrain NPAPI plugins.
 AURA_EXPORT extern const WindowProperty<Window*>* const kHostWindowKey;
@@ -60,6 +64,12 @@ AURA_EXPORT extern const WindowProperty<ui::WindowShowState>* const
 // See ui/base/ui_base_types.h for its definition.
 AURA_EXPORT extern const WindowProperty<ui::WindowShowState>* const
     kShowStateKey;
+
+// The inset of the topmost view in the client view from the top of the
+// non-client view. The topmost view depends on the window type. The topmost
+// view is the tab strip for tabbed browser windows, the toolbar for popups,
+// the web contents for app windows and varies for fullscreen windows.
+AURA_EXPORT extern const aura::WindowProperty<int>* const kTopViewInset;
 
 // Alphabetical sort.
 

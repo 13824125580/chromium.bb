@@ -6,20 +6,18 @@
 #define InspectorAccessibilityAgent_h
 
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/Accessibility.h"
 #include "modules/ModulesExport.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
+class InspectorDOMAgent;
 class Page;
 
-class MODULES_EXPORT InspectorAccessibilityAgent : public InspectorBaseAgent<InspectorAccessibilityAgent, protocol::Frontend::Accessibility>, public protocol::Dispatcher::AccessibilityCommandHandler {
+class MODULES_EXPORT InspectorAccessibilityAgent : public InspectorBaseAgent<protocol::Accessibility::Metainfo> {
     WTF_MAKE_NONCOPYABLE(InspectorAccessibilityAgent);
 public:
-    static PassOwnPtrWillBeRawPtr<InspectorAccessibilityAgent> create(Page* page)
-    {
-        return adoptPtrWillBeNoop(new InspectorAccessibilityAgent(page));
-    }
+    InspectorAccessibilityAgent(Page*, InspectorDOMAgent*);
 
     // Base agent methods.
     DECLARE_VIRTUAL_TRACE();
@@ -28,9 +26,8 @@ public:
     void getAXNode(ErrorString*, int nodeId, Maybe<protocol::Accessibility::AXNode>* accessibilityNode) override;
 
 private:
-    explicit InspectorAccessibilityAgent(Page*);
-
-    RawPtrWillBeMember<Page> m_page;
+    Member<Page> m_page;
+    Member<InspectorDOMAgent> m_domAgent;
 };
 
 } // namespace blink

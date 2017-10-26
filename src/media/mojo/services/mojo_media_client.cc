@@ -4,6 +4,12 @@
 
 #include "media/mojo/services/mojo_media_client.h"
 
+#include "base/single_thread_task_runner.h"
+#include "media/base/audio_decoder.h"
+#include "media/base/cdm_factory.h"
+#include "media/base/renderer_factory.h"
+#include "media/base/video_decoder.h"
+
 namespace media {
 
 MojoMediaClient::MojoMediaClient() {}
@@ -12,7 +18,19 @@ MojoMediaClient::~MojoMediaClient() {}
 
 void MojoMediaClient::Initialize() {}
 
-scoped_ptr<RendererFactory> MojoMediaClient::CreateRendererFactory(
+void MojoMediaClient::WillQuit() {}
+
+std::unique_ptr<AudioDecoder> MojoMediaClient::CreateAudioDecoder(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  return nullptr;
+}
+
+std::unique_ptr<VideoDecoder> MojoMediaClient::CreateVideoDecoder(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  return nullptr;
+}
+
+std::unique_ptr<RendererFactory> MojoMediaClient::CreateRendererFactory(
     const scoped_refptr<MediaLog>& media_log) {
   return nullptr;
 }
@@ -26,8 +44,8 @@ VideoRendererSink* MojoMediaClient::CreateVideoRendererSink(
   return nullptr;
 }
 
-scoped_ptr<CdmFactory> MojoMediaClient::CreateCdmFactory(
-    mojo::shell::mojom::InterfaceProvider* interface_provider) {
+std::unique_ptr<CdmFactory> MojoMediaClient::CreateCdmFactory(
+    shell::mojom::InterfaceProvider* interface_provider) {
   return nullptr;
 }
 

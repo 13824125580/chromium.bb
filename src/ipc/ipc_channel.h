@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -126,11 +127,12 @@ class IPC_EXPORT Channel : public Endpoint {
   // Each mode has its own Create*() API to create the Channel object.
   //
   // TODO(morrita): Replace CreateByModeForProxy() with one of above Create*().
-  static scoped_ptr<Channel> Create(const IPC::ChannelHandle& channel_handle,
-                                    Mode mode,
-                                    Listener* listener);
+  static std::unique_ptr<Channel> Create(
+      const IPC::ChannelHandle& channel_handle,
+      Mode mode,
+      Listener* listener);
 
-  static scoped_ptr<Channel> CreateClient(
+  static std::unique_ptr<Channel> CreateClient(
       const IPC::ChannelHandle& channel_handle,
       Listener* listener);
 
@@ -139,21 +141,21 @@ class IPC_EXPORT Channel : public Endpoint {
   // from other processes. Named channels work via named unix domain sockets.
   // On Windows MODE_NAMED_SERVER is equivalent to MODE_SERVER and
   // MODE_NAMED_CLIENT is equivalent to MODE_CLIENT.
-  static scoped_ptr<Channel> CreateNamedServer(
+  static std::unique_ptr<Channel> CreateNamedServer(
       const IPC::ChannelHandle& channel_handle,
       Listener* listener);
-  static scoped_ptr<Channel> CreateNamedClient(
+  static std::unique_ptr<Channel> CreateNamedClient(
       const IPC::ChannelHandle& channel_handle,
       Listener* listener);
 #if defined(OS_POSIX)
   // An "open" named server accepts connections from ANY client.
   // The caller must then implement their own access-control based on the
   // client process' user Id.
-  static scoped_ptr<Channel> CreateOpenNamedServer(
+  static std::unique_ptr<Channel> CreateOpenNamedServer(
       const IPC::ChannelHandle& channel_handle,
       Listener* listener);
 #endif
-  static scoped_ptr<Channel> CreateServer(
+  static std::unique_ptr<Channel> CreateServer(
       const IPC::ChannelHandle& channel_handle,
       Listener* listener);
 
@@ -164,6 +166,9 @@ class IPC_EXPORT Channel : public Endpoint {
   // connect to a pre-existing pipe.  Note, calling Connect()
   // will not block the calling thread and may complete
   // asynchronously.
+  //
+  // The subclass implementation must call WillConnect() at the beginning of its
+  // implementation.
   virtual bool Connect() WARN_UNUSED_RESULT = 0;
 
   // Close this Channel explicitly.  May be called multiple times.
@@ -218,11 +223,23 @@ class IPC_EXPORT Channel : public Endpoint {
   static std::string GenerateVerifiedChannelID(const std::string& prefix);
 #endif
 
+  // Generates a pair of channel handles that can be used as the client and
+  // server ends of a ChannelMojo. |name_postfix| is appended to the end of the
+  // handle name to help identify the handles.
+  //
+  // Note, when using ChannelMojo, |ChannelHandle::name| serves no functional
+  // purpose other than to identify the channel in logging.
+  static void GenerateMojoChannelHandlePair(
+      const std::string& name_postfix,
+      IPC::ChannelHandle* handle0,
+      IPC::ChannelHandle* handle1);
+
 #if defined(OS_LINUX)
   // Sandboxed processes live in a PID namespace, so when sending the IPC hello
   // message from client to server we need to send the PID from the global
   // PID namespace.
   static void SetGlobalPid(int pid);
+  static int GetGlobalPid();
 #endif
 
 #if defined(OS_ANDROID)
@@ -249,10 +266,20 @@ class IPC_EXPORT Channel : public Endpoint {
     Message* get_message() const { return message_.get(); }
 
    private:
-    scoped_ptr<Message> message_;
+    std::unique_ptr<Message> message_;
     void* buffer_;
     size_t length_;
   };
+
+  // Endpoint overrides.
+  void OnSetAttachmentBrokerEndpoint() override;
+
+  // Subclasses must call this method at the beginning of their implementation
+  // of Connect().
+  void WillConnect();
+
+ private:
+  bool did_start_connect_ = false;
 };
 
 #if defined(OS_POSIX)

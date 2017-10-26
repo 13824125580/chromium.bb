@@ -4,9 +4,8 @@
 
 #include "ash/shelf/app_list_shelf_item_delegate.h"
 
-#include "ash/shelf/shelf_model.h"
+#include "ash/common/shelf/shelf_model.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
 #include "grit/ash_strings.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -46,13 +45,6 @@ base::string16 AppListShelfItemDelegate::GetTitle() {
   return l10n_util::GetStringUTF16(title_id);
 }
 
-ui::MenuModel* AppListShelfItemDelegate::CreateContextMenu(
-    aura::Window* root_window) {
-  return Shell::GetInstance()->delegate()->CreateContextMenu(root_window,
-                                                             NULL,
-                                                             NULL);
-}
-
 ShelfMenuModel* AppListShelfItemDelegate::CreateApplicationMenu(
     int event_flags) {
   // AppList does not show an application menu.
@@ -71,7 +63,6 @@ bool AppListShelfItemDelegate::ShouldShowTooltip() {
   return true;
 }
 
-void AppListShelfItemDelegate::Close() {
-}
+void AppListShelfItemDelegate::Close() {}
 
 }  // namespace ash

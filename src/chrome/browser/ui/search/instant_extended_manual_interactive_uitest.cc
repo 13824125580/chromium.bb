@@ -9,11 +9,8 @@
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search/search.h"
-#include "chrome/browser/task_manager/task_manager.h"
-#include "chrome/browser/task_manager/task_manager_browsertest_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/search/instant_test_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/search_types.h"
@@ -21,7 +18,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/omnibox/browser/omnibox_view.h"
+#include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
 #include "components/search/search.h"
 #include "content/public/browser/navigation_controller.h"
@@ -92,8 +89,9 @@ class InstantExtendedManualTest : public InProcessBrowserTest,
 
  private:
   scoped_refptr<net::RuleBasedHostResolverProc> host_resolver_proc_;
-  scoped_ptr<net::ScopedDefaultHostResolverProc> scoped_host_resolver_proc_;
-  scoped_ptr<net::NetworkChangeNotifier::DisableForTest>
+  std::unique_ptr<net::ScopedDefaultHostResolverProc>
+      scoped_host_resolver_proc_;
+  std::unique_ptr<net::NetworkChangeNotifier::DisableForTest>
       disable_network_change_notifier_;
 };
 

@@ -27,6 +27,7 @@
 #include "base/base_paths_android.h"
 #include "base/command_line.h"
 #include "base/files/scoped_file.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "components/cdm/browser/cdm_message_filter_android.h"
 #include "components/crash/content/browser/crash_micro_dump_manager_android.h"
@@ -36,6 +37,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/geolocation_delegate.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -159,6 +161,19 @@ class AwAccessTokenStore : public content::AccessTokenStore {
   DISALLOW_COPY_AND_ASSIGN(AwAccessTokenStore);
 };
 
+// A provider of Geolocation services to override AccessTokenStore.
+class AwGeolocationDelegate : public content::GeolocationDelegate {
+ public:
+  AwGeolocationDelegate() = default;
+
+  content::AccessTokenStore* CreateAccessTokenStore() final {
+    return new AwAccessTokenStore();
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(AwGeolocationDelegate);
+};
+
 AwLocaleManager* g_locale_manager = NULL;
 
 }  // anonymous namespace
@@ -231,30 +246,6 @@ void AwContentBrowserClient::RenderProcessWillLaunch(
   host->AddFilter(new AwPrintingMessageFilter(host->GetID()));
 }
 
-net::URLRequestContextGetter* AwContentBrowserClient::CreateRequestContext(
-    content::BrowserContext* browser_context,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  DCHECK_EQ(browser_context_.get(), browser_context);
-  return browser_context_->CreateRequestContext(
-      protocol_handlers, std::move(request_interceptors));
-}
-
-net::URLRequestContextGetter*
-AwContentBrowserClient::CreateRequestContextForStoragePartition(
-    content::BrowserContext* browser_context,
-    const base::FilePath& partition_path,
-    bool in_memory,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  DCHECK_EQ(browser_context_.get(), browser_context);
-  // TODO(mkosiba,kinuko): request_interceptors should be hooked up in the
-  // downstream. (crbug.com/350286)
-  return browser_context_->CreateRequestContextForStoragePartition(
-      partition_path, in_memory, protocol_handlers,
-      std::move(request_interceptors));
-}
-
 bool AwContentBrowserClient::IsHandledURL(const GURL& url) {
   if (!url.is_valid()) {
     // We handle error cases.
@@ -300,14 +291,6 @@ void AwContentBrowserClient::AppendExtraCommandLineSwitches(
     // The only kind of a child process WebView can have is renderer.
     DCHECK_EQ(switches::kRendererProcess,
               command_line->GetSwitchValueASCII(switches::kProcessType));
-
-    const base::CommandLine& browser_command_line =
-        *base::CommandLine::ForCurrentProcess();
-    static const char* const kCommonSwitchNames[] = {
-      switches::kDisablePageVisibility,
-    };
-    command_line->CopySwitchesFrom(browser_command_line, kCommonSwitchNames,
-                                   arraysize(kCommonSwitchNames));
   }
 }
 
@@ -365,16 +348,6 @@ bool AwContentBrowserClient::AllowSetCookie(const GURL& url,
                                                              options);
 }
 
-bool AwContentBrowserClient::AllowWorkerDatabase(
-    const GURL& url,
-    const base::string16& name,
-    const base::string16& display_name,
-    content::ResourceContext* context,
-    const std::vector<std::pair<int, int> >& render_frames) {
-  // Android WebView does not yet support web workers.
-  return false;
-}
-
 void AwContentBrowserClient::AllowWorkerFileSystem(
     const GURL& url,
     content::ResourceContext* context,
@@ -425,7 +398,7 @@ void AwContentBrowserClient::AllowCertificateError(
 void AwContentBrowserClient::SelectClientCertificate(
     content::WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
-    scoped_ptr<content::ClientCertificateDelegate> delegate) {
+    std::unique_ptr<content::ClientCertificateDelegate> delegate) {
   AwContentsClientBridgeBase* client =
       AwContentsClientBridgeBase::FromWebContents(web_contents);
   if (client)
@@ -469,8 +442,9 @@ net::NetLog* AwContentBrowserClient::GetNetLog() {
   return browser_context_->GetAwURLRequestContext()->GetNetLog();
 }
 
-content::AccessTokenStore* AwContentBrowserClient::CreateAccessTokenStore() {
-  return new AwAccessTokenStore();
+content::GeolocationDelegate*
+AwContentBrowserClient::CreateGeolocationDelegate() {
+  return new AwGeolocationDelegate();
 }
 
 bool AwContentBrowserClient::IsFastShutdownPossible() {
@@ -486,8 +460,7 @@ bool AwContentBrowserClient::IsFastShutdownPossible() {
 }
 
 void AwContentBrowserClient::ClearCache(content::RenderFrameHost* rfh) {
-  RemoveHttpDiskCache(rfh->GetProcess()->GetBrowserContext(),
-                      rfh->GetProcess()->GetID());
+  RemoveHttpDiskCache(rfh->GetProcess());
 }
 
 void AwContentBrowserClient::ClearCookies(content::RenderFrameHost* rfh) {
@@ -523,6 +496,13 @@ bool AwContentBrowserClient::AllowPepperSocketAPI(
   return false;
 }
 
+bool AwContentBrowserClient::IsPepperVpnProviderAPIAllowed(
+    content::BrowserContext* browser_context,
+    const GURL& url) {
+  NOTREACHED() << "Android WebView does not support plugins";
+  return false;
+}
+
 void AwContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
@@ -548,8 +528,8 @@ void AwContentBrowserClient::OverrideWebkitPrefs(
     content::RenderViewHost* rvh,
     content::WebPreferences* web_prefs) {
   if (!preferences_populater_.get()) {
-    preferences_populater_ = make_scoped_ptr(native_factory_->
-        CreateWebPreferencesPopulater());
+    preferences_populater_ =
+        base::WrapUnique(native_factory_->CreateWebPreferencesPopulater());
   }
   preferences_populater_->PopulateFor(
       content::WebContents::FromRenderViewHost(rvh), web_prefs);

@@ -5,7 +5,7 @@
 #include "modules/push_messaging/PushController.h"
 
 #include "public/platform/modules/push_messaging/WebPushClient.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/Assertions.h"
 
 namespace blink {
 
@@ -14,17 +14,17 @@ PushController::PushController(WebPushClient* client)
 {
 }
 
-PassOwnPtrWillBeRawPtr<PushController> PushController::create(WebPushClient* client)
+PushController* PushController::create(WebPushClient* client)
 {
-    return adoptPtrWillBeNoop(new PushController(client));
+    return new PushController(client);
 }
 
 WebPushClient& PushController::clientFrom(LocalFrame* frame)
 {
     PushController* controller = PushController::from(frame);
-    ASSERT(controller);
+    DCHECK(controller);
     WebPushClient* client = controller->client();
-    ASSERT(client);
+    DCHECK(client);
     return *client;
 }
 

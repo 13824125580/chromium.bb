@@ -7,12 +7,10 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "ui/gfx/native_pixmap_handle_ozone.h"
+#include "ui/ozone/platform/drm/common/client_native_pixmap_dmabuf.h"
 #include "ui/ozone/public/client_native_pixmap_factory.h"
-
-#if defined(USE_VGEM_MAP)
-#include "ui/ozone/platform/drm/common/client_native_pixmap_vgem.h"
-#endif
 
 namespace ui {
 
@@ -39,27 +37,28 @@ class ClientNativePixmapFactoryGbm : public ClientNativePixmapFactory {
   ~ClientNativePixmapFactoryGbm() override {}
 
   // ClientNativePixmapFactory:
-  void Initialize(base::ScopedFD device_fd) override {
-#if defined(USE_VGEM_MAP)
-    // It's called in IO thread. We rely on clients for thread-safety.
-    // Switching to an IPC message filter ensures thread-safety.
-    DCHECK_LT(vgem_fd_.get(), 0);
-    vgem_fd_ = std::move(device_fd);
-#endif
-  }
   bool IsConfigurationSupported(gfx::BufferFormat format,
                                 gfx::BufferUsage usage) const override {
     switch (usage) {
       case gfx::BufferUsage::GPU_READ:
-      case gfx::BufferUsage::SCANOUT:
-        return format == gfx::BufferFormat::RGBA_8888 ||
+        return format == gfx::BufferFormat::BGR_565 ||
+               format == gfx::BufferFormat::RGBA_8888 ||
                format == gfx::BufferFormat::RGBX_8888 ||
                format == gfx::BufferFormat::BGRA_8888 ||
-               format == gfx::BufferFormat::BGRX_8888;
+               format == gfx::BufferFormat::BGRX_8888 ||
+               format == gfx::BufferFormat::YVU_420;
+      case gfx::BufferUsage::SCANOUT:
+        return format == gfx::BufferFormat::BGRX_8888;
       case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE:
       case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT: {
-#if defined(USE_VGEM_MAP)
-        return vgem_fd_.is_valid() && format == gfx::BufferFormat::BGRA_8888;
+#if defined(OS_CHROMEOS)
+        return
+#if defined(ARCH_CPU_X86_FAMILY)
+            // Currently only Intel driver (i.e. minigbm and Mesa) supports R_8.
+            // crbug.com/356871
+            format == gfx::BufferFormat::R_8 ||
+#endif
+            format == gfx::BufferFormat::BGRA_8888;
 #else
         return false;
 #endif
@@ -68,37 +67,31 @@ class ClientNativePixmapFactoryGbm : public ClientNativePixmapFactory {
     NOTREACHED();
     return false;
   }
-  scoped_ptr<ClientNativePixmap> ImportFromHandle(
+  std::unique_ptr<ClientNativePixmap> ImportFromHandle(
       const gfx::NativePixmapHandle& handle,
       const gfx::Size& size,
       gfx::BufferUsage usage) override {
-    base::ScopedFD scoped_fd(handle.fd.fd);
-
+    DCHECK(!handle.fds.empty());
+    base::ScopedFD scoped_fd(handle.fds[0].fd);
     switch (usage) {
       case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE:
       case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT:
-#if defined(USE_VGEM_MAP)
-        // A valid |vgem_fd_| is required to acquire a VGEM bo. |vgem_fd_| is
-        // set before a widget is created.
-        DCHECK_GE(vgem_fd_.get(), 0);
-        return ClientNativePixmapVgem::ImportFromDmabuf(
-            vgem_fd_.get(), scoped_fd.get(), size, handle.stride);
-#endif
+#if defined(OS_CHROMEOS)
+        // TODO(dcastagna): Add support for pixmaps with multiple FDs for non
+        // scanout buffers.
+        return ClientNativePixmapDmaBuf::ImportFromDmabuf(
+            scoped_fd.release(), size, handle.strides_and_offsets[0].first);
+#else
         NOTREACHED();
         return nullptr;
+#endif
       case gfx::BufferUsage::GPU_READ:
       case gfx::BufferUsage::SCANOUT:
-        return make_scoped_ptr<ClientNativePixmapGbm>(
-            new ClientNativePixmapGbm);
+        return base::WrapUnique(new ClientNativePixmapGbm);
     }
     NOTREACHED();
     return nullptr;
   }
-
- private:
-#if defined(USE_VGEM_MAP)
-  base::ScopedFD vgem_fd_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(ClientNativePixmapFactoryGbm);
 };

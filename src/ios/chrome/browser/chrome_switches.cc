@@ -12,6 +12,9 @@ namespace switches {
 // all work out.
 // -----------------------------------------------------------------------------
 
+// Disables all bookmarks view in bookmark manager.
+const char kDisableAllBookmarksView[] = "disable-all-bookmarks-view";
+
 // Disables Contextual Search.
 const char kDisableContextualSearch[] = "disable-contextual-search";
 
@@ -37,9 +40,6 @@ const char kDisableIOSWKWebView[] = "disable-wkwebview";
 // Disable the snapshots lru cache.
 const char kDisableLRUSnapshotCache[] = "disable-lru-snapshot-cache";
 
-// Disables NTP favicons.
-const char kDisableNTPFavicons[] = "disable-ntp-favicons";
-
 // Disable auto-reload of error pages if offline.
 const char kDisableOfflineAutoReload[] = "disable-offline-auto-reload";
 
@@ -48,6 +48,12 @@ const char kDisableTabEviction[] = "disable-tab-eviction";
 
 // Disables the tab switcher.
 const char kDisableTabSwitcher[] = "disable-tab-switcher";
+
+// Disables Physical Web scanning for nearby URLs.
+const char kDisableIOSPhysicalWeb[] = "disable-ios-physical-web";
+
+// Enables all bookmarks view in bookmark manager.
+const char kEnableAllBookmarksView[] = "enable-all-bookmarks-view";
 
 // Enables Contextual Search.
 const char kEnableContextualSearch[] = "enable-contextual-search";
@@ -77,9 +83,6 @@ const char kEnableIOSWKWebView[] = "enable-wkwebview";
 // Enables the snapshot lru cache.
 const char kEnableLRUSnapshotCache[] = "enable-lru-snapshot-cache";
 
-// Enables NTP favicons.
-const char kEnableNTPFavicons[] = "enable-ntp-favicons";
-
 // Enable auto-reload of error pages if offline.
 const char kEnableOfflineAutoReload[] = "enable-offline-auto-reload";
 
@@ -91,6 +94,9 @@ const char kEnableTabEviction[] = "enable-tab-eviction";
 
 // Enables the tab switcher.
 const char kEnableTabSwitcher[] = "enable-tab-switcher";
+
+// Enables Physical Web scanning for nearby URLs.
+const char kEnableIOSPhysicalWeb[] = "enable-ios-physical-web";
 
 // Forces additional Chrome Variation Ids that will be sent in X-Client-Data
 // header, specified as a 64-bit encoded list of numeric experiment ids. Ids
@@ -117,11 +123,6 @@ const char kIOSIgnoreCertificateErrors[] = "ignore-certificate-errors";
 const char kIOSTestingFixedHttpPort[] = "testing-fixed-http-port";
 const char kIOSTestingFixedHttpsPort[] = "testing-fixed-https-port";
 
-// Disable several subsystems which run network requests in the background.
-// This is for use when doing network performance testing to avoid noise in the
-// measurements.
-const char kDisableBackgroundNetworking[] = "disable-background-networking";
-
 // Enables grouping websites by domain and filtering them by period.
 const char kHistoryEnableGroupByDomain[] = "enable-grouped-history";
 
@@ -129,10 +130,5 @@ const char kHistoryEnableGroupByDomain[] = "enable-grouped-history";
 const char kMarkNonSecureAs[] = "mark-non-secure-as";
 const char kMarkNonSecureAsNeutral[] = "neutral";
 const char kMarkNonSecureAsNonSecure[] = "non-secure";
-
-// If present, safebrowsing only performs update when
-// SafeBrowsingProtocolManager::ForceScheduleNextUpdate() is explicitly called.
-// This is used for testing only.
-const char kSbDisableAutoUpdate[] = "safebrowsing-disable-auto-update";
 
 }  // namespace switches

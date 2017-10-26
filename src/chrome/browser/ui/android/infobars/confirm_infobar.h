@@ -12,7 +12,7 @@
 
 class ConfirmInfoBar : public InfoBarAndroid {
  public:
-  explicit ConfirmInfoBar(scoped_ptr<ConfirmInfoBarDelegate> delegate);
+  explicit ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate);
   ~ConfirmInfoBar() override;
 
  protected:
@@ -20,6 +20,7 @@ class ConfirmInfoBar : public InfoBarAndroid {
   ConfirmInfoBarDelegate* GetDelegate();
   void OnLinkClicked(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& obj) override;
+  base::android::ScopedJavaLocalRef<jobject> GetWindowAndroid();
 
   // InfoBarAndroid overrides.
   base::android::ScopedJavaLocalRef<jobject> CreateRenderInfoBar(

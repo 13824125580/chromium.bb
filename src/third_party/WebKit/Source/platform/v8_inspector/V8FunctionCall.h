@@ -31,35 +31,33 @@
 #ifndef V8FunctionCall_h
 #define V8FunctionCall_h
 
-#include "wtf/Vector.h"
-#include "wtf/text/WTFString.h"
+#include "platform/inspector_protocol/String16.h"
+
 #include <v8.h>
 
 namespace blink {
 
-class V8DebuggerClient;
+class V8DebuggerImpl;
 
 class V8FunctionCall {
-    STACK_ALLOCATED();
 public:
-    V8FunctionCall(V8DebuggerClient*, v8::Local<v8::Context>, v8::Local<v8::Value>, const String& name);
+    V8FunctionCall(V8DebuggerImpl*, v8::Local<v8::Context>, v8::Local<v8::Value>, const String16& name);
 
     void appendArgument(v8::Local<v8::Value>);
-    void appendArgument(const String&);
+    void appendArgument(const String16&);
     void appendArgument(int);
     void appendArgument(bool);
     void appendUndefinedArgument();
 
     v8::Local<v8::Value> call(bool& hadException, bool reportExceptions = true);
-    v8::Local<v8::Value> call();
     v8::Local<v8::Function> function();
     v8::Local<v8::Value> callWithoutExceptionHandling();
     v8::Local<v8::Context> context() { return m_context; }
 
 protected:
-    V8DebuggerClient* m_client;
+    V8DebuggerImpl* m_debugger;
     v8::Local<v8::Context> m_context;
-    Vector<v8::Local<v8::Value>> m_arguments;
+    std::vector<v8::Local<v8::Value>> m_arguments;
     v8::Local<v8::String> m_name;
     v8::Local<v8::Value> m_value;
 };

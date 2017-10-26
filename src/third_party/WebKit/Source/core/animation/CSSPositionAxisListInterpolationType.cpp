@@ -23,6 +23,9 @@ InterpolationValue CSSPositionAxisListInterpolationType::convertPositionAxisCSSV
         return result;
     }
 
+    if (!value.isPrimitiveValue())
+        return nullptr;
+
     const CSSPrimitiveValue& primitveValue = toCSSPrimitiveValue(value);
     if (!primitveValue.isValueID())
         return CSSLengthInterpolationType::maybeConvertCSSValue(value);
@@ -37,7 +40,7 @@ InterpolationValue CSSPositionAxisListInterpolationType::convertPositionAxisCSSV
     case CSSValueCenter:
         return CSSLengthInterpolationType::createInterpolablePercent(50);
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return nullptr;
     }
 }
@@ -52,7 +55,7 @@ InterpolationValue CSSPositionAxisListInterpolationType::maybeConvertValue(const
 
     const CSSValueList& list = toCSSValueList(value);
     return ListInterpolationFunctions::createList(list.length(), [&list](size_t index) {
-        return convertPositionAxisCSSValue(*list.item(index));
+        return convertPositionAxisCSSValue(list.item(index));
     });
 }
 

@@ -12,7 +12,6 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -27,7 +26,7 @@
 #include "ui/gl/gl_switches.h"
 
 #if defined(USE_LIBPCI)
-#include "library_loaders/libpci.h"
+#include "library_loaders/libpci.h"  // nogncheck
 #endif
 
 namespace gpu {
@@ -177,7 +176,7 @@ CollectInfoResult CollectContextGraphicsInfo(GPUInfo* gpu_info) {
     // TODO(zmo): need to consider the case where we are running on top
     // of desktop GL and GL_ARB_robustness extension is available.
     gpu_info->can_lose_context =
-        (gfx::GetGLImplementation() == gfx::kGLImplementationEGLGLES2);
+        (gl::GetGLImplementation() == gl::kGLImplementationEGLGLES2);
 #endif
   }
 

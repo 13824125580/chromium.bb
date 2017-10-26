@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profiles_state.h"
@@ -18,7 +17,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/opaque_browser_frame_view_layout.h"
 #include "chrome/browser/ui/views/frame/opaque_browser_frame_view_platform_specific.h"
-#include "chrome/browser/ui/views/profiles/avatar_menu_button.h"
+#include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
 #include "chrome/browser/ui/views/tab_icon_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
@@ -133,8 +132,6 @@ OpaqueBrowserFrameView::OpaqueBrowserFrameView(BrowserFrame* frame,
   window_title_->set_id(VIEW_ID_WINDOW_TITLE);
   AddChildView(window_title_);
 
-  UpdateAvatar();
-
   platform_observer_.reset(OpaqueBrowserFrameViewPlatformSpecific::Create(
       this, layout_,
       ThemeServiceFactory::GetForProfile(browser_view->browser()->profile())));
@@ -155,9 +152,9 @@ gfx::Rect OpaqueBrowserFrameView::GetBoundsForTabStrip(
 }
 
 int OpaqueBrowserFrameView::GetTopInset(bool restored) const {
-  return browser_view()->IsTabStripVisible() ?
-      layout_->GetTabStripInsetsTop(restored) :
-      layout_->NonClientTopBorderHeight(restored);
+  return browser_view()->IsTabStripVisible()
+             ? layout_->GetTabStripInsetsTop(restored)
+             : layout_->NonClientTopHeight(restored);
 }
 
 int OpaqueBrowserFrameView::GetThemeBackgroundXInset() const {
@@ -191,8 +188,8 @@ gfx::Rect OpaqueBrowserFrameView::GetWindowBoundsForClientBounds(
 
 bool OpaqueBrowserFrameView::IsWithinAvatarMenuButtons(
     const gfx::Point& point) const {
-  if (avatar_button() &&
-     avatar_button()->GetMirroredBounds().Contains(point)) {
+  if (profile_indicator_icon() &&
+      profile_indicator_icon()->GetMirroredBounds().Contains(point)) {
     return true;
   }
   if (profile_switcher_.view() &&
@@ -383,16 +380,12 @@ bool OpaqueBrowserFrameView::ShouldShowCaptionButtons() const {
   return ShouldShowWindowTitleBar();
 }
 
-bool OpaqueBrowserFrameView::ShouldShowAvatar() const {
-  return browser_view()->ShouldShowAvatar();
-}
-
 bool OpaqueBrowserFrameView::IsRegularOrGuestSession() const {
   return browser_view()->IsRegularOrGuestSession();
 }
 
 gfx::ImageSkia OpaqueBrowserFrameView::GetOTRAvatarIcon() const {
-  return browser_view()->GetOTRAvatarIcon();
+  return BrowserNonClientFrameView::GetOTRAvatarIcon();
 }
 
 bool OpaqueBrowserFrameView::IsMaximized() const {
@@ -465,11 +458,11 @@ bool OpaqueBrowserFrameView::ShouldPaintAsThemed() const {
          platform_observer_->IsUsingSystemTheme();
 }
 
-void OpaqueBrowserFrameView::UpdateAvatar() {
+void OpaqueBrowserFrameView::UpdateProfileIcons() {
   if (browser_view()->IsRegularOrGuestSession())
     profile_switcher_.Update(AvatarButtonStyle::THEMED);
   else
-    UpdateOldAvatarButton();
+    UpdateProfileIndicatorIcon();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -573,8 +566,11 @@ bool OpaqueBrowserFrameView::ShouldShowWindowTitleBar() const {
 }
 
 int OpaqueBrowserFrameView::GetTopAreaHeight() const {
-  const gfx::ImageSkia* const frame_image = GetFrameImage();
-  int top_area_height = frame_image->height();
+  // The top area height in dp (only used when there's no frame image).
+  // TODO(pkasting): investigate removing this constant. See crbug.com/590301
+  const int kHeight = 64;
+  const gfx::ImageSkia frame_image = GetFrameImage();
+  int top_area_height = frame_image.isNull() ? kHeight : frame_image.height();
   if (browser_view()->IsTabStripVisible()) {
     top_area_height =
         std::max(top_area_height,
@@ -660,9 +656,8 @@ void OpaqueBrowserFrameView::PaintToolbarBackground(gfx::Canvas* canvas) const {
     canvas->sk_canvas()->clipRect(gfx::RectToSkRect(tabstrip_bounds),
                                   SkRegion::kDifference_Op);
     separator_rect.set_y(tabstrip_bounds.bottom());
-    BrowserView::Paint1pxHorizontalLine(
-        canvas, tp->GetColor(ThemeProperties::COLOR_TOOLBAR_TOP_SEPARATOR),
-        separator_rect, true);
+    BrowserView::Paint1pxHorizontalLine(canvas, GetToolbarTopSeparatorColor(),
+                                        separator_rect, true);
 
     // Toolbar/content separator.
     toolbar_bounds.Inset(kClientEdgeThickness, 0);
@@ -755,10 +750,8 @@ void OpaqueBrowserFrameView::PaintClientEdge(gfx::Canvas* canvas) const {
                           client_bounds.height());
 
       // Shadow.
-      BrowserView::Paint1pxHorizontalLine(
-          canvas, ThemeProperties::GetDefaultColor(
-                      ThemeProperties::COLOR_TOOLBAR_TOP_SEPARATOR, incognito),
-          client_bounds, true);
+      BrowserView::Paint1pxHorizontalLine(canvas, GetToolbarTopSeparatorColor(),
+                                          client_bounds, true);
     } else {
       // Ensure the client edge rects are drawn to the top of the location bar.
       img_y_offset = kClientEdgeThickness;

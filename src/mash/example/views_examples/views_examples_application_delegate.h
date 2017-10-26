@@ -5,29 +5,46 @@
 #ifndef MASH_EXAMPLE_VIEWS_EXAMPLES_APPLICATION_DELEGATE_H_
 #define MASH_EXAMPLE_VIEWS_EXAMPLES_APPLICATION_DELEGATE_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "mojo/services/tracing/public/cpp/tracing_impl.h"
-#include "mojo/shell/public/cpp/shell_client.h"
+#include "mash/public/interfaces/launchable.mojom.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/shell/public/cpp/shell_client.h"
+#include "services/tracing/public/cpp/tracing_impl.h"
 
 namespace views {
 class AuraInit;
+class WindowManagerConnection;
 }
 
-class ViewsExamplesApplicationDelegate : public mojo::ShellClient {
+class ViewsExamplesApplicationDelegate
+    : public shell::ShellClient,
+      public mash::mojom::Launchable,
+      public shell::InterfaceFactory<mash::mojom::Launchable> {
  public:
   ViewsExamplesApplicationDelegate();
   ~ViewsExamplesApplicationDelegate() override;
 
  private:
-  // mojo::ShellClient:
-  void Initialize(mojo::Connector* connector, const std::string& url,
-                  uint32_t id, uint32_t user_id) override;
-  bool AcceptConnection(mojo::Connection* connection) override;
+  // shell::ShellClient:
+  void Initialize(shell::Connector* connector,
+                  const shell::Identity& identity,
+                  uint32_t id) override;
+  bool AcceptConnection(shell::Connection* connection) override;
+
+  // mash::mojom::Launchable:
+  void Launch(uint32_t what, mash::mojom::LaunchMode how) override;
+
+  // shell::InterfaceFactory<mash::mojom::Launchable>:
+  void Create(shell::Connection* connection,
+              mash::mojom::LaunchableRequest request) override;
+
+  mojo::BindingSet<mash::mojom::Launchable> bindings_;
 
   mojo::TracingImpl tracing_;
-
-  scoped_ptr<views::AuraInit> aura_init_;
+  std::unique_ptr<views::AuraInit> aura_init_;
+  std::unique_ptr<views::WindowManagerConnection> window_manager_connection_;
 
   DISALLOW_COPY_AND_ASSIGN(ViewsExamplesApplicationDelegate);
 };

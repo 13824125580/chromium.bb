@@ -305,7 +305,7 @@ class OmniboxFieldTrial {
 
   // Returns the number of title words that are allowed to contribute
   // to the topicality score.  Words later in the title are ignored.
-  // Returns 10 as a default if the experiment isn't active.
+  // Returns 20 as a default if the experiment isn't active.
   static size_t HQPNumTitleWordsToAllow();
 
   // ---------------------------------------------------------
@@ -323,17 +323,6 @@ class OmniboxFieldTrial {
   // URL-what-you-typed match when appropriate.  Return true if the experiment
   // isn't active.
   static bool HUPSearchDatabase();
-
-  // ---------------------------------------------------------
-  // For the PreventUWYTDefaultForNonURLInputs experiment that's part of the
-  // bundled omnibox field trial.
-
-  // Returns true if HistoryURL provider should prohibit the URL-what-you-
-  // typed match from being the legal default match for non-URL inputs.
-  // If this behavior is active, some code in AutocompleteInput::Parse() also
-  // gets disabled; this code is unnecessary given the not-allowed-to-be-
-  // default constraint.  Returns false if the experiment isn't active.
-  static bool PreventUWYTDefaultForNonURLInputs();
 
   // ---------------------------------------------------------
   // For the aggressive keyword matching experiment that's part of the bundled

@@ -26,9 +26,9 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -150,7 +150,7 @@ AutomaticRebootManager::SystemEventTimes::SystemEventTimes(
 }
 
 AutomaticRebootManager::AutomaticRebootManager(
-    scoped_ptr<base::TickClock> clock)
+    std::unique_ptr<base::TickClock> clock)
     : clock_(std::move(clock)),
       have_boot_time_(false),
       have_update_reboot_needed_time_(false),

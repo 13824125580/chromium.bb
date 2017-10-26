@@ -26,11 +26,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import unittest
 
 from webkitpy.layout_tests.port import mac
 from webkitpy.layout_tests.port import port_testcase
-from webkitpy.tool.mocktool import MockOptions
+from webkitpy.tool.mock_tool import MockOptions
 
 
 class MacPortTest(port_testcase.PortTestCase):
@@ -58,7 +57,8 @@ class MacPortTest(port_testcase.PortTestCase):
 
         # Test that we prefer the legacy dir over the new dir.
         options = MockOptions(configuration='Release', build_directory=None)
-        self.assert_build_path(options, ['/mock-checkout/xcodebuild/Release', '/mock-checkout/out/Release'], '/mock-checkout/xcodebuild/Release')
+        self.assert_build_path(options, ['/mock-checkout/xcodebuild/Release',
+                                         '/mock-checkout/out/Release'], '/mock-checkout/xcodebuild/Release')
 
     def test_build_path_timestamps(self):
         options = MockOptions(configuration='Release', build_directory=None)

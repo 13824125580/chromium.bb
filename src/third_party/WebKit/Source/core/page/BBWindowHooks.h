@@ -30,7 +30,7 @@
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
-#include "wtf/ArrayBuffer.h"
+#include "wtf/typed_arrays/ArrayBuffer.h"
 
 namespace blink {
 
@@ -40,11 +40,11 @@ namespace blink {
     class Range;
     class ClientRect;
 
-    class BBWindowHooks : public RefCountedWillBeGarbageCollected<BBWindowHooks>, public ScriptWrappable, public DOMWindowProperty {
+    class BBWindowHooks : public GarbageCollected<BBWindowHooks>, public ScriptWrappable, public DOMWindowProperty {
         DEFINE_WRAPPERTYPEINFO();
-        WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(BBWindowHooks);
+        USING_GARBAGE_COLLECTED_MIXIN(BBWindowHooks);
     public:
-        static PassRefPtrWillBeRawPtr<BBWindowHooks> create(LocalFrame *frame) { return adoptRefWillBeNoop(new BBWindowHooks(frame)); }
+        static BBWindowHooks* create(LocalFrame *frame) { return new BBWindowHooks(frame); }
 
         bool isBlock(Node* node);
         String getPlainText(Node* node, const String& excluder = "", const String& mask = "");
@@ -52,7 +52,8 @@ namespace blink {
         bool checkSpellingForRange(Range* range);
         void removeMarker(Range* range, long mask, long removeMarkerFlag);
         void addMarker(Range* range, long markerType);
-        PassRefPtrWillBeRawPtr<Range> findPlainText(Range* range, const String& target, long options);
+        void addHighlightMarker(Range* range, long foregroundColor, long backgroundColor);
+        Range* findPlainText(Range* range, const String& target, long options);
         bool checkSpellingForNode(Node* node);
         ClientRect* getAbsoluteCaretRectAtOffset(Node* node, long offset);
 

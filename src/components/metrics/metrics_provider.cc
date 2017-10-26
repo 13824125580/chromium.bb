@@ -47,7 +47,14 @@ void MetricsProvider::ProvideGeneralMetrics(
     ChromeUserMetricsExtension* uma_proto) {
 }
 
+void MetricsProvider::MergeHistogramDeltas() {
+}
+
 void MetricsProvider::RecordHistogramSnapshots(
+    base::HistogramSnapshotManager* snapshot_manager) {
+}
+
+void MetricsProvider::RecordInitialHistogramSnapshots(
     base::HistogramSnapshotManager* snapshot_manager) {
 }
 

@@ -156,7 +156,7 @@ void P2PSocketHostTcpBase::OnConnected(int result) {
     state_ = STATE_TLS_CONNECTING;
     StartTls();
   } else if (IsPseudoTlsClientSocket(type_)) {
-    scoped_ptr<net::StreamSocket> transport_socket = std::move(socket_);
+    std::unique_ptr<net::StreamSocket> transport_socket = std::move(socket_);
     socket_.reset(
         new jingle_glue::FakeSSLClientSocket(std::move(transport_socket)));
     state_ = STATE_TLS_CONNECTING;
@@ -179,15 +179,19 @@ void P2PSocketHostTcpBase::StartTls() {
   DCHECK_EQ(state_, STATE_TLS_CONNECTING);
   DCHECK(socket_.get());
 
-  scoped_ptr<net::ClientSocketHandle> socket_handle(
+  std::unique_ptr<net::ClientSocketHandle> socket_handle(
       new net::ClientSocketHandle());
   socket_handle->SetSocket(std::move(socket_));
 
-  net::SSLClientSocketContext context;
-  context.cert_verifier = url_context_->GetURLRequestContext()->cert_verifier();
-  context.transport_security_state =
-      url_context_->GetURLRequestContext()->transport_security_state();
-  DCHECK(context.transport_security_state);
+  const net::URLRequestContext* url_request_context =
+      url_context_->GetURLRequestContext();
+  net::SSLClientSocketContext context(
+      url_request_context->cert_verifier(),
+      nullptr, /* TODO(rkn): ChannelIDService is not thread safe. */
+      url_request_context->transport_security_state(),
+      url_request_context->cert_transparency_verifier(),
+      url_request_context->ct_policy_enforcer(),
+      std::string() /* TODO(rsleevi): Ensure a proper unique shard. */);
 
   // Default ssl config.
   const net::SSLConfig ssl_config;
@@ -196,7 +200,7 @@ void P2PSocketHostTcpBase::StartTls() {
   // Calling net::HostPortPair::FromIPEndPoint will crash if the IP address is
   // empty.
   if (!remote_address_.ip_address.address().empty()) {
-      net::HostPortPair::FromIPEndPoint(remote_address_.ip_address);
+    net::HostPortPair::FromIPEndPoint(remote_address_.ip_address);
   } else {
     dest_host_port_pair.set_port(remote_address_.ip_address.port());
   }

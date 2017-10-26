@@ -40,8 +40,83 @@
 #include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/page/ChromeClient.h"
+#include "wtf/Optional.h"
 
 namespace blink {
+
+namespace {
+
+void dispatchCompositionUpdateEvent(LocalFrame& frame, const String& text)
+{
+    Element* target = frame.document()->focusedElement();
+    if (!target)
+        return;
+
+    CompositionEvent* event = CompositionEvent::create(EventTypeNames::compositionupdate, frame.domWindow(), text);
+    target->dispatchEvent(event);
+}
+
+void dispatchCompositionEndEvent(LocalFrame& frame, const String& text)
+{
+    Element* target = frame.document()->focusedElement();
+    if (!target)
+        return;
+
+    CompositionEvent* event = CompositionEvent::create(EventTypeNames::compositionend, frame.domWindow(), text);
+    target->dispatchEvent(event);
+}
+
+// Used to insert/replace text during composition update and confirm composition.
+// Procedure:
+//   1. Fire 'beforeinput' event for (TODO(chongz): deleted composed text) and inserted text
+//   2. Fire 'compositionupdate' event
+//   3. Fire TextEvent and modify DOM
+//   TODO(chongz): 4. Fire 'input' event
+void insertTextDuringCompositionWithEvents(LocalFrame& frame, const String& text, TypingCommand::Options options, TypingCommand::TextCompositionType compositionType)
+{
+    DCHECK(compositionType == TypingCommand::TextCompositionType::TextCompositionUpdate || compositionType == TypingCommand::TextCompositionType::TextCompositionConfirm)
+        << "compositionType should be TextCompositionUpdate or TextCompositionConfirm, but got " << static_cast<int>(compositionType);
+    if (!frame.document())
+        return;
+
+    Element* target = frame.document()->focusedElement();
+    if (!target)
+        return;
+
+    // TODO(chongz): Fire 'beforeinput' for the composed text being replaced/deleted.
+
+    // Only the last confirmed text is cancelable.
+    InputEvent::EventCancelable beforeInputCancelable = (compositionType == TypingCommand::TextCompositionType::TextCompositionUpdate) ? InputEvent::EventCancelable::NotCancelable : InputEvent::EventCancelable::IsCancelable;
+    DispatchEventResult result = dispatchBeforeInputFromComposition(target, InputEvent::InputType::InsertText, text, beforeInputCancelable);
+
+    if (beforeInputCancelable == InputEvent::EventCancelable::IsCancelable && result != DispatchEventResult::NotCanceled)
+        return;
+
+    // 'beforeinput' event handler may destroy document.
+    if (!frame.document())
+        return;
+
+    dispatchCompositionUpdateEvent(frame, text);
+    // 'compositionupdate' event handler may destroy document.
+    if (!frame.document())
+        return;
+
+    switch (compositionType) {
+    case TypingCommand::TextCompositionType::TextCompositionUpdate:
+        TypingCommand::insertText(*frame.document(), text, options, compositionType);
+        break;
+    case TypingCommand::TextCompositionType::TextCompositionConfirm:
+        // TODO(chongz): Use TypingCommand::insertText after TextEvent was removed. (Removed from spec since 2012)
+        // See TextEvent.idl.
+        frame.eventHandler().handleTextInputEvent(text, 0, TextEventInputComposition);
+        break;
+    default:
+        NOTREACHED();
+    }
+    // TODO(chongz): Fire 'input' event.
+}
+
+} // anonymous namespace
 
 InputMethodController::SelectionOffsetsScope::SelectionOffsetsScope(InputMethodController* inputMethodController)
     : m_inputMethodController(inputMethodController)
@@ -56,19 +131,15 @@ InputMethodController::SelectionOffsetsScope::~SelectionOffsetsScope()
 
 // ----------------------------
 
-PassOwnPtrWillBeRawPtr<InputMethodController> InputMethodController::create(LocalFrame& frame)
+InputMethodController* InputMethodController::create(LocalFrame& frame)
 {
-    return adoptPtrWillBeNoop(new InputMethodController(frame));
+    return new InputMethodController(frame);
 }
 
 InputMethodController::InputMethodController(LocalFrame& frame)
     : m_frame(&frame)
     , m_isDirty(false)
     , m_hasComposition(false)
-{
-}
-
-InputMethodController::~InputMethodController()
 {
 }
 
@@ -99,11 +170,6 @@ void InputMethodController::documentDetached()
     m_compositionRange = nullptr;
 }
 
-bool InputMethodController::insertTextForConfirmedComposition(const String& text)
-{
-    return frame().eventHandler().handleTextInputEvent(text, 0, TextEventInputComposition);
-}
-
 void InputMethodController::selectComposition() const
 {
     const EphemeralRange range = compositionEphemeralRange();
@@ -122,25 +188,14 @@ bool InputMethodController::confirmComposition()
     return confirmComposition(composingText());
 }
 
-static void dispatchCompositionEndEvent(LocalFrame& frame, const String& text)
-{
-    // We should send this event before sending a TextEvent as written in
-    // Section 6.2.2 and 6.2.3 of the DOM Event specification.
-    Element* target = frame.document()->focusedElement();
-    if (!target)
-        return;
-
-    RefPtrWillBeRawPtr<CompositionEvent> event =
-        CompositionEvent::create(EventTypeNames::compositionend, frame.domWindow(), text);
-    target->dispatchEvent(event);
-}
-
-bool InputMethodController::confirmComposition(const String& text)
+bool InputMethodController::confirmComposition(const String& text, ConfirmCompositionBehavior confirmBehavior)
 {
     if (!hasComposition())
         return false;
 
-    Editor::RevealSelectionScope revealSelectionScope(&editor());
+    Optional<Editor::RevealSelectionScope> revealSelectionScope;
+    if (confirmBehavior == KeepSelection)
+        revealSelectionScope.emplace(&editor());
 
     // If the composition was set from existing text and didn't change, then
     // there's nothing to do here (and we should avoid doing anything as that
@@ -156,8 +211,6 @@ bool InputMethodController::confirmComposition(const String& text)
     if (frame().selection().isNone())
         return false;
 
-    dispatchCompositionEndEvent(frame(), text);
-
     if (!frame().document())
         return false;
 
@@ -169,7 +222,13 @@ bool InputMethodController::confirmComposition(const String& text)
 
     clear();
 
-    insertTextForConfirmedComposition(text);
+    insertTextDuringCompositionWithEvents(frame(), text, 0, TypingCommand::TextCompositionType::TextCompositionConfirm);
+    // Event handler might destroy document.
+    if (!frame().document())
+        return false;
+
+    // No DOM update after 'compositionend'.
+    dispatchCompositionEndEvent(frame(), text);
 
     return true;
 }
@@ -179,6 +238,10 @@ bool InputMethodController::confirmCompositionOrInsertText(const String& text, C
     if (!hasComposition()) {
         if (!text.length())
             return false;
+
+        if (dispatchBeforeInputInsertText(frame().document()->focusedElement(), text) != DispatchEventResult::NotCanceled)
+            return false;
+
         editor().insertText(text, 0);
         return true;
     }
@@ -188,8 +251,8 @@ bool InputMethodController::confirmCompositionOrInsertText(const String& text, C
         return true;
     }
 
-    if (confirmBehavior != KeepSelection)
-        return confirmComposition();
+    if (confirmBehavior == DoNotKeepSelection)
+        return confirmComposition(composingText(), DoNotKeepSelection);
 
     SelectionOffsetsScope selectionOffsetsScope(this);
     return confirmComposition();
@@ -205,13 +268,22 @@ void InputMethodController::cancelComposition()
     if (frame().selection().isNone())
         return;
 
-    dispatchCompositionEndEvent(frame(), emptyString());
     clear();
-    insertTextForConfirmedComposition(emptyString());
+
+    // TODO(chongz): Update InputType::DeleteComposedCharacter with latest discussion.
+    dispatchBeforeInputFromComposition(frame().document()->focusedElement(), InputEvent::InputType::DeleteComposedCharacter, emptyString(), InputEvent::EventCancelable::NotCancelable);
+    dispatchCompositionUpdateEvent(frame(), emptyString());
+    insertTextDuringCompositionWithEvents(frame(), emptyString(), 0, TypingCommand::TextCompositionType::TextCompositionConfirm);
+    // Event handler might destroy document.
+    if (!frame().document())
+        return;
 
     // An open typing command that disagrees about current selection would cause
     // issues with typing later on.
     TypingCommand::closeTyping(m_frame);
+
+    // No DOM update after 'compositionend'.
+    dispatchCompositionEndEvent(frame(), emptyString());
 }
 
 void InputMethodController::cancelCompositionIfSelectionIsInvalid()
@@ -231,67 +303,66 @@ void InputMethodController::cancelCompositionIfSelectionIsInvalid()
     frame().chromeClient().didCancelCompositionOnSelectionChange();
 }
 
-void InputMethodController::setComposition(const String& text, const Vector<CompositionUnderline>& underlines, unsigned selectionStart, unsigned selectionEnd)
+void InputMethodController::setComposition(const String& text, const Vector<CompositionUnderline>& underlines, int selectionStart, int selectionEnd)
 {
     Editor::RevealSelectionScope revealSelectionScope(&editor());
 
     // Updates styles before setting selection for composition to prevent
     // inserting the previous composition text into text nodes oddly.
     // See https://bugs.webkit.org/show_bug.cgi?id=46868
-    frame().document()->updateLayoutTree();
+    frame().document()->updateStyleAndLayoutTree();
 
     selectComposition();
 
     if (frame().selection().isNone())
         return;
 
-    if (Element* target = frame().document()->focusedElement()) {
-        // Dispatch an appropriate composition event to the focused node.
-        // We check the composition status and choose an appropriate composition event since this
-        // function is used for three purposes:
-        // 1. Starting a new composition.
-        //    Send a compositionstart and a compositionupdate event when this function creates
-        //    a new composition node, i.e.
-        //    !hasComposition() && !text.isEmpty().
-        //    Sending a compositionupdate event at this time ensures that at least one
-        //    compositionupdate event is dispatched.
-        // 2. Updating the existing composition node.
-        //    Send a compositionupdate event when this function updates the existing composition
-        //    node, i.e. hasComposition() && !text.isEmpty().
-        // 3. Canceling the ongoing composition.
-        //    Send a compositionend event when function deletes the existing composition node, i.e.
-        //    !hasComposition() && test.isEmpty().
-        RefPtrWillBeRawPtr<CompositionEvent> event = nullptr;
-        if (!hasComposition()) {
-            // We should send a compositionstart event only when the given text is not empty because this
-            // function doesn't create a composition node when the text is empty.
-            if (!text.isEmpty()) {
-                target->dispatchEvent(CompositionEvent::create(EventTypeNames::compositionstart, frame().domWindow(), frame().selectedText()));
-                event = CompositionEvent::create(EventTypeNames::compositionupdate, frame().domWindow(), text);
-            }
-        } else {
-            if (!text.isEmpty())
-                event = CompositionEvent::create(EventTypeNames::compositionupdate, frame().domWindow(), text);
-            else
-                event = CompositionEvent::create(EventTypeNames::compositionend, frame().domWindow(), text);
+    Element* target = frame().document()->focusedElement();
+    if (!target)
+        return;
+
+    // Dispatch an appropriate composition event to the focused node.
+    // We check the composition status and choose an appropriate composition event since this
+    // function is used for three purposes:
+    // 1. Starting a new composition.
+    //    Send a compositionstart and a compositionupdate event when this function creates
+    //    a new composition node, i.e.
+    //    !hasComposition() && !text.isEmpty().
+    //    Sending a compositionupdate event at this time ensures that at least one
+    //    compositionupdate event is dispatched.
+    // 2. Updating the existing composition node.
+    //    Send a compositionupdate event when this function updates the existing composition
+    //    node, i.e. hasComposition() && !text.isEmpty().
+    // 3. Canceling the ongoing composition.
+    //    Send a compositionend event when function deletes the existing composition node, i.e.
+    //    !hasComposition() && test.isEmpty().
+    if (text.isEmpty()) {
+        if (hasComposition()) {
+            confirmComposition(emptyString());
+            return;
         }
-        if (event.get())
-            target->dispatchEvent(event);
+        // It's weird to call |setComposition()| with empty text outside composition, however some IME
+        // (e.g. Japanese IBus-Anthy) did this, so we simply delete selection without sending extra events.
+        TypingCommand::deleteSelection(*frame().document(), TypingCommand::PreventSpellChecking);
+        return;
     }
 
-    // If text is empty, then delete the old composition here. If text is non-empty, InsertTextCommand::input
-    // will delete the old composition with an optimized replace operation.
-    if (text.isEmpty()) {
-        ASSERT(frame().document());
-        TypingCommand::deleteSelection(*frame().document(), TypingCommand::PreventSpellChecking);
+    // We should send a 'compositionstart' event only when the given text is not empty because this
+    // function doesn't create a composition node when the text is empty.
+    if (!hasComposition()) {
+        target->dispatchEvent(CompositionEvent::create(EventTypeNames::compositionstart, frame().domWindow(), frame().selectedText()));
+        if (!frame().document())
+            return;
     }
+
+    DCHECK(!text.isEmpty());
 
     clear();
 
-    if (text.isEmpty())
+    insertTextDuringCompositionWithEvents(frame(), text, TypingCommand::SelectInsertedText | TypingCommand::PreventSpellChecking, TypingCommand::TextCompositionUpdate);
+    // Event handlers might destroy document.
+    if (!frame().document())
         return;
-    ASSERT(frame().document());
-    TypingCommand::insertText(*frame().document(), text, TypingCommand::SelectInsertedText | TypingCommand::PreventSpellChecking, TypingCommand::TextCompositionUpdate);
 
     // Find out what node has the composition now.
     Position base = mostForwardCaretPosition(frame().selection().base());
@@ -319,10 +390,31 @@ void InputMethodController::setComposition(const String& text, const Vector<Comp
     if (baseNode->layoutObject())
         baseNode->layoutObject()->setShouldDoFullPaintInvalidation();
 
-    unsigned start = std::min(baseOffset + selectionStart, extentOffset);
-    unsigned end = std::min(std::max(start, baseOffset + selectionEnd), extentOffset);
-    RefPtrWillBeRawPtr<Range> selectedRange = Range::create(baseNode->document(), baseNode, start, baseNode, end);
-    frame().selection().setSelectedRange(selectedRange.get(), TextAffinity::Downstream, SelectionDirectionalMode::NonDirectional, NotUserTriggered);
+    // In case of exceeding the left boundary.
+    int selectionOffsetsStart = static_cast<int>(getSelectionOffsets().start());
+    int start = std::max(selectionOffsetsStart + selectionStart, 0);
+    int end = std::max(selectionOffsetsStart + selectionEnd, start);
+
+    Element* rootEditableElement = frame().selection().rootEditableElement();
+    if (!rootEditableElement)
+        return;
+
+    // In case of exceeding the right boundary.
+    // If both |value1| and |value2| exceed right boundary,
+    // PlainTextRange(value1, value2)::createRange() will return a default
+    // value, which is [0,0]. In order to get the correct Position in that case,
+    // we should make sure |value1| is within range at least.
+    const EphemeralRange& startRange = PlainTextRange(0, start).createRange(*rootEditableElement);
+    const EphemeralRange& endRange = PlainTextRange(0, end).createRange(*rootEditableElement);
+
+    // TODO(yabinh): There should be a better way to create |startPosition| and
+    // |endPosition|. But for now, since we can't get |anchorNode| and |offset|,
+    // we can't create the 2 Position objects directly. So we use
+    // PlainTextRange::createRange as a workaround.
+    const Position& startPosition = startRange.endPosition();
+    const Position& endPosition = endRange.endPosition();
+    const EphemeralRange selectedRange(startPosition, endPosition);
+    frame().selection().setSelectedRange(selectedRange, TextAffinity::Downstream, SelectionDirectionalMode::NonDirectional, NotUserTriggered);
 
     if (underlines.isEmpty()) {
         frame().document()->markers().addCompositionMarker(m_compositionRange->startPosition(), m_compositionRange->endPosition(), Color::black, false, LayoutTheme::theme().platformDefaultCompositionBackgroundColor());
@@ -381,7 +473,7 @@ EphemeralRange InputMethodController::compositionEphemeralRange() const
     return EphemeralRange(m_compositionRange.get());
 }
 
-PassRefPtrWillBeRawPtr<Range> InputMethodController::compositionRange() const
+Range* InputMethodController::compositionRange() const
 {
     return hasComposition() ? m_compositionRange : nullptr;
 }
@@ -397,7 +489,7 @@ PlainTextRange InputMethodController::getSelectionOffsets() const
     if (range.isNull())
         return PlainTextRange();
     ContainerNode* editable = frame().selection().rootEditableElementOrTreeScopeRootNode();
-    ASSERT(editable);
+    DCHECK(editable);
     return PlainTextRange::create(*editable, range);
 }
 
@@ -450,6 +542,9 @@ void InputMethodController::extendSelectionAndDelete(int before, int after)
             break;
         ++before;
     } while (frame().selection().start() == frame().selection().end() && before <= static_cast<int>(selectionOffsets.start()));
+    // TODO(chongz): New spec might want to change InputType.
+    // https://github.com/w3c/editing/issues/125#issuecomment-213041256
+    dispatchBeforeInputEditorCommand(m_frame->document()->focusedElement(), InputEvent::InputType::DeleteContent, emptyString(), new RangeVector(1, m_frame->selection().firstRange()));
     TypingCommand::deleteSelection(*frame().document());
 }
 

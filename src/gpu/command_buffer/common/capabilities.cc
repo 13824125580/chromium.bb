@@ -83,7 +83,14 @@ Capabilities::Capabilities()
       timer_queries(false),
       surfaceless(false),
       flips_vertically(false),
+      msaa_is_slow(false),
+      disable_webgl_multisampling_color_mask_usage(false),
+      disable_webgl_rgb_multisampling_usage(false),
+      chromium_image_rgb_emulation(false),
+      emulate_rgb_buffer_with_rgba(false),
       major_version(2),
       minor_version(0) {}
+
+Capabilities::Capabilities(const Capabilities& other) = default;
 
 }  // namespace gpu

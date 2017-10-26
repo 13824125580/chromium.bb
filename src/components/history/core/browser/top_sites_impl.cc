@@ -20,7 +20,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/history/core/browser/history_backend.h"
@@ -217,9 +217,10 @@ void TopSitesImpl::GetMostVisitedURLs(
     if (!loaded_) {
       // A request came in before we finished loading. Store the callback and
       // we'll run it on current thread when we finish loading.
-      pending_callbacks_.push_back(base::Bind(
-          &RunOrPostGetMostVisitedURLsCallback,
-          base::ThreadTaskRunnerHandle::Get(), include_forced_urls, callback));
+      pending_callbacks_.push_back(
+          base::Bind(&RunOrPostGetMostVisitedURLsCallback,
+                     base::RetainedRef(base::ThreadTaskRunnerHandle::Get()),
+                     include_forced_urls, callback));
       return;
     }
     if (include_forced_urls) {
@@ -330,7 +331,7 @@ bool TopSitesImpl::HasBlacklistedItems() const {
 void TopSitesImpl::AddBlacklistedURL(const GURL& url) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  scoped_ptr<base::Value> dummy = base::Value::CreateNullValue();
+  std::unique_ptr<base::Value> dummy = base::Value::CreateNullValue();
   {
     DictionaryPrefUpdate update(pref_service_, kMostVisitedURLsBlacklist);
     base::DictionaryValue* blacklist = update.Get();

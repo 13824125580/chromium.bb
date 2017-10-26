@@ -23,20 +23,20 @@ public:
         Factory() {}
         ~Factory() override {}
 
-        PassOwnPtrWillBeRawPtr<CanvasRenderingContext> create(HTMLCanvasElement*, const CanvasContextCreationAttributes&, Document&) override;
-        CanvasRenderingContext::ContextType contextType() const override { return CanvasRenderingContext::ContextImageBitmap; }
-        void onError(HTMLCanvasElement*, const String& error) override { }
+        CanvasRenderingContext* create(HTMLCanvasElement*, const CanvasContextCreationAttributes&, Document&) override;
+        CanvasRenderingContext::ContextType getContextType() const override { return CanvasRenderingContext::ContextImageBitmap; }
     };
 
     // Script API
-    void transferImageBitmap(ImageBitmap*);
+    void transferFromImageBitmap(ImageBitmap*);
 
     // CanvasRenderingContext implementation
-    ContextType contextType() const override { return CanvasRenderingContext::ContextImageBitmap; }
+    ContextType getContextType() const override { return CanvasRenderingContext::ContextImageBitmap; }
     bool hasAlpha() const override { return m_hasAlpha; }
     void setIsHidden(bool) override { }
     bool isContextLost() const override { return false; }
     bool paint(GraphicsContext&, const IntRect&) override;
+    void setCanvasGetContextResult(RenderingContext&) final;
 
     // TODO(junov): Implement GPU accelerated rendering using a layer bridge
     WebLayer* platformLayer() const override { return nullptr; }

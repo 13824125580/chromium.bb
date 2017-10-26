@@ -30,8 +30,8 @@
 #include "core/layout/svg/SVGMarkerData.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/transforms/AffineTransform.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -78,7 +78,7 @@ public:
     bool hasNonScalingStroke() const { return style()->svgStyle().vectorEffect() == VE_NON_SCALING_STROKE; }
     Path* nonScalingStrokePath(const Path*, const AffineTransform&) const;
     AffineTransform nonScalingStrokeTransform() const;
-    AffineTransform localTransform() const final { return m_localTransform; }
+    AffineTransform localSVGTransform() const final { return m_localTransform; }
 
     virtual const Vector<MarkerPosition>* markerPositions() const { return nullptr; }
 
@@ -91,7 +91,7 @@ public:
     const char* name() const override { return "LayoutSVGShape"; }
 
 protected:
-    void clearPath() { m_path.clear(); }
+    void clearPath() { m_path.reset(); }
     void createPath();
 
     virtual void updateShapeFromElement();
@@ -112,9 +112,7 @@ private:
     bool fillContains(const FloatPoint&, bool requiresFill = true, const WindRule fillRule = RULE_NONZERO);
     bool strokeContains(const FloatPoint&, bool requiresStroke = true);
 
-    const AffineTransform& localToParentTransform() const final { return m_localTransform; }
-    LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject*,
-        const PaintInvalidationState* = nullptr) const override;
+    const AffineTransform& localToSVGParentTransform() const final { return m_localTransform; }
 
     bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectSVGShape || LayoutSVGModelObject::isOfType(type); }
     void layout() final;
@@ -126,7 +124,6 @@ private:
     FloatRect strokeBoundingBox() const final { return m_strokeBoundingBox; }
     FloatRect calculateObjectBoundingBox() const;
     FloatRect calculateStrokeBoundingBox() const;
-    void updatePaintInvalidationBoundingBox();
     void updateLocalTransform();
 
 private:
@@ -134,8 +131,8 @@ private:
     // TODO(fmalita): the Path is now cached in SVGPath; while this additional cache is just a
     // shallow copy, it certainly has a complexity/state management cost (plus allocation & storage
     // overhead) - so we should look into removing it.
-    OwnPtr<Path> m_path;
-    mutable OwnPtr<LayoutSVGShapeRareData> m_rareData;
+    std::unique_ptr<Path> m_path;
+    mutable std::unique_ptr<LayoutSVGShapeRareData> m_rareData;
 
     bool m_needsBoundariesUpdate : 1;
     bool m_needsShapeUpdate : 1;

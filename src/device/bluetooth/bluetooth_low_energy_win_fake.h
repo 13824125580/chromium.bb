@@ -5,66 +5,100 @@
 #ifndef DEVICE_BLUETOOTH_BLUETOOTH_LOW_ENERGY_WIN_FAKE_H_
 #define DEVICE_BLUETOOTH_BLUETOOTH_LOW_ENERGY_WIN_FAKE_H_
 
-#include "device/bluetooth/bluetooth_low_energy_win.h"
-
+#include <memory>
 #include <set>
 #include <unordered_map>
+
+#include "device/bluetooth/bluetooth_low_energy_win.h"
 
 namespace device {
 namespace win {
 
 struct BLEDevice;
-struct BLEGattService;
-struct BLEGattCharacteristic;
-struct BLEGattDescriptor;
+struct GattService;
+struct GattCharacteristic;
+struct GattCharacteristicObserver;
+struct GattDescriptor;
 
 // The key of BLEDevicesMap is the string of the BLE device address.
-typedef std::unordered_map<std::string, scoped_ptr<BLEDevice>> BLEDevicesMap;
-// The key of BLEGattServicesMap, BLEGattCharacteristicsMap and
-// BLEGattDescriptorsMap is the string of the attribute handle.
-typedef std::unordered_map<std::string, scoped_ptr<BLEGattService>>
-    BLEGattServicesMap;
-typedef std::unordered_map<std::string, scoped_ptr<BLEGattCharacteristic>>
-    BLEGattCharacteristicsMap;
-typedef std::unordered_map<std::string, scoped_ptr<BLEGattDescriptor>>
-    BLEGattDescriptorsMap;
+typedef std::unordered_map<std::string, std::unique_ptr<BLEDevice>>
+    BLEDevicesMap;
+// The key of GattServicesMap, GattCharacteristicsMap and GattDescriptorsMap is
+// the string of the attribute handle.
+typedef std::unordered_map<std::string, std::unique_ptr<GattService>>
+    GattServicesMap;
+typedef std::unordered_map<std::string, std::unique_ptr<GattCharacteristic>>
+    GattCharacteristicsMap;
+typedef std::unordered_map<std::string, std::unique_ptr<GattDescriptor>>
+    GattDescriptorsMap;
 // The key of BLEAttributeHandleTable is the string of the BLE device address.
-typedef std::unordered_map<std::string, scoped_ptr<std::set<USHORT>>>
+typedef std::unordered_map<std::string, std::unique_ptr<std::set<USHORT>>>
     BLEAttributeHandleTable;
+// The key of GattCharacteristicObserverTable is GattCharacteristicObserver
+// pointer.
+// Note: The underlying data type of BLUETOOTH_GATT_EVENT_HANDLE is PVOID.
+typedef std::unordered_map<BLUETOOTH_GATT_EVENT_HANDLE,
+                           std::unique_ptr<GattCharacteristicObserver>>
+    GattCharacteristicObserverTable;
 
 struct BLEDevice {
   BLEDevice();
   ~BLEDevice();
-  scoped_ptr<BluetoothLowEnergyDeviceInfo> device_info;
-  BLEGattServicesMap primary_services;
+  std::unique_ptr<BluetoothLowEnergyDeviceInfo> device_info;
+  GattServicesMap primary_services;
+  bool marked_as_deleted;
 };
 
-struct BLEGattService {
-  BLEGattService();
-  ~BLEGattService();
-  scoped_ptr<BTH_LE_GATT_SERVICE> service_info;
-  BLEGattServicesMap included_services;
-  BLEGattCharacteristicsMap included_characteristics;
+struct GattService {
+  GattService();
+  ~GattService();
+  std::unique_ptr<BTH_LE_GATT_SERVICE> service_info;
+  GattServicesMap included_services;
+  GattCharacteristicsMap included_characteristics;
 };
 
-struct BLEGattCharacteristic {
-  BLEGattCharacteristic();
-  ~BLEGattCharacteristic();
-  scoped_ptr<BTH_LE_GATT_CHARACTERISTIC> characteristic_info;
-  scoped_ptr<BTH_LE_GATT_CHARACTERISTIC_VALUE> value;
-  BLEGattDescriptorsMap included_descriptors;
+struct GattCharacteristic {
+  GattCharacteristic();
+  ~GattCharacteristic();
+  std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC> characteristic_info;
+  std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC_VALUE> value;
+  GattDescriptorsMap included_descriptors;
+  std::vector<HRESULT> read_errors;
+  std::vector<HRESULT> write_errors;
+  std::vector<HRESULT> notify_errors;
+  std::vector<BLUETOOTH_GATT_EVENT_HANDLE> observers;
 };
 
-struct BLEGattDescriptor {
-  BLEGattDescriptor();
-  ~BLEGattDescriptor();
-  scoped_ptr<BTH_LE_GATT_DESCRIPTOR> descriptor_info;
-  scoped_ptr<BTH_LE_GATT_DESCRIPTOR_VALUE> value;
+struct GattDescriptor {
+  GattDescriptor();
+  ~GattDescriptor();
+  std::unique_ptr<BTH_LE_GATT_DESCRIPTOR> descriptor_info;
+  std::unique_ptr<BTH_LE_GATT_DESCRIPTOR_VALUE> value;
+};
+
+struct GattCharacteristicObserver {
+  GattCharacteristicObserver();
+  ~GattCharacteristicObserver();
+  PFNBLUETOOTH_GATT_EVENT_CALLBACK callback;
+  PVOID context;
 };
 
 // Fake implementation of BluetoothLowEnergyWrapper. Used for BluetoothTestWin.
 class BluetoothLowEnergyWrapperFake : public BluetoothLowEnergyWrapper {
  public:
+  class Observer {
+   public:
+    Observer() {}
+    ~Observer() {}
+
+    virtual void OnReadGattCharacteristicValue() = 0;
+    virtual void OnWriteGattCharacteristicValue(
+        const PBTH_LE_GATT_CHARACTERISTIC_VALUE value) = 0;
+    virtual void OnStartCharacteristicNotification() = 0;
+    virtual void OnWriteGattDescriptorValue(
+        const std::vector<uint8_t>& value) = 0;
+  };
+
   BluetoothLowEnergyWrapperFake();
   ~BluetoothLowEnergyWrapperFake() override;
 
@@ -82,37 +116,88 @@ class BluetoothLowEnergyWrapperFake : public BluetoothLowEnergyWrapper {
   HRESULT ReadCharacteristicsOfAService(
       base::FilePath& service_path,
       const PBTH_LE_GATT_SERVICE service,
-      scoped_ptr<BTH_LE_GATT_CHARACTERISTIC>* out_included_characteristics,
+      std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC>* out_included_characteristics,
       USHORT* out_counts) override;
+  HRESULT ReadDescriptorsOfACharacteristic(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic,
+      std::unique_ptr<BTH_LE_GATT_DESCRIPTOR>* out_included_descriptors,
+      USHORT* out_counts) override;
+  HRESULT ReadCharacteristicValue(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic,
+      std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC_VALUE>* out_value) override;
+  HRESULT WriteCharacteristicValue(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic,
+      PBTH_LE_GATT_CHARACTERISTIC_VALUE new_value) override;
+  HRESULT RegisterGattEvents(base::FilePath& service_path,
+                             BTH_LE_GATT_EVENT_TYPE type,
+                             PVOID event_parameter,
+                             PFNBLUETOOTH_GATT_EVENT_CALLBACK callback,
+                             PVOID context,
+                             BLUETOOTH_GATT_EVENT_HANDLE* out_handle) override;
+  HRESULT UnregisterGattEvent(
+      BLUETOOTH_GATT_EVENT_HANDLE event_handle) override;
+  HRESULT WriteDescriptorValue(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_DESCRIPTOR descriptor,
+      PBTH_LE_GATT_DESCRIPTOR_VALUE new_value) override;
 
   BLEDevice* SimulateBLEDevice(std::string device_name,
                                BLUETOOTH_ADDRESS device_address);
   BLEDevice* GetSimulatedBLEDevice(std::string device_address);
+  void RemoveSimulatedBLEDevice(std::string device_address);
 
   // Note: |parent_service| may be nullptr to indicate a primary service.
-  BLEGattService* SimulateBLEGattService(BLEDevice* device,
-                                         BLEGattService* parent_service,
-                                         const BTH_LE_UUID& uuid);
+  GattService* SimulateGattService(BLEDevice* device,
+                                   GattService* parent_service,
+                                   const BTH_LE_UUID& uuid);
 
   // Note: |parent_service| may be nullptr to indicate a primary service.
-  void SimulateBLEGattServiceRemoved(BLEDevice* device,
-                                     BLEGattService* parent_service,
-                                     std::string attribute_handle);
+  void SimulateGattServiceRemoved(BLEDevice* device,
+                                  GattService* parent_service,
+                                  std::string attribute_handle);
 
   // Note: |chain_of_att_handle| contains the attribute handles of the services
   // in order from primary service to target service. The last item in
   // |chain_of_att_handle| is the target service's attribute handle.
-  BLEGattService* GetSimulatedGattService(
+  GattService* GetSimulatedGattService(
       BLEDevice* device,
       const std::vector<std::string>& chain_of_att_handle);
-  BLEGattCharacteristic* SimulateBLEGattCharacterisc(
+  GattCharacteristic* SimulateGattCharacterisc(
       std::string device_address,
-      BLEGattService* parent_service,
+      GattService* parent_service,
       const BTH_LE_GATT_CHARACTERISTIC& characteristic);
-  void SimulateBLEGattCharacteriscRemove(BLEGattService* parent_service,
-                                         std::string attribute_handle);
+  void SimulateGattCharacteriscRemove(GattService* parent_service,
+                                      std::string attribute_handle);
+  GattCharacteristic* GetSimulatedGattCharacteristic(
+      GattService* parent_service,
+      std::string attribute_handle);
+  void SimulateGattCharacteristicValue(GattCharacteristic* characteristic,
+                                       const std::vector<uint8_t>& value);
+  void SimulateCharacteristicValueChangeNotification(
+      GattCharacteristic* characteristic);
+  void SimulateGattCharacteristicSetNotifyError(
+      GattCharacteristic* characteristic,
+      HRESULT error);
+  void SimulateGattCharacteristicReadError(GattCharacteristic* characteristic,
+                                           HRESULT error);
+  void SimulateGattCharacteristicWriteError(GattCharacteristic* characteristic,
+                                            HRESULT error);
+  void RememberCharacteristicForSubsequentAction(GattService* parent_service,
+                                                 std::string attribute_handle);
+  void SimulateGattDescriptor(std::string device_address,
+                              GattCharacteristic* characteristic,
+                              const BTH_LE_UUID& uuid);
+  void AddObserver(Observer* observer);
 
  private:
+  // Get simulated characteristic by |service_path| and |characteristic| info.
+  GattCharacteristic* GetSimulatedGattCharacteristic(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic);
+
   // Generate an unique attribute handle on |device_address|.
   USHORT GenerateAUniqueAttributeHandle(std::string device_address);
 
@@ -122,16 +207,16 @@ class BluetoothLowEnergyWrapperFake : public BluetoothLowEnergyWrapper {
   // Generate GATT service device path of the service with
   // |service_attribute_handle|. |resident_device_path| is the BLE device this
   // GATT service belongs to.
-  base::string16 GenerateBLEGattServiceDevicePath(
+  base::string16 GenerateGattServiceDevicePath(
       base::string16 resident_device_path,
       USHORT service_attribute_handle);
 
   // Extract device address from the device |path| generated by
-  // GenerateBLEDevicePath or GenerateBLEGattServiceDevicePath.
+  // GenerateBLEDevicePath or GenerateGattServiceDevicePath.
   base::string16 ExtractDeviceAddressFromDevicePath(base::string16 path);
 
   // Extract service attribute handles from the |path| generated by
-  // GenerateBLEGattServiceDevicePath.
+  // GenerateGattServiceDevicePath.
   std::vector<std::string> ExtractServiceAttributeHandlesFromDevicePath(
       base::string16 path);
 
@@ -142,6 +227,9 @@ class BluetoothLowEnergyWrapperFake : public BluetoothLowEnergyWrapper {
   // Table to store allocated attribute handle for a device.
   BLEAttributeHandleTable attribute_handle_table_;
   BLEDevicesMap simulated_devices_;
+  Observer* observer_;
+  GattCharacteristicObserverTable gatt_characteristic_observers_;
+  GattCharacteristic* remembered_characteristic_;
 };
 
 }  // namespace win

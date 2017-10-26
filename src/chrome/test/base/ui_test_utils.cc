@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
@@ -14,7 +16,6 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,7 +35,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/find_bar/find_notification_details.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
@@ -45,7 +45,7 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
-#include "components/omnibox/browser/omnibox_view.h"
+#include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
@@ -54,9 +54,11 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/geoposition.h"
+#include "content/public/common/resource_request_body.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -142,7 +144,7 @@ bool GetCurrentTabTitle(const Browser* browser, base::string16* title) {
   NavigationEntry* last_entry = web_contents->GetController().GetActiveEntry();
   if (!last_entry)
     return false;
-  title->assign(last_entry->GetTitleForDisplay(std::string()));
+  title->assign(last_entry->GetTitleForDisplay());
   return true;
 }
 
@@ -154,7 +156,12 @@ void NavigateToURL(chrome::NavigateParams* params) {
 void NavigateToURLWithPost(Browser* browser, const GURL& url) {
   chrome::NavigateParams params(browser, url,
                                 ui::PAGE_TRANSITION_FORM_SUBMIT);
+
+  std::string post_data("test=body");
+  params.post_data = content::ResourceRequestBody::CreateFromBytes(
+      post_data.data(), post_data.size());
   params.uses_post = true;
+
   NavigateToURL(&params);
 }
 
@@ -335,7 +342,7 @@ void DownloadURL(Browser* browser, const GURL& download_url) {
 
   content::DownloadManager* download_manager =
       content::BrowserContext::GetDownloadManager(browser->profile());
-  scoped_ptr<content::DownloadTestObserver> observer(
+  std::unique_ptr<content::DownloadTestObserver> observer(
       new content::DownloadTestObserverTerminal(
           download_manager, 1,
           content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_ACCEPT));
@@ -395,10 +402,10 @@ void GetCookies(const GURL& url,
   *value_size = -1;
   if (url.is_valid() && contents) {
     scoped_refptr<net::URLRequestContextGetter> context_getter =
-        contents->GetBrowserContext()->GetRequestContextForRenderProcess(
-            contents->GetRenderProcessHost()->GetID());
-    base::WaitableEvent event(true /* manual reset */,
-                              false /* not initially signaled */);
+        contents->GetRenderProcessHost()->GetStoragePartition()->
+            GetURLRequestContext();
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     CHECK(content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
         base::Bind(&GetCookiesOnIOThread, url, context_getter, &event, value)));

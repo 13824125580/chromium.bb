@@ -4,11 +4,11 @@
 
 #include "ash/display/display_animator_chromeos.h"
 
+#include "ash/common/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "base/bind.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"

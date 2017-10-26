@@ -10,12 +10,12 @@
 #include "core/dom/DOMArrayPiece.h"
 #include "core/dom/DOMDataView.h"
 #include "modules/EventTargetModules.h"
+#include "modules/bluetooth/BluetoothRemoteGATTService.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/bluetooth/WebBluetoothRemoteGATTCharacteristic.h"
 #include "public/platform/modules/bluetooth/WebBluetoothRemoteGATTCharacteristicInit.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -34,22 +34,21 @@ class ScriptState;
 // "Interface required by CallbackPromiseAdapter" section and the
 // CallbackPromiseAdapter class comments.
 class BluetoothRemoteGATTCharacteristic final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<BluetoothRemoteGATTCharacteristic>
+    : public EventTargetWithInlineData
     , public ActiveDOMObject
     , public WebBluetoothRemoteGATTCharacteristic {
     USING_PRE_FINALIZER(BluetoothRemoteGATTCharacteristic, dispose);
     DEFINE_WRAPPERTYPEINFO();
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(BluetoothRemoteGATTCharacteristic);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(BluetoothRemoteGATTCharacteristic);
+    USING_GARBAGE_COLLECTED_MIXIN(BluetoothRemoteGATTCharacteristic);
 public:
-    explicit BluetoothRemoteGATTCharacteristic(ExecutionContext*, PassOwnPtr<WebBluetoothRemoteGATTCharacteristicInit>);
+    explicit BluetoothRemoteGATTCharacteristic(ExecutionContext*, std::unique_ptr<WebBluetoothRemoteGATTCharacteristicInit>, BluetoothRemoteGATTService*);
 
     // Interface required by CallbackPromiseAdapter.
-    using WebType = OwnPtr<WebBluetoothRemoteGATTCharacteristicInit>;
-    static BluetoothRemoteGATTCharacteristic* take(ScriptPromiseResolver*, PassOwnPtr<WebBluetoothRemoteGATTCharacteristicInit>);
+    using WebType = std::unique_ptr<WebBluetoothRemoteGATTCharacteristicInit>;
+    static BluetoothRemoteGATTCharacteristic* take(ScriptPromiseResolver*, std::unique_ptr<WebBluetoothRemoteGATTCharacteristicInit>, BluetoothRemoteGATTService*);
 
     // Save value.
-    void setValue(const PassRefPtr<DOMDataView>&);
+    void setValue(DOMDataView*);
 
     // WebBluetoothRemoteGATTCharacteristic interface:
     void dispatchCharacteristicValueChanged(const WebVector<uint8_t>&) override;
@@ -67,16 +66,16 @@ public:
 
     // EventTarget methods:
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const;
+    ExecutionContext* getExecutionContext() const;
 
     // Interface required by garbage collection.
     DECLARE_VIRTUAL_TRACE();
 
     // IDL exposed interface:
+    BluetoothRemoteGATTService* service() { return m_service; }
     String uuid() { return m_webCharacteristic->uuid; }
-
     BluetoothCharacteristicProperties* properties() { return m_properties; }
-    PassRefPtr<DOMDataView> value() const { return m_value; }
+    DOMDataView* value() const { return m_value; }
     ScriptPromise readValue(ScriptState*);
     ScriptPromise writeValue(ScriptState*, const DOMArrayPiece&);
     ScriptPromise startNotifications(ScriptState*);
@@ -86,13 +85,14 @@ public:
 
 protected:
     // EventTarget overrides.
-    bool addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
+    void addedEventListener(const AtomicString& eventType, RegisteredEventListener&) override;
 
 private:
-    OwnPtr<WebBluetoothRemoteGATTCharacteristicInit> m_webCharacteristic;
+    std::unique_ptr<WebBluetoothRemoteGATTCharacteristicInit> m_webCharacteristic;
+    Member<BluetoothRemoteGATTService> m_service;
     bool m_stopped;
     Member<BluetoothCharacteristicProperties> m_properties;
-    RefPtr<DOMDataView> m_value;
+    Member<DOMDataView> m_value;
 };
 
 } // namespace blink

@@ -123,14 +123,14 @@ void AsyncClose(FILE** file) {
 struct VisitedLinkMaster::LoadFromFileResult
     : public base::RefCountedThreadSafe<LoadFromFileResult> {
   LoadFromFileResult(base::ScopedFILE file,
-                     scoped_ptr<base::SharedMemory> shared_memory,
+                     std::unique_ptr<base::SharedMemory> shared_memory,
                      Fingerprint* hash_table,
                      int32_t num_entries,
                      int32_t used_count,
                      uint8_t salt[LINK_SALT_LENGTH]);
 
   base::ScopedFILE file;
-  scoped_ptr<base::SharedMemory> shared_memory;
+  std::unique_ptr<base::SharedMemory> shared_memory;
   Fingerprint* hash_table;
   int32_t num_entries;
   int32_t used_count;
@@ -145,7 +145,7 @@ struct VisitedLinkMaster::LoadFromFileResult
 
 VisitedLinkMaster::LoadFromFileResult::LoadFromFileResult(
     base::ScopedFILE file,
-    scoped_ptr<base::SharedMemory> shared_memory,
+    std::unique_ptr<base::SharedMemory> shared_memory,
     Fingerprint* hash_table,
     int32_t num_entries,
     int32_t used_count,
@@ -362,7 +362,7 @@ void VisitedLinkMaster::AddURL(const GURL& url) {
   if (!table_builder_.get() &&
       !table_is_loading_from_file_ &&
       index != null_hash_) {
-    // Not rebuilding, so we want to keep the file on disk up-to-date.
+    // Not rebuilding, so we want to keep the file on disk up to date.
     if (persist_to_disk_) {
       WriteUsedItemCountToFile();
       WriteHashRangeToFile(index, index);
@@ -380,7 +380,7 @@ void VisitedLinkMaster::AddURLs(const std::vector<GURL>& urls) {
       ResizeTableIfNecessary();
   }
 
-  // Keeps the file on disk up-to-date.
+  // Keeps the file on disk up to date.
   if (!table_builder_.get() &&
       !table_is_loading_from_file_ &&
       persist_to_disk_)
@@ -662,7 +662,7 @@ bool VisitedLinkMaster::LoadApartFromFile(
     return false;  // Header isn't valid.
 
   // Allocate and read the table.
-  scoped_ptr<base::SharedMemory> shared_memory;
+  std::unique_ptr<base::SharedMemory> shared_memory;
   VisitedLinkCommon::Fingerprint* hash_table;
   if (!CreateApartURLTable(num_entries, salt, &shared_memory, &hash_table))
     return false;
@@ -816,7 +816,7 @@ bool VisitedLinkMaster::ReadFileHeader(FILE* file,
   if (signature != kFileSignature)
     return false;
 
-  // Verify the version is up-to-date. As with other read errors, a version
+  // Verify the version is up to date. As with other read errors, a version
   // mistmatch will trigger a rebuild of the database from history, which will
   // have the effect of migrating the database.
   int32_t version;
@@ -859,7 +859,7 @@ bool VisitedLinkMaster::GetDatabaseFileName(base::FilePath* filename) {
 // Initializes the shared memory structure. The salt should already be filled
 // in so that it can be written to the shared memory
 bool VisitedLinkMaster::CreateURLTable(int32_t num_entries) {
-  scoped_ptr<base::SharedMemory> shared_memory;
+  std::unique_ptr<base::SharedMemory> shared_memory;
   VisitedLinkCommon::Fingerprint* hash_table;
   if (CreateApartURLTable(num_entries, salt_, &shared_memory, &hash_table)) {
     shared_memory_ = shared_memory.release();
@@ -876,7 +876,7 @@ bool VisitedLinkMaster::CreateURLTable(int32_t num_entries) {
 bool VisitedLinkMaster::CreateApartURLTable(
     int32_t num_entries,
     const uint8_t salt[LINK_SALT_LENGTH],
-    scoped_ptr<base::SharedMemory>* shared_memory,
+    std::unique_ptr<base::SharedMemory>* shared_memory,
     VisitedLinkCommon::Fingerprint** hash_table) {
   DCHECK(salt);
   DCHECK(shared_memory);
@@ -887,7 +887,7 @@ bool VisitedLinkMaster::CreateApartURLTable(
       num_entries * sizeof(Fingerprint) + sizeof(SharedHeader);
 
   // Create the shared memory object.
-  scoped_ptr<base::SharedMemory> sh_mem(new base::SharedMemory());
+  std::unique_ptr<base::SharedMemory> sh_mem(new base::SharedMemory());
   if (!sh_mem)
     return false;
 

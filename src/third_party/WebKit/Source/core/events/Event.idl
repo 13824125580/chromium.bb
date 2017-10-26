@@ -23,7 +23,6 @@
 [
     Constructor(DOMString type, optional EventInit eventInitDict),
     Exposed=(Window,Worker),
-    WillBeGarbageCollected,
 ] interface Event {
     readonly attribute DOMString type;
     readonly attribute EventTarget? target;
@@ -43,9 +42,9 @@
     void preventDefault();
     readonly attribute boolean defaultPrevented;
 
-    [RuntimeEnabled=ShadowDOMV1, MeasureAs=EventScoped] readonly attribute boolean scoped;
+    [RuntimeEnabled=ShadowDOMV1, MeasureAs=EventComposed] readonly attribute boolean composed;
 
-    [RuntimeEnabled=TrustedEvents, Unforgeable] readonly attribute boolean isTrusted;
+    [Unforgeable] readonly attribute boolean isTrusted;
 
     // TODO(majidvp): At the moment the actual return value type can either
     // be: 
@@ -66,7 +65,7 @@
     // Shadow DOM
     // https://w3c.github.io/webcomponents/spec/shadow/#extensions-to-event-interface
     [MeasureAs=EventPath, CallWith=ScriptState] readonly attribute EventTarget[] path;
-    [RuntimeEnabled=ShadowDOMV1, MeasureAs=EventDeepPath, CallWith=ScriptState] sequence<EventTarget> deepPath();
+    [RuntimeEnabled=ShadowDOMV1, MeasureAs=EventComposedPath, CallWith=ScriptState] sequence<EventTarget> composedPath();
 
     // Non-standard APIs
     const unsigned short MOUSEDOWN = 1;
@@ -87,5 +86,5 @@
     const unsigned short CHANGE    = 32768;
     [MeasureAs=EventSrcElement] readonly attribute EventTarget srcElement;
     [MeasureAs=EventReturnValue, CallWith=ExecutionContext, ImplementedAs=legacyReturnValue] attribute boolean returnValue;
-    [MeasureAs=EventCancelBubble] attribute boolean cancelBubble;
+    [MeasureAs=EventCancelBubble, CallWith=ExecutionContext] attribute boolean cancelBubble;
 };

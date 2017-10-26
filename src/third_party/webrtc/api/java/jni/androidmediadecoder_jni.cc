@@ -9,6 +9,7 @@
  */
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 // NOTICE: androidmediadecoder_jni.h must be included before
@@ -31,19 +32,16 @@
 #include "webrtc/common_video/include/i420_buffer_pool.h"
 #include "webrtc/modules/video_coding/include/video_codec_interface.h"
 #include "webrtc/system_wrappers/include/logcat_trace_context.h"
-#include "webrtc/system_wrappers/include/tick_util.h"
 
 using rtc::Bind;
 using rtc::Thread;
 using rtc::ThreadManager;
-using rtc::scoped_ptr;
 
 using webrtc::CodecSpecificInfo;
 using webrtc::DecodedImageCallback;
 using webrtc::EncodedImage;
 using webrtc::VideoFrame;
 using webrtc::RTPFragmentationHeader;
-using webrtc::TickTime;
 using webrtc::VideoCodec;
 using webrtc::VideoCodecType;
 using webrtc::kVideoCodecH264;
@@ -99,6 +97,7 @@ class MediaCodecVideoDecoder : public webrtc::VideoDecoder,
   void CheckOnCodecThread();
 
   int32_t InitDecodeOnCodecThread();
+  int32_t ResetDecodeOnCodecThread();
   int32_t ReleaseOnCodecThread();
   int32_t DecodeOnCodecThread(const EncodedImage& inputImage);
   // Deliver any outputs pending in the MediaCodec to our |callback_| and return
@@ -106,6 +105,7 @@ class MediaCodecVideoDecoder : public webrtc::VideoDecoder,
   bool DeliverPendingOutputs(JNIEnv* jni, int dequeue_timeout_us);
   int32_t ProcessHWErrorOnCodecThread();
   void EnableFrameLogOnWarning();
+  void ResetVariables();
 
   // Type of video codec.
   VideoCodecType codecType_;
@@ -135,10 +135,12 @@ class MediaCodecVideoDecoder : public webrtc::VideoDecoder,
 
   // State that is constant for the lifetime of this object once the ctor
   // returns.
-  scoped_ptr<Thread> codec_thread_;  // Thread on which to operate MediaCodec.
+  std::unique_ptr<Thread>
+      codec_thread_;  // Thread on which to operate MediaCodec.
   ScopedGlobalRef<jclass> j_media_codec_video_decoder_class_;
   ScopedGlobalRef<jobject> j_media_codec_video_decoder_;
   jmethodID j_init_decode_method_;
+  jmethodID j_reset_method_;
   jmethodID j_release_method_;
   jmethodID j_dequeue_input_buffer_method_;
   jmethodID j_queue_input_buffer_method_;
@@ -200,6 +202,8 @@ MediaCodecVideoDecoder::MediaCodecVideoDecoder(
       jni, *j_media_codec_video_decoder_class_, "initDecode",
       "(Lorg/webrtc/MediaCodecVideoDecoder$VideoCodecType;"
       "IILorg/webrtc/SurfaceTextureHelper;)Z");
+  j_reset_method_ =
+      GetMethodID(jni, *j_media_codec_video_decoder_class_, "reset", "(II)V");
   j_release_method_ =
       GetMethodID(jni, *j_media_codec_video_decoder_class_, "release", "()V");
   j_dequeue_input_buffer_method_ = GetMethodID(
@@ -303,7 +307,22 @@ int32_t MediaCodecVideoDecoder::InitDecode(const VideoCodec* inst,
 
   // Call Java init.
   return codec_thread_->Invoke<int32_t>(
+      RTC_FROM_HERE,
       Bind(&MediaCodecVideoDecoder::InitDecodeOnCodecThread, this));
+}
+
+void MediaCodecVideoDecoder::ResetVariables() {
+  CheckOnCodecThread();
+
+  key_frame_required_ = true;
+  frames_received_ = 0;
+  frames_decoded_ = 0;
+  frames_decoded_logged_ = kMaxDecodedLogFrames;
+  start_time_ms_ = rtc::TimeMillis();
+  current_frames_ = 0;
+  current_bytes_ = 0;
+  current_decoding_time_ms_ = 0;
+  current_delay_time_ms_ = 0;
 }
 
 int32_t MediaCodecVideoDecoder::InitDecodeOnCodecThread() {
@@ -322,25 +341,16 @@ int32_t MediaCodecVideoDecoder::InitDecodeOnCodecThread() {
     return WEBRTC_VIDEO_CODEC_ERROR;
   }
 
-  // Always start with a complete key frame.
-  key_frame_required_ = true;
-  frames_received_ = 0;
-  frames_decoded_ = 0;
-  frames_decoded_logged_ = kMaxDecodedLogFrames;
+  ResetVariables();
 
-  jobject java_surface_texture_helper_ = nullptr;
   if (use_surface_) {
-    java_surface_texture_helper_ = jni->CallStaticObjectMethod(
-        FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
-        GetStaticMethodID(jni,
-                          FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
-                          "create",
-                          "(Lorg/webrtc/EglBase$Context;)"
-                          "Lorg/webrtc/SurfaceTextureHelper;"),
-        render_egl_context_);
-    RTC_CHECK(java_surface_texture_helper_ != nullptr);
-    surface_texture_helper_ = new rtc::RefCountedObject<SurfaceTextureHelper>(
-        jni, java_surface_texture_helper_);
+    surface_texture_helper_ = SurfaceTextureHelper::create(
+        jni, "Decoder SurfaceTextureHelper", render_egl_context_);
+    if (!surface_texture_helper_) {
+      ALOGE << "Couldn't create SurfaceTextureHelper - fallback to SW codec";
+      sw_fallback_required_ = true;
+      return WEBRTC_VIDEO_CODEC_ERROR;
+    }
   }
 
   jobject j_video_codec_enum = JavaEnumFromIndexAndClassName(
@@ -351,7 +361,9 @@ int32_t MediaCodecVideoDecoder::InitDecodeOnCodecThread() {
       j_video_codec_enum,
       codec_.width,
       codec_.height,
-      java_surface_texture_helper_);
+      use_surface_ ? surface_texture_helper_->GetJavaSurfaceTextureHelper()
+                   : nullptr);
+
   if (CheckException(jni) || !success) {
     ALOGE << "Codec initialization error - fallback to SW codec.";
     sw_fallback_required_ = true;
@@ -372,16 +384,11 @@ int32_t MediaCodecVideoDecoder::InitDecodeOnCodecThread() {
     default:
       max_pending_frames_ = 0;
   }
-  start_time_ms_ = GetCurrentTimeMs();
-  current_frames_ = 0;
-  current_bytes_ = 0;
-  current_decoding_time_ms_ = 0;
-  current_delay_time_ms_ = 0;
+  ALOGD << "Maximum amount of pending frames: " << max_pending_frames_;
 
   jobjectArray input_buffers = (jobjectArray)GetObjectField(
       jni, *j_media_codec_video_decoder_, j_input_buffers_field_);
   size_t num_input_buffers = jni->GetArrayLength(input_buffers);
-  ALOGD << "Maximum amount of pending frames: " << max_pending_frames_;
   input_buffers_.resize(num_input_buffers);
   for (size_t i = 0; i < num_input_buffers; ++i) {
     input_buffers_[i] =
@@ -393,7 +400,38 @@ int32_t MediaCodecVideoDecoder::InitDecodeOnCodecThread() {
     }
   }
 
-  codec_thread_->PostDelayed(kMediaCodecPollMs, this);
+  codec_thread_->PostDelayed(RTC_FROM_HERE, kMediaCodecPollMs, this);
+
+  return WEBRTC_VIDEO_CODEC_OK;
+}
+
+int32_t MediaCodecVideoDecoder::ResetDecodeOnCodecThread() {
+  CheckOnCodecThread();
+  JNIEnv* jni = AttachCurrentThreadIfNeeded();
+  ScopedLocalRefFrame local_ref_frame(jni);
+  ALOGD << "ResetDecodeOnCodecThread Type: " << (int)codecType_ << ". "
+      << codec_.width << " x " << codec_.height;
+  ALOGD << "  Frames received: " << frames_received_ <<
+      ". Frames decoded: " << frames_decoded_;
+
+  inited_ = false;
+  rtc::MessageQueueManager::Clear(this);
+  ResetVariables();
+
+  jni->CallVoidMethod(
+      *j_media_codec_video_decoder_,
+      j_reset_method_,
+      codec_.width,
+      codec_.height);
+
+  if (CheckException(jni)) {
+    ALOGE << "Soft reset error - fallback to SW codec.";
+    sw_fallback_required_ = true;
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+  inited_ = true;
+
+  codec_thread_->PostDelayed(RTC_FROM_HERE, kMediaCodecPollMs, this);
 
   return WEBRTC_VIDEO_CODEC_OK;
 }
@@ -401,7 +439,7 @@ int32_t MediaCodecVideoDecoder::InitDecodeOnCodecThread() {
 int32_t MediaCodecVideoDecoder::Release() {
   ALOGD << "DecoderRelease request";
   return codec_thread_->Invoke<int32_t>(
-        Bind(&MediaCodecVideoDecoder::ReleaseOnCodecThread, this));
+      RTC_FROM_HERE, Bind(&MediaCodecVideoDecoder::ReleaseOnCodecThread, this));
 }
 
 int32_t MediaCodecVideoDecoder::ReleaseOnCodecThread() {
@@ -430,7 +468,7 @@ int32_t MediaCodecVideoDecoder::ReleaseOnCodecThread() {
 }
 
 void MediaCodecVideoDecoder::CheckOnCodecThread() {
-  RTC_CHECK(codec_thread_ == ThreadManager::Instance()->CurrentThread())
+  RTC_CHECK(codec_thread_.get() == ThreadManager::Instance()->CurrentThread())
       << "Running on wrong thread!";
 }
 
@@ -493,9 +531,22 @@ int32_t MediaCodecVideoDecoder::Decode(
   if ((inputImage._encodedWidth * inputImage._encodedHeight > 0) &&
       (inputImage._encodedWidth != codec_.width ||
       inputImage._encodedHeight != codec_.height)) {
+    ALOGW << "Input resolution changed from " <<
+        codec_.width << " x " << codec_.height << " to " <<
+        inputImage._encodedWidth << " x " << inputImage._encodedHeight;
     codec_.width = inputImage._encodedWidth;
     codec_.height = inputImage._encodedHeight;
-    int32_t ret = InitDecode(&codec_, 1);
+    int32_t ret;
+    if (use_surface_ &&
+        (codecType_ == kVideoCodecVP8 || codecType_ == kVideoCodecH264)) {
+      // Soft codec reset - only for surface decoding.
+      ret = codec_thread_->Invoke<int32_t>(
+          RTC_FROM_HERE,
+          Bind(&MediaCodecVideoDecoder::ResetDecodeOnCodecThread, this));
+    } else {
+      // Hard codec reset.
+      ret = InitDecode(&codec_, 1);
+    }
     if (ret < 0) {
       ALOGE << "InitDecode failure: " << ret << " - fallback to SW codec";
       sw_fallback_required_ = true;
@@ -519,8 +570,9 @@ int32_t MediaCodecVideoDecoder::Decode(
     return WEBRTC_VIDEO_CODEC_ERROR;
   }
 
-  return codec_thread_->Invoke<int32_t>(Bind(
-      &MediaCodecVideoDecoder::DecodeOnCodecThread, this, inputImage));
+  return codec_thread_->Invoke<int32_t>(
+      RTC_FROM_HERE,
+      Bind(&MediaCodecVideoDecoder::DecodeOnCodecThread, this, inputImage));
 }
 
 int32_t MediaCodecVideoDecoder::DecodeOnCodecThread(
@@ -531,14 +583,16 @@ int32_t MediaCodecVideoDecoder::DecodeOnCodecThread(
 
   // Try to drain the decoder and wait until output is not too
   // much behind the input.
-  if (frames_received_ > frames_decoded_ + max_pending_frames_) {
+  if (codecType_ == kVideoCodecH264 &&
+      frames_received_ > frames_decoded_ + max_pending_frames_) {
+    // Print warning for H.264 only - for VP8/VP9 one frame delay is ok.
     ALOGW << "Decoder is too far behind. Try to drain. Received: " <<
         frames_received_ << ". Decoded: " << frames_decoded_;
     EnableFrameLogOnWarning();
   }
-  const int64 drain_start = GetCurrentTimeMs();
+  const int64 drain_start = rtc::TimeMillis();
   while ((frames_received_ > frames_decoded_ + max_pending_frames_) &&
-         (GetCurrentTimeMs() - drain_start) < kMediaCodecTimeoutMs) {
+         (rtc::TimeMillis() - drain_start) < kMediaCodecTimeoutMs) {
     if (!DeliverPendingOutputs(jni, kMediaCodecPollMs)) {
       ALOGE << "DeliverPendingOutputs error. Frames received: " <<
           frames_received_ << ". Frames decoded: " << frames_decoded_;
@@ -710,6 +764,12 @@ bool MediaCodecVideoDecoder::DeliverPendingOutputs(
       ALOGE << "Insufficient output buffer size: " << output_buffer_size;
       return false;
     }
+    if (output_buffer_size < stride * height * 3 / 2 &&
+        slice_height == height && stride > width) {
+      // Some codecs (Exynos) incorrectly report stride information for
+      // output byte buffer, so actual stride value need to be corrected.
+      stride = output_buffer_size * 2 / (height * 3);
+    }
     jobjectArray output_buffers = reinterpret_cast<jobjectArray>(GetObjectField(
         jni, *j_media_codec_video_decoder_, j_output_buffers_field_));
     jobject output_buffer =
@@ -734,12 +794,12 @@ bool MediaCodecVideoDecoder::DeliverPendingOutputs(
       libyuv::I420Copy(y_ptr, stride,
                        u_ptr, uv_stride,
                        v_ptr, uv_stride,
-                       frame_buffer->MutableData(webrtc::kYPlane),
-                       frame_buffer->stride(webrtc::kYPlane),
-                       frame_buffer->MutableData(webrtc::kUPlane),
-                       frame_buffer->stride(webrtc::kUPlane),
-                       frame_buffer->MutableData(webrtc::kVPlane),
-                       frame_buffer->stride(webrtc::kVPlane),
+                       frame_buffer->MutableDataY(),
+                       frame_buffer->StrideY(),
+                       frame_buffer->MutableDataU(),
+                       frame_buffer->StrideU(),
+                       frame_buffer->MutableDataV(),
+                       frame_buffer->StrideV(),
                        width, height);
     } else {
       // All other supported formats are nv12.
@@ -748,12 +808,12 @@ bool MediaCodecVideoDecoder::DeliverPendingOutputs(
       libyuv::NV12ToI420(
           y_ptr, stride,
           uv_ptr, stride,
-          frame_buffer->MutableData(webrtc::kYPlane),
-          frame_buffer->stride(webrtc::kYPlane),
-          frame_buffer->MutableData(webrtc::kUPlane),
-          frame_buffer->stride(webrtc::kUPlane),
-          frame_buffer->MutableData(webrtc::kVPlane),
-          frame_buffer->stride(webrtc::kVPlane),
+          frame_buffer->MutableDataY(),
+          frame_buffer->StrideY(),
+          frame_buffer->MutableDataU(),
+          frame_buffer->StrideU(),
+          frame_buffer->MutableDataV(),
+          frame_buffer->StrideV(),
           width, height);
     }
     // Return output byte buffer back to codec.
@@ -766,10 +826,6 @@ bool MediaCodecVideoDecoder::DeliverPendingOutputs(
       return false;
     }
   }
-  VideoFrame decoded_frame(frame_buffer, 0, 0, webrtc::kVideoRotation_0);
-  decoded_frame.set_timestamp(output_timestamps_ms);
-  decoded_frame.set_ntp_time_ms(output_ntp_timestamps_ms);
-
   if (frames_decoded_ < frames_decoded_logged_) {
     ALOGD << "Decoder frame out # " << frames_decoded_ <<
         ". " << width << " x " << height <<
@@ -785,7 +841,7 @@ bool MediaCodecVideoDecoder::DeliverPendingOutputs(
   current_frames_++;
   current_decoding_time_ms_ += decode_time_ms;
   current_delay_time_ms_ += frame_delayed_ms;
-  int statistic_time_ms = GetCurrentTimeMs() - start_time_ms_;
+  int statistic_time_ms = rtc::TimeMillis() - start_time_ms_;
   if (statistic_time_ms >= kMediaCodecStatisticsIntervalMs &&
       current_frames_ > 0) {
     int current_bitrate = current_bytes_ * 8 / statistic_time_ms;
@@ -798,16 +854,19 @@ bool MediaCodecVideoDecoder::DeliverPendingOutputs(
         ". DecTime: " << (current_decoding_time_ms_ / current_frames_) <<
         ". DelayTime: " << (current_delay_time_ms_ / current_frames_) <<
         " for last " << statistic_time_ms << " ms.";
-    start_time_ms_ = GetCurrentTimeMs();
+    start_time_ms_ = rtc::TimeMillis();
     current_frames_ = 0;
     current_bytes_ = 0;
     current_decoding_time_ms_ = 0;
     current_delay_time_ms_ = 0;
   }
 
-  // |.IsZeroSize())| returns true when a frame has been dropped.
-  if (!decoded_frame.IsZeroSize()) {
-    // Callback - output decoded frame.
+  // If the frame was dropped, frame_buffer is left as nullptr.
+  if (frame_buffer) {
+    VideoFrame decoded_frame(frame_buffer, 0, 0, webrtc::kVideoRotation_0);
+    decoded_frame.set_timestamp(output_timestamps_ms);
+    decoded_frame.set_ntp_time_ms(output_ntp_timestamps_ms);
+
     const int32_t callback_status =
         callback_->Decoded(decoded_frame, decode_time_ms);
     if (callback_status > 0) {
@@ -840,7 +899,7 @@ void MediaCodecVideoDecoder::OnMessage(rtc::Message* msg) {
     ProcessHWErrorOnCodecThread();
     return;
   }
-  codec_thread_->PostDelayed(kMediaCodecPollMs, this);
+  codec_thread_->PostDelayed(RTC_FROM_HERE, kMediaCodecPollMs, this);
 }
 
 MediaCodecVideoDecoderFactory::MediaCodecVideoDecoderFactory()
@@ -934,4 +993,3 @@ const char* MediaCodecVideoDecoder::ImplementationName() const {
 }
 
 }  // namespace webrtc_jni
-

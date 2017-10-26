@@ -509,10 +509,18 @@ var Should = (function () {
 
         this._checkNaN(value, 'EXPECTED');
 
-        if (this.target === value)
-            this._testPassed('is equal to ' + value);
-        else
-            this._testFailed('was ' + this.target + ' instead of ' + value);
+        var outputValue = value;
+        if (type === 'string')
+            outputValue = '"' + outputValue + '"';
+        if (this.target === value) {
+            var outputValue = (type === 'string') ? '"' + value + '"' : value;
+            this._testPassed('is equal to ' + outputValue);
+        } else {
+            var targetValue = this.target;
+            if (typeof this.target === 'string')
+                targetValue = '"' + targetValue + '"';
+            this._testFailed('was ' + targetValue + ' instead of ' + outputValue);
+        }
         return this._success;
     };
 
@@ -550,10 +558,15 @@ var Should = (function () {
 
         this._checkNaN(value, 'EXPECTED');
 
-        if (this.target >= value)
-            this._testPassed("is greater than or equal to " + value);
-        else
-            this._testFailed("(" + this.target + ") is not greater than or equal to " + value);
+        var prefix = '(' + this.target + ') ';
+
+        if (this.target >= value) {
+            if (!this.verbose)
+                prefix = '';
+            this._testPassed(prefix + "is greater than or equal to " + value);
+        } else {
+            this._testFailed(prefix + "is not greater than or equal to " + value);
+        }
         return this._success;
     }
 
@@ -593,10 +606,15 @@ var Should = (function () {
 
         this._checkNaN(value, 'EXPECTED');
 
-        if (this.target <= value)
-            this._testPassed("is less than or equal to " + value);
-        else
-            this._testFailed("(" + this.target + ") is not less than or equal to " + value);
+        var prefix = '(' + this.target + ') ';
+
+        if (this.target <= value) {
+            if (!this.verbose)
+                prefix = '';
+            this._testPassed(prefix + "is less than or equal to " + value);
+        } else {
+            this._testFailed(prefix + "is not less than or equal to " + value);
+        }
         return this._success;
     }
 
@@ -852,9 +870,9 @@ var Should = (function () {
                     maxAbsError = diff;
                 }
                 // Keep track of the location of the max relative error, ignoring cases where the
-                // relative error is ininfinity (because the expected value = 0).
+                // relative error is NaN.
                 var relError = diff / Math.abs(expected[i]);
-                if (isFinite(relError) && relError > maxRelError) {
+                if (!isNaN(relError) && relError > maxRelError) {
                     maxRelErrorIndex = i;
                     maxRelError = relError;
                 }

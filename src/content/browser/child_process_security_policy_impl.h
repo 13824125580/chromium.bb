@@ -5,10 +5,10 @@
 #ifndef CONTENT_BROWSER_CHILD_PROCESS_SECURITY_POLICY_IMPL_H_
 #define CONTENT_BROWSER_CHILD_PROCESS_SECURITY_POLICY_IMPL_H_
 
-
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
@@ -77,6 +77,9 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   bool HasWebUIBindings(int child_id) override;
   void GrantSendMidiSysExMessage(int child_id) override;
   bool CanAccessDataForOrigin(int child_id, const GURL& url) override;
+
+  // Returns if |child_id| can read all of the |files|.
+  bool CanReadAllFiles(int child_id, const std::vector<base::FilePath>& files);
 
   // Pseudo schemes are treated differently than other schemes because they
   // cannot be requested like normal URLs.  There is no mechanism for revoking

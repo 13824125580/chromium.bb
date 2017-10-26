@@ -25,8 +25,8 @@
 
 #include <blpwtk2_config.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <content/public/browser/content_browser_client.h>
+#include <content/public/browser/browser_context.h>
 #include <net/url_request/url_request_job_factory.h>
 
 namespace net {
@@ -73,14 +73,6 @@ class ContentBrowserClientImpl : public content::ContentBrowserClient {
     // own the delegate.
     content::WebContentsViewDelegate* GetWebContentsViewDelegate(
         content::WebContents* webContents) override;
-
-    // Creates the main net::URLRequestContextGetter.  Should only be called
-    // once per ContentBrowserClient object.
-    // TODO(ajwong): Remove once http://crbug.com/159193 is resolved.
-    net::URLRequestContextGetter* CreateRequestContext(
-        content::BrowserContext* browserContext,
-        content::ProtocolHandlerMap* protocolHandlers,
-        content::URLRequestInterceptorScopedVector request_interceptors) override;
 
     // Returns whether a specified URL is handled by the embedder's internal
     // protocol handlers.

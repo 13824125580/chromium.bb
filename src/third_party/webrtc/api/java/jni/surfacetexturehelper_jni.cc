@@ -14,21 +14,53 @@
 #include "webrtc/api/java/jni/classreferenceholder.h"
 #include "webrtc/base/bind.h"
 #include "webrtc/base/checks.h"
+#include "webrtc/base/logging.h"
 
 namespace webrtc_jni {
 
-SurfaceTextureHelper::SurfaceTextureHelper(
-    JNIEnv* jni, jobject surface_texture_helper)
-  : j_surface_texture_helper_(jni, surface_texture_helper),
-    j_return_texture_method_(
-        GetMethodID(jni,
-                    FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
-                    "returnTextureFrame",
-                    "()V")) {
+rtc::scoped_refptr<SurfaceTextureHelper> SurfaceTextureHelper::create(
+    JNIEnv* jni,
+    const char* thread_name,
+    jobject j_egl_context) {
+  jobject j_surface_texture_helper = jni->CallStaticObjectMethod(
+      FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
+      GetStaticMethodID(jni, FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
+                        "create",
+                        "(Ljava/lang/String;Lorg/webrtc/EglBase$Context;)"
+                        "Lorg/webrtc/SurfaceTextureHelper;"),
+      jni->NewStringUTF(thread_name), j_egl_context);
+  CHECK_EXCEPTION(jni)
+      << "error during initialization of Java SurfaceTextureHelper";
+  if (IsNull(jni, j_surface_texture_helper))
+    return nullptr;
+  return new rtc::RefCountedObject<SurfaceTextureHelper>(
+      jni, j_surface_texture_helper);
+}
+
+SurfaceTextureHelper::SurfaceTextureHelper(JNIEnv* jni,
+                                           jobject j_surface_texture_helper)
+    : j_surface_texture_helper_(jni, j_surface_texture_helper),
+      j_return_texture_method_(
+          GetMethodID(jni,
+                      FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
+                      "returnTextureFrame",
+                      "()V")) {
   CHECK_EXCEPTION(jni) << "error during initialization of SurfaceTextureHelper";
 }
 
 SurfaceTextureHelper::~SurfaceTextureHelper() {
+  LOG(LS_INFO) << "SurfaceTextureHelper dtor";
+  JNIEnv* jni = AttachCurrentThreadIfNeeded();
+  jni->CallVoidMethod(
+      *j_surface_texture_helper_,
+      GetMethodID(jni, FindClass(jni, "org/webrtc/SurfaceTextureHelper"),
+                  "dispose", "()V"));
+
+  CHECK_EXCEPTION(jni) << "error during SurfaceTextureHelper.dispose()";
+}
+
+jobject SurfaceTextureHelper::GetJavaSurfaceTextureHelper() const {
+  return *j_surface_texture_helper_;
 }
 
 void SurfaceTextureHelper::ReturnTextureFrame() const {

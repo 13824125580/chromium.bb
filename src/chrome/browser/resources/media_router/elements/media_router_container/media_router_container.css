@@ -3,7 +3,7 @@
  * found in the LICENSE file. */
 
 .active-sink {
-  color: var(--paper-blue-500);
+  color: var(--paper-blue-700);
 }
 
 .cast-mode-icon,
@@ -15,7 +15,6 @@
 }
 
 #cast-mode-list {
-  margin-top: var(--container-header-height);
   padding-bottom: 12px;
   padding-top: 4px;
 }
@@ -25,16 +24,21 @@
   width: 100%;
 }
 
+#content {
+  position: relative;
+}
+
 #device-missing {
   align-items: center;
   background-color: white;
   display: flex;
   justify-content: center;
-  margin: 60px 0;
+  padding: 60px 0;
 }
 
 #device-missing a {
-  color: rgba(33, 150, 243, 0.87);
+  color: var(--paper-blue-700);
+  margin: 8px 0;
   text-decoration: none;
 }
 
@@ -67,7 +71,7 @@
 }
 
 #first-run-flow {
-  background-color: var(--paper-blue-500);
+  background-color: var(--paper-blue-700);
   box-sizing: border-box;
   padding: 24px 16px 4px 16px;
   position: fixed;
@@ -94,17 +98,17 @@
 }
 
 #issue-banner {
-  margin-top: var(--container-header-height);
   width: 100%;
 }
 
 #issue-banner.non-blocking {
   bottom: 0;
+  display: block;
   margin-top: 0;
 }
 
 #no-search-matches {
-  color: rgb(150, 150, 150);
+  color: rgb(112, 112, 112);
   display: block;
   font-size: 1.2 em;
   padding-bottom: 20px;
@@ -114,7 +118,7 @@
 
 paper-checkbox {
   --paper-checkbox-checked-color: white;
-  --paper-checkbox-checkmark-color: var(--paper-blue-500);
+  --paper-checkbox-checkmark-color: var(--paper-blue-700);
   --paper-checkbox-unchecked-color: white;
 }
 
@@ -144,6 +148,20 @@ paper-menu {
   flex-grow: 1;
 }
 
+#search-results-container {
+  bottom: 0;
+  left: 0;
+  overflow-x: hidden;
+  /* overflow-y is set to auto when the results are actually displayed to allow
+   * scrolling. It is set to hidden by default so the scrollbar isn't displayed
+   * while animating.
+   */
+  overflow-y: hidden;
+  position: absolute;
+  right: 0;
+  top: 100%;
+}
+
 #searching-devices-spinner {
   height: 30px;
   width: 30px;
@@ -151,9 +169,16 @@ paper-menu {
 
 #share-screen-text {
   -webkit-padding-start: var(--dialog-padding-start);
-  color: var(--subtext-color);
+  color: var(--paper-grey-600);
+  cursor: default;
+  font-weight: normal;
   padding-bottom: 4px;
   padding-top: 12px;
+}
+
+#share-screen-text::after {
+  background-color: white;
+  font-weight: normal;
 }
 
 .sink-content {
@@ -164,8 +189,12 @@ paper-menu {
 
 .sink-domain {
   -webkit-padding-start: 6px;
-  color: var(--subtext-color);
+  color: var(--paper-grey-600);
   /* TODO(crbug/589697): Handle overflow of very long domain names. */
+}
+
+#sink-list-view {
+  position: relative;
 }
 
 .sink-name {
@@ -174,16 +203,34 @@ paper-menu {
   text-overflow: ellipsis;
 }
 
+#sink-search {
+  padding-bottom: 0;
+  padding-top: 4px;
+  position: absolute;
+  top: 100%;
+  width: 100%;
+  z-index: 1;
+}
+
+:host([search-use-bottom-padding]) #sink-search {
+  padding-bottom: 16px;
+  padding-top: 0;
+}
+
 /* Separate icon class is a consequence of box-sizing: border-box set by
  * paper-icon-button. This should achieve the same dimensions as .sink-icon.
  */
 #sink-search-icon {
+  -webkit-margin-start: 4px;
   -webkit-padding-end: 12px;
-  -webkit-padding-start: 16px;
-  width: 44px;
+  -webkit-padding-start: 12px;
 }
 
 #sink-search-input {
+  --paper-input-container: {
+    margin: 8px 0;
+    padding: 0;
+  };
   --paper-input-container-focus-color: rgb(33, 150, 243);
   --paper-input-container-input: {
     font-size: 12px;
@@ -191,12 +238,12 @@ paper-menu {
   --paper-input-container-label: {
     font-size: 12px;
   };
-  -webkit-padding-end: 31px;
+  -webkit-margin-end: 31px;
   box-sizing: border-box;
 }
 
 .sink-subtext {
-  color: var(--subtext-color);
+  color: var(--paper-grey-600);
   padding-top: 8px;
 }
 
@@ -210,6 +257,3 @@ paper-menu {
   width: 250px;
 }
 
-#route-details {
-  margin-top: var(--container-header-height);
-}

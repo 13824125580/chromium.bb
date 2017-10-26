@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "components/os_crypt/keychain_password_mac.h"
@@ -78,12 +77,10 @@ crypto::SymmetricKey* GetEncryptionKey() {
 
   // Create an encryption key from our password and salt. The key is
   // intentionally leaked.
-  cached_encryption_key =
-      crypto::SymmetricKey::DeriveKeyFromPassword(crypto::SymmetricKey::AES,
-                                                  password,
-                                                  salt,
-                                                  kEncryptionIterations,
-                                                  kDerivedKeySizeInBits);
+  cached_encryption_key = crypto::SymmetricKey::DeriveKeyFromPassword(
+                              crypto::SymmetricKey::AES, password, salt,
+                              kEncryptionIterations, kDerivedKeySizeInBits)
+                              .release();
   ANNOTATE_LEAKING_OBJECT_PTR(cached_encryption_key);
   DCHECK(cached_encryption_key);
   return cached_encryption_key;

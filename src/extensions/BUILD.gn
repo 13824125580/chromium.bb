@@ -69,6 +69,7 @@ grit("extensions_renderer_resources") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = rebase_path(extensions_gypi_values.extensions_test_support_sources,
@@ -81,6 +82,7 @@ source_set("test_support") {
   deps = [
     ":extensions_resources",
     "//base",
+    "//components/cast_certificate:test_support",
     "//components/guest_view/browser:test_support",
     "//components/pref_registry:test_support",
     "//components/prefs:test_support",
@@ -93,16 +95,14 @@ source_set("test_support") {
     "//net:test_support",
     "//testing/gmock",
     "//testing/gtest",
+    "//third_party/cld_2",
   ]
 
   public_deps = [
     "//content/public/browser",
     "//extensions/common/api/cast_channel:cast_channel_proto",
   ]
-
-  if (cld_version == 2) {
-    deps += [ "//third_party/cld_2:cld2_static" ]
-  }
+}
 }
 
 # GYP version: //extensions/extensions.gyp:extensions_shell_and_test_pak
@@ -141,6 +141,7 @@ repack("shell_and_test_pak") {
   ]
 }
 
+if (false) {
 test("extensions_unittests") {
   sources =
       rebase_path(extensions_tests_gypi_values.extensions_unittests_sources,
@@ -158,6 +159,7 @@ test("extensions_unittests") {
   data = [
     "test/data/",
     "//chrome/test/data/extensions/",
+    "//components/test/data/cast_certificate/",
     "$root_out_dir/extensions_shell_and_test.pak",
   ]
 
@@ -184,9 +186,8 @@ test("extensions_unittests") {
     "//extensions/utility",
     "//mojo/edk/js",
     "//mojo/edk/system",
-    "//mojo/environment:chromium",
     "//mojo/public/cpp/bindings",
-    "//mojo/shell/public/interfaces",
+    "//services/shell/public/interfaces",
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/leveldatabase",
@@ -217,7 +218,6 @@ test("extensions_browsertests") {
 
   data = [
     "test/data/",
-    "//net/data/",
     "//net/tools/testserver/",
     "//third_party/pyftpdlib/",
     "//third_party/pywebsocket/",
@@ -241,11 +241,10 @@ test("extensions_browsertests") {
     "//device/bluetooth:mocks",
     "//device/core:mocks",
     "//device/hid:mocks",
-    "//device/usb:mocks",
+    "//device/usb:test_support",
     "//mojo/edk/js",
-    "//mojo/edk/system",
-    "//mojo/environment:chromium",
     "//mojo/public/cpp/bindings",
+    "//net:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]
@@ -253,14 +252,6 @@ test("extensions_browsertests") {
   data_deps = [
     "//third_party/mesa:osmesa",
   ]
-
-  if (is_win) {
-    if (target_cpu == "x86") {
-      data_deps += [
-        # "$root_out_dir/wow_helper.exe"  # TODO(GYP)
-      ]
-    }
-  }
 
   if (is_mac) {
     deps += [ "shell:app_shell" ]  # Needed for App Shell.app's Helper.
@@ -292,7 +283,6 @@ source_set("chrome_extensions_browsertests") {
     "//chrome/common/extensions/api",
     "//chrome/renderer",
     "//components/autofill/content/browser:risk_proto",
-    "//components/autofill/content/browser/wallet:test_support",
     "//components/autofill/content/renderer:test_support",
     "//components/captive_portal:test_support",
     "//components/dom_distiller/content/browser",
@@ -325,7 +315,6 @@ source_set("chrome_extensions_browsertests") {
     "//third_party/leveldatabase",
     "//third_party/libaddressinput",
     "//third_party/libjingle",
-    "//third_party/safe_browsing:test_support",
     "//third_party/webrtc/modules/desktop_capture",
     "//third_party/widevine/cdm:version_h",
     "//ui/accessibility:test_support",
@@ -379,3 +368,5 @@ source_set("chrome_extensions_interactive_uitests") {
     "//ui/web_dialogs:test_support",
   ]
 }
+}
+

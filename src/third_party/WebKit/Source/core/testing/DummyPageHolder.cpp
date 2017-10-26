@@ -35,8 +35,11 @@
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
+#include "core/frame/VisualViewport.h"
 #include "core/loader/EmptyClients.h"
 #include "wtf/Assertions.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -45,18 +48,18 @@ void RootLayerScrollsFrameSettingOverride(Settings& settings)
     settings.setRootLayerScrolls(true);
 }
 
-PassOwnPtr<DummyPageHolder> DummyPageHolder::create(
+std::unique_ptr<DummyPageHolder> DummyPageHolder::create(
     const IntSize& initialViewSize,
     Page::PageClients* pageClients,
-    PassOwnPtrWillBeRawPtr<FrameLoaderClient> frameLoaderClient,
+    FrameLoaderClient* frameLoaderClient,
     FrameSettingOverrideFunction settingOverrider) {
-    return adoptPtr(new DummyPageHolder(initialViewSize, pageClients, frameLoaderClient, settingOverrider));
+    return wrapUnique(new DummyPageHolder(initialViewSize, pageClients, frameLoaderClient, settingOverrider));
 }
 
 DummyPageHolder::DummyPageHolder(
     const IntSize& initialViewSize,
     Page::PageClients* pageClientsArgument,
-    PassOwnPtrWillBeRawPtr<FrameLoaderClient> frameLoaderClient,
+    FrameLoaderClient* frameLoaderClient,
     FrameSettingOverrideFunction settingOverrider)
 {
     Page::PageClients pageClients;
@@ -66,7 +69,6 @@ DummyPageHolder::DummyPageHolder(
         pageClients.chromeClient = pageClientsArgument->chromeClient;
         pageClients.contextMenuClient = pageClientsArgument->contextMenuClient;
         pageClients.editorClient = pageClientsArgument->editorClient;
-        pageClients.dragClient = pageClientsArgument->dragClient;
         pageClients.spellCheckerClient = pageClientsArgument->spellCheckerClient;
     }
     m_page = Page::create(pageClients);

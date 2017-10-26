@@ -26,6 +26,10 @@
             "iconClass": "record-toolbar-item",
             "contextTypes": ["WebInspector.TimelinePanel"],
             "className": "WebInspector.TimelinePanel.ActionDelegate",
+            "options": [
+                { "value": true, "title": "Record" },
+                { "value": false, "title": "Stop" }
+            ],
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -96,20 +100,18 @@
     "dependencies": [
         "components",
         "components_lazy",
+        "timeline_model",
         "ui_lazy"
     ],
     "scripts": [
-        "LayerTreeModel.js",
         "CountersGraph.js",
         "LayerDetailsView.js",
         "LayerTreeOutline.js",
         "LayerViewHost.js",
         "Layers3DView.js",
         "MemoryCountersGraph.js",
-        "TimelineModel.js",
-        "TimelineIRModel.js",
-        "TimelineJSProfile.js",
-        "TimelineFrameModel.js",
+        "TimelineController.js",
+        "TimelineLoader.js",
         "TimelineEventOverview.js",
         "TimelineFlameChart.js",
         "TimelineTreeView.js",

@@ -8,10 +8,10 @@
 #include <map>
 
 #include "base/macros.h"
+#include "cc/ipc/compositor_frame.mojom.h"
 #include "cc/surfaces/surface_factory.h"
 #include "cc/surfaces/surface_id.h"
 #include "cc/surfaces/surface_id_allocator.h"
-#include "components/mus/public/interfaces/compositor_frame.mojom.h"
 #include "components/mus/public/interfaces/window_tree.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
@@ -40,16 +40,20 @@ class ServerWindowSurfaceManager {
 
   ServerWindow* window() { return window_; }
 
-  ServerWindowSurface* GetDefaultSurface();
-  ServerWindowSurface* GetUnderlaySurface();
-  ServerWindowSurface* GetSurfaceByType(mojom::SurfaceType type);
-  bool HasSurfaceOfType(mojom::SurfaceType type);
+  ServerWindowSurface* GetDefaultSurface() const;
+  ServerWindowSurface* GetUnderlaySurface() const;
+  ServerWindowSurface* GetSurfaceByType(mojom::SurfaceType type) const;
+  bool HasSurfaceOfType(mojom::SurfaceType type) const;
+  bool HasAnySurface() const;
+
+  uint32_t id_namespace() const { return surface_id_allocator_.id_namespace(); }
+  cc::SurfaceManager* GetSurfaceManager();
 
  private:
   friend class ServerWindowSurfaceManagerTestApi;
   friend class ServerWindowSurface;
 
-  // Returns true if a surface of |type| has been set and it's size is greater
+  // Returns true if a surface of |type| has been set and its size is greater
   // than the size of the window.
   bool IsSurfaceReadyAndNonEmpty(mojom::SurfaceType type) const;
 
@@ -60,7 +64,7 @@ class ServerWindowSurfaceManager {
   cc::SurfaceIdAllocator surface_id_allocator_;
 
   using TypeToSurfaceMap =
-      std::map<mojom::SurfaceType, scoped_ptr<ServerWindowSurface>>;
+      std::map<mojom::SurfaceType, std::unique_ptr<ServerWindowSurface>>;
 
   TypeToSurfaceMap type_to_surface_map_;
 

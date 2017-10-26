@@ -28,7 +28,6 @@
 #include "content/child/child_discardable_shared_memory_manager.h"
 #include "content/child/child_process.h"
 #include "content/common/child_process_messages.h"
-#include "content/common/sandbox_util.h"
 #include "content/ppapi_plugin/broker_process_dispatcher.h"
 #include "content/ppapi_plugin/plugin_process_dispatcher.h"
 #include "content/ppapi_plugin/ppapi_blink_platform_impl.h"
@@ -36,7 +35,6 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "content/public/common/sandbox_init.h"
-#include "content/public/plugin/content_plugin_client.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_platform_file.h"
 #include "ipc/ipc_sync_channel.h"
@@ -118,7 +116,7 @@ PpapiThread::PpapiThread(const base::CommandLine& command_line, bool is_broker)
       command_line.GetSwitchValueASCII(switches::kPpapiFlashArgs));
 
   blink_platform_impl_.reset(new PpapiBlinkPlatformImpl);
-  blink::initializeWithoutV8(blink_platform_impl_.get());
+  blink::Platform::initialize(blink_platform_impl_.get());
 
   if (!is_broker_) {
     scoped_refptr<ppapi::proxy::PluginMessageFilter> plugin_filter(
@@ -146,7 +144,7 @@ void PpapiThread::Shutdown() {
   if (plugin_entry_points_.shutdown_module)
     plugin_entry_points_.shutdown_module();
   blink_platform_impl_->Shutdown();
-  blink::shutdownWithoutV8();
+  blink::Platform::shutdown();
 }
 
 bool PpapiThread::Send(IPC::Message* msg) {
@@ -193,16 +191,7 @@ IPC::PlatformFileForTransit PpapiThread::ShareHandleWithRemote(
     base::PlatformFile handle,
     base::ProcessId peer_pid,
     bool should_close_source) {
-#if defined(OS_WIN)
-  if (peer_handle_.IsValid()) {
-    DCHECK(is_broker_);
-    return IPC::GetFileHandleForProcess(handle, peer_handle_.Get(),
-                                        should_close_source);
-  }
-#endif
-
-  DCHECK(peer_pid != base::kNullProcessId);
-  return BrokerGetFileHandleForProcess(handle, peer_pid, should_close_source);
+  return IPC::GetPlatformFileForTransit(handle, should_close_source);
 }
 
 base::SharedMemoryHandle PpapiThread::ShareSharedMemoryHandleWithRemote(
@@ -455,8 +444,8 @@ void PpapiThread::OnCreateChannel(base::ProcessId renderer_pid,
   IPC::ChannelHandle channel_handle;
 
   if (!plugin_entry_points_.get_interface ||  // Plugin couldn't be loaded.
-      !SetupRendererChannel(renderer_pid, renderer_child_id, incognito,
-                            &channel_handle)) {
+      !SetupChannel(renderer_pid, renderer_child_id, incognito,
+                    &channel_handle)) {
     Send(new PpapiHostMsg_ChannelCreated(IPC::ChannelHandle()));
     return;
   }
@@ -494,10 +483,10 @@ void PpapiThread::OnHang() {
     base::PlatformThread::Sleep(base::TimeDelta::FromSeconds(1));
 }
 
-bool PpapiThread::SetupRendererChannel(base::ProcessId renderer_pid,
-                                       int renderer_child_id,
-                                       bool incognito,
-                                       IPC::ChannelHandle* handle) {
+bool PpapiThread::SetupChannel(base::ProcessId renderer_pid,
+                               int renderer_child_id,
+                               bool incognito,
+                               IPC::ChannelHandle* handle) {
   DCHECK(is_broker_ == (connect_instance_func_ != NULL));
   IPC::ChannelHandle plugin_handle;
   plugin_handle.name = IPC::Channel::GenerateVerifiedChannelID(
@@ -507,15 +496,17 @@ bool PpapiThread::SetupRendererChannel(base::ProcessId renderer_pid,
   ppapi::proxy::ProxyChannel* dispatcher = NULL;
   bool init_result = false;
   if (is_broker_) {
+    bool peer_is_browser = renderer_pid == base::kNullProcessId;
     BrokerProcessDispatcher* broker_dispatcher =
         new BrokerProcessDispatcher(plugin_entry_points_.get_interface,
-                                    connect_instance_func_);
+                                    connect_instance_func_, peer_is_browser);
     init_result = broker_dispatcher->InitBrokerWithChannel(this,
                                                            renderer_pid,
                                                            plugin_handle,
                                                            false);
     dispatcher = broker_dispatcher;
   } else {
+    DCHECK_NE(base::kNullProcessId, renderer_pid);
     PluginProcessDispatcher* plugin_dispatcher =
         new PluginProcessDispatcher(plugin_entry_points_.get_interface,
                                     permissions_,
@@ -550,13 +541,6 @@ bool PpapiThread::SetupRendererChannel(base::ProcessId renderer_pid,
 void PpapiThread::SavePluginName(const base::FilePath& path) {
   ppapi::proxy::PluginGlobals::Get()->set_plugin_name(
       path.BaseName().AsUTF8Unsafe());
-
-  // plugin() is NULL when in-process, which is fine, because this is
-  // just a hook for setting the process name.
-  if (GetContentClient()->plugin()) {
-    GetContentClient()->plugin()->PluginProcessStarted(
-        path.BaseName().RemoveExtension().LossyDisplayName());
-  }
 }
 
 static std::string GetHistogramName(bool is_broker,

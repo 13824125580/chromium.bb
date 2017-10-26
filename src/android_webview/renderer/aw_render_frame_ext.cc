@@ -17,6 +17,7 @@
 #include "third_party/WebKit/public/web/WebElementCollection.h"
 #include "third_party/WebKit/public/web/WebFrameWidget.h"
 #include "third_party/WebKit/public/web/WebHitTestResult.h"
+#include "third_party/WebKit/public/web/WebImageCache.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebMeaningfulLayout.h"
 #include "third_party/WebKit/public/web/WebNode.h"
@@ -143,8 +144,23 @@ void AwRenderFrameExt::DidCommitProvisionalLoad(bool is_new_navigation,
   content::DocumentState* document_state =
       content::DocumentState::FromDataSource(frame->dataSource());
   if (document_state->can_load_local_resources()) {
-    blink::WebSecurityOrigin origin = frame->document().securityOrigin();
+    blink::WebSecurityOrigin origin = frame->document().getSecurityOrigin();
     origin.grantLoadLocalResources();
+  }
+
+  // Clear the cache when we cross site boundaries in the main frame.
+  //
+  // We're trying to approximate what happens with a multi-process Chromium,
+  // where navigation across origins would cause a new render process to spin
+  // up, and thus start with a clear cache. Wiring up a signal from browser to
+  // renderer code to say "this navigation would have switched processes" would
+  // be disruptive, so this clearing of the cache is the compromise.
+  if (!frame->parent()) {
+    url::Origin new_origin(frame->document().url());
+    if (!new_origin.IsSameOriginWith(last_origin_)) {
+      last_origin_ = new_origin;
+      blink::WebImageCache::clear();
+    }
   }
 }
 
@@ -164,7 +180,7 @@ bool AwRenderFrameExt::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void AwRenderFrameExt::OnDocumentHasImagesRequest(int id) {
+void AwRenderFrameExt::OnDocumentHasImagesRequest(uint32_t id) {
   bool hasImages = false;
   blink::WebView* webview = GetWebView();
   if (webview) {
@@ -284,6 +300,10 @@ blink::WebFrameWidget* AwRenderFrameExt::GetWebFrameWidget() {
     return nullptr;
 
   return render_frame()->GetRenderView()->GetWebFrameWidget();
+}
+
+void AwRenderFrameExt::OnDestruct() {
+  delete this;
 }
 
 }  // namespace android_webview

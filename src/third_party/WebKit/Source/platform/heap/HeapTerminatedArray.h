@@ -14,6 +14,7 @@ namespace blink {
 template<typename T>
 class HeapTerminatedArray : public TerminatedArray<T> {
     DISALLOW_NEW();
+    IS_GARBAGE_COLLECTED_TYPE();
 public:
     using TerminatedArray<T>::begin;
     using TerminatedArray<T>::end;
@@ -26,20 +27,25 @@ public:
 
 private:
     // Allocator describes how HeapTerminatedArrayBuilder should create new intances
-    // of TerminateArray and manage their lifetimes.
+    // of HeapTerminatedArray and manage their lifetimes.
     struct Allocator final {
         STATIC_ONLY(Allocator);
-        typedef HeapTerminatedArray* PassPtr;
-        typedef RawPtr<HeapTerminatedArray> Ptr;
+        using PassPtr = HeapTerminatedArray*;
+        using Ptr = Member<HeapTerminatedArray>;
+
+        static PassPtr release(Ptr& ptr)
+        {
+            return ptr;
+        }
 
         static PassPtr create(size_t capacity)
         {
-            return reinterpret_cast<HeapTerminatedArray*>(Heap::allocate<HeapTerminatedArray>(capacity * sizeof(T), IsEagerlyFinalizedType<T>::value));
+            return reinterpret_cast<HeapTerminatedArray*>(ThreadHeap::allocate<HeapTerminatedArray>(capacity * sizeof(T), IsEagerlyFinalizedType<T>::value));
         }
 
         static PassPtr resize(PassPtr ptr, size_t capacity)
         {
-            return reinterpret_cast<HeapTerminatedArray*>(Heap::reallocate<HeapTerminatedArray>(ptr, capacity * sizeof(T)));
+            return reinterpret_cast<HeapTerminatedArray*>(ThreadHeap::reallocate<HeapTerminatedArray>(ptr, capacity * sizeof(T)));
         }
     };
 

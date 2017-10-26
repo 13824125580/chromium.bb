@@ -28,8 +28,8 @@
 #include "core/fetch/ImageResource.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutAnalyzer.h"
+#include "core/layout/LayoutState.h"
 #include "core/layout/LayoutTableCell.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/SubtreeLayoutScope.h"
 #include "core/paint/TableRowPainter.h"
 #include "core/style/StyleInheritedData.h"
@@ -39,7 +39,7 @@ namespace blink {
 using namespace HTMLNames;
 
 LayoutTableRow::LayoutTableRow(Element* element)
-    : LayoutBox(element)
+    : LayoutTableBoxComponent(element)
     , m_rowIndex(unsetRowIndex)
 {
     // init LayoutObject attributes
@@ -48,7 +48,7 @@ LayoutTableRow::LayoutTableRow(Element* element)
 
 void LayoutTableRow::willBeRemovedFromTree()
 {
-    LayoutBox::willBeRemovedFromTree();
+    LayoutTableBoxComponent::willBeRemovedFromTree();
 
     section()->setNeedsCellRecalc();
 }
@@ -65,7 +65,7 @@ void LayoutTableRow::styleDidChange(StyleDifference diff, const ComputedStyle* o
 {
     ASSERT(style()->display() == TABLE_ROW);
 
-    LayoutBox::styleDidChange(diff, oldStyle);
+    LayoutTableBoxComponent::styleDidChange(diff, oldStyle);
     propagateStyleToAnonymousChildren();
 
     if (section() && oldStyle && style()->logicalHeight() != oldStyle->logicalHeight())
@@ -85,7 +85,15 @@ void LayoutTableRow::styleDidChange(StyleDifference diff, const ComputedStyle* o
                 if (!childBox->isTableCell())
                     continue;
                 childBox->setChildNeedsLayout();
+                childBox->setPreferredLogicalWidthsDirty(MarkOnlyThis);
             }
+            // Most table componenents can rely on LayoutObject::styleDidChange
+            // to mark the container chain dirty. But LayoutTableSection seems
+            // to never clear its dirty bit, which stops the propagation. So
+            // anything under LayoutTableSection has to restart the propagation
+            // at the table.
+            // TODO(dgrogan): Make LayoutTableSection clear its dirty bit.
+            table->setPreferredLogicalWidthsDirty();
         }
     }
 }
@@ -144,7 +152,7 @@ void LayoutTableRow::addChild(LayoutObject* child, LayoutObject* beforeChild)
     LayoutTableCell* cell = toLayoutTableCell(child);
 
     ASSERT(!beforeChild || beforeChild->isTableCell());
-    LayoutBox::addChild(cell, beforeChild);
+    LayoutTableBoxComponent::addChild(cell, beforeChild);
 
     // Generated content can result in us having a null section so make sure to null check our parent.
     if (parent())
@@ -168,9 +176,16 @@ void LayoutTableRow::layout()
             cell->markForPaginationRelayoutIfNeeded(layouter);
         if (cell->needsLayout())
             cell->layout();
+        // We're laying out each cell here to establish its raw logical height so it can be used to
+        // figure out the row's height and baseline later on in layoutRows(). As part of that we
+        // will layout the cell again if we're in a paginated context and come up with the
+        // correct strut. Any strut we come up with here will depend on the old paged layout and will
+        // give the cell an invalid height that is not useful for figuring out the raw height of the row.
+        if (cell->firstRootBox() && cell->firstRootBox()->paginationStrut())
+            cell->setLogicalHeight(cell->logicalHeight() - cell->firstRootBox()->paginationStrut());
     }
 
-    m_overflow.clear();
+    m_overflow.reset();
     addVisualEffectOverflow();
     // We do not call addOverflowFromCell here. The cell are laid out to be
     // measured above and will be sized correctly in a follow-up phase.
@@ -216,12 +231,6 @@ void LayoutTableRow::paint(const PaintInfo& paintInfo, const LayoutPoint& paintO
     TableRowPainter(*this).paint(paintInfo, paintOffset);
 }
 
-void LayoutTableRow::imageChanged(WrappedImagePtr, const IntRect*)
-{
-    // FIXME: Examine cells and issue paint invalidations of only the rect the image paints in.
-    setShouldDoFullPaintInvalidation();
-}
-
 LayoutTableRow* LayoutTableRow::createAnonymous(Document* document)
 {
     LayoutTableRow* layoutObject = new LayoutTableRow(nullptr);
@@ -237,9 +246,18 @@ LayoutTableRow* LayoutTableRow::createAnonymousWithParent(const LayoutObject* pa
     return newRow;
 }
 
+void LayoutTableRow::computeOverflow()
+{
+    clearAllOverflows();
+    addVisualEffectOverflow();
+    for (LayoutTableCell* cell = firstCell(); cell; cell = cell->nextCell())
+        addOverflowFromCell(cell);
+}
+
 void LayoutTableRow::addOverflowFromCell(const LayoutTableCell* cell)
 {
     // Non-row-spanning-cells don't create overflow (they are fully contained within this row).
+    // TODO(crbug.com/603993): This seems incorrect because cell may have visual effect overflow that should be included in this row.
     if (cell->rowSpan() == 1)
         return;
 
@@ -252,7 +270,7 @@ void LayoutTableRow::addOverflowFromCell(const LayoutTableCell* cell)
     LayoutUnit cellOffsetLogicalTopDifference = cell->location().y() - location().y();
     cellVisualOverflowRect.move(LayoutUnit(), cellOffsetLogicalTopDifference);
 
-    addVisualOverflow(cellVisualOverflowRect);
+    addContentsVisualOverflow(cellVisualOverflowRect);
 }
 
 } // namespace blink

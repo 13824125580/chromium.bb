@@ -4,6 +4,7 @@
 
 #include "components/guest_view/renderer/guest_view_request.h"
 
+#include <tuple>
 #include <utility>
 
 #include "components/guest_view/common/guest_view_messages.h"
@@ -12,7 +13,6 @@
 #include "content/public/renderer/render_view.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebRemoteFrame.h"
-#include "third_party/WebKit/public/web/WebScopedMicrotaskSuppression.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
 namespace guest_view {
@@ -30,7 +30,7 @@ GuestViewRequest::~GuestViewRequest() {
 
 void GuestViewRequest::ExecuteCallbackIfAvailable(
     int argc,
-    scoped_ptr<v8::Local<v8::Value>[]> argv) {
+    std::unique_ptr<v8::Local<v8::Value>[]> argv) {
   if (callback_.IsEmpty())
     return;
 
@@ -42,7 +42,8 @@ void GuestViewRequest::ExecuteCallbackIfAvailable(
     return;
 
   v8::Context::Scope context_scope(context);
-  blink::WebScopedMicrotaskSuppression suppression;
+  v8::MicrotasksScope microtasks(
+      isolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   callback->Call(context->Global(), argc, argv.get());
 }
@@ -50,7 +51,7 @@ void GuestViewRequest::ExecuteCallbackIfAvailable(
 GuestViewAttachRequest::GuestViewAttachRequest(
     GuestViewContainer* container,
     int guest_instance_id,
-    scoped_ptr<base::DictionaryValue> params,
+    std::unique_ptr<base::DictionaryValue> params,
     v8::Local<v8::Function> callback,
     v8::Isolate* isolate)
     : GuestViewRequest(container, callback, isolate),
@@ -83,7 +84,7 @@ void GuestViewAttachRequest::HandleResponse(const IPC::Message& message) {
     return;
 
   content::RenderView* guest_proxy_render_view =
-      content::RenderView::FromRoutingID(base::get<1>(param));
+      content::RenderView::FromRoutingID(std::get<1>(param));
   // TODO(fsamuel): Should we be reporting an error to JavaScript or DCHECKing?
   if (!guest_proxy_render_view)
     return;
@@ -101,7 +102,7 @@ void GuestViewAttachRequest::HandleResponse(const IPC::Message& message) {
   }
 
   const int argc = 1;
-  scoped_ptr<v8::Local<v8::Value>[]> argv(new v8::Local<v8::Value>[argc]);
+  std::unique_ptr<v8::Local<v8::Value>[]> argv(new v8::Local<v8::Value>[argc]);
   argv[0] = window;
 
   // Call the AttachGuest API's callback with the guest proxy as the first
@@ -127,6 +128,7 @@ void GuestViewDetachRequest::PerformRequest() {
 }
 
 void GuestViewDetachRequest::HandleResponse(const IPC::Message& message) {
+  DCHECK(message.type() == GuestViewMsg_GuestDetached::ID);
   ExecuteCallbackIfAvailable(0 /* argc */, nullptr);
 }
 

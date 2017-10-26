@@ -5,11 +5,11 @@
 #ifndef CHROME_SERVICE_SERVICE_UTILITY_PROCESS_HOST_H_
 #define CHROME_SERVICE_SERVICE_UTILITY_PROCESS_HOST_H_
 
-#include "build/build_config.h"
+#include <memory>
+#include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/common/child_process_host_delegate.h"
 #include "ipc/ipc_platform_file.h"
@@ -142,18 +142,19 @@ class ServiceUtilityProcessHost : public content::ChildProcessHostDelegate {
   void OnGetPrinterSemanticCapsAndDefaultsFailed(
       const std::string& printer_name);
 
-  scoped_ptr<content::ChildProcessHost> child_process_host_;
+  std::unique_ptr<content::ChildProcessHost> child_process_host_;
   base::Process process_;
   // A pointer to our client interface, who will be informed of progress.
   scoped_refptr<Client> client_;
   scoped_refptr<base::SingleThreadTaskRunner> client_task_runner_;
   bool waiting_for_reply_;
+  const std::string mojo_child_token_;
 
   // Start time of operation.
   base::Time start_time_;
 
   class PdfToEmfState;
-  scoped_ptr<PdfToEmfState> pdf_to_emf_state_;
+  std::unique_ptr<PdfToEmfState> pdf_to_emf_state_;
 
   base::WeakPtrFactory<ServiceUtilityProcessHost> weak_ptr_factory_;
 

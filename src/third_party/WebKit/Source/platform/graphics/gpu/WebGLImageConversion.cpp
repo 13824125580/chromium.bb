@@ -8,10 +8,11 @@
 #include "platform/graphics/ImageObserver.h"
 #include "platform/graphics/cpu/arm/WebGLImageConversionNEON.h"
 #include "platform/graphics/cpu/x86/WebGLImageConversionSSE.h"
+#include "platform/graphics/skia/SkiaUtils.h"
 #include "platform/image-decoders/ImageDecoder.h"
 #include "third_party/skia/include/core/SkImage.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -1714,7 +1715,7 @@ public:
     {
         const unsigned MaxNumberOfComponents = 4;
         const unsigned MaxBytesPerComponent  = 4;
-        m_unpackedIntermediateSrcData = adoptArrayPtr(new uint8_t[m_width * MaxNumberOfComponents *MaxBytesPerComponent]);
+        m_unpackedIntermediateSrcData = wrapArrayUnique(new uint8_t[m_width * MaxNumberOfComponents *MaxBytesPerComponent]);
         ASSERT(m_unpackedIntermediateSrcData.get());
     }
 
@@ -1736,7 +1737,7 @@ private:
     void* const m_dstStart;
     const int m_srcStride, m_dstStride;
     bool m_success;
-    OwnPtr<uint8_t[]> m_unpackedIntermediateSrcData;
+    std::unique_ptr<uint8_t[]> m_unpackedIntermediateSrcData;
 };
 
 void FormatConverter::convert(WebGLImageConversion::DataFormat srcFormat, WebGLImageConversion::DataFormat dstFormat, WebGLImageConversion::AlphaOp alphaOp)
@@ -2140,7 +2141,7 @@ void WebGLImageConversion::ImageExtractor::extractImage(bool premultiplyAlpha, b
 
     if ((!skiaImage || ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) && m_image->data()) {
         // Attempt to get raw unpremultiplied image data.
-        OwnPtr<ImageDecoder> decoder(ImageDecoder::create(
+        std::unique_ptr<ImageDecoder> decoder(ImageDecoder::create(
             *(m_image->data()), ImageDecoder::AlphaNotPremultiplied,
             ignoreGammaAndColorProfile ? ImageDecoder::GammaAndColorProfileIgnored : ImageDecoder::GammaAndColorProfileApplied));
         if (!decoder)
@@ -2149,7 +2150,7 @@ void WebGLImageConversion::ImageExtractor::extractImage(bool premultiplyAlpha, b
         if (!decoder->frameCount())
             return;
         ImageFrame* frame = decoder->frameBufferAtIndex(0);
-        if (!frame || frame->status() != ImageFrame::FrameComplete)
+        if (!frame || frame->getStatus() != ImageFrame::FrameComplete)
             return;
         hasAlpha = frame->hasAlpha();
         SkBitmap bitmap = frame->bitmap();
@@ -2160,7 +2161,7 @@ void WebGLImageConversion::ImageExtractor::extractImage(bool premultiplyAlpha, b
         // only immutable/fully decoded frames make it through.  We could potentially relax this
         // and allow SkImage::NewFromBitmap to make a copy.
         ASSERT(bitmap.isImmutable());
-        skiaImage = adoptRef(SkImage::NewFromBitmap(bitmap));
+        skiaImage = fromSkSp(SkImage::MakeFromBitmap(bitmap));
         info = bitmap.info();
 
         if (hasAlpha && premultiplyAlpha)
@@ -2306,13 +2307,14 @@ bool WebGLImageConversion::packImageData(
 
     if (!packPixels(reinterpret_cast<const uint8_t*>(pixels), sourceFormat, width, height, sourceUnpackAlignment, format, type, alphaOp, data.data(), flipY))
         return false;
-    if (ImageObserver *observer = image->imageObserver())
+    if (ImageObserver *observer = image->getImageObserver())
         observer->didDraw(image);
     return true;
 }
 
 bool WebGLImageConversion::extractImageData(
     const uint8_t* imageData,
+    DataFormat sourceDataFormat,
     const IntSize& imageDataSize,
     GLenum format,
     GLenum type,
@@ -2333,7 +2335,7 @@ bool WebGLImageConversion::extractImageData(
         return false;
     data.resize(packedSize);
 
-    if (!packPixels(imageData, DataFormatRGBA8, width, height, 0, format, type, premultiplyAlpha ? AlphaDoPremultiply : AlphaDoNothing, data.data(), flipY))
+    if (!packPixels(imageData, sourceDataFormat, width, height, 0, format, type, premultiplyAlpha ? AlphaDoPremultiply : AlphaDoNothing, data.data(), flipY))
         return false;
 
     return true;

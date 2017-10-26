@@ -8,12 +8,15 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/associated_interface_request.h"
-#include "mojo/public/cpp/bindings/callback.h"
 #include "mojo/public/cpp/bindings/lib/associated_interface_ptr_state.h"
 
 namespace mojo {
@@ -22,11 +25,7 @@ namespace mojo {
 // InterfacePtr, except that it doesn't own a message pipe handle.
 template <typename Interface>
 class AssociatedInterfacePtr {
-  DISALLOW_COPY_AND_ASSIGN_WITH_MOVE_FOR_BIND(AssociatedInterfacePtr)
-
  public:
-  using GenericInterface = typename Interface::GenericInterface;
-
   // Constructs an unbound AssociatedInterfacePtr.
   AssociatedInterfacePtr() {}
   AssociatedInterfacePtr(decltype(nullptr)) {}
@@ -54,20 +53,26 @@ class AssociatedInterfacePtr {
   // Calling with an invalid |info| has the same effect as reset(). In this
   // case, the AssociatedInterfacePtr is not considered as bound.
   //
+  // |runner| must belong to the same thread. It will be used to dispatch all
+  // callbacks and connection error notification. It is useful when you attach
+  // multiple task runners to a single thread for the purposes of task
+  // scheduling.
+  //
   // NOTE: Please see the comments of
   // AssociatedGroup.CreateAssociatedInterface() about when you can use this
   // object to make calls.
-  void Bind(AssociatedInterfacePtrInfo<GenericInterface> info) {
+  void Bind(AssociatedInterfacePtrInfo<Interface> info,
+            scoped_refptr<base::SingleThreadTaskRunner> runner =
+                base::ThreadTaskRunnerHandle::Get()) {
     reset();
 
-    bool is_local =
-        internal::AssociatedInterfacePtrInfoHelper::GetHandle(&info).is_local();
+    bool is_local = info.handle().is_local();
 
     DCHECK(is_local) << "The AssociatedInterfacePtrInfo is supposed to be used "
                         "at the other side of the message pipe.";
 
     if (info.is_valid() && is_local)
-      internal_state_.Bind(std::move(info));
+      internal_state_.Bind(std::move(info), std::move(runner));
   }
 
   bool is_bound() const { return internal_state_.is_bound(); }
@@ -81,10 +86,13 @@ class AssociatedInterfacePtr {
   // Returns the version number of the interface that the remote side supports.
   uint32_t version() const { return internal_state_.version(); }
 
+  // Returns the internal interface ID of this associated interface.
+  uint32_t interface_id() const { return internal_state_.interface_id(); }
+
   // Queries the max version that the remote side supports. On completion, the
   // result will be returned as the input of |callback|. The version number of
   // this object will also be updated.
-  void QueryVersion(const Callback<void(uint32_t)>& callback) {
+  void QueryVersion(const base::Callback<void(uint32_t)>& callback) {
     internal_state_.QueryVersion(callback);
   }
 
@@ -114,7 +122,7 @@ class AssociatedInterfacePtr {
   //
   // This method may only be called after the AssociatedInterfacePtr has been
   // bound.
-  void set_connection_error_handler(const Closure& error_handler) {
+  void set_connection_error_handler(const base::Closure& error_handler) {
     internal_state_.set_connection_error_handler(error_handler);
   }
 
@@ -125,7 +133,7 @@ class AssociatedInterfacePtr {
   // It is an error to call PassInterface() while there are pending responses.
   // TODO: fix this restriction, it's not always obvious when there is a
   // pending response.
-  AssociatedInterfacePtrInfo<GenericInterface> PassInterface() {
+  AssociatedInterfacePtrInfo<Interface> PassInterface() {
     DCHECK(!internal_state_.has_pending_callbacks());
     State state;
     internal_state_.Swap(&state);
@@ -147,6 +155,7 @@ class AssociatedInterfacePtr {
   // Allow AssociatedInterfacePtr<> to be used in boolean expressions, but not
   // implicitly convertible to a real bool (which is dangerous).
  private:
+  // TODO(dcheng): Use an explicit conversion operator.
   typedef internal::AssociatedInterfacePtrState<Interface>
       AssociatedInterfacePtr::*Testable;
 
@@ -166,6 +175,8 @@ class AssociatedInterfacePtr {
 
   typedef internal::AssociatedInterfacePtrState<Interface> State;
   mutable State internal_state_;
+
+  DISALLOW_COPY_AND_ASSIGN(AssociatedInterfacePtr);
 };
 
 // Creates an associated interface. The output |ptr| should be used locally
@@ -178,16 +189,18 @@ class AssociatedInterfacePtr {
 // as soon as the request is sent, |ptr| is usable. There is no need to wait
 // until the request is bound to an implementation at the remote side.
 template <typename Interface>
-AssociatedInterfaceRequest<typename Interface::GenericInterface> GetProxy(
+AssociatedInterfaceRequest<Interface> GetProxy(
     AssociatedInterfacePtr<Interface>* ptr,
-    AssociatedGroup* group) {
-  AssociatedInterfaceRequest<typename Interface::GenericInterface> request;
-  AssociatedInterfacePtrInfo<typename Interface::GenericInterface> ptr_info;
+    AssociatedGroup* group,
+    scoped_refptr<base::SingleThreadTaskRunner> runner =
+        base::ThreadTaskRunnerHandle::Get()) {
+  AssociatedInterfaceRequest<Interface> request;
+  AssociatedInterfacePtrInfo<Interface> ptr_info;
   group->CreateAssociatedInterface(AssociatedGroup::WILL_PASS_REQUEST,
                                    &ptr_info, &request);
 
-  ptr->Bind(std::move(ptr_info));
-  return std::move(request);
+  ptr->Bind(std::move(ptr_info), std::move(runner));
+  return request;
 }
 
 }  // namespace mojo

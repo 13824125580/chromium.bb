@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/printing/cloud_print/privet_device_lister_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,6 +26,7 @@ class MockServiceWatcher;
 
 class ServiceDiscoveryMockDelegate {
  public:
+  virtual ~ServiceDiscoveryMockDelegate() {}
   virtual void ServiceWatcherStarted(const std::string& service_type,
                                      MockServiceWatcher* watcher) = 0;
   virtual void ServiceResolverStarted(const std::string& service_type,
@@ -39,8 +42,7 @@ class MockServiceWatcher : public ServiceWatcher {
         mock_delegate_(mock_delegate) {
   }
 
-  virtual ~MockServiceWatcher() {
-  }
+  ~MockServiceWatcher() override {}
 
   virtual void Start() {
     DCHECK(!started_);
@@ -115,29 +117,29 @@ class MockServiceDiscoveryClient : public ServiceDiscoveryClient {
 
   // Create a service watcher object listening for DNS-SD service announcements
   // on service type |service_type|.
-  scoped_ptr<ServiceWatcher> CreateServiceWatcher(
+  std::unique_ptr<ServiceWatcher> CreateServiceWatcher(
       const std::string& service_type,
       const ServiceWatcher::UpdatedCallback& callback) override {
-    return make_scoped_ptr(
+    return base::WrapUnique(
         new MockServiceWatcher(service_type, callback, mock_delegate_));
   }
 
   // Create a service resolver object for getting detailed service information
   // for the service called |service_name|.
-  scoped_ptr<ServiceResolver> CreateServiceResolver(
+  std::unique_ptr<ServiceResolver> CreateServiceResolver(
       const std::string& service_name,
       const ServiceResolver::ResolveCompleteCallback& callback) override {
-    return make_scoped_ptr(
+    return base::WrapUnique(
         new MockServiceResolver(service_name, callback, mock_delegate_));
   }
 
   // Not used in this test.
-  scoped_ptr<LocalDomainResolver> CreateLocalDomainResolver(
+  std::unique_ptr<LocalDomainResolver> CreateLocalDomainResolver(
       const std::string& domain,
       net::AddressFamily address_family,
       const LocalDomainResolver::IPAddressCallback& callback) override {
     NOTREACHED();
-    return scoped_ptr<LocalDomainResolver>();
+    return std::unique_ptr<LocalDomainResolver>();
   }
 
  private:
@@ -154,15 +156,12 @@ class MockServiceDiscoveryMockDelegate : public ServiceDiscoveryMockDelegate {
 
 class MockDeviceListerDelegate : public PrivetDeviceLister::Delegate {
  public:
-  MockDeviceListerDelegate() {
-  }
+  MockDeviceListerDelegate() {}
+  virtual ~MockDeviceListerDelegate() {}
 
-  virtual ~MockDeviceListerDelegate() {
-  }
-
-  MOCK_METHOD3(DeviceChanged, void(bool added,
-                                   const std::string& name,
-                                   const DeviceDescription& description));
+  MOCK_METHOD2(DeviceChanged,
+               void(const std::string& name,
+                    const DeviceDescription& description));
 
   MOCK_METHOD1(DeviceRemoved, void(const std::string& name));
 
@@ -171,11 +170,8 @@ class MockDeviceListerDelegate : public PrivetDeviceLister::Delegate {
 
 class PrivetDeviceListerTest : public testing::Test {
  public:
-  PrivetDeviceListerTest() : mock_client_(&mock_delegate_) {
-  }
-
-  ~PrivetDeviceListerTest() override {
-  }
+  PrivetDeviceListerTest() : mock_client_(&mock_delegate_) {}
+  ~PrivetDeviceListerTest() override {}
 
   void SetUp() override {
     example_attrs_.push_back("tXtvers=1");
@@ -220,10 +216,8 @@ TEST_F(PrivetDeviceListerTest, SimpleUpdateTest) {
                                   "myprinter._privet._tcp.local");
   testing::Mock::VerifyAndClear(&mock_delegate_);
 
-  EXPECT_CALL(delegate_, DeviceChanged(true,
-                                       "myprinter._privet._tcp.local",
-                                       _))
-              .WillOnce(SaveArg<2>(&outgoing_description));
+  EXPECT_CALL(delegate_, DeviceChanged("myprinter._privet._tcp.local", _))
+      .WillOnce(SaveArg<1>(&outgoing_description));
 
   service_resolver->callback().Run(ServiceResolver::STATUS_SUCCESS,
                                    service_description_);
@@ -261,9 +255,7 @@ TEST_F(PrivetDeviceListerTest, MultipleUpdatesPostResolve) {
                                   "myprinter._privet._tcp.local");
   testing::Mock::VerifyAndClear(&mock_delegate_);
 
-  EXPECT_CALL(delegate_, DeviceChanged(false,
-                                       "myprinter._privet._tcp.local",
-                                       _));
+  EXPECT_CALL(delegate_, DeviceChanged("myprinter._privet._tcp.local", _));
   service_resolver->callback().Run(ServiceResolver::STATUS_SUCCESS,
                                    service_description_);
 

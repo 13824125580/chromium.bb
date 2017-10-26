@@ -7,10 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "media/blink/active_loader.h"
 #include "media/blink/media_blink_export.h"
@@ -40,6 +40,7 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
   // MultiBuffer::DataProvider implementation
   MultiBufferBlockId Tell() const override;
   bool Available() const override;
+  int64_t AvailableBytes() const override;
   scoped_refptr<DataBuffer> Read() override;
   void SetDeferred(bool defer) override;
 
@@ -89,7 +90,8 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
   int64_t block_size() const;
 
   // If we have made a range request, verify the response from the server.
-  bool VerifyPartialResponse(const blink::WebURLResponse& response);
+  bool VerifyPartialResponse(const blink::WebURLResponse& response,
+                             const scoped_refptr<UrlData>& url_data);
 
   // Current Position.
   MultiBufferBlockId pos_;
@@ -115,10 +117,10 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
   const GURL origin_;
 
   // Keeps track of an active WebURLLoader and associated state.
-  scoped_ptr<ActiveLoader> active_loader_;
+  std::unique_ptr<ActiveLoader> active_loader_;
 
   // Injected WebURLLoader instance for testing purposes.
-  scoped_ptr<blink::WebURLLoader> test_loader_;
+  std::unique_ptr<blink::WebURLLoader> test_loader_;
 
   // When we encounter a redirect, this is the source of the redirect.
   GURL redirects_to_;
@@ -128,4 +130,4 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
 
 }  // namespace media
 
-#endif  // MEDIA_BLINK_RESOURCE_MULTIBUFFER_RESOURCE_LOADER_H_
+#endif  // MEDIA_BLINK_RESOURCE_MULTIBUFFER_DATA_PROVIDER_H_

@@ -9,11 +9,13 @@
 
 #include <algorithm>
 #include <list>
+#include <utility>
 
 #include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_variant.h"
+#include "media/base/timestamp_constants.h"
 
 using base::win::ScopedCoMem;
 using base::win::ScopedComPtr;
@@ -329,12 +331,12 @@ bool VideoCaptureDeviceWin::Init() {
 
 void VideoCaptureDeviceWin::AllocateAndStart(
     const VideoCaptureParams& params,
-    scoped_ptr<VideoCaptureDevice::Client> client) {
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (state_ != kIdle)
     return;
 
-  client_ = client.Pass();
+  client_ = std::move(client);
 
   // Get the camera capability that best match the requested format.
   const CapabilityWin found_capability =
@@ -360,7 +362,7 @@ void VideoCaptureDeviceWin::AllocateAndStart(
     return;
   }
 
-  scoped_ptr<BYTE[]> caps(new BYTE[size]);
+  std::unique_ptr<BYTE[]> caps(new BYTE[size]);
   ScopedMediaType media_type;
 
   // Get the windows capability from the capture device.
@@ -450,9 +452,17 @@ void VideoCaptureDeviceWin::StopAndDeAllocate() {
 // Implements SinkFilterObserver::SinkFilterObserver.
 void VideoCaptureDeviceWin::FrameReceived(const uint8_t* buffer,
                                           int length,
-                                          base::TimeTicks timestamp) {
+                                          base::TimeDelta timestamp) {
+  if (first_ref_time_.is_null())
+    first_ref_time_ = base::TimeTicks::Now();
+
+  // There is a chance that the platform does not provide us with the timestamp,
+  // in which case, we use reference time to calculate a timestamp.
+  if (timestamp == media::kNoTimestamp())
+    timestamp = base::TimeTicks::Now() - first_ref_time_;
+
   client_->OnIncomingCapturedData(buffer, length, capture_format_, 0,
-                                  base::TimeTicks::Now());
+                                  base::TimeTicks::Now(), timestamp);
 }
 
 bool VideoCaptureDeviceWin::CreateCapabilityMap() {
@@ -479,7 +489,7 @@ bool VideoCaptureDeviceWin::CreateCapabilityMap() {
     return false;
   }
 
-  scoped_ptr<BYTE[]> caps(new BYTE[size]);
+  std::unique_ptr<BYTE[]> caps(new BYTE[size]);
   for (int stream_index = 0; stream_index < count; ++stream_index) {
     ScopedMediaType media_type;
     hr = stream_config->GetStreamCaps(stream_index, media_type.Receive(),

@@ -5,13 +5,16 @@
 #ifndef REMOTING_HOST_SECURITY_KEY_GNUBBY_EXTENSION_H_
 #define REMOTING_HOST_SECURITY_KEY_GNUBBY_EXTENSION_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "remoting/host/host_extension.h"
 
 namespace remoting {
+
+class ClientSessionDetails;
+class HostExtensionSession;
 
 // GnubbyExtension extends HostExtension to enable Security Key support.
 class GnubbyExtension : public HostExtension {
@@ -21,8 +24,8 @@ class GnubbyExtension : public HostExtension {
 
   // HostExtension interface.
   std::string capability() const override;
-  scoped_ptr<HostExtensionSession> CreateExtensionSession(
-      ClientSessionControl* client_session_control,
+  std::unique_ptr<HostExtensionSession> CreateExtensionSession(
+      ClientSessionDetails* client_session_details,
       protocol::ClientStub* client_stub) override;
 
  private:

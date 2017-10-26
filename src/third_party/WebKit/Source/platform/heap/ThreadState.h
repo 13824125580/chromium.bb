@@ -39,11 +39,13 @@
 #include "wtf/AddressSanitizer.h"
 #include "wtf/Allocator.h"
 #include "wtf/Forward.h"
+#include "wtf/Functional.h"
 #include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
 #include "wtf/ThreadSpecific.h"
 #include "wtf/Threading.h"
 #include "wtf/ThreadingPrimitives.h"
+#include <memory>
 
 namespace v8 {
 class Isolate;
@@ -58,9 +60,10 @@ class GarbageCollectedMixinConstructorMarker;
 class HeapObjectHeader;
 class PersistentNode;
 class PersistentRegion;
-class BaseHeap;
+class BaseArena;
 class SafePointAwareMutexLocker;
 class SafePointBarrier;
+class ThreadHeap;
 class ThreadState;
 class Visitor;
 
@@ -76,12 +79,12 @@ class Visitor;
 // Since a pre-finalizer adds pressure on GC performance, you should use it
 // only if necessary.
 //
-// A pre-finalizer is similar to the HeapHashMap<WeakMember<Foo>, OwnPtr<Disposer>>
+// A pre-finalizer is similar to the HeapHashMap<WeakMember<Foo>, std::unique_ptr<Disposer>>
 // idiom.  The difference between this and the idiom is that pre-finalizer
 // function is called whenever an object is destructed with this feature.  The
-// HeapHashMap<WeakMember<Foo>, OwnPtr<Disposer>> idiom requires an assumption
+// HeapHashMap<WeakMember<Foo>, std::unique_ptr<Disposer>> idiom requires an assumption
 // that the HeapHashMap outlives objects pointed by WeakMembers.
-// FIXME: Replace all of the HeapHashMap<WeakMember<Foo>, OwnPtr<Disposer>>
+// FIXME: Replace all of the HeapHashMap<WeakMember<Foo>, std::unique_ptr<Disposer>>
 // idiom usages with the pre-finalizer if the replacement won't cause
 // performance regressions.
 //
@@ -92,7 +95,7 @@ class Visitor;
 // public:
 //     Foo()
 //     {
-//         ThreadState::current()->registerPreFinalizer(dispose);
+//         ThreadState::current()->registerPreFinalizer(this);
 //     }
 // private:
 //     void dispose()
@@ -106,18 +109,12 @@ public:                                             \
 static bool invokePreFinalizer(void* object)        \
 {                                                   \
     Class* self = reinterpret_cast<Class*>(object); \
-    if (Heap::isHeapObjectAlive(self))              \
+    if (ThreadHeap::isHeapObjectAlive(self))              \
         return false;                               \
     self->Class::preFinalizer();                    \
     return true;                                    \
 }                                                   \
 using UsingPreFinalizerMacroNeedsTrailingSemiColon = char
-
-#if ENABLE(OILPAN)
-#define WILL_BE_USING_PRE_FINALIZER(Class, method) USING_PRE_FINALIZER(Class, method)
-#else
-#define WILL_BE_USING_PRE_FINALIZER(Class, method)
-#endif
 
 class PLATFORM_EXPORT ThreadState {
     USING_FAST_MALLOC(ThreadState);
@@ -174,38 +171,25 @@ public:
         ThreadState* m_state;
     };
 
-    // The set of ThreadStates for all threads attached to the Blink
-    // garbage collector.
-    using AttachedThreadStateSet = HashSet<ThreadState*>;
-    static AttachedThreadStateSet& attachedThreads();
-    static RecursiveMutex& threadAttachMutex();
-    static void lockThreadAttachMutex();
-    static void unlockThreadAttachMutex();
+    void lockThreadAttachMutex();
+    void unlockThreadAttachMutex();
 
-    // Initialize threading infrastructure. Should be called from the main
-    // thread.
-    static void init();
-    static void shutdown();
-    static void shutdownHeapIfNecessary();
+    bool perThreadHeapEnabled() const { return m_perThreadHeapEnabled; }
+
     bool isTerminating() { return m_isTerminating; }
 
     static void attachMainThread();
     static void detachMainThread();
-
-    // Trace all persistent roots, called when marking the managed heap objects.
-    static void visitPersistentRoots(Visitor*);
-
-    // Trace all objects found on the stack, used when doing conservative GCs.
-    static void visitStackRoots(Visitor*);
+    void cleanupMainThread();
 
     // Associate ThreadState object with the current thread. After this
     // call thread can start using the garbage collected heap infrastructure.
     // It also has to periodically check for safepoints.
-    static void attach();
+    static void attachCurrentThread(bool perThreadHeapEnabled);
 
     // Disassociate attached ThreadState from the current thread. The thread
     // can no longer use the garbage collected heap after this call.
-    static void detach();
+    static void detachCurrentThread();
 
     static ThreadState* current()
     {
@@ -233,10 +217,23 @@ public:
         return reinterpret_cast<ThreadState*>(s_mainThreadStateStorage);
     }
 
+    static ThreadState* fromObject(const void*);
+
     bool isMainThread() const { return this == mainThreadState(); }
 #if ENABLE(ASSERT)
     bool checkThread() const { return m_thread == currentThread(); }
 #endif
+
+    ThreadHeap& heap() { return *m_heap; }
+
+    // When ThreadState is detaching from non-main thread its
+    // heap is expected to be empty (because it is going away).
+    // Perform registered cleanup tasks and garbage collection
+    // to sweep away any objects that are left on this heap.
+    // We assert that nothing must remain after this cleanup.
+    // If assertion does not hold we crash as we are potentially
+    // in the dangling pointer situation.
+    void runTerminationGC();
 
     void performIdleGC(double deadlineSeconds);
     void performIdleLazySweep(double deadlineSeconds);
@@ -261,7 +258,7 @@ public:
     //
     // 1) All threads park at safe points.
     // 2) The GCing thread calls preGC() for all ThreadStates.
-    // 3) The GCing thread calls Heap::collectGarbage().
+    // 3) The GCing thread calls ThreadHeap::collectGarbage().
     //    This does marking but doesn't do sweeping.
     // 4) The GCing thread calls postGC() for all ThreadStates.
     // 5) The GCing thread resume all threads.
@@ -329,10 +326,6 @@ public:
     //     are not wrapped in a SafePointScope (e.g. BlinkGCInterruptor for JavaScript code)
     //
 
-    // Request all other threads to stop. Must only be called if the current thread is at safepoint.
-    static bool stopThreads();
-    static void resumeThreads();
-
     // Check if GC is requested by another thread and pause this thread if this is the case.
     // Can only be called when current thread is in a consistent state.
     void safePoint(BlinkGC::StackState);
@@ -342,8 +335,7 @@ public:
     void leaveSafePoint(SafePointAwareMutexLocker* = nullptr);
     bool isAtSafePoint() const { return m_atSafePoint; }
 
-    void addInterruptor(PassOwnPtr<BlinkGCInterruptor>);
-    void removeInterruptor(BlinkGCInterruptor*);
+    void addInterruptor(std::unique_ptr<BlinkGCInterruptor>);
 
     void recordStackEnd(intptr_t* endOfStack)
     {
@@ -353,11 +345,11 @@ public:
     // Get one of the heap structures for this thread.
     // The thread heap is split into multiple heap parts based on object types
     // and object sizes.
-    BaseHeap* heap(int heapIndex) const
+    BaseArena* arena(int arenaIndex) const
     {
-        ASSERT(0 <= heapIndex);
-        ASSERT(heapIndex < BlinkGC::NumberOfHeaps);
-        return m_heaps[heapIndex];
+        ASSERT(0 <= arenaIndex);
+        ASSERT(arenaIndex < BlinkGC::NumberOfArenas);
+        return m_arenas[arenaIndex];
     }
 
 #if ENABLE(ASSERT)
@@ -369,7 +361,7 @@ public:
 #endif
 
     // A region of PersistentNodes allocated on the given thread.
-    PersistentRegion* persistentRegion() const { return m_persistentRegion.get(); }
+    PersistentRegion* getPersistentRegion() const { return m_persistentRegion.get(); }
     // A region of PersistentNodes not owned by any particular thread.
 
     // Visit local thread stack and trace all pointers conservatively.
@@ -427,10 +419,13 @@ public:
 
     void shouldFlushHeapDoesNotContainCache() { m_shouldFlushHeapDoesNotContainCache = true; }
 
-    void registerTraceDOMWrappers(v8::Isolate* isolate, void (*traceDOMWrappers)(v8::Isolate*, Visitor*))
+    void registerTraceDOMWrappers(v8::Isolate* isolate,
+        void (*traceDOMWrappers)(v8::Isolate*, Visitor*),
+        void (*invalidateDeadObjectsInWrappersMarkingDeque)(v8::Isolate*))
     {
         m_isolate = isolate;
         m_traceDOMWrappers = traceDOMWrappers;
+        m_invalidateDeadObjectsInWrappersMarkingDeque = invalidateDeadObjectsInWrappersMarkingDeque;
     }
 
     // By entering a gc-forbidden scope, conservative GCs will not
@@ -456,8 +451,8 @@ public:
         }
     }
 
-    // vectorBackingHeap() returns a heap that the vector allocation should use.
-    // We have four vector heaps and want to choose the best heap here.
+    // vectorBackingArena() returns an arena that the vector allocation should use.
+    // We have four vector arenas and want to choose the best arena here.
     //
     // The goal is to improve the succession rate where expand and
     // promptlyFree happen at an allocation point. This is a key for reusing
@@ -469,41 +464,41 @@ public:
     // - A vector is likely to be promptly freed if the same type of vector
     //   has been frequently promptly freed in the past.
     // - Given the above, when allocating a new vector, look at the four vectors
-    //   that are placed immediately prior to the allocation point of each heap.
-    //   Choose the heap where the vector is least likely to be expanded
+    //   that are placed immediately prior to the allocation point of each arena.
+    //   Choose the arena where the vector is least likely to be expanded
     //   nor promptly freed.
     //
-    // To implement the heuristics, we add a heapAge to each heap. The heapAge
+    // To implement the heuristics, we add an arenaAge to each arena. The arenaAge
     // is updated if:
     //
-    // - a vector on the heap is expanded; or
-    // - a vector that meets the condition (*) is allocated on the heap
+    // - a vector on the arena is expanded; or
+    // - a vector that meets the condition (*) is allocated on the arena
     //
     //   (*) More than 33% of the same type of vectors have been promptly
     //       freed since the last GC.
     //
-    BaseHeap* vectorBackingHeap(size_t gcInfoIndex)
+    BaseArena* vectorBackingArena(size_t gcInfoIndex)
     {
         ASSERT(checkThread());
         size_t entryIndex = gcInfoIndex & likelyToBePromptlyFreedArrayMask;
         --m_likelyToBePromptlyFreed[entryIndex];
-        int heapIndex = m_vectorBackingHeapIndex;
+        int arenaIndex = m_vectorBackingArenaIndex;
         // If m_likelyToBePromptlyFreed[entryIndex] > 0, that means that
         // more than 33% of vectors of the type have been promptly freed
         // since the last GC.
         if (m_likelyToBePromptlyFreed[entryIndex] > 0) {
-            m_heapAges[heapIndex] = ++m_currentHeapAges;
-            m_vectorBackingHeapIndex = heapIndexOfVectorHeapLeastRecentlyExpanded(BlinkGC::Vector1HeapIndex, BlinkGC::Vector4HeapIndex);
+            m_arenaAges[arenaIndex] = ++m_currentArenaAges;
+            m_vectorBackingArenaIndex = arenaIndexOfVectorArenaLeastRecentlyExpanded(BlinkGC::Vector1ArenaIndex, BlinkGC::Vector4ArenaIndex);
         }
-        ASSERT(isVectorHeapIndex(heapIndex));
-        return m_heaps[heapIndex];
+        ASSERT(isVectorArenaIndex(arenaIndex));
+        return m_arenas[arenaIndex];
     }
-    BaseHeap* expandedVectorBackingHeap(size_t gcInfoIndex);
-    static bool isVectorHeapIndex(int heapIndex)
+    BaseArena* expandedVectorBackingArena(size_t gcInfoIndex);
+    static bool isVectorArenaIndex(int arenaIndex)
     {
-        return BlinkGC::Vector1HeapIndex <= heapIndex && heapIndex <= BlinkGC::Vector4HeapIndex;
+        return BlinkGC::Vector1ArenaIndex <= arenaIndex && arenaIndex <= BlinkGC::Vector4ArenaIndex;
     }
-    void allocationPointAdjusted(int heapIndex);
+    void allocationPointAdjusted(int arenaIndex);
     void promptlyFreed(size_t gcInfoIndex);
 
     void accumulateSweepingTime(double time) { m_accumulatedSweepingTime += time; }
@@ -512,10 +507,14 @@ public:
     size_t threadStackSize();
 #endif
 
-#if defined(LEAK_SANITIZER)
-    void registerStaticPersistentNode(PersistentNode*);
+    void freePersistentNode(PersistentNode*);
+
+    using PersistentClearCallback = void(*)(void*);
+
+    void registerStaticPersistentNode(PersistentNode*, PersistentClearCallback);
     void releaseStaticPersistentNodes();
 
+#if defined(LEAK_SANITIZER)
     void enterStaticReferenceRegistrationDisabledScope();
     void leaveStaticReferenceRegistrationDisabledScope();
 #endif
@@ -525,13 +524,17 @@ public:
     void decreaseAllocatedObjectSize(size_t);
     void increaseMarkedObjectSize(size_t);
 
+    void callThreadShutdownHooks();
+
+    v8::Isolate* isolate() const { return m_isolate; }
+
 private:
     enum SnapshotType {
         HeapSnapshot,
         FreelistSnapshot
     };
 
-    ThreadState();
+    ThreadState(bool perThreadHeapEnabled);
     ~ThreadState();
 
     NO_SANITIZE_ADDRESS void copyStackUntilSafePointScope();
@@ -581,18 +584,10 @@ private:
     void eagerSweep();
 
 #if defined(ADDRESS_SANITIZER)
-    void poisonEagerHeap(BlinkGC::Poisoning);
+    void poisonEagerArena();
     void poisonAllHeaps();
 #endif
 
-    // When ThreadState is detaching from non-main thread its
-    // heap is expected to be empty (because it is going away).
-    // Perform registered cleanup tasks and garbage collection
-    // to sweep away any objects that are left on this heap.
-    // We assert that nothing must remain after this cleanup.
-    // If assertion does not hold we crash as we are potentially
-    // in the dangling pointer situation.
-    void cleanup();
     void cleanupPages();
 
     void prepareForThreadStateTermination();
@@ -600,13 +595,13 @@ private:
     void invokePreFinalizers();
 
     void takeSnapshot(SnapshotType);
-    void clearHeapAges();
-    int heapIndexOfVectorHeapLeastRecentlyExpanded(int beginHeapIndex, int endHeapIndex);
+    void clearArenaAges();
+    int arenaIndexOfVectorArenaLeastRecentlyExpanded(int beginArenaIndex, int endArenaIndex);
 
     void reportMemoryToV8();
 
     // Should only be called under protection of threadAttachMutex().
-    const Vector<OwnPtr<BlinkGCInterruptor>>& interruptors() const { return m_interruptors; }
+    const Vector<std::unique_ptr<BlinkGCInterruptor>>& interruptors() const { return m_interruptors; }
 
     friend class SafePointAwareMutexLocker;
     friend class SafePointBarrier;
@@ -615,7 +610,6 @@ private:
     static WTF::ThreadSpecific<ThreadState*>* s_threadSpecific;
     static uintptr_t s_mainThreadStackStart;
     static uintptr_t s_mainThreadUnderestimatedStackSize;
-    static SafePointBarrier* s_safePointBarrier;
 
     // We can't create a static member of type ThreadState here
     // because it will introduce global constructor and destructor.
@@ -626,8 +620,9 @@ private:
     // and lazily construct ThreadState in it using placement new.
     static uint8_t s_mainThreadStateStorage[];
 
+    ThreadHeap* m_heap;
     ThreadIdentifier m_thread;
-    OwnPtr<PersistentRegion> m_persistentRegion;
+    std::unique_ptr<PersistentRegion> m_persistentRegion;
     BlinkGC::StackState m_stackState;
 #if OS(WIN) && COMPILER(MSVC)
     size_t m_threadStackSize;
@@ -638,17 +633,18 @@ private:
     void* m_safePointScopeMarker;
     Vector<Address> m_safePointStackCopy;
     bool m_atSafePoint;
-    Vector<OwnPtr<BlinkGCInterruptor>> m_interruptors;
+    Vector<std::unique_ptr<BlinkGCInterruptor>> m_interruptors;
     bool m_sweepForbidden;
     size_t m_noAllocationCount;
     size_t m_gcForbiddenCount;
     double m_accumulatedSweepingTime;
 
-    BaseHeap* m_heaps[BlinkGC::NumberOfHeaps];
-    int m_vectorBackingHeapIndex;
-    size_t m_heapAges[BlinkGC::NumberOfHeaps];
-    size_t m_currentHeapAges;
+    BaseArena* m_arenas[BlinkGC::NumberOfArenas];
+    int m_vectorBackingArenaIndex;
+    size_t m_arenaAges[BlinkGC::NumberOfArenas];
+    size_t m_currentArenaAges;
 
+    bool m_perThreadHeapEnabled;
     bool m_isTerminating;
     GarbageCollectedMixinConstructorMarker* m_gcMixinMarker;
 
@@ -664,16 +660,19 @@ private:
 
     v8::Isolate* m_isolate;
     void (*m_traceDOMWrappers)(v8::Isolate*, Visitor*);
+    void (*m_invalidateDeadObjectsInWrappersMarkingDeque)(v8::Isolate*);
 
 #if defined(ADDRESS_SANITIZER)
     void* m_asanFakeStack;
 #endif
 
-#if defined(LEAK_SANITIZER)
     // PersistentNodes that are stored in static references;
-    // references we have to clear before initiating LSan's leak detection.
-    HashSet<PersistentNode*> m_staticPersistents;
+    // references that either have to be cleared upon the thread
+    // detaching from Oilpan and shutting down or references we
+    // have to clear before initiating LSan's leak detection.
+    HashMap<PersistentNode*, PersistentClearCallback> m_staticPersistents;
 
+#if defined(LEAK_SANITIZER)
     // Count that controls scoped disabling of persistent registration.
     size_t m_disabledStaticPersistentsRegistration;
 #endif
@@ -684,7 +683,7 @@ private:
     // since there will be less than 2^8 types of objects in common cases.
     static const int likelyToBePromptlyFreedArraySize = (1 << 8);
     static const int likelyToBePromptlyFreedArrayMask = likelyToBePromptlyFreedArraySize - 1;
-    OwnPtr<int[]> m_likelyToBePromptlyFreed;
+    std::unique_ptr<int[]> m_likelyToBePromptlyFreed;
 
     // Stats for heap memory of this thread.
     size_t m_allocatedObjectSize;

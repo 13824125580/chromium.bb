@@ -73,7 +73,7 @@ void VideoFrameMetadata::SetTimeTicks(Key key, const base::TimeTicks& value) {
   SetTimeValue(key, value, &dictionary_);
 }
 
-void VideoFrameMetadata::SetValue(Key key, scoped_ptr<base::Value> value) {
+void VideoFrameMetadata::SetValue(Key key, std::unique_ptr<base::Value> value) {
   dictionary_.SetWithoutPathExpansion(ToInternalKey(key), std::move(value));
 }
 
@@ -143,6 +143,11 @@ void VideoFrameMetadata::MergeInternalValuesInto(
 void VideoFrameMetadata::MergeInternalValuesFrom(
     const base::DictionaryValue& in) {
   dictionary_.MergeDictionary(&in);
+}
+
+void VideoFrameMetadata::MergeMetadataFrom(
+    const VideoFrameMetadata* metadata_source) {
+  dictionary_.MergeDictionary(&metadata_source->dictionary_);
 }
 
 const base::BinaryValue* VideoFrameMetadata::GetBinaryValue(Key key) const {

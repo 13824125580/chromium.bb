@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,6 +20,7 @@
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "components/password_manager/core/browser/stub_form_saver.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/stub_password_manager_driver.h"
 
@@ -49,7 +51,7 @@ void ManagePasswordsTest::SetupManagingPasswords() {
   autofill::PasswordFormMap map;
   map.insert(std::make_pair(
       kTestUsername,
-      make_scoped_ptr(new autofill::PasswordForm(*test_form()))));
+      base::WrapUnique(new autofill::PasswordForm(*test_form()))));
   GetController()->OnPasswordAutofilled(map, map.begin()->second->origin,
                                         nullptr);
 }
@@ -59,9 +61,10 @@ void ManagePasswordsTest::SetupPendingPassword() {
   password_manager::StubLogManager log_manager;
   password_manager::StubPasswordManagerDriver driver;
 
-  scoped_ptr<password_manager::PasswordFormManager> test_form_manager(
+  std::unique_ptr<password_manager::PasswordFormManager> test_form_manager(
       new password_manager::PasswordFormManager(
-          nullptr, &client, driver.AsWeakPtr(), *test_form(), false));
+          nullptr, &client, driver.AsWeakPtr(), *test_form(), false,
+          base::WrapUnique(new password_manager::StubFormSaver)));
   test_form_manager->SimulateFetchMatchingLoginsFromPasswordStore();
   ScopedVector<autofill::PasswordForm> best_matches;
   test_form_manager->OnGetPasswordStoreResults(std::move(best_matches));
@@ -73,18 +76,21 @@ void ManagePasswordsTest::SetupAutomaticPassword() {
   password_manager::StubLogManager log_manager;
   password_manager::StubPasswordManagerDriver driver;
 
-  scoped_ptr<password_manager::PasswordFormManager> test_form_manager(
+  std::unique_ptr<password_manager::PasswordFormManager> test_form_manager(
       new password_manager::PasswordFormManager(
-          nullptr, &client, driver.AsWeakPtr(), *test_form(), false));
+          nullptr, &client, driver.AsWeakPtr(), *test_form(), false,
+          base::WrapUnique(new password_manager::StubFormSaver)));
   GetController()->OnAutomaticPasswordSave(std::move(test_form_manager));
 }
 
 void ManagePasswordsTest::SetupAutoSignin(
     ScopedVector<autofill::PasswordForm> local_credentials) {
-  GetController()->OnAutoSignin(std::move(local_credentials));
+  ASSERT_FALSE(local_credentials.empty());
+  GURL origin = local_credentials[0]->origin;
+  GetController()->OnAutoSignin(std::move(local_credentials), origin);
 }
 
-scoped_ptr<base::HistogramSamples> ManagePasswordsTest::GetSamples(
+std::unique_ptr<base::HistogramSamples> ManagePasswordsTest::GetSamples(
     const char* histogram) {
   // Ensure that everything has been properly recorded before pulling samples.
   content::RunAllPendingInMessageLoop();

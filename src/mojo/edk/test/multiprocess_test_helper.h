@@ -8,10 +8,11 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/process/process.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
-#include "mojo/public/cpp/system/macros.h"
+#include "mojo/edk/embedder/embedder.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "testing/multiprocess_func_list.h"
 
@@ -42,6 +43,10 @@ class MultiprocessTestHelper {
       const std::string& switch_string,
       const std::string& switch_value);
 
+  void set_process_error_callback(const ProcessErrorCallback& callback) {
+    process_error_callback_ = callback;
+  }
+
   // Wait for the child process to terminate.
   // Returns the exit code of the child process. Note that, though it's declared
   // to be an |int|, the exit code is subject to mangling by the OS. E.g., we
@@ -54,6 +59,8 @@ class MultiprocessTestHelper {
   // and false otherwise. You probably want to do something like
   // |EXPECT_TRUE(WaitForChildTestShutdown());|.
   bool WaitForChildTestShutdown();
+
+  const base::Process& test_child() const { return test_child_; }
 
   // Used by macros in mojo/edk/test/mojo_test_base.h to support multiprocess
   // test client initialization.
@@ -68,7 +75,9 @@ class MultiprocessTestHelper {
   // Valid after |StartChild()| and before |WaitForChildShutdown()|.
   base::Process test_child_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(MultiprocessTestHelper);
+  ProcessErrorCallback process_error_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(MultiprocessTestHelper);
 };
 
 }  // namespace test

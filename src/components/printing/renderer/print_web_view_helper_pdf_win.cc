@@ -30,7 +30,7 @@ bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
   std::vector<gfx::Size> page_size_in_dpi(printed_pages.size());
   std::vector<gfx::Rect> content_area_in_dpi(printed_pages.size());
 
-  PdfMetafileSkia metafile;
+  PdfMetafileSkia metafile(PDF_SKIA_DOCUMENT_TYPE);
   CHECK(metafile.Init());
 
   PrintMsg_PrintPage_Params page_params;
@@ -67,9 +67,10 @@ bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
     Send(new PrintHostMsg_DidPrintPage(routing_id(), printed_page_params));
 
     // Send the rest of the pages with an invalid metafile handle.
-    // TODO(erikchen): Fix semantics. See https://crbug.com/640840
-    if (printed_page_params.metafile_data_handle.IsValid())
-       printed_page_params.metafile_data_handle = base::SharedMemoryHandle();
+    if (printed_page_params.metafile_data_handle.IsValid()) {
+      printed_page_params.metafile_data_handle.Close();
+      printed_page_params.metafile_data_handle = base::SharedMemoryHandle();
+    }
   }
   return true;
 }

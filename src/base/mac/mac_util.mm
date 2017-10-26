@@ -218,23 +218,6 @@ void SwitchFullScreenModes(FullScreenMode from_mode, FullScreenMode to_mode) {
   SetUIMode();
 }
 
-void SetCursorVisibility(bool visible) {
-  if (visible)
-    [NSCursor unhide];
-  else
-    [NSCursor hide];
-}
-
-void ActivateProcess(pid_t pid) {
-  ProcessSerialNumber process;
-  OSStatus status = GetProcessForPID(pid, &process);
-  if (status == noErr) {
-    SetFrontProcess(&process);
-  } else {
-    OSSTATUS_DLOG(WARNING, status) << "Unable to get process for pid " << pid;
-  }
-}
-
 bool AmIForeground() {
   ProcessSerialNumber foreground_psn = { 0 };
   OSErr err = GetFrontProcess(&foreground_psn);
@@ -358,7 +341,7 @@ bool WasLaunchedAsLoginOrResumeItem() {
 bool WasLaunchedAsLoginItemRestoreState() {
   // "Reopen windows..." option was added for Lion.  Prior OS versions should
   // not have this behavior.
-  if (IsOSSnowLeopard() || !WasLaunchedAsLoginOrResumeItem())
+  if (!WasLaunchedAsLoginOrResumeItem())
     return false;
 
   CFStringRef app = CFSTR("com.apple.loginwindow");
@@ -385,12 +368,7 @@ bool WasLaunchedAsHiddenLoginItem() {
 
   ScopedCFTypeRef<LSSharedFileListItemRef> item(GetLoginItemForApp());
   if (!item.get()) {
-    // Lion can launch items for the resume feature.  So log an error only for
-    // Snow Leopard or earlier.
-    if (IsOSSnowLeopard())
-      DLOG(ERROR) <<
-          "Process launched at Login but can't access Login Item List.";
-
+    // OS X can launch items for the resume feature.
     return false;
   }
   return IsHiddenLoginItem(item);
@@ -478,45 +456,13 @@ int MacOSXMinorVersion() {
 }
 
 enum {
-  SNOW_LEOPARD_MINOR_VERSION = 6,
-  LION_MINOR_VERSION = 7,
-  MOUNTAIN_LION_MINOR_VERSION = 8,
   MAVERICKS_MINOR_VERSION = 9,
   YOSEMITE_MINOR_VERSION = 10,
   EL_CAPITAN_MINOR_VERSION = 11,
+  SIERRA_MINOR_VERSION = 12,
 };
 
 }  // namespace
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_7)
-bool IsOSSnowLeopard() {
-  return MacOSXMinorVersion() == SNOW_LEOPARD_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_7)
-bool IsOSLion() {
-  return MacOSXMinorVersion() == LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_7)
-bool IsOSLionOrLater() {
-  return MacOSXMinorVersion() >= LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_8)
-bool IsOSMountainLion() {
-  return MacOSXMinorVersion() == MOUNTAIN_LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_8)
-bool IsOSMountainLionOrLater() {
-  return MacOSXMinorVersion() >= MOUNTAIN_LION_MINOR_VERSION;
-}
-#endif
 
 #if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_9)
 bool IsOSMavericks() {
@@ -554,9 +500,21 @@ bool IsOSElCapitanOrLater() {
 }
 #endif
 
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_11)
-bool IsOSLaterThanElCapitan_DontCallThis() {
-  return MacOSXMinorVersion() > EL_CAPITAN_MINOR_VERSION;
+#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_12)
+bool IsOSSierra() {
+  return MacOSXMinorVersion() == SIERRA_MINOR_VERSION;
+}
+#endif
+
+#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_12)
+bool IsOSSierraOrLater() {
+  return MacOSXMinorVersion() >= SIERRA_MINOR_VERSION;
+}
+#endif
+
+#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_12)
+bool IsOSLaterThanSierra_DontCallThis() {
+  return MacOSXMinorVersion() > SIERRA_MINOR_VERSION;
 }
 #endif
 

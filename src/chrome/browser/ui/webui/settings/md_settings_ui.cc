@@ -10,16 +10,20 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/settings/about_handler.h"
 #include "chrome/browser/ui/webui/settings/appearance_handler.h"
+#include "chrome/browser/ui/webui/settings/browser_lifetime_handler.h"
 #include "chrome/browser/ui/webui/settings/downloads_handler.h"
 #include "chrome/browser/ui/webui/settings/font_handler.h"
 #include "chrome/browser/ui/webui/settings/languages_handler.h"
 #include "chrome/browser/ui/webui/settings/md_settings_localized_strings_provider.h"
 #include "chrome/browser/ui/webui/settings/people_handler.h"
+#include "chrome/browser/ui/webui/settings/profile_info_handler.h"
 #include "chrome/browser/ui/webui/settings/reset_settings_handler.h"
 #include "chrome/browser/ui/webui/settings/search_engines_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_clear_browsing_data_handler.h"
-#include "chrome/browser/ui/webui/settings/settings_default_browser_handler.h"
+#include "chrome/browser/ui/webui/settings/settings_media_devices_selection_handler.h"
+#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_startup_pages_handler.h"
 #include "chrome/browser/ui/webui/settings/site_settings_handler.h"
 #include "chrome/common/url_constants.h"
@@ -31,48 +35,72 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/ui/webui/settings/chromeos/change_picture_handler.h"
+#include "chrome/browser/ui/webui/settings/chromeos/device_keyboard_handler.h"
+#include "chrome/browser/ui/webui/settings/chromeos/easy_unlock_settings_handler.h"
 #else  // !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/webui/settings/settings_default_browser_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_manage_profile_handler.h"
+#include "chrome/browser/ui/webui/settings/system_handler.h"
 #endif  // defined(OS_CHROMEOS)
+
+#if defined(USE_NSS_CERTS)
+#include "chrome/browser/ui/webui/settings/certificates_handler.h"
+#elif defined(OS_WIN) || defined(OS_MACOSX)
+#include "chrome/browser/ui/webui/settings/native_certificates_handler.h"
+#endif  // defined(USE_NSS_CERTS)
 
 namespace settings {
 
-SettingsPageUIHandler::SettingsPageUIHandler() {
-}
-
-SettingsPageUIHandler::~SettingsPageUIHandler() {
-}
-
-void SettingsPageUIHandler::CallJavascriptCallback(
-    const base::Value& callback_id, const base::Value& response) {
-  // cr.webUIResponse is a global JS function exposed from cr.js.
-  web_ui()->CallJavascriptFunction("cr.webUIResponse", callback_id, response);
-}
-
-MdSettingsUI::MdSettingsUI(content::WebUI* web_ui)
+MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
     : content::WebUIController(web_ui),
       WebContentsObserver(web_ui->GetWebContents()) {
   Profile* profile = Profile::FromWebUI(web_ui);
   AddSettingsPageUIHandler(new AppearanceHandler(web_ui));
+
+#if defined(USE_NSS_CERTS)
+  AddSettingsPageUIHandler(new CertificatesHandler(false));
+#elif defined(OS_WIN) || defined(OS_MACOSX)
+  AddSettingsPageUIHandler(new NativeCertificatesHandler());
+#endif  // defined(USE_NSS_CERTS)
+
   AddSettingsPageUIHandler(new ClearBrowsingDataHandler(web_ui));
-  AddSettingsPageUIHandler(new DefaultBrowserHandler(web_ui));
+  AddSettingsPageUIHandler(new BrowserLifetimeHandler());
   AddSettingsPageUIHandler(new DownloadsHandler());
   AddSettingsPageUIHandler(new FontHandler(web_ui));
   AddSettingsPageUIHandler(new LanguagesHandler(web_ui));
+  AddSettingsPageUIHandler(new MediaDevicesSelectionHandler(profile));
   AddSettingsPageUIHandler(new PeopleHandler(profile));
+  AddSettingsPageUIHandler(new ProfileInfoHandler(profile));
   AddSettingsPageUIHandler(new SearchEnginesHandler(profile));
   AddSettingsPageUIHandler(new SiteSettingsHandler(profile));
   AddSettingsPageUIHandler(new StartupPagesHandler(web_ui));
 
 #if defined(OS_CHROMEOS)
   AddSettingsPageUIHandler(new chromeos::settings::ChangePictureHandler());
+  AddSettingsPageUIHandler(new chromeos::settings::KeyboardHandler(web_ui));
 #else
+  AddSettingsPageUIHandler(new DefaultBrowserHandler(web_ui));
   AddSettingsPageUIHandler(new ManageProfileHandler(profile));
+  AddSettingsPageUIHandler(new SystemHandler());
 #endif
 
-  content::WebUIDataSource* html_source =
-      content::WebUIDataSource::Create(chrome::kChromeUIMdSettingsHost);
+  // Host must be derived from the visible URL, since this might be serving
+  // either chrome://settings or chrome://md-settings.
+  CHECK(url.GetOrigin() == GURL(chrome::kChromeUISettingsURL).GetOrigin() ||
+        url.GetOrigin() == GURL(chrome::kChromeUIMdSettingsURL).GetOrigin());
 
+  content::WebUIDataSource* html_source =
+      content::WebUIDataSource::Create(url.host());
+
+#if defined(OS_CHROMEOS)
+  chromeos::settings::EasyUnlockSettingsHandler* easy_unlock_handler =
+      chromeos::settings::EasyUnlockSettingsHandler::Create(html_source,
+                                                            profile);
+  if (easy_unlock_handler)
+    AddSettingsPageUIHandler(easy_unlock_handler);
+#endif
+
+  AddSettingsPageUIHandler(AboutHandler::Create(html_source, profile));
   AddSettingsPageUIHandler(ResetSettingsHandler::Create(html_source, profile));
 
   // Add all settings resources.
@@ -91,12 +119,10 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui)
 MdSettingsUI::~MdSettingsUI() {
 }
 
-void MdSettingsUI::AddSettingsPageUIHandler(
-    content::WebUIMessageHandler* handler_raw) {
-  scoped_ptr<content::WebUIMessageHandler> handler(handler_raw);
-  DCHECK(handler.get());
-
-  web_ui()->AddMessageHandler(handler.release());
+void MdSettingsUI::AddSettingsPageUIHandler(SettingsPageUIHandler* handler) {
+  DCHECK(handler);
+  handlers_.insert(handler);
+  web_ui()->AddMessageHandler(handler);  // |handler| is owned by |web_ui()|.
 }
 
 void MdSettingsUI::DidStartProvisionalLoadForFrame(

@@ -87,7 +87,7 @@ class TextInputClientMacTest : public testing::Test {
   // Gets deleted when the last RWH in the "process" gets destroyed.
   MockRenderProcessHostFactory process_factory_;
   MockRenderWidgetHostDelegate delegate_;
-  scoped_ptr<RenderWidgetHostImpl> widget_;
+  std::unique_ptr<RenderWidgetHostImpl> widget_;
 
   base::Thread thread_;
 };
@@ -155,8 +155,8 @@ TEST_F(TextInputClientMacTest, NotFoundCharacterIndex) {
                       base::Unretained(service()), kPreviousValue));
 
   scoped_refptr<TextInputClientMessageFilter> filter(
-      new TextInputClientMessageFilter(widget()->GetProcess()->GetID()));
-  scoped_ptr<IPC::Message> message(
+      new TextInputClientMessageFilter());
+  std::unique_ptr<IPC::Message> message(
       new TextInputClientReplyMsg_GotCharacterIndexForPoint(
           widget()->GetRoutingID(), UINT32_MAX));
   // Set |WTF::notFound| to the index |kTaskDelayMs| after the previous

@@ -8,7 +8,6 @@
 #include "core/paint/LayerClipRecorder.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/RuntimeEnabledFeatures.h"
-#include "platform/graphics/CompositorFactory.h"
 #include "platform/graphics/CompositorFilterOperations.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsLayer.h"
@@ -18,6 +17,8 @@
 #include "platform/graphics/paint/PaintController.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCompositorSupport.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -30,15 +31,14 @@ FilterPainter::FilterPainter(PaintLayer& layer, GraphicsContext& context, const 
     if (!layer.paintsWithFilters())
         return;
 
-    RefPtrWillBeRawPtr<FilterEffect> lastEffect = layer.lastFilterEffect();
+    FilterEffect* lastEffect = layer.lastFilterEffect();
     if (!lastEffect)
         return;
 
     ASSERT(layer.filterInfo());
 
-    SkiaImageFilterBuilder builder;
     lastEffect->determineFilterPrimitiveSubregion(MapRectForward);
-    RefPtr<SkImageFilter> imageFilter = builder.build(lastEffect.get(), ColorSpaceDeviceRGB);
+    sk_sp<SkImageFilter> imageFilter = SkiaImageFilterBuilder::build(lastEffect, ColorSpaceDeviceRGB);
     if (!imageFilter)
         return;
 
@@ -56,14 +56,14 @@ FilterPainter::FilterPainter(PaintLayer& layer, GraphicsContext& context, const 
     paintingInfo.clipToDirtyRect = false;
 
     if (clipRect.rect() != paintingInfo.paintDirtyRect || clipRect.hasRadius()) {
-        m_clipRecorder = adoptPtr(new LayerClipRecorder(context, *layer.layoutObject(), DisplayItem::ClipLayerFilter, clipRect, &paintingInfo, LayoutPoint(), paintFlags));
+        m_clipRecorder = wrapUnique(new LayerClipRecorder(context, *layer.layoutObject(), DisplayItem::ClipLayerFilter, clipRect, &paintingInfo, LayoutPoint(), paintFlags));
     }
 
     ASSERT(m_layoutObject);
-    if (!context.paintController().displayItemConstructionIsDisabled()) {
+    if (!context.getPaintController().displayItemConstructionIsDisabled()) {
         FilterOperations filterOperations(layer.computeFilterOperations(m_layoutObject->styleRef()));
-        OwnPtr<CompositorFilterOperations> compositorFilterOperations = adoptPtr(CompositorFactory::current().createFilterOperations());
-        builder.buildFilterOperations(filterOperations, compositorFilterOperations.get());
+        std::unique_ptr<CompositorFilterOperations> compositorFilterOperations = CompositorFilterOperations::create();
+        SkiaImageFilterBuilder::buildFilterOperations(filterOperations, compositorFilterOperations.get());
         // FIXME: It's possible to have empty CompositorFilterOperations here even
         // though the SkImageFilter produced above is non-null, since the
         // layer's FilterEffectBuilder can have a stale representation of
@@ -76,7 +76,7 @@ FilterPainter::FilterPainter(PaintLayer& layer, GraphicsContext& context, const 
             visualBounds.moveBy(-offsetFromRoot);
             layer.convertFromFlowThreadToVisualBoundingBoxInAncestor(paintingInfo.rootLayer, visualBounds);
         }
-        context.paintController().createAndAppend<BeginFilterDisplayItem>(*m_layoutObject, imageFilter, FloatRect(visualBounds), compositorFilterOperations.release());
+        context.getPaintController().createAndAppend<BeginFilterDisplayItem>(*m_layoutObject, std::move(imageFilter), FloatRect(visualBounds), std::move(compositorFilterOperations));
     }
 
     m_filterInProgress = true;
@@ -87,7 +87,7 @@ FilterPainter::~FilterPainter()
     if (!m_filterInProgress)
         return;
 
-    m_context.paintController().endItem<EndFilterDisplayItem>(*m_layoutObject);
+    m_context.getPaintController().endItem<EndFilterDisplayItem>(*m_layoutObject);
 }
 
 } // namespace blink

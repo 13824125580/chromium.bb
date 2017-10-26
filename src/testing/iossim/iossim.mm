@@ -1,7 +1,371 @@
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+#import <Foundation/Foundation.h>
+#if defined(__MAC_10_12) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_10_12
+#include <getopt.h>
+#include <string>
 
+namespace {
+
+void PrintUsage() {
+  fprintf(
+      stderr,
+      "Usage: iossim [-d device] [-s sdk_version] <app_path> <xctest_path>\n"
+      "  where <app_path> is the path to the .app directory and <xctest_path> "
+      "is the path to an optional xctest bundle.\n"
+      "Options:\n"
+      "  -d  Specifies the device (must be one of the values from the iOS "
+      "Simulator's Hardware -> Device menu. Defaults to 'iPhone 6s'.\n"
+      "  -e  Erase the device's contents and settings before running the "
+      "test.\n"
+      "  -p  Print the device's home directory, does not run a test.\n"
+      "  -s  Specifies the SDK version to use (e.g '9.3'). Will use system "
+      "default if not specified.\n");
+}
+
+// Exit status codes.
+const int kExitSuccess = EXIT_SUCCESS;
+const int kExitInvalidArguments = 2;
+
+void LogError(NSString* format, ...) {
+  va_list list;
+  va_start(list, format);
+
+  NSString* message =
+      [[[NSString alloc] initWithFormat:format arguments:list] autorelease];
+
+  fprintf(stderr, "iossim: ERROR: %s\n", [message UTF8String]);
+  fflush(stderr);
+
+  va_end(list);
+}
+
+}
+
+// Wrap boiler plate calls to xcrun NSTasks.
+@interface XCRunTask : NSObject {
+  NSTask* _task;
+}
+- (instancetype)initWithArguments:(NSArray*)arguments;
+- (void)run;
+- (void)setStandardOutput:(id)output;
+- (void)setStandardError:(id)error;
+@end
+
+@implementation XCRunTask
+
+- (instancetype)initWithArguments:(NSArray*)arguments {
+  self = [super init];
+  if (self) {
+    _task = [[NSTask alloc] init];
+    SEL selector = @selector(setStartsNewProcessGroup:);
+    if ([_task respondsToSelector:selector])
+      [_task performSelector:selector withObject:nil];
+    [_task setLaunchPath:@"/usr/bin/xcrun"];
+    [_task setArguments:arguments];
+  }
+  return self;
+}
+
+- (void)dealloc {
+  [_task release];
+  [super dealloc];
+}
+
+- (void)setStandardOutput:(id)output {
+  [_task setStandardOutput:output];
+}
+
+- (void)setStandardError:(id)error {
+  [_task setStandardError:error];
+}
+
+- (void)run {
+  [_task launch];
+  [_task waitUntilExit];
+}
+
+@end
+
+// Return array of available iOS runtime dictionaries.  Unavailable (old Xcode
+// versions) or other runtimes (tvOS, watchOS) are removed.
+NSArray* Runtimes(NSDictionary* simctl_list) {
+  NSMutableArray* runtimes =
+      [[simctl_list[@"runtimes"] mutableCopy] autorelease];
+  for (NSDictionary* runtime in simctl_list[@"runtimes"]) {
+    if (![runtime[@"identifier"]
+            hasPrefix:@"com.apple.CoreSimulator.SimRuntime.iOS"] ||
+        ![runtime[@"availability"] isEqualToString:@"(available)"]) {
+      [runtimes removeObject:runtime];
+    }
+  }
+  return runtimes;
+}
+
+// Return array of device dictionaries.
+NSArray* Devices(NSDictionary* simctl_list) {
+  NSMutableArray* devicetypes =
+      [[simctl_list[@"devicetypes"] mutableCopy] autorelease];
+  for (NSDictionary* devicetype in simctl_list[@"devicetypes"]) {
+    if (![devicetype[@"identifier"]
+            hasPrefix:@"com.apple.CoreSimulator.SimDeviceType.iPad"] &&
+        ![devicetype[@"identifier"]
+            hasPrefix:@"com.apple.CoreSimulator.SimDeviceType.iPhone"]) {
+      [devicetypes removeObject:devicetype];
+    }
+  }
+  return devicetypes;
+}
+
+// Get list of devices, runtimes, etc from sim_ctl.
+NSDictionary* GetSimulatorList() {
+  XCRunTask* task = [[[XCRunTask alloc]
+      initWithArguments:@[ @"simctl", @"list", @"-j" ]] autorelease];
+  NSPipe* out = [NSPipe pipe];
+  [task setStandardOutput:out];
+  [task run];
+
+  NSData* data = [[out fileHandleForReading] readDataToEndOfFile];
+  NSError* error = nil;
+  return [NSJSONSerialization JSONObjectWithData:data
+                                         options:kNilOptions
+                                           error:&error];
+}
+
+// List supported runtimes and devices.
+void PrintSupportedDevices(NSDictionary* simctl_list) {
+  printf("\niOS devices:\n");
+  for (NSDictionary* type in Devices(simctl_list)) {
+    printf("%s\n", [type[@"name"] UTF8String]);
+  }
+  printf("\nruntimes:\n");
+  for (NSDictionary* runtime in Runtimes(simctl_list)) {
+    printf("%s\n", [runtime[@"version"] UTF8String]);
+  }
+}
+
+// Expand path to absolute path.
+NSString* ResolvePath(NSString* path) {
+  path = [path stringByExpandingTildeInPath];
+  path = [path stringByStandardizingPath];
+  const char* cpath = [path cStringUsingEncoding:NSUTF8StringEncoding];
+  char* resolved_name = NULL;
+  char* abs_path = realpath(cpath, resolved_name);
+  if (abs_path == NULL) {
+    return nil;
+  }
+  return [NSString stringWithCString:abs_path encoding:NSUTF8StringEncoding];
+}
+
+// Search |simctl_list| for a udid matching |device_name| and |sdk_version|.
+NSString* GetDeviceBySDKAndName(NSDictionary* simctl_list,
+                                NSString* device_name,
+                                NSString* sdk_version) {
+  NSString* sdk = [@"iOS " stringByAppendingString:sdk_version];
+  NSArray* devices = [simctl_list[@"devices"] objectForKey:sdk];
+  for (NSDictionary* device in devices) {
+    if ([device[@"name"] isEqualToString:device_name]) {
+      return device[@"udid"];
+    }
+  }
+  return nil;
+}
+
+// Prints the HOME environment variable for a device.  Used by the bots to
+// package up all the test data.
+void PrintDeviceHome(NSString* udid) {
+  XCRunTask* task = [[[XCRunTask alloc]
+      initWithArguments:@[ @"simctl", @"getenv", udid, @"HOME" ]] autorelease];
+  [task run];
+}
+
+// Erase a device, used by the bots before a clean test run.
+void EraseDevice(NSString* udid) {
+  XCRunTask* shutdown = [[[XCRunTask alloc]
+      initWithArguments:@[ @"simctl", @"shutdown", udid ]] autorelease];
+  [shutdown setStandardOutput:nil];
+  [shutdown setStandardError:nil];
+  [shutdown run];
+
+  XCRunTask* erase = [[[XCRunTask alloc]
+      initWithArguments:@[ @"simctl", @"erase", udid ]] autorelease];
+  [erase run];
+}
+
+void KillSimulator() {
+  XCRunTask* task = [[[XCRunTask alloc]
+      initWithArguments:@[ @"killall", @"Simulator" ]] autorelease];
+  [task setStandardOutput:nil];
+  [task setStandardError:nil];
+  [task run];
+}
+
+void RunApplication(NSString* app_path, NSString* xctest_path, NSString* udid) {
+  NSString* tempFilePath = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+  [[NSFileManager defaultManager] createFileAtPath:tempFilePath
+                                          contents:nil
+                                        attributes:nil];
+
+  NSString* file_string =
+      @"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+       "<!DOCTYPE plist PUBLIC \"-//Apple Computer//DTD PLIST 1.0//EN\" "
+       "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+       "<plist version=\"1.0\">\n"
+       "<dict>\n"
+       "    <key>TestTargetName</key>\n"
+       "    <dict>\n"
+       "         <key>TestBundlePath</key>\n"
+       "         <string>{0}</string>\n"
+       "         <key>TestHostPath</key>\n"
+       "         <string>{1}</string>\n"
+       "         <key>TestingEnvironmentVariables</key>\n"
+       "         <dict>\n"
+       "              <key>IDEiPhoneInternalTestBundleName</key>\n"
+       "              <string>{2}</string>\n"
+       "{3}"
+       "         </dict>\n"
+       "    </dict>\n"
+       "</dict>\n"
+       "</plist>\n";
+
+  NSString* xctest_inject =
+      @"              <key>DYLD_INSERT_LIBRARIES</key>\n"
+       "              "
+       "<string>__PLATFORMS__/iPhoneSimulator.platform/Developer/Library/"
+       "PrivateFrameworks/IDEBundleInjection.framework/IDEBundleInjection</"
+       "string>\n";
+
+  if (xctest_path) {
+    file_string =
+        [file_string stringByReplacingOccurrencesOfString:@"{0}"
+                                               withString:xctest_path];
+    file_string =
+        [file_string stringByReplacingOccurrencesOfString:@"{3}"
+                                               withString:xctest_inject];
+
+  } else {
+    file_string = [file_string stringByReplacingOccurrencesOfString:@"{0}"
+                                                         withString:app_path];
+    file_string = [file_string stringByReplacingOccurrencesOfString:@"{3}"
+                                                         withString:@""];
+  }
+  file_string = [file_string stringByReplacingOccurrencesOfString:@"{1}"
+                                                       withString:app_path];
+  file_string = [file_string
+      stringByReplacingOccurrencesOfString:@"{2}"
+                                withString:[app_path lastPathComponent]];
+
+  [file_string writeToFile:tempFilePath
+                atomically:YES
+                  encoding:NSUTF8StringEncoding
+                     error:nil];
+
+  XCRunTask* task = [[[XCRunTask alloc] initWithArguments:@[
+    @"xcodebuild", @"-xctestrun", tempFilePath, @"-destination",
+    [@"platform=iOS Simulator,id=" stringByAppendingString:udid],
+    @"test-without-building"
+  ]] autorelease];
+  [task run];
+}
+
+int main(int argc, char* const argv[]) {
+  NSString* app_path = nil;
+  NSString* xctest_path = nil;
+  NSString* device_name = @"iPhone 6s";
+  bool wants_erase = false;
+  bool wants_print_home = false;
+  NSDictionary* simctl_list = GetSimulatorList();
+  float sdk = 0;
+  for (NSDictionary* runtime in Runtimes(simctl_list)) {
+    sdk = fmax(sdk, [runtime[@"version"] floatValue]);
+  }
+  NSString* sdk_version = [NSString stringWithFormat:@"%0.1f", sdk];
+
+  int c;
+  while ((c = getopt(argc, argv, "hs:d:u:t:pel")) != -1) {
+    switch (c) {
+      case 's':
+        sdk_version = [NSString stringWithUTF8String:optarg];
+        break;
+      case 'd':
+        device_name = [NSString stringWithUTF8String:optarg];
+        break;
+      case 'e':
+        wants_erase = true;
+        break;
+      case 'p':
+        wants_print_home = true;
+        break;
+      case 'l':
+        PrintSupportedDevices(simctl_list);
+        exit(kExitSuccess);
+        break;
+      case 'h':
+        PrintUsage();
+        exit(kExitSuccess);
+      case 'u':
+      case 't':
+        // Ignore 'u' and 't', used by old version of iossim.
+        break;
+      default:
+        PrintUsage();
+        exit(kExitInvalidArguments);
+    }
+  }
+
+  NSString* udid = GetDeviceBySDKAndName(simctl_list, device_name, sdk_version);
+  if (udid == nil) {
+    LogError(@"Unable to find a device %@ with SDK %@.", device_name,
+             sdk_version);
+    PrintSupportedDevices(simctl_list);
+    exit(kExitInvalidArguments);
+  }
+
+  if (wants_print_home) {
+    PrintDeviceHome(udid);
+    exit(kExitSuccess);
+  }
+
+  // There should be at least one arg left, specifying the app path. Any
+  // additional args are passed as arguments to the app.
+  if (optind < argc) {
+    NSString* unresolved_path = [[NSFileManager defaultManager]
+        stringWithFileSystemRepresentation:argv[optind]
+                                    length:strlen(argv[optind])];
+    app_path = ResolvePath(unresolved_path);
+    if (!app_path) {
+      LogError(@"Unable to resolve app_path %@", unresolved_path);
+      exit(kExitInvalidArguments);
+    }
+
+    if (++optind < argc) {
+      NSString* unresolved_path = [[NSFileManager defaultManager]
+          stringWithFileSystemRepresentation:argv[optind]
+                                      length:strlen(argv[optind])];
+      xctest_path = ResolvePath(unresolved_path);
+      if (!xctest_path) {
+        LogError(@"Unable to resolve xctest_path %@", unresolved_path);
+        exit(kExitInvalidArguments);
+      }
+    }
+  } else {
+    LogError(@"Unable to parse command line arguments.");
+    PrintUsage();
+    exit(kExitInvalidArguments);
+  }
+
+  KillSimulator();
+  if (wants_erase) {
+    EraseDevice(udid);
+  }
+
+  RunApplication(app_path, xctest_path, udid);
+  return kExitSuccess;
+}
+#else
+#import <Appkit/Appkit.h>
 #include <asl.h>
 #import <Foundation/Foundation.h>
 #include <libgen.h>
@@ -21,16 +385,9 @@
 // However, there are some forward declarations required to get things to
 // compile.
 
-// TODO(lliabraa): Once all builders are on Xcode 6 this ifdef can be removed
-// (crbug.com/385030).
-#if defined(IOSSIM_USE_XCODE_6)
 @class DVTStackBacktrace;
 #import "DVTFoundation.h"
-#endif  // IOSSIM_USE_XCODE_6
 
-// TODO(lliabraa): Once all builders are on Xcode 6 this ifdef can be removed
-// (crbug.com/385030).
-#if defined(IOSSIM_USE_XCODE_6)
 @protocol SimBridge;
 @class DVTSimulatorApplication;
 @class SimDeviceSet;
@@ -39,7 +396,6 @@
 @class SimRuntime;
 @class SimServiceConnectionManager;
 #import "CoreSimulator.h"
-#endif  // IOSSIM_USE_XCODE_6
 
 @interface DVTPlatform : NSObject
 + (BOOL)loadAllPlatformsReturningError:(id*)arg1;
@@ -64,6 +420,7 @@
        didStart:(BOOL)started
       withError:(NSError*)error;
 @end
+
 #import "DVTiPhoneSimulatorRemoteClient.h"
 
 // An undocumented system log key included in messages from launchd. The value
@@ -76,10 +433,6 @@ namespace {
 // simulator.
 const char* const kUserHomeEnvVariable = "CFFIXED_USER_HOME";
 const char* const kHomeEnvVariable = "HOME";
-
-// Device family codes for iPhone and iPad.
-const int kIPhoneFamily = 1;
-const int kIPadFamily = 2;
 
 // Max number of seconds to wait for the simulator session to start.
 // This timeout must allow time to start up iOS Simulator, install the app
@@ -118,7 +471,6 @@ const int kExitInvalidArguments = 2;
 const int kExitInitializationFailure = 3;
 const int kExitAppFailedToStart = 4;
 const int kExitAppCrashed = 5;
-const int kExitUnsupportedXcodeVersion = 6;
 
 void LogError(NSString* format, ...) {
   va_list list;
@@ -185,74 +537,17 @@ NSString* GetOutputFromTask(NSString* toolPath, NSArray* args) {
                                 encoding:NSUTF8StringEncoding] autorelease];
 }
 
-// Finds the Xcode version via xcodebuild -version. Output from xcodebuild is
-// expected to look like:
-//   Xcode <version>
-//   Build version 5B130a
-// where <version> is the string returned by this function (e.g. 6.0).
-NSString* FindXcodeVersion() {
-  NSString* output = GetOutputFromTask(@"/usr/bin/xcodebuild",
-                                       @[ @"-version" ]);
-  // Scan past the "Xcode ", then scan the rest of the line into |version|.
-  NSScanner* scanner = [NSScanner scannerWithString:output];
-  BOOL valid = [scanner scanString:@"Xcode " intoString:NULL];
-  NSString* version;
-  valid =
-      [scanner scanUpToCharactersFromSet:[NSCharacterSet newlineCharacterSet]
-                              intoString:&version];
-  if (!valid) {
-    LogError(@"Unable to find Xcode version. 'xcodebuild -version' "
-             @"returned \n%@", output);
-    return nil;
-  }
-  return version;
-}
-
-// Returns true if iossim is running with Xcode 6 or later installed on the
-// host.
-BOOL IsRunningWithXcode6OrLater() {
-  static NSString* xcodeVersion = FindXcodeVersion();
-  if (!xcodeVersion) {
-    return false;
-  }
-  NSArray* components = [xcodeVersion componentsSeparatedByString:@"."];
-  if ([components count] < 1) {
-    return false;
-  }
-  NSInteger majorVersion = [[components objectAtIndex:0] integerValue];
-  return majorVersion >= 6;
-}
-
 // Prints supported devices and SDKs.
 void PrintSupportedDevices() {
-  if (IsRunningWithXcode6OrLater()) {
-#if defined(IOSSIM_USE_XCODE_6)
-    printf("Supported device/SDK combinations:\n");
-    Class simDeviceSetClass = FindClassByName(@"SimDeviceSet");
-    id deviceSet =
-        [simDeviceSetClass setForSetPath:[simDeviceSetClass defaultSetPath]];
-    for (id simDevice in [deviceSet availableDevices]) {
-      NSString* deviceInfo =
-          [NSString stringWithFormat:@"  -d '%@' -s '%@'\n",
-              [simDevice name], [[simDevice runtime] versionString]];
-      printf("%s", [deviceInfo UTF8String]);
-    }
-#endif  // IOSSIM_USE_XCODE_6
-  } else {
-    printf("Supported SDK versions:\n");
-    Class rootClass = FindClassByName(@"DTiPhoneSimulatorSystemRoot");
-    for (id root in [rootClass knownRoots]) {
-      printf("  '%s'\n", [[root sdkVersion] UTF8String]);
-    }
-    // This is the list of devices supported on Xcode 5.1.x.
-    printf("Supported devices:\n");
-    printf("  'iPhone'\n");
-    printf("  'iPhone Retina (3.5-inch)'\n");
-    printf("  'iPhone Retina (4-inch)'\n");
-    printf("  'iPhone Retina (4-inch 64-bit)'\n");
-    printf("  'iPad'\n");
-    printf("  'iPad Retina'\n");
-    printf("  'iPad Retina (64-bit)'\n");
+  printf("Supported device/SDK combinations:\n");
+  Class simDeviceSetClass = FindClassByName(@"SimDeviceSet");
+  id deviceSet =
+      [simDeviceSetClass setForSetPath:[simDeviceSetClass defaultSetPath]];
+  for (id simDevice in [deviceSet availableDevices]) {
+    NSString* deviceInfo =
+        [NSString stringWithFormat:@"  -d '%@' -s '%@'\n",
+            [simDevice name], [[simDevice runtime] versionString]];
+    printf("%s", [deviceInfo UTF8String]);
   }
 }
 }  // namespace
@@ -312,21 +607,15 @@ void PrintSupportedDevices() {
   NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
 
   NSFileHandle* simio = [NSFileHandle fileHandleForReadingAtPath:stdioPath_];
-  if (IsRunningWithXcode6OrLater()) {
-#if defined(IOSSIM_USE_XCODE_6)
-    // With iOS 8 simulators on Xcode 6, the app output is relative to the
-    // simulator's data directory.
-    NSString* versionString =
-        [[[session sessionConfig] simulatedSystemRoot] sdkVersion];
-    NSInteger majorVersion = [[[versionString componentsSeparatedByString:@"."]
-        objectAtIndex:0] intValue];
-    if (majorVersion >= 8) {
-      NSString* dataPath = session.sessionConfig.device.dataPath;
-      NSString* appOutput =
-          [dataPath stringByAppendingPathComponent:stdioPath_];
-      simio = [NSFileHandle fileHandleForReadingAtPath:appOutput];
-    }
-#endif  // IOSSIM_USE_XCODE_6
+  NSString* versionString =
+      [[[session sessionConfig] simulatedSystemRoot] sdkVersion];
+  NSInteger majorVersion = [[[versionString componentsSeparatedByString:@"."]
+      objectAtIndex:0] intValue];
+  if (majorVersion >= 8) {
+    NSString* dataPath = session.sessionConfig.device.dataPath;
+    NSString* appOutput =
+        [dataPath stringByAppendingPathComponent:stdioPath_];
+    simio = [NSFileHandle fileHandleForReadingAtPath:appOutput];
   }
   NSFileHandle* standardOutput = [NSFileHandle fileHandleWithStandardOutput];
   // Copy data to stdout/stderr while the app is running.
@@ -440,90 +729,46 @@ void PrintSupportedDevices() {
   // status code. iOS Simluator handles things a bit differently depending on
   // the version, so first determine the iOS version being used.
   BOOL badEntryFound = NO;
-  NSString* versionString =
-      [[[session sessionConfig] simulatedSystemRoot] sdkVersion];
-  NSInteger majorVersion = [[[versionString componentsSeparatedByString:@"."]
-      objectAtIndex:0] intValue];
-  if (majorVersion <= 6) {
-    // In iOS 6 and before, logging from the simulated apps went to the main
-    // system logs, so use ASL to check if the simulated app exited abnormally
-    // by looking for system log messages from launchd that refer to the
-    // simulated app's PID. Limit query to messages in the last minute since
-    // PIDs are cyclical.
-    aslmsg query = asl_new(ASL_TYPE_QUERY);
-    asl_set_query(query, ASL_KEY_SENDER, "launchd",
-                  ASL_QUERY_OP_EQUAL | ASL_QUERY_OP_SUBSTRING);
-    char session_id[20];
-    if (snprintf(session_id, 20, "%d", [session simulatedApplicationPID]) < 0) {
-      LogError(@"Failed to get [session simulatedApplicationPID]");
-      exit(kExitFailure);
-    }
-    asl_set_query(query, ASL_KEY_REF_PID, session_id, ASL_QUERY_OP_EQUAL);
-    asl_set_query(query, ASL_KEY_TIME, "-1m", ASL_QUERY_OP_GREATER_EQUAL);
 
-    // Log any messages found, and take note of any messages that may indicate
-    // the app crashed or did not exit cleanly.
-    aslresponse response = asl_search(NULL, query);
-    aslmsg entry;
-    while ((entry = aslresponse_next(response)) != NULL) {
-      const char* message = asl_get(entry, ASL_KEY_MSG);
-      LogWarning(@"Console message: %s", message);
-      // Some messages are harmless, so don't trigger a failure for them.
-      if (strstr(message, "The following job tried to hijack the service"))
-        continue;
-      badEntryFound = YES;
-    }
-  } else {
-    // Otherwise, the iOS Simulator's system logging is sandboxed, so parse the
-    // sandboxed system.log file for known errors.
-    NSString* path;
-    if (IsRunningWithXcode6OrLater()) {
-#if defined(IOSSIM_USE_XCODE_6)
-      NSString* dataPath = session.sessionConfig.device.dataPath;
-      path =
-          [dataPath stringByAppendingPathComponent:@"Library/Logs/system.log"];
-#endif  // IOSSIM_USE_XCODE_6
-    } else {
-      NSString* relativePathToSystemLog =
-          [NSString stringWithFormat:
-              @"Library/Logs/iOS Simulator/%@/system.log", versionString];
-      path = [simulatorHome_
-          stringByAppendingPathComponent:relativePathToSystemLog];
-    }
-    NSFileManager* fileManager = [NSFileManager defaultManager];
-    if ([fileManager fileExistsAtPath:path]) {
-      NSString* content =
-          [NSString stringWithContentsOfFile:path
-                                    encoding:NSUTF8StringEncoding
-                                       error:NULL];
-      NSArray* lines = [content componentsSeparatedByCharactersInSet:
-          [NSCharacterSet newlineCharacterSet]];
-      NSString* simulatedAppPID =
-          [NSString stringWithFormat:@"%d", session.simulatedApplicationPID];
-      NSArray* kErrorStrings = @[
-        @"Service exited with abnormal code:",
-        @"Service exited due to signal:",
-      ];
-      for (NSString* line in lines) {
-        if ([line rangeOfString:simulatedAppPID].location != NSNotFound) {
-          for (NSString* errorString in kErrorStrings) {
-            if ([line rangeOfString:errorString].location != NSNotFound) {
-              LogWarning(@"Console message: %@", line);
-              badEntryFound = YES;
-              break;
-            }
-          }
-          if (badEntryFound) {
+  // The iOS Simulator's system logging is sandboxed, so parse the sandboxed
+  // system.log file for known errors.
+  NSString* path;
+  NSString* dataPath = session.sessionConfig.device.dataPath;
+  path =
+      [dataPath stringByAppendingPathComponent:@"Library/Logs/system.log"];
+  NSFileManager* fileManager = [NSFileManager defaultManager];
+  if ([fileManager fileExistsAtPath:path]) {
+    NSString* content =
+        [NSString stringWithContentsOfFile:path
+                                  encoding:NSUTF8StringEncoding
+                                     error:NULL];
+    NSArray* lines = [content componentsSeparatedByCharactersInSet:
+        [NSCharacterSet newlineCharacterSet]];
+    NSString* simulatedAppPID =
+        [NSString stringWithFormat:@"%d", session.simulatedApplicationPID];
+    NSArray* kErrorStrings = @[
+      @"Service exited with abnormal code:",
+      @"Service exited due to signal:",
+    ];
+    for (NSString* line in lines) {
+      if ([line rangeOfString:simulatedAppPID].location != NSNotFound) {
+        for (NSString* errorString in kErrorStrings) {
+          if ([line rangeOfString:errorString].location != NSNotFound) {
+            LogWarning(@"Console message: %@", line);
+            badEntryFound = YES;
             break;
           }
         }
+        if (badEntryFound) {
+          break;
+        }
       }
-      // Remove the log file so subsequent invocations of iossim won't be
-      // looking at stale logs.
-      remove([path fileSystemRepresentation]);
-    } else {
-        LogWarning(@"Unable to find system log at '%@'.", path);
     }
+    // Remove the log file so subsequent invocations of iossim won't be
+    // looking at stale logs.
+    remove([path fileSystemRepresentation]);
+  } else {
+      LogWarning(@"Unable to find system log at '%@'.", path);
   }
 
   // If the query returned any nasty-looking results, iossim should exit with
@@ -586,22 +831,16 @@ NSBundle* LoadSimulatorFramework(NSString* developerDir) {
 
   // The path within the developer dir of the private Simulator frameworks.
   NSString* simulatorFrameworkRelativePath;
-  if (IsRunningWithXcode6OrLater()) {
-    simulatorFrameworkRelativePath =
-        @"../SharedFrameworks/DVTiPhoneSimulatorRemoteClient.framework";
-    NSString* const kCoreSimulatorRelativePath =
-       @"Library/PrivateFrameworks/CoreSimulator.framework";
-    NSString* coreSimulatorPath = [developerDir
-        stringByAppendingPathComponent:kCoreSimulatorRelativePath];
-    NSBundle* coreSimulatorBundle =
-        [NSBundle bundleWithPath:coreSimulatorPath];
-    if (![coreSimulatorBundle load])
-      return nil;
-  } else {
-    simulatorFrameworkRelativePath =
-      @"Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/"
-      @"DVTiPhoneSimulatorRemoteClient.framework";
-  }
+  simulatorFrameworkRelativePath =
+      @"../SharedFrameworks/DVTiPhoneSimulatorRemoteClient.framework";
+  NSString* const kCoreSimulatorRelativePath =
+     @"Library/PrivateFrameworks/CoreSimulator.framework";
+  NSString* coreSimulatorPath = [developerDir
+      stringByAppendingPathComponent:kCoreSimulatorRelativePath];
+  NSBundle* coreSimulatorBundle =
+      [NSBundle bundleWithPath:coreSimulatorPath];
+  if (![coreSimulatorBundle load])
+    return nil;
   NSString* simBundlePath = [developerDir
       stringByAppendingPathComponent:simulatorFrameworkRelativePath];
   NSBundle* simBundle = [NSBundle bundleWithPath:simBundlePath];
@@ -633,7 +872,6 @@ DTiPhoneSimulatorApplicationSpecifier* BuildAppSpec(NSString* appPath) {
 // valid.
 DTiPhoneSimulatorSystemRoot* BuildSystemRoot(NSString* sdkVersion) {
   Class systemRootClass = FindClassByName(@"DTiPhoneSimulatorSystemRoot");
-#if defined(IOSSIM_USE_XCODE_6)
   Class simRuntimeClass = FindClassByName(@"SimRuntime");
   NSArray* sorted =
       [[simRuntimeClass supportedRuntimes] sortedArrayUsingDescriptors:@[
@@ -642,9 +880,6 @@ DTiPhoneSimulatorSystemRoot* BuildSystemRoot(NSString* sdkVersion) {
   NSString* versionString = [[sorted lastObject] versionString];
   DTiPhoneSimulatorSystemRoot* systemRoot =
       [systemRootClass rootWithSDKVersion:versionString];
-#else
-  DTiPhoneSimulatorSystemRoot* systemRoot = [systemRootClass defaultRoot];
-#endif
   if (sdkVersion)
     systemRoot = [systemRootClass rootWithSDKVersion:sdkVersion];
 
@@ -674,47 +909,43 @@ DTiPhoneSimulatorSessionConfig* BuildSessionConfig(
   sessionConfig.simulatedDeviceInfoName = deviceName;
   sessionConfig.simulatedDeviceFamily = deviceFamily;
 
-  if (IsRunningWithXcode6OrLater()) {
-#if defined(IOSSIM_USE_XCODE_6)
-    Class simDeviceTypeClass = FindClassByName(@"SimDeviceType");
-    id simDeviceType =
-        [simDeviceTypeClass supportedDeviceTypesByAlias][deviceName];
-    Class simRuntimeClass = FindClassByName(@"SimRuntime");
-    NSString* identifier = systemRoot.runtime.identifier;
-    id simRuntime = [simRuntimeClass supportedRuntimesByIdentifier][identifier];
+  Class simDeviceTypeClass = FindClassByName(@"SimDeviceType");
+  id simDeviceType =
+      [simDeviceTypeClass supportedDeviceTypesByAlias][deviceName];
+  Class simRuntimeClass = FindClassByName(@"SimRuntime");
+  NSString* identifier = systemRoot.runtime.identifier;
+  id simRuntime = [simRuntimeClass supportedRuntimesByIdentifier][identifier];
 
-    // Attempt to use an existing device, but create one if a suitable match
-    // can't be found. For example, if the simulator is running with a
-    // non-default home directory (e.g. via iossim's -u command line arg) then
-    // there won't be any devices so one will have to be created.
-    Class simDeviceSetClass = FindClassByName(@"SimDeviceSet");
-    id deviceSet =
-        [simDeviceSetClass setForSetPath:[simDeviceSetClass defaultSetPath]];
-    id simDevice = nil;
-    for (id device in [deviceSet availableDevices]) {
-      if ([device runtime] == simRuntime &&
-          [device deviceType] == simDeviceType) {
-        simDevice = device;
-        break;
-      }
+  // Attempt to use an existing device, but create one if a suitable match
+  // can't be found. For example, if the simulator is running with a
+  // non-default home directory (e.g. via iossim's -u command line arg) then
+  // there won't be any devices so one will have to be created.
+  Class simDeviceSetClass = FindClassByName(@"SimDeviceSet");
+  id deviceSet =
+      [simDeviceSetClass setForSetPath:[simDeviceSetClass defaultSetPath]];
+  id simDevice = nil;
+  for (id device in [deviceSet availableDevices]) {
+    if ([device runtime] == simRuntime &&
+        [device deviceType] == simDeviceType) {
+      simDevice = device;
+      break;
     }
-    if (!simDevice) {
-      NSError* error = nil;
-      // n.b. only the device name is necessary because the iOS Simulator menu
-      // already splits devices by runtime version.
-      NSString* name = [NSString stringWithFormat:@"iossim - %@ ", deviceName];
-      simDevice = [deviceSet createDeviceWithType:simDeviceType
-                                          runtime:simRuntime
-                                             name:name
-                                            error:&error];
-      if (error) {
-        LogError(@"Failed to create device: %@", error);
-        exit(kExitInitializationFailure);
-      }
-    }
-    sessionConfig.device = simDevice;
-#endif  // IOSSIM_USE_XCODE_6
   }
+  if (!simDevice) {
+    NSError* error = nil;
+    // n.b. only the device name is necessary because the iOS Simulator menu
+    // already splits devices by runtime version.
+    NSString* name = [NSString stringWithFormat:@"iossim - %@ ", deviceName];
+    simDevice = [deviceSet createDeviceWithType:simDeviceType
+                                        runtime:simRuntime
+                                           name:name
+                                          error:&error];
+    if (error) {
+      LogError(@"Failed to create device: %@", error);
+      exit(kExitInitializationFailure);
+    }
+  }
+  sessionConfig.device = simDevice;
   return sessionConfig;
 }
 
@@ -795,16 +1026,6 @@ BOOL InitializeSimulatorUserHome(NSString* userHomePath) {
   return YES;
 }
 
-// Performs a case-insensitive search to see if |stringToSearch| begins with
-// |prefixToFind|. Returns true if a match is found.
-BOOL CaseInsensitivePrefixSearch(NSString* stringToSearch,
-                                 NSString* prefixToFind) {
-  NSStringCompareOptions options = (NSAnchoredSearch | NSCaseInsensitiveSearch);
-  NSRange range = [stringToSearch rangeOfString:prefixToFind
-                                        options:options];
-  return range.location != NSNotFound;
-}
-
 // Prints the usage information to stderr.
 void PrintUsage() {
   fprintf(stderr, "Usage: iossim [-d device] [-s sdkVersion] [-u homeDir] "
@@ -828,19 +1049,8 @@ void PrintUsage() {
 }
 }  // namespace
 
-void EnsureSupportForCurrentXcodeVersion() {
-  if (IsRunningWithXcode6OrLater()) {
-#if !IOSSIM_USE_XCODE_6
-    LogError(@"Running on Xcode 6, but Xcode 6 support was not compiled in.");
-    exit(kExitUnsupportedXcodeVersion);
-#endif  // IOSSIM_USE_XCODE_6
-  }
-}
-
 int main(int argc, char* const argv[]) {
   NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-
-  EnsureSupportForCurrentXcodeVersion();
 
   // basename() may modify the passed in string and it returns a pointer to an
   // internal buffer. Give it a copy to modify, and copy what it returns.
@@ -857,8 +1067,7 @@ int main(int argc, char* const argv[]) {
   NSString* appPath = nil;
   NSString* appName = nil;
   NSString* sdkVersion = nil;
-  NSString* deviceName =
-      IsRunningWithXcode6OrLater() ? @"iPhone 5s" : @"iPhone";
+  NSString* deviceName = @"iPhone 5s";
   NSString* simHomePath = nil;
   NSMutableArray* appArgs = [NSMutableArray array];
   NSMutableDictionary* appEnv = [NSMutableDictionary dictionary];
@@ -965,26 +1174,11 @@ int main(int argc, char* const argv[]) {
 
   // Determine the deviceFamily based on the deviceName
   NSNumber* deviceFamily = nil;
-  if (IsRunningWithXcode6OrLater()) {
-#if defined(IOSSIM_USE_XCODE_6)
-    Class simDeviceTypeClass = FindClassByName(@"SimDeviceType");
-    if ([simDeviceTypeClass supportedDeviceTypesByAlias][deviceName] == nil) {
-      LogError(@"Invalid device name: %@.", deviceName);
-      PrintSupportedDevices();
-      exit(kExitInvalidArguments);
-    }
-#endif  // IOSSIM_USE_XCODE_6
-  } else {
-    if (!deviceName || CaseInsensitivePrefixSearch(deviceName, @"iPhone")) {
-      deviceFamily = [NSNumber numberWithInt:kIPhoneFamily];
-    } else if (CaseInsensitivePrefixSearch(deviceName, @"iPad")) {
-      deviceFamily = [NSNumber numberWithInt:kIPadFamily];
-    }
-    else {
-      LogError(@"Invalid device name: %@. Must begin with 'iPhone' or 'iPad'",
-               deviceName);
-      exit(kExitInvalidArguments);
-    }
+  Class simDeviceTypeClass = FindClassByName(@"SimDeviceType");
+  if ([simDeviceTypeClass supportedDeviceTypesByAlias][deviceName] == nil) {
+    LogError(@"Invalid device name: %@.", deviceName);
+    PrintSupportedDevices();
+    exit(kExitInvalidArguments);
   }
 
   // Set up the user home directory for the simulator only if a non-default
@@ -1036,3 +1230,5 @@ int main(int argc, char* const argv[]) {
   [pool drain];
   return kExitFailure;
 }
+
+#endif

@@ -7,10 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/test/test_io_thread.h"
@@ -62,8 +62,9 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
     void Shutdown();
 
    private:
-    scoped_ptr<scheduler::RendererScheduler> renderer_scheduler_;
-    scoped_ptr<RendererBlinkPlatformImplTestOverrideImpl> blink_platform_impl_;
+    std::unique_ptr<scheduler::RendererScheduler> renderer_scheduler_;
+    std::unique_ptr<RendererBlinkPlatformImplTestOverrideImpl>
+        blink_platform_impl_;
   };
 
   RenderViewTest();
@@ -103,8 +104,8 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
 
   // Navigates the main frame back or forward in session history and commits.
   // The caller must capture a PageState for the target page.
-  void GoBack(const PageState& state);
-  void GoForward(const PageState& state);
+  void GoBack(const GURL& url, const PageState& state);
+  void GoForward(const GURL& url, const PageState& state);
 
   // Sends one native key event over IPC.
   void SendNativeKeyEvent(const NativeWebKeyboardEvent& key_event);
@@ -167,8 +168,8 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   // These are all methods from RenderViewImpl that we expose to testing code.
   bool OnMessageReceived(const IPC::Message& msg);
   void DidNavigateWithinPage(blink::WebLocalFrame* frame,
-                             bool is_new_navigation);
-  void SendContentStateImmediately();
+                             bool is_new_navigation,
+                             bool content_initiated);
   blink::WebWidget* GetWebWidget();
 
   // Allows a subclass to override the various content client implementations.
@@ -177,7 +178,7 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   virtual ContentRendererClient* CreateContentRendererClient();
 
   // Allows a subclass to customize the initial size of the RenderView.
-  virtual scoped_ptr<ResizeParams> InitialSizeParams();
+  virtual std::unique_ptr<ResizeParams> InitialSizeParams();
 
   // testing::Test
   void SetUp() override;
@@ -188,32 +189,32 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   void onLeakDetectionComplete(const Result& result) override;
 
   base::MessageLoop msg_loop_;
-  scoped_ptr<FakeCompositorDependencies> compositor_deps_;
-  scoped_ptr<MockRenderProcess> mock_process_;
+  std::unique_ptr<FakeCompositorDependencies> compositor_deps_;
+  std::unique_ptr<MockRenderProcess> mock_process_;
   // We use a naked pointer because we don't want to expose RenderViewImpl in
   // the embedder's namespace.
   RenderView* view_;
   RendererBlinkPlatformImplTestOverride blink_platform_impl_;
-  scoped_ptr<ContentClient> content_client_;
-  scoped_ptr<ContentBrowserClient> content_browser_client_;
-  scoped_ptr<ContentRendererClient> content_renderer_client_;
-  scoped_ptr<MockRenderThread> render_thread_;
+  std::unique_ptr<ContentClient> content_client_;
+  std::unique_ptr<ContentBrowserClient> content_browser_client_;
+  std::unique_ptr<ContentRendererClient> content_renderer_client_;
+  std::unique_ptr<MockRenderThread> render_thread_;
 
   // Used to setup the process so renderers can run.
-  scoped_ptr<RendererMainPlatformDelegate> platform_;
-  scoped_ptr<MainFunctionParams> params_;
-  scoped_ptr<base::CommandLine> command_line_;
+  std::unique_ptr<RendererMainPlatformDelegate> platform_;
+  std::unique_ptr<MainFunctionParams> params_;
+  std::unique_ptr<base::CommandLine> command_line_;
 
   // For Mojo.
-  scoped_ptr<base::TestIOThread> test_io_thread_;
-  scoped_ptr<mojo::edk::test::ScopedIPCSupport> ipc_support_;
+  std::unique_ptr<base::TestIOThread> test_io_thread_;
+  std::unique_ptr<mojo::edk::test::ScopedIPCSupport> ipc_support_;
 
 #if defined(OS_MACOSX)
-  scoped_ptr<base::mac::ScopedNSAutoreleasePool> autorelease_pool_;
+  std::unique_ptr<base::mac::ScopedNSAutoreleasePool> autorelease_pool_;
 #endif
 
  private:
-  void GoToOffset(int offset, const PageState& state);
+  void GoToOffset(int offset, const GURL& url, const PageState& state);
 };
 
 }  // namespace content

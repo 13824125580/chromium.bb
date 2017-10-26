@@ -26,7 +26,6 @@ from contextlib import contextmanager
 import filecmp
 import fnmatch
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -47,7 +46,10 @@ import bindings.scripts.compute_interfaces_info_overall
 from bindings.scripts.compute_interfaces_info_overall import compute_interfaces_info_overall, interfaces_info
 from bindings.scripts.idl_compiler import IdlCompilerDictionaryImpl, IdlCompilerV8
 from bindings.scripts.idl_reader import IdlReader
-from bindings.scripts.utilities import ComponentInfoProviderCore, ComponentInfoProviderModules, idl_filename_to_component, write_file
+from bindings.scripts.utilities import ComponentInfoProviderCore
+from bindings.scripts.utilities import ComponentInfoProviderModules
+from bindings.scripts.utilities import idl_filename_to_component
+from bindings.scripts.utilities import write_file
 
 
 PASS_MESSAGE = 'All tests PASS!'
@@ -66,10 +68,12 @@ DEPENDENCY_IDL_FILES = frozenset([
     'TestImplements.idl',
     'TestImplements2.idl',
     'TestImplements3.idl',
-    'TestPartialInterface.idl',
-    'TestPartialInterface2.idl',
-    'TestPartialInterface3.idl',
-    'TestPartialInterface4.idl',
+    'TestInterfacePartial.idl',
+    'TestInterfacePartial2.idl',
+    'TestInterfacePartial3.idl',
+    'TestInterfacePartial4.idl',
+    'TestInterface2Partial.idl',
+    'TestInterface2Partial2.idl',
 ])
 
 # core/inspector/InspectorInstrumentation.idl is not a valid Blink IDL.
@@ -86,6 +90,7 @@ reference_directory = os.path.join(source_path, 'bindings', 'tests', 'results')
 # Note that this dict contains information about testing idl files, which live
 # in Source/bindings/tests/idls/{core,modules}, not in Source/{core,modules}.
 component_info_providers = {}
+
 
 @contextmanager
 def TemporaryDirectory():
@@ -229,7 +234,7 @@ def bindings_tests(output_directory, verbose):
             return False
 
         if not filecmp.cmp(reference_filename, output_filename):
-            # cmp is much faster than diff, and usual case is "no differance",
+            # cmp is much faster than diff, and usual case is "no difference",
             # so only run diff if cmp detects a difference
             print 'FAIL: %s' % reference_basename
             print diff(reference_filename, output_filename)
@@ -260,8 +265,8 @@ def bindings_tests(output_directory, verbose):
                 excess_files.append(relpath)
         if excess_files:
             print ('Excess reference files! '
-                  '(probably cruft from renaming or deleting):\n' +
-                  '\n'.join(excess_files))
+                   '(probably cruft from renaming or deleting):\n' +
+                   '\n'.join(excess_files))
             return False
         return True
 
@@ -307,9 +312,9 @@ def bindings_tests(output_directory, verbose):
             input_directory = os.path.join(test_input_directory, component)
             for filename in os.listdir(input_directory):
                 if (filename.endswith('.idl') and
-                    # Dependencies aren't built
-                    # (they are used by the dependent)
-                    filename not in DEPENDENCY_IDL_FILES):
+                        # Dependencies aren't built
+                        # (they are used by the dependent)
+                        filename not in DEPENDENCY_IDL_FILES):
                     idl_filenames.append(
                         os.path.realpath(
                             os.path.join(input_directory, filename)))

@@ -7,7 +7,6 @@
 #include "base/lazy_instance.h"
 #include "net/quic/quic_chromium_client_session.h"
 #include "net/quic/quic_crypto_client_stream.h"
-#include "net/quic/quic_server_id.h"
 
 using std::string;
 
@@ -23,7 +22,7 @@ QuicCryptoClientStream*
 MockCryptoClientStreamFactory::CreateQuicCryptoClientStream(
     const QuicServerId& server_id,
     QuicChromiumClientSession* session,
-    scoped_ptr<ProofVerifyContext> /*proof_verify_context*/,
+    std::unique_ptr<ProofVerifyContext> /*proof_verify_context*/,
     QuicCryptoClientConfig* crypto_config) {
   const ProofVerifyDetailsChromium* proof_verify_details = nullptr;
   if (!proof_verify_details_queue_.empty()) {

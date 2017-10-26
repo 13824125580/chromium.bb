@@ -17,9 +17,8 @@
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/win/scoped_handle.h"
-#include "base/win/windows_version.h"
 #include "ipc/attachment_broker.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_proxy.h"
@@ -30,6 +29,7 @@
 #include "remoting/host/ipc_util.h"
 #include "remoting/host/switches.h"
 #include "remoting/host/win/launch_process_with_token.h"
+#include "remoting/host/win/security_descriptor.h"
 #include "remoting/host/win/worker_process_launcher.h"
 #include "remoting/host/win/wts_terminal_monitor.h"
 #include "remoting/host/worker_process_ipc_delegate.h"
@@ -50,9 +50,10 @@ class WtsSessionProcessDelegate::Core
       public IPC::Listener {
  public:
   Core(scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-       scoped_ptr<base::CommandLine> target,
+       std::unique_ptr<base::CommandLine> target,
        bool launch_elevated,
-       const std::string& channel_security);
+       const std::string& channel_security,
+       const std::string& new_process_security);
 
   // Initializes the object returning true on success.
   bool Initialize(uint32_t session_id);
@@ -111,10 +112,13 @@ class WtsSessionProcessDelegate::Core
 
   // The server end of the IPC channel used to communicate to the worker
   // process.
-  scoped_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
 
   // Security descriptor (as SDDL) to be applied to |channel_|.
   std::string channel_security_;
+
+  // Security descriptor (as SDDL) to be applied to the newly created process.
+  std::string new_process_security_;
 
   WorkerProcessLauncher* event_handler_;
 
@@ -138,7 +142,7 @@ class WtsSessionProcessDelegate::Core
   base::win::ScopedHandle session_token_;
 
   // Command line of the launched process.
-  scoped_ptr<base::CommandLine> target_command_;
+  std::unique_ptr<base::CommandLine> target_command_;
 
   // The handle of the worker process, if launched.
   base::win::ScopedHandle worker_process_;
@@ -148,12 +152,14 @@ class WtsSessionProcessDelegate::Core
 
 WtsSessionProcessDelegate::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    scoped_ptr<base::CommandLine> target_command,
+    std::unique_ptr<base::CommandLine> target_command,
     bool launch_elevated,
-    const std::string& channel_security)
+    const std::string& channel_security,
+    const std::string& new_process_security)
     : caller_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       io_task_runner_(io_task_runner),
       channel_security_(channel_security),
+      new_process_security_(new_process_security),
       event_handler_(nullptr),
       get_named_pipe_client_pid_(nullptr),
       launch_elevated_(launch_elevated),
@@ -162,10 +168,6 @@ WtsSessionProcessDelegate::Core::Core(
 
 bool WtsSessionProcessDelegate::Core::Initialize(uint32_t session_id) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
-
-  // Windows XP does not support elevation.
-  if (base::win::GetVersion() < base::win::VERSION_VISTA)
-    launch_elevated_ = false;
 
   if (launch_elevated_) {
     // GetNamedPipeClientProcessId() is available starting from Vista.
@@ -382,15 +384,32 @@ void WtsSessionProcessDelegate::Core::DoLaunchProcess() {
   }
 
   // Wrap the pipe into an IPC channel.
-  scoped_ptr<IPC::ChannelProxy> channel(
-      IPC::ChannelProxy::Create(IPC::ChannelHandle(pipe.Get()),
-                                IPC::Channel::MODE_SERVER,
-                                this,
-                                io_task_runner_));
+  std::unique_ptr<IPC::ChannelProxy> channel(
+      new IPC::ChannelProxy(this, io_task_runner_));
+  IPC::AttachmentBroker::GetGlobal()->RegisterCommunicationChannel(
+      channel.get(), io_task_runner_);
+  channel->Init(IPC::ChannelHandle(pipe.Get()), IPC::Channel::MODE_SERVER,
+                /*create_pipe_now=*/true);
 
   // Pass the name of the IPC channel to use.
   command_line.AppendSwitchNative(kDaemonPipeSwitchName,
                                   base::UTF8ToWide(channel_name));
+
+  ScopedSd security_descriptor;
+  std::unique_ptr<SECURITY_ATTRIBUTES> security_attributes;
+  if (!new_process_security_.empty()) {
+    security_descriptor = ConvertSddlToSd(new_process_security_);
+    if (!security_descriptor) {
+      PLOG(ERROR) << "ConvertSddlToSd() failed.";
+      ReportFatalError();
+      return;
+    }
+
+    security_attributes.reset(new SECURITY_ATTRIBUTES());
+    security_attributes->nLength = sizeof(SECURITY_ATTRIBUTES);
+    security_attributes->lpSecurityDescriptor = security_descriptor.get();
+    security_attributes->bInheritHandle = FALSE;
+  }
 
   // Try to launch the process.
   ScopedHandle worker_process;
@@ -398,7 +417,7 @@ void WtsSessionProcessDelegate::Core::DoLaunchProcess() {
   if (!LaunchProcessWithToken(command_line.GetProgram(),
                               command_line.GetCommandLineString(),
                               session_token_.Get(),
-                              nullptr,
+                              security_attributes.get(),
                               nullptr,
                               false,
                               CREATE_SUSPENDED | CREATE_BREAKAWAY_FROM_JOB,
@@ -425,9 +444,6 @@ void WtsSessionProcessDelegate::Core::DoLaunchProcess() {
 
   channel_ = std::move(channel);
   pipe_ = std::move(pipe);
-
-  IPC::AttachmentBroker::GetGlobal()->RegisterCommunicationChannel(
-      channel_.get());
 
   // Report success if the worker process is lauched directly. Otherwise, PID of
   // the client connected to the pipe will be used later. See
@@ -529,11 +545,12 @@ void WtsSessionProcessDelegate::Core::ReportProcessLaunched(
 
 WtsSessionProcessDelegate::WtsSessionProcessDelegate(
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    scoped_ptr<base::CommandLine> target_command,
+    std::unique_ptr<base::CommandLine> target_command,
     bool launch_elevated,
-    const std::string& channel_security) {
+    const std::string& channel_security,
+    const std::string& new_process_security_descriptor) {
   core_ = new Core(io_task_runner, std::move(target_command), launch_elevated,
-                   channel_security);
+                   channel_security, new_process_security_descriptor);
 }
 
 WtsSessionProcessDelegate::~WtsSessionProcessDelegate() {

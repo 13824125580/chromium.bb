@@ -5,12 +5,12 @@
 #ifndef CHROME_BROWSER_UI_SYNC_ONE_CLICK_SIGNIN_SYNC_STARTER_H_
 #define CHROME_BROWSER_UI_SYNC_ONE_CLICK_SIGNIN_SYNC_STARTER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list_observer.h"
@@ -24,7 +24,11 @@ class ProfileSyncService;
 
 namespace content {
 class WebContents;
-}  // namespace content
+}
+
+namespace sync_driver {
+class SyncSetupInProgressHandle;
+}
 
 // Waits for successful sign-in notification from the signin manager and then
 // starts the sync machine.  Instances of this class delete themselves once
@@ -132,9 +136,8 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
 
   // LoginUIService::Observer override.
   void OnSyncConfirmationUIClosed(
-      LoginUIService::SyncConfirmationUIClosedResults results) override;
+      LoginUIService::SyncConfirmationUIClosedResult result) override;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // User input handler for the signin confirmation dialog.
   class SigninDialogDelegate
     : public ui::ProfileSigninConfirmationDelegate {
@@ -172,8 +175,6 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // credentials transfer, load policy, and open the first window.
   void CompleteInitForNewProfile(Profile* profile,
                                  Profile::CreateStatus status);
-
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
   // Cancels the in-progress signin for this profile.
   void CancelSigninAndDelete();
@@ -222,7 +223,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
 
   Profile* profile_;
   Browser* browser_;
-  scoped_ptr<SigninTracker> signin_tracker_;
+  std::unique_ptr<SigninTracker> signin_tracker_;
   StartSyncMode start_mode_;
   ConfirmationRequired confirmation_required_;
   GURL current_url_;
@@ -231,12 +232,18 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // Callback executed when sync setup succeeds or fails.
   Callback sync_setup_completed_callback_;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // Policy credentials we keep while determining whether to create
   // a new profile for an enterprise user or not.
   std::string dm_token_;
   std::string client_id_;
-#endif
+
+  // This only cares about the first AccountAddedToCookie event. Since
+  // SigninTracker always expects an observer, this object will just disregard
+  // following AccountAddedToCookie calls triggered by account reconciliation.
+  bool first_account_added_to_cookie_;
+
+  // Prevents Sync from running until configuration is complete.
+  std::unique_ptr<sync_driver::SyncSetupInProgressHandle> sync_blocker_;
 
   base::WeakPtrFactory<OneClickSigninSyncStarter> weak_pointer_factory_;
 

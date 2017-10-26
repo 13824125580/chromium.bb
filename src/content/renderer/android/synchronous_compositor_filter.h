@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
@@ -23,10 +25,11 @@ namespace content {
 
 class SynchronousCompositorProxy;
 
-class SynchronousCompositorFilter : public IPC::MessageFilter,
-                                    public IPC::Sender,
-                                    public SynchronousCompositorRegistry,
-                                    public InputHandlerManagerClient {
+class SynchronousCompositorFilter
+    : public IPC::MessageFilter,
+      public IPC::Sender,
+      public SynchronousCompositorRegistry,
+      public SynchronousInputHandlerProxyClient {
  public:
   SynchronousCompositorFilter(const scoped_refptr<base::SingleThreadTaskRunner>&
                                   compositor_task_runner);
@@ -49,25 +52,13 @@ class SynchronousCompositorFilter : public IPC::MessageFilter,
   void UnregisterOutputSurface(
       int routing_id,
       SynchronousCompositorOutputSurface* output_surface) override;
-  void RegisterBeginFrameSource(int routing_id,
-                                SynchronousCompositorExternalBeginFrameSource*
-                                    begin_frame_source) override;
-  void UnregisterBeginFrameSource(int routing_id,
-                                  SynchronousCompositorExternalBeginFrameSource*
-                                      begin_frame_source) override;
 
-  // InputHandlerManagerClient overrides.
-  void SetBoundHandler(const Handler& handler) override;
-  void DidAddInputHandler(
+  // SynchronousInputHandlerProxyClient overrides.
+  void DidAddSynchronousHandlerProxy(
       int routing_id,
-      ui::SynchronousInputHandlerProxy*
-          synchronous_input_handler_proxy) override;
-  void DidRemoveInputHandler(int routing_id) override;
-  void DidOverscroll(int routing_id,
-                     const DidOverscrollParams& params) override;
-  void DidStopFlinging(int routing_id) override;
-  void NonBlockingInputEventHandled(int routing_id,
-                                    blink::WebInputEvent::Type type) override;
+      ui::SynchronousInputHandlerProxy* synchronous_input_handler_proxy)
+      override;
+  void DidRemoveSynchronousHandlerProxy(int routing_id) override;
 
  private:
   ~SynchronousCompositorFilter() override;
@@ -78,7 +69,6 @@ class SynchronousCompositorFilter : public IPC::MessageFilter,
   // Compositor thread methods.
   void FilterReadyyOnCompositorThread();
   void OnMessageReceivedOnCompositorThread(const IPC::Message& message);
-  void SetBoundHandlerOnCompositorThread(const Handler& handler);
   void CheckIsReady(int routing_id);
   void UnregisterObjects(int routing_id);
   void RemoveEntryIfNeeded(int routing_id);
@@ -93,13 +83,11 @@ class SynchronousCompositorFilter : public IPC::MessageFilter,
   // Compositor thread-only fields.
   using SyncCompositorMap =
       base::ScopedPtrHashMap<int /* routing_id */,
-                             scoped_ptr<SynchronousCompositorProxy>>;
+                             std::unique_ptr<SynchronousCompositorProxy>>;
   SyncCompositorMap sync_compositor_map_;
-  Handler input_handler_;
 
   bool filter_ready_;
   struct Entry {
-    SynchronousCompositorExternalBeginFrameSource* begin_frame_source;
     SynchronousCompositorOutputSurface* output_surface;
     ui::SynchronousInputHandlerProxy* synchronous_input_handler_proxy;
 

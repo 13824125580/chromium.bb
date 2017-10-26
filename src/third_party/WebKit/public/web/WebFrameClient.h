@@ -35,6 +35,7 @@
 #include "WebAXObject.h"
 #include "WebDOMMessageEvent.h"
 #include "WebDataSource.h"
+#include "WebFileChooserParams.h"
 #include "WebFrame.h"
 #include "WebFrameOwnerProperties.h"
 #include "WebHistoryCommitType.h"
@@ -45,21 +46,27 @@
 #include "WebNavigatorContentUtilsClient.h"
 #include "WebSandboxFlags.h"
 #include "WebTextDirection.h"
+#include "public/platform/BlameContext.h"
 #include "public/platform/WebCommon.h"
+#include "public/platform/WebEffectiveConnectionType.h"
 #include "public/platform/WebFileSystem.h"
 #include "public/platform/WebFileSystemType.h"
-#include "public/platform/WebMediaPlayer.h"
+#include "public/platform/WebInsecureRequestPolicy.h"
+#include "public/platform/WebLoadingBehaviorFlag.h"
+#include "public/platform/WebPageVisibilityState.h"
 #include "public/platform/WebSecurityOrigin.h"
 #include "public/platform/WebSetSinkIdCallbacks.h"
 #include "public/platform/WebStorageQuotaCallbacks.h"
 #include "public/platform/WebStorageQuotaType.h"
 #include "public/platform/WebURLError.h"
 #include "public/platform/WebURLRequest.h"
+#include "public/web/WebContentSecurityPolicy.h"
 #include <v8.h>
 
 namespace blink {
 
 enum class WebTreeScopeType;
+class ServiceRegistry;
 class WebApplicationCacheHost;
 class WebApplicationCacheHostClient;
 class WebAppBannerClient;
@@ -73,11 +80,15 @@ class WebDataSource;
 class WebEncryptedMediaClient;
 class WebExternalPopupMenu;
 class WebExternalPopupMenuClient;
+class WebFileChooserCompletion;
 class WebFormElement;
-class WebGeolocationClient;
+class WebInstalledAppClient;
+class WebMediaPlayer;
 class WebMediaPlayerClient;
 class WebMediaPlayerEncryptedMediaClient;
+class WebMediaPlayerSource;
 class WebMediaSession;
+class WebMediaStream;
 class WebMIDIClient;
 class WebNotificationPermissionCallback;
 class WebPermissionClient;
@@ -91,10 +102,7 @@ class WebScreenOrientationClient;
 class WebString;
 class WebURL;
 class WebURLResponse;
-class WebUSBClient;
 class WebUserMediaClient;
-class WebVRClient;
-class WebWakeLockClient;
 class WebWorkerContentSettingsClientProxy;
 struct WebColorSuggestion;
 struct WebConsoleMessage;
@@ -113,7 +121,7 @@ public:
 
     // May return null.
     // WebContentDecryptionModule* may be null if one has not yet been set.
-    virtual WebMediaPlayer* createMediaPlayer(WebMediaPlayer::LoadType, const WebURL&, WebMediaPlayerClient*, WebMediaPlayerEncryptedMediaClient*, WebContentDecryptionModule*, const WebString& sinkId, WebMediaSession*) { return 0; }
+    virtual WebMediaPlayer* createMediaPlayer(const WebMediaPlayerSource&, WebMediaPlayerClient*, WebMediaPlayerEncryptedMediaClient*, WebContentDecryptionModule*, const WebString& sinkId, WebMediaSession*) { return 0; }
 
     // May return null.
     virtual WebMediaSession* createMediaSession() { return 0; }
@@ -139,6 +147,8 @@ public:
     // WebKitPlatformSupport::cookieJar() will be called to access cookies.
     virtual WebCookieJar* cookieJar() { return 0; }
 
+    // Returns a blame context for attributing work belonging to this frame.
+    virtual BlameContext* frameBlameContext() { return nullptr; }
 
     // General notifications -----------------------------------------------
 
@@ -178,11 +188,25 @@ public:
     // This frame's name has changed.
     virtual void didChangeName(const WebString& name, const WebString& uniqueName) { }
 
-    // This frame has been set to enforce strict mixed content checking.
-    virtual void didEnforceStrictMixedContentChecking() {}
+    // This frame has set an insecure request policy.
+    virtual void didEnforceInsecureRequestPolicy(WebInsecureRequestPolicy) {}
+
+    // This frame has been updated to a unique origin, which should be
+    // considered potentially trustworthy if
+    // |isPotentiallyTrustworthyUniqueOrigin| is true. TODO(estark):
+    // this method only exists to support dynamic sandboxing via a CSP
+    // delivered in a <meta> tag. This is not supposed to be allowed per
+    // the CSP spec and should be ripped out. https://crbug.com/594645
+    virtual void didUpdateToUniqueOrigin(bool isPotentiallyTrustworthyUniqueOrigin) {}
 
     // The sandbox flags have changed for a child frame of this frame.
     virtual void didChangeSandboxFlags(WebFrame* childFrame, WebSandboxFlags flags) { }
+
+    // Called when a new Content Security Policy is added to the frame's
+    // document.  This can be triggered by handling of HTTP headers, handling
+    // of <meta> element, or by inheriting CSP from the parent (in case of
+    // about:blank).
+    virtual void didAddContentSecurityPolicy(const WebString& headerValue, WebContentSecurityPolicyType, WebContentSecurityPolicySource) { }
 
     // Some frame owner properties have changed for a child frame of this frame.
     // Frame owner properties currently include: scrolling, marginwidth and
@@ -332,7 +356,7 @@ public:
     // The navigation resulted in no change to the documents within the page.
     // For example, the navigation may have just resulted in scrolling to a
     // named anchor or a PopState event may have been dispatched.
-    virtual void didNavigateWithinPage(WebLocalFrame*, const WebHistoryItem&, WebHistoryCommitType) { }
+    virtual void didNavigateWithinPage(WebLocalFrame*, const WebHistoryItem&, WebHistoryCommitType, bool contentInitiated) { }
 
     // Called upon update to scroll position, document state, and other
     // non-navigational events related to the data held by WebHistoryItem.
@@ -348,6 +372,9 @@ public:
     // Called to dispatch a load event for this frame in the FrameOwner of an
     // out-of-process parent frame.
     virtual void dispatchLoad() { }
+
+    // Returns the effective connection type when the frame was fetched.
+    virtual WebEffectiveConnectionType getEffectiveConnectionType() { return WebEffectiveConnectionType::TypeUnknown; }
 
     // Web Notifications ---------------------------------------------------
 
@@ -366,6 +393,10 @@ public:
     // Used to access the embedder for the Presentation API.
     virtual WebPresentationClient* presentationClient() { return 0; }
 
+    // InstalledApp API ----------------------------------------------------
+
+    // Used to access the embedder for the InstalledApp API.
+    virtual WebInstalledAppClient* installedAppClient() { return nullptr; }
 
     // Editing -------------------------------------------------------------
 
@@ -405,13 +436,18 @@ public:
         const WebString& message, const WebString& defaultValue,
         WebString* actualValue) { return false; }
 
-    // Displays a modal confirmation dialog containing the given message as
-    // description and OK/Cancel choices, where 'OK' means that it is okay
-    // to proceed with closing the view. Returns true if the user selects
-    // 'OK' or false otherwise.
-    virtual bool runModalBeforeUnloadDialog(
-        bool isReload, const WebString& message) { return true; }
+    // Displays a modal confirmation dialog with OK/Cancel choices, where 'OK'
+    // means that it is okay to proceed with closing the view. Returns true if
+    // the user selects 'OK' or false otherwise.
+    virtual bool runModalBeforeUnloadDialog(bool isReload) { return true; }
 
+    // This method returns immediately after showing the dialog. When the
+    // dialog is closed, it should call the WebFileChooserCompletion to
+    // pass the results of the dialog. Returns false if
+    // WebFileChooseCompletion will never be called.
+    virtual bool runFileChooser(
+        const blink::WebFileChooserParams& params,
+        WebFileChooserCompletion* chooserCompletion) { return false; }
 
     // UI ------------------------------------------------------------------
 
@@ -419,10 +455,9 @@ public:
     // the given frame. Additional context data is supplied.
     virtual void showContextMenu(const WebContextMenuData&) { }
 
-    // Called when the data attached to the currently displayed context menu is
-    // invalidated. The context menu may be closed if possible.
-    virtual void clearContextMenu() { }
-
+    // This method is called in response to WebView's saveImageAt(x, y).
+    // A data url from <canvas> or <img> is passed to the method's argument.
+    virtual void saveImageFromDataURL(const WebString&) { }
 
     // Low-level resource notifications ------------------------------------
 
@@ -466,13 +501,17 @@ public:
 
     // This frame has displayed inactive content (such as an image) from
     // a connection with certificate errors.
-    virtual void didDisplayContentWithCertificateErrors(const WebURL& url, const WebCString& securityInfo, const WebURL& mainResourceUrl, const WebCString& mainResourceSecurityInfo) {}
+    virtual void didDisplayContentWithCertificateErrors(const WebURL& url, const WebCString& securityInfo) {}
     // This frame has run active content (such as a script) from a
     // connection with certificate errors.
-    virtual void didRunContentWithCertificateErrors(const WebURL& url, const WebCString& securityInfo, const WebURL& mainResourceUrl, const WebCString& mainResourceSecurityInfo) {}
+    virtual void didRunContentWithCertificateErrors(const WebURL& url, const WebCString& securityInfo) {}
 
     // A performance timing event (e.g. first paint) occurred
     virtual void didChangePerformanceTiming() { }
+
+    // Blink exhibited a certain loading behavior that the browser process will
+    // use for segregated histograms.
+    virtual void didObserveLoadingBehavior(WebLoadingBehaviorFlag) { }
 
 
     // Script notifications ------------------------------------------------
@@ -521,12 +560,6 @@ public:
     virtual void reportFindInPageSelection(
         int identifier, int activeMatchOrdinal, const WebRect& selection) { }
 
-    // Currently, TextFinder will report up the frame tree on certain events to
-    // form a tree of TextFinders. When we're experimenting with OOPIFs, this
-    // is precisely not what we want. Experiments that want to search per frame
-    // should override this to true.
-    virtual bool shouldSearchSingleFrame() { return false; }
-
     // Quota ---------------------------------------------------------
 
     // Requests a new quota size for the origin's storage.
@@ -547,16 +580,6 @@ public:
     // A WebSocket object is going to open a new WebSocket connection.
     virtual void willOpenWebSocket(WebSocketHandle*) { }
 
-    // Wake Lock -----------------------------------------------------
-
-    virtual WebWakeLockClient* wakeLockClient() { return 0; }
-
-    // Geolocation ---------------------------------------------------------
-
-    // Access the embedder API for (client-based) geolocation client .
-    virtual WebGeolocationClient* geolocationClient() { return 0; }
-
-
     // MediaStream -----------------------------------------------------
 
     // A new WebRTCPeerConnectionHandler is created.
@@ -574,22 +597,14 @@ public:
 
     virtual WebMIDIClient* webMIDIClient() { return 0; }
 
-
-    // Messages ------------------------------------------------------
-
-    // Notifies the embedder that a postMessage was issued on this frame, and
-    // gives the embedder a chance to handle it instead of WebKit. Returns true
-    // if the embedder handled it.
-    virtual bool willCheckAndDispatchMessageEvent(
-        WebLocalFrame* sourceFrame,
-        WebFrame* targetFrame,
-        WebSecurityOrigin target,
-        WebDOMMessageEvent event) { return false; }
+    // User agent ------------------------------------------------------
 
     // Asks the embedder if a specific user agent should be used. Non-empty
     // strings indicate an override should be used. Otherwise,
     // Platform::current()->userAgent() will be called to provide one.
     virtual WebString userAgentOverride() { return WebString(); }
+
+    // Do not track ----------------------------------------------------
 
     // Asks the embedder what value the network stack will send for the DNT
     // header. An empty string indicates that no DNT header will be send.
@@ -603,12 +618,6 @@ public:
     // implemented in content/, and putting it here avoids adding more public
     // content/ APIs.
     virtual bool allowWebGL(bool defaultValue) { return defaultValue; }
-
-    // Notifies the client that a WebGL context was lost on this page with the
-    // given reason (one of the GL_ARB_robustness status codes; see
-    // Extensions3D.h in WebCore/platform/graphics).
-    virtual void didLoseWebGLContext(int) { }
-
 
     // Screen Orientation --------------------------------------------------
 
@@ -672,11 +681,6 @@ public:
     // Access the embedder API for permission client.
     virtual WebPermissionClient* permissionClient() { return 0; }
 
-    // Virtual Reality -----------------------------------------------------
-
-    // Access the embedder API for virtual reality client.
-    virtual WebVRClient* webVRClient() { return 0; }
-
     // App Banners ---------------------------------------------------------
     virtual WebAppBannerClient* appBannerClient() { return 0; }
 
@@ -699,15 +703,29 @@ public:
     // Bluetooth -----------------------------------------------------------
     virtual WebBluetooth* bluetooth() { return 0; }
 
-    // WebUSB --------------------------------------------------------------
-    virtual WebUSBClient* usbClient() { return nullptr; }
-
 
     // Audio Output Devices API --------------------------------------------
 
     // Checks that the given audio sink exists and is authorized. The result is provided via the callbacks.
     // This method takes ownership of the callbacks pointer.
-    virtual void checkIfAudioSinkExistsAndIsAuthorized(const WebString& sinkId, const WebSecurityOrigin&, WebSetSinkIdCallbacks*) { BLINK_ASSERT_NOT_REACHED(); }
+    virtual void checkIfAudioSinkExistsAndIsAuthorized(const WebString& sinkId, const WebSecurityOrigin&, WebSetSinkIdCallbacks* callbacks)
+    {
+        if (callbacks) {
+            callbacks->onError(WebSetSinkIdError::NotSupported);
+            delete callbacks;
+        }
+    }
+
+    // Mojo ----------------------------------------------------------------
+    virtual ServiceRegistry* serviceRegistry() { return nullptr; }
+
+    // Visibility ----------------------------------------------------------
+
+    // Returns the current visibility of the WebFrame.
+    virtual WebPageVisibilityState visibilityState() const
+    {
+        return WebPageVisibilityStateVisible;
+    }
 
 protected:
     virtual ~WebFrameClient() { }

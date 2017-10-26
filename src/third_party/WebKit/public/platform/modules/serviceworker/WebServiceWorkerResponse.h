@@ -76,6 +76,15 @@ public:
     void setError(WebServiceWorkerResponseError);
     WebServiceWorkerResponseError error() const;
 
+    void setResponseTime(int64_t);
+    int64_t responseTime() const;
+
+    void setCacheStorageCacheName(const WebString&);
+    WebString cacheStorageCacheName() const;
+
+    void setCorsExposedHeaderNames(const WebVector<WebString>&);
+    WebVector<WebString> corsExposedHeaderNames() const;
+
 #if INSIDE_BLINK
     const HTTPHeaderMap& headers() const;
 

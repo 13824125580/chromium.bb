@@ -5,12 +5,18 @@
 #ifndef COMPONENTS_CRONET_URL_REQUEST_CONTEXT_CONFIG_H_
 #define COMPONENTS_CRONET_URL_REQUEST_CONTEXT_CONFIG_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_vector.h"
 #include "base/time/time.h"
 #include "net/base/hash_value.h"
+
+namespace base {
+class SequencedTaskRunner;
+}  // namespace base
 
 namespace net {
 class CertVerifier;
@@ -101,13 +107,16 @@ struct URLRequestContextConfig {
       // Data reduction proxy secure proxy check URL.
       const std::string& data_reduction_secure_proxy_check_url,
       // MockCertVerifier to use for testing purposes.
-      scoped_ptr<net::CertVerifier> mock_cert_verifier);
+      std::unique_ptr<net::CertVerifier> mock_cert_verifier,
+      // Enable network quality estimator.
+      bool enable_network_quality_estimator);
   ~URLRequestContextConfig();
 
   // Configure |context_builder| based on |this|.
   void ConfigureURLRequestContextBuilder(
       net::URLRequestContextBuilder* context_builder,
-      net::NetLog* net_log);
+      net::NetLog* net_log,
+      const scoped_refptr<base::SequencedTaskRunner>& file_task_runner);
 
   // Enable QUIC.
   const bool enable_quic;
@@ -142,7 +151,10 @@ struct URLRequestContextConfig {
   const std::string data_reduction_secure_proxy_check_url;
 
   // Certificate verifier for testing.
-  scoped_ptr<net::CertVerifier> mock_cert_verifier;
+  std::unique_ptr<net::CertVerifier> mock_cert_verifier;
+
+  // Enable network quality estimator.
+  const bool enable_network_quality_estimator;
 
   // App-provided list of servers that support QUIC.
   ScopedVector<QuicHint> quic_hints;

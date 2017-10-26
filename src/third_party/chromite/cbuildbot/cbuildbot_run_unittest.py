@@ -15,6 +15,7 @@ from chromite.cbuildbot import chromeos_config
 from chromite.cbuildbot import cbuildbot_run
 from chromite.cbuildbot import config_lib
 from chromite.cbuildbot import config_lib_unittest
+from chromite.cbuildbot import constants
 from chromite.lib import cros_test_lib
 from chromite.lib import parallel
 
@@ -154,7 +155,7 @@ class BuilderRunPickleTest(_BuilderRunTestCase):
   """Make sure BuilderRun objects can be pickled."""
 
   def setUp(self):
-    self.real_config = chromeos_config.GetConfig()['x86-alex-release-group']
+    self.real_config = chromeos_config.GetConfig()['gcc-toolchain-group']
     self.PatchObject(cbuildbot_run._BuilderRunBase, 'GetVersion',
                      return_value=DEFAULT_VERSION)
 
@@ -273,9 +274,9 @@ class BuilderRunTest(_BuilderRunTestCase):
       self.assertEqual(expected, archive.upload_url)
 
       # Check archive.download_url.
-      expected = ('%s%s/%s/%s' %
-                  (cbuildbot_run.archive_lib.gs.PRIVATE_BASE_HTTPS_URL,
-                   DEFAULT_ARCHIVE_GS_PATH, DEFAULT_BOT_NAME, DEFAULT_VERSION))
+      expected = '%s%s/%s/%s' % (
+          cbuildbot_run.archive_lib.gs.PRIVATE_BASE_HTTPS_DOWNLOAD_URL,
+          DEFAULT_ARCHIVE_GS_PATH, DEFAULT_BOT_NAME, DEFAULT_VERSION)
       self.assertEqual(expected, archive.download_url)
 
   def _RunAccessor(self, method_name, options_dict, config_dict):
@@ -339,6 +340,18 @@ class BuilderRunTest(_BuilderRunTestCase):
           {'postsync_reexec': config_val})
 
       self.assertEquals(result, truth_table.GetOutput(inputs))
+
+  def testInProduction(self):
+    run = self._NewBuilderRun()
+    self.assertFalse(run.InProduction())
+
+  def testInEmailReportingEnvironment(self):
+    run = self._NewBuilderRun()
+    self.assertFalse(run.InEmailReportingEnvironment())
+
+    run.attrs.metadata.UpdateWithDict(
+        {'buildbot-master-name': constants.WATERFALL_BRILLO})
+    self.assertTrue(run.InEmailReportingEnvironment())
 
 
 class GetVersionTest(_BuilderRunTestCase):

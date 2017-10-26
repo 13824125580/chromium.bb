@@ -43,9 +43,10 @@
 #include "core/html/HTMLAllCollection.h"
 #include "core/html/HTMLCollection.h"
 #include "core/html/HTMLIFrameElement.h"
-#include "wtf/OwnPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
 #include "wtf/StdLibExtras.h"
+#include <memory>
 
 namespace blink {
 
@@ -56,11 +57,11 @@ void V8Document::openMethodCustom(const v8::FunctionCallbackInfo<v8::Value>& inf
     Document* document = V8Document::toImpl(info.Holder());
 
     if (info.Length() > 2) {
-        RefPtrWillBeRawPtr<LocalFrame> frame = document->frame();
+        LocalFrame* frame = document->frame();
         if (!frame)
             return;
         // Fetch the global object for the frame.
-        v8::Local<v8::Context> context = toV8Context(frame.get(), DOMWrapperWorld::current(info.GetIsolate()));
+        v8::Local<v8::Context> context = toV8Context(frame, DOMWrapperWorld::current(info.GetIsolate()));
         // Bail out if we cannot get the context.
         if (context.IsEmpty())
             return;
@@ -76,7 +77,7 @@ void V8Document::openMethodCustom(const v8::FunctionCallbackInfo<v8::Value>& inf
             return;
         }
         // Wrap up the arguments and call the function.
-        OwnPtr<v8::Local<v8::Value>[]> params = adoptArrayPtr(new v8::Local<v8::Value>[info.Length()]);
+        std::unique_ptr<v8::Local<v8::Value>[]> params = wrapArrayUnique(new v8::Local<v8::Value>[info.Length()]);
         for (int i = 0; i < info.Length(); i++)
             params[i] = info[i];
 

@@ -20,8 +20,12 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kX64And32:
     case kX64Cmp:
     case kX64Cmp32:
+    case kX64Cmp16:
+    case kX64Cmp8:
     case kX64Test:
     case kX64Test32:
+    case kX64Test16:
+    case kX64Test8:
     case kX64Or:
     case kX64Or32:
     case kX64Xor:
@@ -100,6 +104,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kSSEFloat64InsertLowWord32:
     case kSSEFloat64InsertHighWord32:
     case kSSEFloat64LoadLowWord32:
+    case kSSEFloat64SilenceNaN:
     case kAVXFloat32Cmp:
     case kAVXFloat32Add:
     case kAVXFloat32Sub:
@@ -163,6 +168,11 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kX64Push:
     case kX64Poke:
       return kHasSideEffect;
+
+    case kX64Xchgb:
+    case kX64Xchgw:
+    case kX64Xchgl:
+      return kIsLoadOperation | kHasSideEffect;
 
 #define CASE(Name) case k##Name:
     COMMON_ARCH_OPCODE_LIST(CASE)

@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media_galleries/fileapi/itunes_data_provider.h"
+
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,12 +17,10 @@
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "chrome/browser/media_galleries/fileapi/itunes_data_provider.h"
 #include "chrome/browser/media_galleries/fileapi/media_file_system_backend.h"
 #include "chrome/browser/media_galleries/imported_media_gallery_registry.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -179,7 +180,7 @@ class ITunesDataProviderTest : public InProcessBrowserTest {
   }
 
   void WriteLibraryInternal(const std::vector<LibraryEntry>& entries) {
-    if (!entries.size())
+    if (entries.empty())
       return;
     std::string xml = "<plist><dict><key>Tracks</key><dict>\n";
     for (size_t i = 0; i < entries.size(); ++i) {

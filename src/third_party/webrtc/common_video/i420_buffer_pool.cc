@@ -12,50 +12,11 @@
 
 #include "webrtc/base/checks.h"
 
-namespace {
-
-// One extra indirection is needed to make |HasOneRef| work.
-class PooledI420Buffer : public webrtc::VideoFrameBuffer {
- public:
-  explicit PooledI420Buffer(
-      const rtc::scoped_refptr<webrtc::I420Buffer>& buffer)
-      : buffer_(buffer) {}
-
- private:
-  ~PooledI420Buffer() override {}
-
-  int width() const override { return buffer_->width(); }
-  int height() const override { return buffer_->height(); }
-  const uint8_t* data(webrtc::PlaneType type) const override {
-    return buffer_->data(type);
-  }
-  uint8_t* MutableData(webrtc::PlaneType type) override {
-    // Make the HasOneRef() check here instead of in |buffer_|, because the pool
-    // also has a reference to |buffer_|.
-    RTC_DCHECK(HasOneRef());
-    return const_cast<uint8_t*>(buffer_->data(type));
-  }
-  int stride(webrtc::PlaneType type) const override {
-    return buffer_->stride(type);
-  }
-  void* native_handle() const override { return nullptr; }
-
-  rtc::scoped_refptr<VideoFrameBuffer> NativeToI420Buffer() override {
-    RTC_NOTREACHED();
-    return nullptr;
-  }
-
-  friend class rtc::RefCountedObject<PooledI420Buffer>;
-  rtc::scoped_refptr<webrtc::I420Buffer> buffer_;
-};
-
-}  // namespace
-
 namespace webrtc {
 
 I420BufferPool::I420BufferPool(bool zero_initialize)
     : zero_initialize_(zero_initialize) {
-  Release();
+  thread_checker_.DetachFromThread();
 }
 
 void I420BufferPool::Release() {
@@ -63,8 +24,8 @@ void I420BufferPool::Release() {
   buffers_.clear();
 }
 
-rtc::scoped_refptr<VideoFrameBuffer> I420BufferPool::CreateBuffer(int width,
-                                                                  int height) {
+rtc::scoped_refptr<I420Buffer> I420BufferPool::CreateBuffer(int width,
+                                                            int height) {
   RTC_DCHECK(thread_checker_.CalledOnValidThread());
   // Release buffers with wrong resolution.
   for (auto it = buffers_.begin(); it != buffers_.end();) {
@@ -74,22 +35,21 @@ rtc::scoped_refptr<VideoFrameBuffer> I420BufferPool::CreateBuffer(int width,
       ++it;
   }
   // Look for a free buffer.
-  for (const rtc::scoped_refptr<I420Buffer>& buffer : buffers_) {
-    // If the buffer is in use, the ref count will be 2, one from the list we
-    // are looping over and one from a PooledI420Buffer returned from
-    // CreateBuffer that has not been released yet. If the ref count is 1
-    // (HasOneRef), then the list we are looping over holds the only reference
-    // and it's safe to reuse.
+  for (const rtc::scoped_refptr<PooledI420Buffer>& buffer : buffers_) {
+    // If the buffer is in use, the ref count will be >= 2, one from the list we
+    // are looping over and one from the application. If the ref count is 1,
+    // then the list we are looping over holds the only reference and it's safe
+    // to reuse.
     if (buffer->HasOneRef())
-      return new rtc::RefCountedObject<PooledI420Buffer>(buffer);
+      return buffer;
   }
   // Allocate new buffer.
-  rtc::scoped_refptr<I420Buffer> buffer = new rtc::RefCountedObject<I420Buffer>(
-      width, height);
+  rtc::scoped_refptr<PooledI420Buffer> buffer =
+      new PooledI420Buffer(width, height);
   if (zero_initialize_)
     buffer->InitializeData();
   buffers_.push_back(buffer);
-  return new rtc::RefCountedObject<PooledI420Buffer>(buffers_.back());
+  return buffer;
 }
 
 }  // namespace webrtc

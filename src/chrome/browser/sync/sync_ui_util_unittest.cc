@@ -12,6 +12,7 @@
 #include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/sync/sync_ui_util.h"
 #include "chrome/grit/generated_resources.h"
@@ -87,7 +88,7 @@ class SyncUIUtilTest : public testing::Test {
 // Test that GetStatusLabelsForSyncGlobalError returns an error if a
 // passphrase is required.
 TEST_F(SyncUIUtilTest, PassphraseGlobalError) {
-  scoped_ptr<Profile> profile = MakeSignedInTestingProfile();
+  std::unique_ptr<Profile> profile = MakeSignedInTestingProfile();
   ProfileSyncServiceMock service(
       CreateProfileSyncServiceParamsForTest(profile.get()));
   browser_sync::SyncBackendHost::Status status;
@@ -107,7 +108,7 @@ TEST_F(SyncUIUtilTest, PassphraseGlobalError) {
 // Test that GetStatusLabelsForSyncGlobalError returns an error if a
 // passphrase is required and not for auth errors.
 TEST_F(SyncUIUtilTest, AuthAndPassphraseGlobalError) {
-  scoped_ptr<Profile> profile(MakeSignedInTestingProfile());
+  std::unique_ptr<Profile> profile(MakeSignedInTestingProfile());
   ProfileSyncServiceMock service(
       CreateProfileSyncServiceParamsForTest(profile.get()));
   browser_sync::SyncBackendHost::Status status;
@@ -135,7 +136,7 @@ TEST_F(SyncUIUtilTest, AuthAndPassphraseGlobalError) {
 // Test that GetStatusLabelsForSyncGlobalError does not indicate errors for
 // auth errors (these are reported through SigninGlobalError).
 TEST_F(SyncUIUtilTest, AuthStateGlobalError) {
-  scoped_ptr<Profile> profile(MakeSignedInTestingProfile());
+  std::unique_ptr<Profile> profile(MakeSignedInTestingProfile());
   ProfileSyncService::InitParams init_params =
       CreateProfileSyncServiceParamsForTest(profile.get());
   NiceMock<ProfileSyncServiceMock> service(&init_params);
@@ -158,9 +159,6 @@ TEST_F(SyncUIUtilTest, AuthStateGlobalError) {
     GoogleServiceAuthError::HOSTED_NOT_ALLOWED
   };
 
-  FakeSigninManagerBase signin(
-      ChromeSigninClientFactory::GetForProfile(profile.get()),
-      AccountTrackerServiceFactory::GetForProfile(profile.get()));
   for (size_t i = 0; i < arraysize(table); ++i) {
     VerifySyncGlobalErrorResult(&service,
                                 table[i],
@@ -337,7 +335,7 @@ void GetDistinctCase(ProfileSyncServiceMock* service,
 TEST_F(SyncUIUtilTest, DistinctCasesReportUniqueMessageSets) {
   std::set<base::string16> messages;
   for (int idx = 0; idx != NUMBER_OF_STATUS_CASES; idx++) {
-    scoped_ptr<Profile> profile(new TestingProfile());
+    std::unique_ptr<Profile> profile(new TestingProfile());
     ProfileSyncService::InitParams init_params =
         CreateProfileSyncServiceParamsForTest(profile.get());
     NiceMock<ProfileSyncServiceMock> service(&init_params);
@@ -345,7 +343,7 @@ TEST_F(SyncUIUtilTest, DistinctCasesReportUniqueMessageSets) {
     EXPECT_CALL(service, GetAuthError()).WillRepeatedly(ReturnRef(error));
     FakeSigninManagerForSyncUIUtilTest signin(profile.get());
     signin.SetAuthenticatedAccountInfo(kTestGaiaId, kTestUser);
-    scoped_ptr<FakeAuthStatusProvider> provider(new FakeAuthStatusProvider(
+    std::unique_ptr<FakeAuthStatusProvider> provider(new FakeAuthStatusProvider(
         SigninErrorControllerFactory::GetForProfile(profile.get())));
     GetDistinctCase(&service, &signin, provider.get(), idx);
     base::string16 status_label;
@@ -375,7 +373,7 @@ TEST_F(SyncUIUtilTest, DistinctCasesReportUniqueMessageSets) {
 // honored.
 TEST_F(SyncUIUtilTest, HtmlNotIncludedInStatusIfNotRequested) {
   for (int idx = 0; idx != NUMBER_OF_STATUS_CASES; idx++) {
-    scoped_ptr<Profile> profile(MakeSignedInTestingProfile());
+    std::unique_ptr<Profile> profile(MakeSignedInTestingProfile());
     ProfileSyncService::InitParams init_params =
         CreateProfileSyncServiceParamsForTest(profile.get());
     NiceMock<ProfileSyncServiceMock> service(&init_params);
@@ -383,7 +381,7 @@ TEST_F(SyncUIUtilTest, HtmlNotIncludedInStatusIfNotRequested) {
     EXPECT_CALL(service, GetAuthError()).WillRepeatedly(ReturnRef(error));
     FakeSigninManagerForSyncUIUtilTest signin(profile.get());
     signin.SetAuthenticatedAccountInfo(kTestGaiaId, kTestUser);
-    scoped_ptr<FakeAuthStatusProvider> provider(new FakeAuthStatusProvider(
+    std::unique_ptr<FakeAuthStatusProvider> provider(new FakeAuthStatusProvider(
         SigninErrorControllerFactory::GetForProfile(profile.get())));
     GetDistinctCase(&service, &signin, provider.get(), idx);
     base::string16 status_label;
@@ -404,4 +402,37 @@ TEST_F(SyncUIUtilTest, HtmlNotIncludedInStatusIfNotRequested) {
     provider.reset();
     signin.Shutdown();
   }
+}
+
+TEST_F(SyncUIUtilTest, UnrecoverableErrorWithActionableError) {
+  std::unique_ptr<Profile> profile(MakeSignedInTestingProfile());
+  SigninManagerBase* signin =
+      SigninManagerFactory::GetForProfile(profile.get());
+
+  ProfileSyncServiceMock service(
+      CreateProfileSyncServiceParamsForTest(profile.get()));
+  EXPECT_CALL(service, IsFirstSetupComplete()).WillRepeatedly(Return(true));
+  EXPECT_CALL(service, HasUnrecoverableError()).WillRepeatedly(Return(true));
+
+  // First time action is not set. We should get unrecoverable error.
+  syncer::SyncStatus status;
+  EXPECT_CALL(service, QueryDetailedSyncStatus(_))
+      .WillOnce(DoAll(SetArgPointee<0>(status), Return(true)));
+
+  base::string16 link_label;
+  base::string16 unrecoverable_error_status_label;
+  sync_ui_util::GetStatusLabels(profile.get(), &service, *signin,
+                                sync_ui_util::PLAIN_TEXT,
+                                &unrecoverable_error_status_label, &link_label);
+
+  // This time set action to UPGRADE_CLIENT. Ensure that status label differs
+  // from previous one.
+  status.sync_protocol_error.action = syncer::UPGRADE_CLIENT;
+  EXPECT_CALL(service, QueryDetailedSyncStatus(_))
+      .WillOnce(DoAll(SetArgPointee<0>(status), Return(true)));
+  base::string16 upgrade_client_status_label;
+  sync_ui_util::GetStatusLabels(profile.get(), &service, *signin,
+                                sync_ui_util::PLAIN_TEXT,
+                                &upgrade_client_status_label, &link_label);
+  EXPECT_NE(unrecoverable_error_status_label, upgrade_client_status_label);
 }

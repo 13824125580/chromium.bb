@@ -11,6 +11,7 @@
 #include "core/loader/EmptyClients.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
@@ -20,8 +21,8 @@ protected:
     HTMLDocument& document() const { return *m_document; }
 
 private:
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
-    RefPtrWillBePersistent<HTMLDocument> m_document;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
+    Persistent<HTMLDocument> m_document;
 };
 
 void HTMLSelectElementTest::SetUp()
@@ -297,7 +298,7 @@ TEST_F(HTMLSelectElementTest, ActiveSelectionEndAfterOptionRemoval)
     document().documentElement()->setInnerHTML("<select><optgroup><option selected>o1</option></optgroup></select>", ASSERT_NO_EXCEPTION);
     document().view()->updateAllLifecyclePhases();
     HTMLSelectElement* select = toHTMLSelectElement(document().body()->firstChild());
-    RefPtrWillBeRawPtr<HTMLOptionElement> option = toHTMLOptionElement(select->firstChild()->firstChild());
+    HTMLOptionElement* option = toHTMLOptionElement(select->firstChild()->firstChild());
     EXPECT_EQ(1, select->activeSelectionEndListIndex());
     select->firstChild()->removeChild(option, ASSERT_NO_EXCEPTION);
     EXPECT_EQ(-1, select->activeSelectionEndListIndex());
@@ -322,8 +323,8 @@ TEST_F(HTMLSelectElementTest, DefaultToolTip)
     EXPECT_EQ(select->defaultToolTip(), option->defaultToolTip());
     EXPECT_EQ(select->defaultToolTip(), optgroup->defaultToolTip());
 
-    RefPtrWillBeRawPtr<HTMLFormElement> form = HTMLFormElement::create(document());
-    document().body()->appendChild(form.get());
+    HTMLFormElement* form = HTMLFormElement::create(document());
+    document().body()->appendChild(form);
     form->appendChild(select);
     EXPECT_EQ("<<ValidationValueMissingForSelect>>", select->defaultToolTip()) << "defaultToolTip for SELECT with FORM and required attribute should return a valueMissing message.";
     EXPECT_EQ(select->defaultToolTip(), option->defaultToolTip());
@@ -338,6 +339,15 @@ TEST_F(HTMLSelectElementTest, DefaultToolTip)
     optgroup->remove();
     EXPECT_EQ(String(), option->defaultToolTip());
     EXPECT_EQ(String(), optgroup->defaultToolTip());
+}
+
+TEST_F(HTMLSelectElementTest, SetRecalcListItemsByOptgroupRemoval)
+{
+    document().documentElement()->setInnerHTML("<select><optgroup><option>sub1</option><option>sub2</option></optgroup></select>", ASSERT_NO_EXCEPTION);
+    document().view()->updateAllLifecyclePhases();
+    HTMLSelectElement* select = toHTMLSelectElement(document().body()->firstChild());
+    select->setInnerHTML("", ASSERT_NO_EXCEPTION);
+    // PASS if setInnerHTML didn't have a check failure.
 }
 
 } // namespace blink

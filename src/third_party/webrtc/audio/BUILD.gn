@@ -14,7 +14,6 @@ source_set("audio") {
     "audio_receive_stream.h",
     "audio_send_stream.cc",
     "audio_send_stream.h",
-    "audio_sink.h",
     "audio_state.cc",
     "audio_state.h",
     "conversion.h",
@@ -35,4 +34,24 @@ source_set("audio") {
     "../system_wrappers",
     "../voice_engine",
   ]
+}
+if (rtc_include_tests) {
+  source_set("audio_tests") {
+    testonly = true
+    sources = [
+      "audio_receive_stream_unittest.cc",
+      "audio_send_stream_unittest.cc",
+      "audio_state_unittest.cc",
+    ]
+    deps = [
+      ":audio",
+      "//testing/gmock",
+      "//testing/gtest",
+    ]
+    if (is_clang) {
+      # Suppress warnings from the Chromium Clang plugin.
+      # See http://code.google.com/p/webrtc/issues/detail?id=163 for details.
+      configs -= [ "//build/config/clang:find_bad_constructs" ]
+    }
+  }
 }

@@ -12,6 +12,7 @@
 #include "base/power_monitor/power_observer.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/mac/videotoolbox_glue.h"
+#include "media/base/mac/videotoolbox_helpers.h"
 #include "media/cast/sender/size_adaptable_video_encoder_base.h"
 #include "media/cast/sender/video_encoder.h"
 
@@ -47,7 +48,7 @@ class H264VideoToolboxEncoder : public VideoEncoder,
       const FrameEncodedCallback& frame_encoded_callback) final;
   void SetBitRate(int new_bit_rate) final;
   void GenerateKeyFrame() final;
-  scoped_ptr<VideoFrameFactory> CreateVideoFrameFactory() final;
+  std::unique_ptr<VideoFrameFactory> CreateVideoFrameFactory() final;
   void EmitFrames() final;
 
   // base::PowerObserver
@@ -74,11 +75,6 @@ class H264VideoToolboxEncoder : public VideoEncoder,
   // Update the encoder's target frame size by resetting the compression
   // session. This will also update the video frame factory.
   void UpdateFrameSize(const gfx::Size& size_needed);
-
-  // Set a compression session property.
-  bool SetSessionProperty(CFStringRef key, int32_t value);
-  bool SetSessionProperty(CFStringRef key, bool value);
-  bool SetSessionProperty(CFStringRef key, CFStringRef value);
 
   // Compression session callback function to handle compressed frames.
   static void CompressionCallback(void* encoder_opaque,
@@ -114,8 +110,8 @@ class H264VideoToolboxEncoder : public VideoEncoder,
   // Video frame factory tied to the encoder.
   scoped_refptr<VideoFrameFactoryImpl> video_frame_factory_;
 
-  // The ID of the last frame that was emitted.
-  uint32_t last_frame_id_;
+  // The ID for the next frame to be emitted.
+  FrameId next_frame_id_;
 
   // Force next frame to be a keyframe.
   bool encode_next_frame_as_keyframe_;

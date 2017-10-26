@@ -74,9 +74,6 @@ public:
     bool popsMenuByArrowKeys() const override { return true; }
     bool popsMenuBySpaceKey() const final { return true; }
 
-    IntSize meterSizeForBounds(const LayoutMeter&, const IntRect&) const override;
-    bool supportsMeter(ControlPart) const override;
-
     // Returns the repeat interval of the animation for the progress bar.
     double animationRepeatIntervalForProgressBar() const override;
     // Returns the duration of the animation for the progress bar.
@@ -96,8 +93,6 @@ protected:
     void adjustMenuListButtonStyle(ComputedStyle&, Element*) const override;
     void adjustSearchFieldStyle(ComputedStyle&) const override;
     void adjustSearchFieldCancelButtonStyle(ComputedStyle&) const override;
-    void adjustSearchFieldDecorationStyle(ComputedStyle&) const override;
-    void adjustSearchFieldResultsDecorationStyle(ComputedStyle&) const override;
 
 public:
     // Constants and methods shared with ThemePainterMac
@@ -126,16 +121,12 @@ public:
 
     const IntSize* searchFieldSizes() const;
     const IntSize* cancelButtonSizes() const;
-    const IntSize* resultsButtonSizes() const;
     void setSearchCellState(const LayoutObject&, const IntRect&);
     void setSearchFieldSize(ComputedStyle&) const;
 
     NSPopUpButtonCell* popupButton() const;
     NSSearchFieldCell* search() const;
     NSTextFieldCell* textField() const;
-
-    NSLevelIndicatorStyle levelIndicatorStyleFor(ControlPart) const;
-    NSLevelIndicatorCell* levelIndicatorFor(const LayoutMeter&) const;
 
     // A view associated to the contained document. Subclasses may not have such a view and return a fake.
     NSView* documentViewFor(const LayoutObject&) const;
@@ -167,7 +158,7 @@ public:
 
 protected:
     void adjustMediaSliderThumbSize(ComputedStyle&) const;
-    String extraFullScreenStyleSheet() override;
+    String extraFullscreenStyleSheet() override;
 
     // Controls color values returned from platformFocusRingColor(). systemColor() will be used when false.
     bool usesTestModeFocusRingColor() const;

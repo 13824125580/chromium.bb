@@ -10,9 +10,6 @@
 #include <set>
 #include <vector>
 
-#include "ash/multi_profile_uma.h"
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -26,8 +23,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -38,12 +35,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/host_desktop.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_utils.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "components/metrics/system_memory_stats_recorder.h"
 #include "components/variations/variations_associated_data.h"
@@ -55,6 +53,9 @@
 #include "content/public/common/page_importance_signals.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/wm_shell.h"
+#include "ash/multi_profile_uma.h"
 #include "chrome/browser/memory/tab_manager_delegate_chromeos.h"
 #endif
 
@@ -70,10 +71,12 @@ namespace {
 // value.
 const int kAdjustmentIntervalSeconds = 10;
 
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
 // For each period of this length record a statistic to indicate whether or not
 // the user experienced a low memory event. If this interval is changed,
 // Tabs.Discard.DiscardInLastMinute must be replaced with a new statistic.
 const int kRecentTabDiscardIntervalSeconds = 60;
+#endif
 
 // If there has been no priority adjustment in this interval, assume the
 // machine was suspended and correct the timing statistics.
@@ -141,7 +144,7 @@ TabManager::TabManager()
       under_memory_pressure_(false),
       weak_ptr_factory_(this) {
 #if defined(OS_CHROMEOS)
-  delegate_.reset(new TabManagerDelegate);
+  delegate_.reset(new TabManagerDelegate(weak_ptr_factory_.GetWeakPtr()));
 #endif
   browser_tab_strip_tracker_.Init(
       BrowserTabStripTracker::InitWith::ALL_BROWERS);
@@ -162,15 +165,6 @@ void TabManager::Start() {
   if (!base::FeatureList::IsEnabled(features::kAutomaticTabDiscarding))
     return;
 
-  // Check the variation parameter to see if a tab be discarded more than once.
-  // Default is to only discard once per tab.
-  std::string allow_multiple_discards = variations::GetVariationParamValue(
-      features::kAutomaticTabDiscarding.name, "AllowMultipleDiscards");
-  if (allow_multiple_discards == "true")
-    discard_once_ = true;
-  else
-    discard_once_ = false;
-
   // Check the variation parameter to see if a tab is to be protected for an
   // amount of time after being backgrounded. The value is in seconds.
   std::string minimum_protection_time_string =
@@ -185,18 +179,20 @@ void TabManager::Start() {
             base::TimeDelta::FromSeconds(minimum_protection_time_seconds);
     }
   }
-
-#elif defined(OS_CHROMEOS)
-  // On Chrome OS, tab manager is always started and tabs can be discarded more
-  // than once.
-  discard_once_ = false;
 #endif
+
+  // Check if only one discard is allowed.
+  discard_once_ = CanOnlyDiscardOnce();
 
   if (!update_timer_.IsRunning()) {
     update_timer_.Start(FROM_HERE,
                         TimeDelta::FromSeconds(kAdjustmentIntervalSeconds),
                         this, &TabManager::UpdateTimerCallback);
   }
+
+  // MemoryPressureMonitor is not implemented on Linux so far and tabs are never
+  // discarded.
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
   if (!recent_tab_discard_timer_.IsRunning()) {
     recent_tab_discard_timer_.Start(
         FROM_HERE, TimeDelta::FromSeconds(kRecentTabDiscardIntervalSeconds),
@@ -214,6 +210,7 @@ void TabManager::Start() {
       OnMemoryPressure(level);
     }
   }
+#endif
 }
 
 void TabManager::Stop() {
@@ -222,32 +219,13 @@ void TabManager::Stop() {
   memory_pressure_listener_.reset();
 }
 
-// Things to collect on the browser thread (because TabStripModel isn't thread
-// safe):
-// 1) whether or not a tab is pinned
-// 2) last time a tab was selected
-// 3) is the tab currently selected
 TabStatsList TabManager::GetTabStats() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TabStatsList stats_list;
-  stats_list.reserve(32);  // 99% of users have < 30 tabs open.
-
-  // TODO(chrisha): Move this code to a TabStripModel enumeration delegate!
-  if (!test_tab_strip_models_.empty()) {
-    for (size_t i = 0; i < test_tab_strip_models_.size(); ++i) {
-      AddTabStats(test_tab_strip_models_[i].first,   // tab_strip_model
-                  test_tab_strip_models_[i].second,  // is_app
-                  i == 0,                            // is_active
-                  &stats_list);
-    }
-  } else {
-    // The code here can only be tested under a full browser test.
-    AddTabStats(&stats_list);
-  }
+  TabStatsList stats_list(GetUnsortedTabStats());
 
   // Sort the collected data so that least desirable to be killed is first, most
   // desirable is last.
   std::sort(stats_list.begin(), stats_list.end(), CompareTabStats);
+
   return stats_list;
 }
 
@@ -257,15 +235,27 @@ std::vector<content::RenderProcessHost*> TabManager::GetOrderedRenderers() {
 
   std::vector<content::RenderProcessHost*> sorted_renderers;
   std::set<content::RenderProcessHost*> seen_renderers;
+  std::set<content::RenderProcessHost*> visible_renderers;
   sorted_renderers.reserve(tab_stats.size());
 
   // Convert the tab sort order to a process sort order. The process inherits
   // the priority of its highest priority tab.
   for (auto& tab : tab_stats) {
+    auto renderer = tab.render_process_host;
+
+    // Skip renderers associated with visible tabs as handling memory pressure
+    // notifications in these processes can cause jank. This code works because
+    // visible tabs always come first in |tab_stats|.
+    if (tab.is_selected) {
+      visible_renderers.insert(renderer);
+      continue;
+    }
+    if (visible_renderers.count(renderer) > 0)
+      continue;
+
     // Skip renderers that have already been encountered. This can occur when
     // multiple tabs are folded into a single renderer process. In this case the
     // process takes the priority of its highest priority contained tab.
-    auto renderer = tab.render_process_host;
     if (!seen_renderers.insert(renderer).second)
       continue;
 
@@ -279,23 +269,15 @@ bool TabManager::IsTabDiscarded(content::WebContents* contents) const {
   return GetWebContentsData(contents)->IsDiscarded();
 }
 
-// TODO(jamescook): This should consider tabs with references to other tabs,
-// such as tabs created with JavaScript window.open(). Potentially consider
-// discarding the entire set together, or use that in the priority computation.
-bool TabManager::DiscardTab() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TabStatsList stats = GetTabStats();
-  if (stats.empty())
-    return false;
-  // Loop until a non-discarded tab to kill is found.
-  for (TabStatsList::const_reverse_iterator stats_rit = stats.rbegin();
-       stats_rit != stats.rend(); ++stats_rit) {
-    int64_t least_important_tab_id = stats_rit->tab_contents_id;
-    if (CanDiscardTab(least_important_tab_id) &&
-        DiscardTabById(least_important_tab_id))
-      return true;
+void TabManager::DiscardTab() {
+#if defined(OS_CHROMEOS)
+  // Call Chrome OS specific low memory handling process.
+  if (base::FeatureList::IsEnabled(features::kArcMemoryManagement)) {
+    delegate_->LowMemoryKill(GetUnsortedTabStats());
+    return;
   }
-  return false;
+#endif
+  DiscardTabImpl();
 }
 
 WebContents* TabManager::DiscardTabById(int64_t target_web_contents_id) {
@@ -402,9 +384,9 @@ void TabManager::RecordDiscardStatistics() {
 #if defined(OS_CHROMEOS)
   // Record the discarded tab in relation to the amount of simultaneously
   // logged in users.
-  if (ash::Shell::HasInstance()) {
-    ash::MultiProfileUMA::RecordDiscardedTab(ash::Shell::GetInstance()
-                                                 ->session_state_delegate()
+  if (ash::WmShell::HasInstance()) {
+    ash::MultiProfileUMA::RecordDiscardedTab(ash::WmShell::Get()
+                                                 ->GetSessionStateDelegate()
                                                  ->NumberOfLoggedInUsers());
   }
 #endif
@@ -474,17 +456,17 @@ int TabManager::GetTabCount() const {
 
 void TabManager::AddTabStats(TabStatsList* stats_list) {
   BrowserList* browser_list = BrowserList::GetInstance();
-  // The first window will be the active one.
-  bool browser_active = true;
   for (BrowserList::const_reverse_iterator browser_iterator =
            browser_list->begin_last_active();
        browser_iterator != browser_list->end_last_active();
        ++browser_iterator) {
     Browser* browser = *browser_iterator;
-    AddTabStats(browser->tab_strip_model(), browser->is_app(), browser_active,
+    // |is_active_window| tells us whether this browser window is active. It is
+    // possible that none of the browser windows is active because it's some
+    // other application window in the foreground.
+    bool is_active_window = browser->window()->IsActive();
+    AddTabStats(browser->tab_strip_model(), browser->is_app(), is_active_window,
                 stats_list);
-    // The active browser window is processed in the first iteration.
-    browser_active = false;
   }
 }
 
@@ -492,7 +474,7 @@ void TabManager::AddTabStats(const TabStripModel* model,
                              bool is_app,
                              bool active_model,
                              TabStatsList* stats_list) {
-for (int i = 0; i < model->count(); i++) {
+  for (int i = 0; i < model->count(); i++) {
     WebContents* contents = model->GetWebContentsAt(i);
     if (!contents->IsCrashed()) {
       TabStats stats;
@@ -511,7 +493,7 @@ for (int i = 0; i < model->count(); i++) {
       stats.renderer_handle = contents->GetRenderProcessHost()->GetHandle();
       stats.child_process_host_id = contents->GetRenderProcessHost()->GetID();
 #if defined(OS_CHROMEOS)
-      stats.oom_score = delegate_->GetOomScore(stats.child_process_host_id);
+      stats.oom_score = delegate_->GetCachedOomScore(stats.renderer_handle);
 #endif
       stats.title = contents->GetTitle();
       stats.tab_contents_id = IdFromWebContents(contents);
@@ -522,7 +504,9 @@ for (int i = 0; i < model->count(); i++) {
 
 // This function is called when |update_timer_| fires. It will adjust the clock
 // if needed (if it detects that the machine was asleep) and will fire the stats
-// updating on ChromeOS via the delegate.
+// updating on ChromeOS via the delegate. This function also tries to purge
+// cache memory and suspend tabs which becomes and keeps backgrounded for a
+// while.
 void TabManager::UpdateTimerCallback() {
   // If Chrome is shutting down, do not do anything.
   if (g_browser_process->IsShuttingDown())
@@ -549,6 +533,37 @@ void TabManager::UpdateTimerCallback() {
   // This starts the CrOS specific OOM adjustments in /proc/<pid>/oom_score_adj.
   delegate_->AdjustOomPriorities(stats_list);
 #endif
+
+  PurgeAndSuspendBackgroundedTabs();
+}
+
+void TabManager::PurgeAndSuspendBackgroundedTabs() {
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  if (!command_line.HasSwitch(switches::kPurgeAndSuspendTime))
+    return;
+  int purge_and_suspend_time = 0;
+  if (!base::StringToInt(
+          command_line.GetSwitchValueASCII(switches::kPurgeAndSuspendTime),
+          &purge_and_suspend_time)) {
+    return;
+  }
+  if (purge_and_suspend_time <= 0)
+    return;
+  auto purge_and_suspend_time_threshold =
+      NowTicks() - base::TimeDelta::FromSeconds(purge_and_suspend_time);
+  auto tab_stats = GetUnsortedTabStats();
+  for (auto& tab : tab_stats) {
+    if (!tab.render_process_host->IsProcessBackgrounded())
+      continue;
+    // TODO(hajimehoshi): Now calling PurgeAndSuspend is implemented without
+    // timers for simplicity, so PurgeAndSuspend is called even after the
+    // renderer is purged and suspended once. This should be replaced with
+    // timers if we want necessary and sufficient signals.
+    if (tab.last_active > purge_and_suspend_time_threshold)
+      continue;
+    tab.render_process_host->PurgeAndSuspend();
+  }
 }
 
 bool TabManager::CanDiscardTab(int64_t target_web_contents_id) const {
@@ -772,8 +787,8 @@ void TabManager::DoChildProcessDispatch() {
   auto renderers = GetOrderedRenderers();
 
   // The following code requires at least one renderer to be present or it will
-  // busyloop. It's possible (however unlikely) for no renderers to exist, so
-  // bail early if that's the case.
+  // busyloop. It's possible for no renderers to exist (we eliminate visible
+  // renderers to avoid janking them), so bail early if that's the case.
   if (renderers.empty())
     return;
 
@@ -810,6 +825,69 @@ void TabManager::DoChildProcessDispatch() {
       base::Bind(&TabManager::DoChildProcessDispatch,
                  weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromSeconds(kRendererNotificationDelayInSeconds));
+}
+
+// TODO(jamescook): This should consider tabs with references to other tabs,
+// such as tabs created with JavaScript window.open(). Potentially consider
+// discarding the entire set together, or use that in the priority computation.
+bool TabManager::DiscardTabImpl() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  TabStatsList stats = GetTabStats();
+
+  if (stats.empty())
+    return false;
+  // Loop until a non-discarded tab to kill is found.
+  for (TabStatsList::const_reverse_iterator stats_rit = stats.rbegin();
+       stats_rit != stats.rend(); ++stats_rit) {
+    int64_t least_important_tab_id = stats_rit->tab_contents_id;
+    if (CanDiscardTab(least_important_tab_id) &&
+        DiscardTabById(least_important_tab_id))
+      return true;
+  }
+  return false;
+}
+
+// Check the variation parameter to see if a tab can be discarded only once or
+// multiple times.
+// Default is to only discard once per tab.
+bool TabManager::CanOnlyDiscardOnce() {
+#if defined(OS_WIN) || defined(OS_MACOSX)
+  // On Windows and MacOS, default to discarding only once unless otherwise
+  // specified by the variation parameter.
+  // TODO(georgesak): Add Linux when automatic discarding is enabled for that
+  // platform.
+  std::string allow_multiple_discards = variations::GetVariationParamValue(
+      features::kAutomaticTabDiscarding.name, "AllowMultipleDiscards");
+  return (allow_multiple_discards != "true");
+#else
+  return false;
+#endif
+}
+
+// Things to collect on the browser thread (because TabStripModel isn't thread
+// safe):
+// 1) whether or not a tab is pinned
+// 2) last time a tab was selected
+// 3) is the tab currently selected
+TabStatsList TabManager::GetUnsortedTabStats() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  TabStatsList stats_list;
+  stats_list.reserve(32);  // 99% of users have < 30 tabs open.
+
+  // TODO(chrisha): Move this code to a TabStripModel enumeration delegate!
+  if (!test_tab_strip_models_.empty()) {
+    for (size_t i = 0; i < test_tab_strip_models_.size(); ++i) {
+      AddTabStats(test_tab_strip_models_[i].first,   // tab_strip_model
+                  test_tab_strip_models_[i].second,  // is_app
+                  i == 0,                            // is_active
+                  &stats_list);
+    }
+  } else {
+    // The code here can only be tested under a full browser test.
+    AddTabStats(&stats_list);
+  }
+
+  return stats_list;
 }
 
 }  // namespace memory

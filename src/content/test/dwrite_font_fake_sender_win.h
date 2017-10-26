@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <wrl.h>
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -16,7 +17,11 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "ipc/ipc_message.h"
+#include "ipc/ipc_platform_file.h"
 #include "ipc/ipc_sender.h"
+
+struct DWriteFontStyle;
+struct MapCharactersResult;
 
 namespace content {
 
@@ -31,10 +36,17 @@ class FakeFont {
  public:
   explicit FakeFont(const base::string16& name);
 
+  FakeFont(const FakeFont& other);
+
   ~FakeFont();
 
   FakeFont& AddFilePath(const base::string16& file_path) {
     file_paths_.push_back(file_path);
+    return *this;
+  }
+
+  FakeFont& AddFileHandle(IPC::PlatformFileForTransit handle) {
+    file_handles_.push_back(handle);
     return *this;
   }
 
@@ -44,10 +56,13 @@ class FakeFont {
     return *this;
   }
 
+  const base::string16& font_name() { return font_name_; }
+
  private:
   friend FakeFontCollection;
   base::string16 font_name_;
   std::vector<base::string16> file_paths_;
+  std::vector<IPC::PlatformFileForTransit> file_handles_;
   std::vector<std::pair<base::string16, base::string16>> family_names_;
 
   DISALLOW_ASSIGN(FakeFont);
@@ -96,7 +111,7 @@ class FakeFontCollection : public base::RefCounted<FakeFontCollection> {
 
     ~ReplySender() override;
 
-    scoped_ptr<IPC::Message>& OnMessageReceived(const IPC::Message& msg);
+    std::unique_ptr<IPC::Message>& OnMessageReceived(const IPC::Message& msg);
 
     bool Send(IPC::Message* msg) override;
 
@@ -109,11 +124,19 @@ class FakeFontCollection : public base::RefCounted<FakeFontCollection> {
         uint32_t family_index,
         std::vector<std::pair<base::string16, base::string16>>* family_names);
     void OnGetFontFiles(uint32_t family_index,
-                        std::vector<base::string16>* file_paths_);
+                        std::vector<base::string16>* file_paths,
+                        std::vector<IPC::PlatformFileForTransit>* file_handles);
+
+    void OnMapCharacters(const base::string16& text,
+                         const DWriteFontStyle& font_style,
+                         const base::string16& locale_name,
+                         uint32_t reading_direction,
+                         const base::string16& base_family_name,
+                         MapCharactersResult* result);
 
    private:
     scoped_refptr<FakeFontCollection> collection_;
-    scoped_ptr<IPC::Message> reply_;
+    std::unique_ptr<IPC::Message> reply_;
 
     DISALLOW_COPY_AND_ASSIGN(ReplySender);
   };
@@ -143,7 +166,15 @@ class FakeFontCollection : public base::RefCounted<FakeFontCollection> {
       std::vector<std::pair<base::string16, base::string16>>* family_names);
 
   void OnGetFontFiles(uint32_t family_index,
-                      std::vector<base::string16>* file_paths);
+                      std::vector<base::string16>* file_paths,
+                      std::vector<IPC::PlatformFileForTransit>* file_handles);
+
+  void OnMapCharacters(const base::string16& text,
+                       const DWriteFontStyle& font_style,
+                       const base::string16& locale_name,
+                       uint32_t reading_direction,
+                       const base::string16& base_family_name,
+                       MapCharactersResult* result);
 
   std::unique_ptr<ReplySender> GetReplySender();
 

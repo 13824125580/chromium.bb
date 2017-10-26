@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <list>
+#include <memory>
 #include <utility>
 
 #include "base/barrier_closure.h"
@@ -24,6 +25,7 @@
 #include "base/trace_event/trace_event.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
+#include "media/base/bind_to_current_loop.h"
 #include "media/renderers/gpu_video_accelerator_factories.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "ui/gfx/buffer_format_util.h"
@@ -74,7 +76,7 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   // Resource to represent a plane.
   struct PlaneResource {
     gfx::Size size;
-    scoped_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer;
+    std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer;
     unsigned texture_id = 0u;
     unsigned image_id = 0u;
     gpu::Mailbox mailbox;
@@ -84,17 +86,7 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   struct FrameResources {
     explicit FrameResources(const gfx::Size& size) : size(size) {}
     void SetIsInUse(bool in_use) { in_use_ = in_use; }
-    bool IsInUse() const {
-      if (in_use_)
-        return true;
-      for (const PlaneResource& plane_resource : plane_resources) {
-        if (plane_resource.gpu_memory_buffer &&
-            plane_resource.gpu_memory_buffer->IsInUseByMacOSWindowServer()) {
-          return true;
-        }
-      }
-      return false;
-    }
+    bool IsInUse() const { return in_use_; }
 
     const gfx::Size size;
     PlaneResource plane_resources[VideoFrame::kMaxPlanes];
@@ -139,13 +131,9 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
 
   // Callback called when a VideoFrame generated with GetFrameResources is no
   // longer referenced.
-  // This could be called by any thread.
+  // This must be called on the thread where |media_task_runner_| is current.
   void MailboxHoldersReleased(FrameResources* frame_resources,
                               const gpu::SyncToken& sync_token);
-
-  // Return frame resources to the pool. This has to be called on the thread
-  // where |media_task_runner_| is current.
-  void ReturnFrameResources(FrameResources* frame_resources);
 
   // Delete resources. This has to be called on the thread where |task_runner|
   // is current.
@@ -543,7 +531,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
         const scoped_refptr<VideoFrame>& video_frame,
         FrameResources* frame_resources,
         const FrameReadyCB& frame_ready_cb) {
-  scoped_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
+  std::unique_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
       gpu_factories_->GetGLContextLock());
   if (!lock) {
     frame_ready_cb.Run(video_frame);
@@ -592,43 +580,43 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
   for (size_t i = 0; i < num_planes; i += planes_per_copy)
     mailbox_holders[i].sync_token = sync_token;
 
-  scoped_refptr<VideoFrame> frame;
 
-  auto release_mailbox_callback =
-      base::Bind(&PoolImpl::MailboxHoldersReleased, this, frame_resources);
+  auto release_mailbox_callback = BindToCurrentLoop(
+      base::Bind(&PoolImpl::MailboxHoldersReleased, this, frame_resources));
+
+  // Consumers should sample from NV12 textures as if they're XRGB.
+  VideoPixelFormat frame_format =
+      output_format_ == PIXEL_FORMAT_NV12 ? PIXEL_FORMAT_XRGB : output_format_;
+  DCHECK_EQ(VideoFrame::NumPlanes(frame_format) * planes_per_copy, num_planes);
 
   // Create the VideoFrame backed by native textures.
   gfx::Size visible_size = video_frame->visible_rect().size();
-  switch (output_format_) {
-    case PIXEL_FORMAT_I420:
-      frame = VideoFrame::WrapYUV420NativeTextures(
-          mailbox_holders[VideoFrame::kYPlane],
-          mailbox_holders[VideoFrame::kUPlane],
-          mailbox_holders[VideoFrame::kVPlane], release_mailbox_callback,
-          coded_size, gfx::Rect(visible_size), video_frame->natural_size(),
-          video_frame->timestamp());
-      if (frame &&
-          video_frame->metadata()->IsTrue(VideoFrameMetadata::ALLOW_OVERLAY))
-        frame->metadata()->SetBoolean(VideoFrameMetadata::ALLOW_OVERLAY, true);
-      break;
-    case PIXEL_FORMAT_NV12:
-    case PIXEL_FORMAT_UYVY:
-      frame = VideoFrame::WrapNativeTexture(
-          output_format_, mailbox_holders[VideoFrame::kYPlane],
-          release_mailbox_callback, coded_size, gfx::Rect(visible_size),
-          video_frame->natural_size(), video_frame->timestamp());
-      if (frame)
-        frame->metadata()->SetBoolean(VideoFrameMetadata::ALLOW_OVERLAY, true);
-      break;
-    default:
-      NOTREACHED();
-  }
+  scoped_refptr<VideoFrame> frame = VideoFrame::WrapNativeTextures(
+      frame_format, mailbox_holders, release_mailbox_callback, coded_size,
+      gfx::Rect(visible_size), video_frame->natural_size(),
+      video_frame->timestamp());
 
   if (!frame) {
     release_mailbox_callback.Run(gpu::SyncToken());
     frame_ready_cb.Run(video_frame);
     return;
   }
+
+  bool allow_overlay = false;
+  switch (output_format_) {
+    case PIXEL_FORMAT_I420:
+      allow_overlay =
+          video_frame->metadata()->IsTrue(VideoFrameMetadata::ALLOW_OVERLAY);
+      break;
+    case PIXEL_FORMAT_NV12:
+    case PIXEL_FORMAT_UYVY:
+      allow_overlay = true;
+      break;
+    default:
+      break;
+  }
+  frame->metadata()->SetBoolean(VideoFrameMetadata::ALLOW_OVERLAY,
+                                allow_overlay);
 
   base::TimeTicks render_time;
   if (video_frame->metadata()->GetTimeTicks(VideoFrameMetadata::REFERENCE_TIME,
@@ -680,7 +668,7 @@ GpuMemoryBufferVideoFramePool::PoolImpl::GetOrCreateFrameResources(
   }
 
   // Create the resources.
-  scoped_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
+  std::unique_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
       gpu_factories_->GetGLContextLock());
   if (!lock)
     return nullptr;
@@ -722,7 +710,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::DeleteFrameResources(
   // make sure that we won't execute this callback (use a weak pointer to
   // the old context).
 
-  scoped_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
+  std::unique_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
       gpu_factories->GetGLContextLock());
   if (!lock)
     return;
@@ -736,19 +724,12 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::DeleteFrameResources(
   }
 }
 
-// Called when a VideoFrame is no longer references.
+// Called when a VideoFrame is no longer referenced.
+// Put back the resources in the pool.
 void GpuMemoryBufferVideoFramePool::PoolImpl::MailboxHoldersReleased(
     FrameResources* frame_resources,
-    const gpu::SyncToken& sync_token) {
-  // Return the resource on the media thread.
-  media_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&PoolImpl::ReturnFrameResources, this, frame_resources));
-}
-
-// Put back the resources in the pool.
-void GpuMemoryBufferVideoFramePool::PoolImpl::ReturnFrameResources(
-    FrameResources* frame_resources) {
+    const gpu::SyncToken& release_sync_token) {
+  DCHECK(media_task_runner_->BelongsToCurrentThread());
   auto it = std::find(resources_pool_.begin(), resources_pool_.end(),
                       frame_resources);
   DCHECK(it != resources_pool_.end());

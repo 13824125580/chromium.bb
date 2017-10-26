@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <deque>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/containers/mru_cache.h"
@@ -159,7 +160,7 @@ class NaClBrowser {
 
   void OpenIrtLibraryFile();
 
-  void OnIrtOpened(scoped_ptr<base::FileProxy> file_proxy,
+  void OnIrtOpened(std::unique_ptr<base::FileProxy> file_proxy,
                    base::File::Error error_code);
 
   void InitValidationCacheFilePath();
@@ -200,7 +201,7 @@ class NaClBrowser {
   // A list of pending tasks to start NaCl processes.
   std::vector<base::Closure> waiting_;
 
-  scoped_ptr<NaClBrowserDelegate> browser_delegate_;
+  std::unique_ptr<NaClBrowserDelegate> browser_delegate_;
 
   std::deque<base::Time> crash_times_;
 

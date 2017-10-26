@@ -16,7 +16,7 @@
 #include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/io_buffer.h"
 #include "remoting/test/leaky_bucket.h"
@@ -120,7 +120,7 @@ int FakeUdpSocket::SendTo(const void* data, size_t data_size,
   cricket::ApplyPacketOptions(
       reinterpret_cast<uint8_t*>(buffer->data()), data_size,
       options.packet_time_params,
-      (base::TimeTicks::Now() - base::TimeTicks()).InMilliseconds());
+      (base::TimeTicks::Now() - base::TimeTicks()).InMicroseconds());
   dispatcher_->DeliverPacket(local_address_, address, buffer, data_size);
   return data_size;
 }

@@ -31,7 +31,8 @@ import sys
 import unittest
 
 from webkitpy.common.system.executive import Executive
-from webkitpy.common.system.executive_mock import MockExecutive, MockExecutive2
+from webkitpy.common.system.executive_mock import MockExecutive
+from webkitpy.common.system.executive_mock import MockExecutive2
 from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.common.system.platforminfo import PlatformInfo
@@ -50,6 +51,7 @@ def fake_sys(platform_str='darwin', windows_version_tuple=None):
 def fake_platform(mac_version_string='10.6.3', release_string='bar', linux_version='trusty'):
 
     class FakePlatformModule(object):
+
         def mac_ver(self):
             return tuple([mac_version_string, tuple(['', '', '']), 'i386'])
 
@@ -72,8 +74,10 @@ def fake_executive(output=None):
 
 
 class TestPlatformInfo(unittest.TestCase):
+
     def make_info(self, sys_module=None, platform_module=None, filesystem_module=None, executive=None):
-        return PlatformInfo(sys_module or fake_sys(), platform_module or fake_platform(), filesystem_module or MockFileSystem(), executive or fake_executive())
+        return PlatformInfo(sys_module or fake_sys(), platform_module or fake_platform(),
+                            filesystem_module or MockFileSystem(), executive or fake_executive())
 
     def test_real_code(self):
         # This test makes sure the real (unmocked) code actually works.

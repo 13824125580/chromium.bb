@@ -11,8 +11,8 @@
 #include "webrtc/base/buffer.h"
 #include "webrtc/base/gunit.h"
 
-#include <algorithm>  // std::swap (pre-C++11)
-#include <utility>  // std::swap (C++11 and later)
+#include <type_traits>
+#include <utility>
 
 namespace rtc {
 
@@ -64,28 +64,11 @@ TEST(BufferTest, TestConstructArray) {
   EXPECT_EQ(0, memcmp(buf.data(), kTestData, 16));
 }
 
-TEST(BufferTest, TestConstructCopy) {
-  Buffer buf1(kTestData), buf2(buf1);
-  EXPECT_EQ(buf2.size(), 16u);
-  EXPECT_EQ(buf2.capacity(), 16u);
-  EXPECT_EQ(0, memcmp(buf2.data(), kTestData, 16));
-  EXPECT_NE(buf1.data(), buf2.data());
-  EXPECT_EQ(buf1, buf2);
-}
-
-TEST(BufferTest, TestAssign) {
-  Buffer buf1, buf2(kTestData, sizeof(kTestData), 256);
-  EXPECT_NE(buf1, buf2);
-  buf1 = buf2;
-  EXPECT_EQ(buf1, buf2);
-  EXPECT_NE(buf1.data(), buf2.data());
-}
-
 TEST(BufferTest, TestSetData) {
   Buffer buf(kTestData + 4, 7);
   buf.SetData(kTestData, 9);
   EXPECT_EQ(buf.size(), 9u);
-  EXPECT_EQ(buf.capacity(), 9u);
+  EXPECT_EQ(buf.capacity(), 7u * 3 / 2);
   EXPECT_EQ(0, memcmp(buf.data(), kTestData, 9));
 }
 
@@ -112,7 +95,7 @@ TEST(BufferTest, TestSetSizeLarger) {
   EXPECT_EQ(buf.capacity(), 15u);
   buf.SetSize(20);
   EXPECT_EQ(buf.size(), 20u);
-  EXPECT_EQ(buf.capacity(), 20u);  // Has grown.
+  EXPECT_EQ(buf.capacity(), 15u * 3 / 2);  // Has grown.
   EXPECT_EQ(0, memcmp(buf.data(), kTestData, 15));
 }
 
@@ -138,7 +121,7 @@ TEST(BufferTest, TestEnsureCapacityLarger) {
 TEST(BufferTest, TestMoveConstruct) {
   Buffer buf1(kTestData, 3, 40);
   const uint8_t* data = buf1.data();
-  Buffer buf2(buf1.DEPRECATED_Pass());
+  Buffer buf2(std::move(buf1));
   EXPECT_EQ(buf2.size(), 3u);
   EXPECT_EQ(buf2.capacity(), 40u);
   EXPECT_EQ(buf2.data(), data);
@@ -152,7 +135,7 @@ TEST(BufferTest, TestMoveAssign) {
   Buffer buf1(kTestData, 3, 40);
   const uint8_t* data = buf1.data();
   Buffer buf2(kTestData);
-  buf2 = buf1.DEPRECATED_Pass();
+  buf2 = std::move(buf1);
   EXPECT_EQ(buf2.size(), 3u);
   EXPECT_EQ(buf2.capacity(), 40u);
   EXPECT_EQ(buf2.data(), data);
@@ -277,6 +260,101 @@ TEST(BufferTest, TestMutableLambdaSetAppend) {
   for (uint8_t i = 0; i != buf.size(); ++i) {
     EXPECT_EQ(buf.data()[i], magic_number + i);
   }
+}
+
+TEST(BufferTest, TestBracketRead) {
+  Buffer buf(kTestData, 7);
+  EXPECT_EQ(buf.size(), 7u);
+  EXPECT_EQ(buf.capacity(), 7u);
+  EXPECT_NE(buf.data(), nullptr);
+
+  for (size_t i = 0; i != 7u; ++i) {
+    EXPECT_EQ(buf[i], kTestData[i]);
+  }
+}
+
+TEST(BufferTest, TestBracketReadConst) {
+  Buffer buf(kTestData, 7);
+  EXPECT_EQ(buf.size(), 7u);
+  EXPECT_EQ(buf.capacity(), 7u);
+  EXPECT_NE(buf.data(), nullptr);
+
+  const Buffer& cbuf = buf;
+
+  for (size_t i = 0; i != 7u; ++i) {
+    EXPECT_EQ(cbuf[i], kTestData[i]);
+  }
+}
+
+TEST(BufferTest, TestBracketWrite) {
+  Buffer buf(7);
+  EXPECT_EQ(buf.size(), 7u);
+  EXPECT_EQ(buf.capacity(), 7u);
+  EXPECT_NE(buf.data(), nullptr);
+
+  for (size_t i = 0; i != 7u; ++i) {
+    buf[i] = kTestData[i];
+  }
+
+  for (size_t i = 0; i != 7u; ++i) {
+    EXPECT_EQ(buf[i], kTestData[i]);
+  }
+}
+
+TEST(BufferTest, TestInt16) {
+  static constexpr int16_t test_data[] = {14, 15, 16, 17, 18};
+  BufferT<int16_t> buf(test_data);
+  EXPECT_EQ(buf.size(), 5u);
+  EXPECT_EQ(buf.capacity(), 5u);
+  EXPECT_NE(buf.data(), nullptr);
+  for (size_t i = 0; i != buf.size(); ++i) {
+    EXPECT_EQ(test_data[i], buf[i]);
+  }
+  BufferT<int16_t> buf2(test_data);
+  EXPECT_EQ(buf, buf2);
+  buf2[0] = 9;
+  EXPECT_NE(buf, buf2);
+}
+
+TEST(BufferTest, TestFloat) {
+  static constexpr float test_data[] = {14, 15, 16, 17, 18};
+  BufferT<float> buf;
+  EXPECT_EQ(buf.size(), 0u);
+  EXPECT_EQ(buf.capacity(), 0u);
+  EXPECT_EQ(buf.data(), nullptr);
+  buf.SetData(test_data);
+  EXPECT_EQ(buf.size(), 5u);
+  EXPECT_EQ(buf.capacity(), 5u);
+  EXPECT_NE(buf.data(), nullptr);
+  float* p1 = buf.data();
+  while (buf.data() == p1) {
+    buf.AppendData(test_data);
+  }
+  EXPECT_EQ(buf.size(), buf.capacity());
+  EXPECT_GT(buf.size(), 5u);
+  EXPECT_EQ(buf.size() % 5, 0u);
+  EXPECT_NE(buf.data(), nullptr);
+  for (size_t i = 0; i != buf.size(); ++i) {
+    EXPECT_EQ(test_data[i % 5], buf[i]);
+  }
+}
+
+TEST(BufferTest, TestStruct) {
+  struct BloodStone {
+    bool blood;
+    const char* stone;
+  };
+  BufferT<BloodStone> buf(4);
+  EXPECT_EQ(buf.size(), 4u);
+  EXPECT_EQ(buf.capacity(), 4u);
+  EXPECT_NE(buf.data(), nullptr);
+  BufferT<BloodStone*> buf2(4);
+  for (size_t i = 0; i < buf2.size(); ++i) {
+    buf2[i] = &buf[i];
+  }
+  static const char kObsidian[] = "obsidian";
+  buf2[2]->stone = kObsidian;
+  EXPECT_EQ(kObsidian, buf[2].stone);
 }
 
 }  // namespace rtc

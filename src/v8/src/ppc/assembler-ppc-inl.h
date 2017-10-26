@@ -89,7 +89,6 @@ Address RelocInfo::target_address() {
   return Assembler::target_address_at(pc_, host_);
 }
 
-
 Address RelocInfo::target_address_address() {
   DCHECK(IsCodeTarget(rmode_) || IsRuntimeEntry(rmode_) ||
          rmode_ == EMBEDDED_OBJECT || rmode_ == EXTERNAL_REFERENCE);
@@ -178,7 +177,6 @@ Address Assembler::return_address_from_call_start(Address pc) {
   }
   return pc + (len + 2) * kInstrSize;
 }
-
 
 Object* RelocInfo::target_object() {
   DCHECK(IsCodeTarget(rmode_) || rmode_ == EMBEDDED_OBJECT);
@@ -327,7 +325,7 @@ void RelocInfo::WipeOut() {
   }
 }
 
-
+template <typename ObjectVisitor>
 void RelocInfo::Visit(Isolate* isolate, ObjectVisitor* visitor) {
   RelocInfo::Mode mode = rmode();
   if (mode == RelocInfo::EMBEDDED_OBJECT) {

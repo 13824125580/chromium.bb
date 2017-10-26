@@ -33,7 +33,6 @@
 #include "core/frame/FrameView.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLFormControlElement.h"
-#include "core/layout/LayoutBlock.h"
 #include "core/style/ComputedStyle.h"
 
 namespace blink {
@@ -84,10 +83,9 @@ static void inertSubtreesChanged(Document& document)
     // tree can change inertness which means they must be added or removed from
     // the tree. The most foolproof way is to clear the entire tree and rebuild
     // it, though a more clever way is probably possible.
-    Document& topDocument = document.topDocument();
-    topDocument.clearAXObjectCache();
-    if (AXObjectCache* cache = topDocument.axObjectCache())
-        cache->childrenChanged(&topDocument);
+    document.clearAXObjectCache();
+    if (AXObjectCache* cache = document.axObjectCache())
+        cache->childrenChanged(&document);
 }
 
 inline HTMLDialogElement::HTMLDialogElement(Document& document)
@@ -130,7 +128,7 @@ void HTMLDialogElement::closeDialog(const String& returnValue)
 void HTMLDialogElement::forceLayoutForCentering()
 {
     m_centeringMode = NeedsCentering;
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (m_centeringMode == NeedsCentering)
         setNotCentered();
 }
@@ -143,7 +141,7 @@ void HTMLDialogElement::show()
 
     // The layout must be updated here because setFocusForDialog calls
     // Element::isFocusable, which requires an up-to-date layout.
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     setFocusForDialog(this);
 }
@@ -154,7 +152,7 @@ void HTMLDialogElement::showModal(ExceptionState& exceptionState)
         exceptionState.throwDOMException(InvalidStateError, "The element already has an 'open' attribute, and therefore cannot be opened modally.");
         return;
     }
-    if (!inDocument()) {
+    if (!inShadowIncludingDocument()) {
         exceptionState.throwDOMException(InvalidStateError, "The element is not in a Document.");
         return;
     }

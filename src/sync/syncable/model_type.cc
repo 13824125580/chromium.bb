@@ -30,10 +30,18 @@ namespace syncer {
 
 struct ModelTypeInfo {
   const ModelType model_type;
-  const char* const notification_type;  // Model Type notification string.
-  const char* const root_tag;           // Root tag for Model Type
-  const char* const model_type_string;  // String value for Model Type
-  const int specifics_field_number;     // SpecificsFieldNumber for Model Type
+  // Model Type notification string.
+  // This needs to match the corresponding proto message name in sync.proto
+  const char* const notification_type;
+  // Root tag for Model Type
+  // This should be the same as the model type but all lowercase.
+  const char* const root_tag;
+  // String value for Model Type
+  // This should be the same as the model type but space separated and the
+  // first letter of every word capitalized.
+  const char* const model_type_string;
+  // SpecificsFieldNumber for Model Type
+  const int specifics_field_number;
   // Histogram value should be unique for the Model Type, Existing histogram
   // values should never be modified without updating "SyncModelTypes" enum in
   // histograms.xml to maintain backward compatibility.
@@ -43,6 +51,7 @@ struct ModelTypeInfo {
 // Below struct entries are in the same order as their definition in the
 // ModelType enum. Don't forget to update the ModelType enum when you make
 // changes to this list.
+// Struct field values should be unique across the entire map.
 const ModelTypeInfo kModelTypeInfoMap[] = {
     {UNSPECIFIED, "", "", "Unspecified", -1, 0},
     {TOP_LEVEL_FOLDER, "", "", "Top Level Folder", -1, 1},
@@ -122,6 +131,8 @@ const ModelTypeInfo kModelTypeInfoMap[] = {
     {SUPERVISED_USER_WHITELISTS, "MANAGED_USER_WHITELIST",
      "managed_user_whitelists", "Managed User Whitelists",
      sync_pb::EntitySpecifics::kManagedUserWhitelistFieldNumber, 33},
+    {ARC_PACKAGE, "ARC_PACKAGE", "arc_package", "Arc Package",
+     sync_pb::EntitySpecifics::kArcPackageFieldNumber, 36},
     {PROXY_TABS, "", "", "Tabs", -1, 25},
     {NIGORI, "NIGORI", "nigori", "Encryption keys",
      sync_pb::EntitySpecifics::kNigoriFieldNumber, 17},
@@ -146,12 +157,11 @@ const char* kUserSelectableDataTypeNames[] = {
   "typedUrls",
   "extensions",
   "apps",
-  "wifiCredentials",
   "tabs",
 };
 
 static_assert(
-    36 == MODEL_TYPE_COUNT,
+    37 == MODEL_TYPE_COUNT,
     "update kUserSelectableDataTypeName to match UserSelectableTypes");
 
 void AddDefaultFieldValue(ModelType datatype,
@@ -208,6 +218,9 @@ void AddDefaultFieldValue(ModelType datatype,
       break;
     case APP_SETTINGS:
       specifics->mutable_app_setting();
+      break;
+    case ARC_PACKAGE:
+      specifics->mutable_arc_package();
       break;
     case EXTENSION_SETTINGS:
       specifics->mutable_extension_setting();
@@ -358,6 +371,9 @@ ModelType GetModelTypeFromSpecifics(const sync_pb::EntitySpecifics& specifics) {
   if (specifics.has_app_list())
     return APP_LIST;
 
+  if (specifics.has_arc_package())
+    return ARC_PACKAGE;
+
   if (specifics.has_search_engine())
     return SEARCH_ENGINES;
 
@@ -450,7 +466,6 @@ ModelTypeSet UserSelectableTypes() {
   set.Put(TYPED_URLS);
   set.Put(EXTENSIONS);
   set.Put(APPS);
-  set.Put(WIFI_CREDENTIALS);
   set.Put(PROXY_TABS);
   return set;
 }
@@ -628,6 +643,10 @@ std::string ModelTypeSetToString(ModelTypeSet model_types) {
   return result;
 }
 
+std::ostream& operator<<(std::ostream& out, ModelTypeSet model_type_set) {
+  return out << ModelTypeSetToString(model_type_set);
+}
+
 ModelTypeSet ModelTypeSetFromString(const std::string& model_types_string) {
   std::string working_copy = model_types_string;
   ModelTypeSet model_types;
@@ -652,8 +671,8 @@ ModelTypeSet ModelTypeSetFromString(const std::string& model_types_string) {
   return model_types;
 }
 
-scoped_ptr<base::ListValue> ModelTypeSetToValue(ModelTypeSet model_types) {
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+std::unique_ptr<base::ListValue> ModelTypeSetToValue(ModelTypeSet model_types) {
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   for (ModelTypeSet::Iterator it = model_types.First(); it.Good(); it.Inc()) {
     value->AppendString(ModelTypeToString(it.Get()));
   }
@@ -736,6 +755,10 @@ bool TypeSupportsHierarchy(ModelType model_type) {
 
 bool TypeSupportsOrdering(ModelType model_type) {
   return model_type == BOOKMARKS;
+}
+
+const char* ModelTypeToTag(ModelType model_type) {
+  return kModelTypeInfoMap[model_type].root_tag;
 }
 
 }  // namespace syncer

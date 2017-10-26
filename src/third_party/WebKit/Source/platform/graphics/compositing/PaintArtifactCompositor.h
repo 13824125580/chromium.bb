@@ -8,17 +8,23 @@
 #include "base/memory/ref_counted.h"
 #include "platform/PlatformExport.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace cc {
 class Layer;
+}
+
+namespace gfx {
+class Transform;
+class Vector2dF;
 }
 
 namespace blink {
 
 class PaintArtifact;
 class WebLayer;
+struct PaintChunk;
 
 // Responsible for managing compositing in terms of a PaintArtifact.
 //
@@ -34,7 +40,6 @@ public:
     ~PaintArtifactCompositor();
 
     // Updates the layer tree to match the provided paint artifact.
-    // Creates the root layer if not already done.
     void update(const PaintArtifact&);
 
     // The root layer of the tree managed by this object.
@@ -42,17 +47,36 @@ public:
 
     // Wraps rootLayer(), so that it can be attached as a child of another
     // WebLayer.
-    WebLayer* webLayer() const { return m_webLayer.get(); }
+    WebLayer* getWebLayer() const { return m_webLayer.get(); }
+
+    // Returns extra information recorded during unit tests.
+    // While not part of the normal output of this class, this provides a simple
+    // way of locating the layers of interest, since there are still a slew of
+    // placeholder layers required.
+    struct ExtraDataForTesting {
+        Vector<scoped_refptr<cc::Layer>> contentLayers;
+    };
+    void enableExtraDataForTesting() { m_extraDataForTestingEnabled = true; }
+    ExtraDataForTesting* getExtraDataForTesting() const { return m_extraDataForTesting.get(); }
 
 private:
     class ContentLayerClientImpl;
 
-    scoped_refptr<cc::Layer> m_rootLayer;
-    OwnPtr<WebLayer> m_webLayer;
-    Vector<OwnPtr<ContentLayerClientImpl>> m_contentLayerClients;
+    void updateInLayerListMode(const PaintArtifact&);
 
-    // For ~PaintArtifactCompositor on MSVC.
-    friend struct WTF::OwnedPtrDeleter<ContentLayerClientImpl>;
+    // Builds a leaf layer that represents a single paint chunk.
+    // Note: cc::Layer API assumes the layer bounds to start at (0, 0) but the bounding box of
+    // a paint chunk does not necessarily start at (0, 0) and could even be negative. Internally
+    // the generated layer translates the paint chunk to align the bounding box to (0, 0) and
+    // return the actual origin of the paint chunk in output parameter layerOffset.
+    scoped_refptr<cc::Layer> layerForPaintChunk(const PaintArtifact&, const PaintChunk&, gfx::Vector2dF& layerOffset);
+
+    scoped_refptr<cc::Layer> m_rootLayer;
+    std::unique_ptr<WebLayer> m_webLayer;
+    Vector<std::unique_ptr<ContentLayerClientImpl>> m_contentLayerClients;
+
+    bool m_extraDataForTestingEnabled = false;
+    std::unique_ptr<ExtraDataForTesting> m_extraDataForTesting;
 };
 
 } // namespace blink

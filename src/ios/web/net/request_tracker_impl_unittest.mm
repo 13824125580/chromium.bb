@@ -9,6 +9,7 @@
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
@@ -19,6 +20,8 @@
 #include "ios/web/public/test/test_web_thread.h"
 #include "net/cert/x509_certificate.h"
 #include "net/http/http_response_headers.h"
+#include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job_factory.h"
@@ -111,10 +114,6 @@
 
 - (void)clearCertificates {
   // Nothing, yet.
-}
-
-- (void)handlePassKitObject:(NSData*)data {
-  // Nothing yet.
 }
 
 @end
@@ -240,7 +239,7 @@ class RequestTrackerTest : public PlatformTest {
   net::TestJobInterceptor* AddInterceptorToRequest(size_t i) {
     // |interceptor| will be deleted from |job_factory_|'s destructor.
     net::TestJobInterceptor* protocol_handler = new net::TestJobInterceptor();
-    job_factory_.SetProtocolHandler("http", make_scoped_ptr(protocol_handler));
+    job_factory_.SetProtocolHandler("http", base::WrapUnique(protocol_handler));
     contexts_[i]->set_job_factory(&job_factory_);
     return protocol_handler;
   }
@@ -265,10 +264,8 @@ class RequestTrackerTest : public PlatformTest {
         net::HttpResponseInfo* response =
             const_cast<net::HttpResponseInfo*>(&requests_[i]->response_info());
 
-        response->ssl_info.cert = new net::X509Certificate(
-            "subject", "issuer",
-            base::Time::Now() - base::TimeDelta::FromDays(2),
-            base::Time::Now() + base::TimeDelta::FromDays(2));
+        response->ssl_info.cert = net::ImportCertFromFile(
+            net::GetTestCertsDirectory(), "ok_cert.pem");
         response->ssl_info.cert_status = 0;  // No errors.
         response->ssl_info.security_bits = 128;
 
@@ -444,7 +441,7 @@ TEST_F(RequestTrackerTest, CaptureHeaders) {
   // TODO(mmenke):  This is really bizarre. Do something more reasonable.
   const_cast<net::HttpResponseInfo&>(request->response_info()).headers =
       new net::HttpResponseHeaders(headers);
-  scoped_ptr<net::URLRequestTestJob> job(new net::URLRequestTestJob(
+  std::unique_ptr<net::URLRequestTestJob> job(new net::URLRequestTestJob(
       request, request->context()->network_delegate(), headers, "", false));
   AddInterceptorToRequest(0)->set_main_intercept_job(std::move(job));
   request->Start();
@@ -491,11 +488,9 @@ void TwoStartsSSLCallback(bool* called, bool ok) {
 
 // crbug/386180
 TEST_F(RequestTrackerTest, DISABLED_TwoStartsNoEstimate) {
-  net::X509Certificate* cert =
-      new net::X509Certificate("subject", "issuer", base::Time::Now(),
-                               base::Time::Max());
   net::SSLInfo ssl_info;
-  ssl_info.cert = cert;
+  ssl_info.cert =
+      net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem");
   ssl_info.cert_status = net::CERT_STATUS_AUTHORITY_INVALID;
   scoped_refptr<MockCertificatePolicyCache> cache;
   tracker_->SetCertificatePolicyCacheForTest(cache.get());

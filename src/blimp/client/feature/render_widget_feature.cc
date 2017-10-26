@@ -21,12 +21,12 @@ RenderWidgetFeature::RenderWidgetFeature() {}
 RenderWidgetFeature::~RenderWidgetFeature() {}
 
 void RenderWidgetFeature::set_outgoing_input_message_processor(
-    scoped_ptr<BlimpMessageProcessor> processor) {
+    std::unique_ptr<BlimpMessageProcessor> processor) {
   outgoing_input_message_processor_ = std::move(processor);
 }
 
 void RenderWidgetFeature::set_outgoing_compositor_message_processor(
-    scoped_ptr<BlimpMessageProcessor> processor) {
+    std::unique_ptr<BlimpMessageProcessor> processor) {
   outgoing_compositor_message_processor_ = std::move(processor);
 }
 
@@ -34,7 +34,7 @@ void RenderWidgetFeature::SendWebGestureEvent(
     const int tab_id,
     const int render_widget_id,
     const blink::WebGestureEvent& event) {
-  scoped_ptr<BlimpMessage> blimp_message =
+  std::unique_ptr<BlimpMessage> blimp_message =
       input_message_generator_.GenerateMessage(event);
 
   // Don't send unsupported WebGestureEvents.
@@ -53,7 +53,7 @@ void RenderWidgetFeature::SendCompositorMessage(
     const int render_widget_id,
     const cc::proto::CompositorMessage& message) {
   CompositorMessage* compositor_message;
-  scoped_ptr<BlimpMessage> blimp_message =
+  std::unique_ptr<BlimpMessage> blimp_message =
       CreateBlimpMessage(&compositor_message, tab_id);
 
   compositor_message->set_render_widget_id(render_widget_id);
@@ -80,26 +80,27 @@ void RenderWidgetFeature::RemoveDelegate(const int tab_id) {
 }
 
 void RenderWidgetFeature::ProcessMessage(
-    scoped_ptr<BlimpMessage> message,
+    std::unique_ptr<BlimpMessage> message,
     const net::CompletionCallback& callback) {
   DCHECK(!callback.is_null());
-  DCHECK(message->type() == BlimpMessage::RENDER_WIDGET ||
-         message->type() == BlimpMessage::COMPOSITOR);
+  DCHECK(BlimpMessage::kRenderWidget == message->feature_case() ||
+         BlimpMessage::kCompositor == message->feature_case());
 
   int target_tab_id = message->target_tab_id();
   RenderWidgetFeatureDelegate* delegate = FindDelegate(target_tab_id);
   DCHECK(delegate) << "RenderWidgetFeatureDelegate not found for "
       << target_tab_id;
 
-  switch (message->type()) {
-    case BlimpMessage::RENDER_WIDGET:
+  switch (message->feature_case()) {
+    case BlimpMessage::kRenderWidget:
       ProcessRenderWidgetMessage(delegate, message->render_widget());
       break;
-    case BlimpMessage::COMPOSITOR:
+    case BlimpMessage::kCompositor:
       ProcessCompositorMessage(delegate, message->compositor());
       break;
     default:
-      NOTIMPLEMENTED();
+      NOTREACHED();
+      break;
   }
 
   callback.Run(net::OK);
@@ -120,6 +121,9 @@ void RenderWidgetFeature::ProcessRenderWidgetMessage(
     case RenderWidgetMessage::DELETED:
       delegate->OnRenderWidgetDeleted(render_widget_id);
       break;
+    case RenderWidgetMessage::UNKNOWN:
+      NOTREACHED();
+      break;
   }
 }
 
@@ -128,7 +132,7 @@ void RenderWidgetFeature::ProcessCompositorMessage(
     const CompositorMessage& message) {
   int render_widget_id = message.render_widget_id();
 
-  scoped_ptr<cc::proto::CompositorMessage> payload(
+  std::unique_ptr<cc::proto::CompositorMessage> payload(
       new cc::proto::CompositorMessage);
   if (payload->ParseFromString(message.payload())) {
     delegate->OnCompositorMessageReceived(render_widget_id,

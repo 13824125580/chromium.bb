@@ -21,7 +21,7 @@ from dashboard import utils
 # here in order to be restricted to internal users.
 _INTERNAL_ONLY_KINDS = [
     'Bot',
-    'Test',
+    'TestMetadata',
     'Row',
     'Sheriff',
     'Anomaly',
@@ -84,6 +84,8 @@ def _IsServicingPrivilegedRequest():
   if path.startswith('/mapreduce'):
     return True
   if path.startswith('/_ah/queue/deferred'):
+    return True
+  if path.startswith('/_ah/pipeline/'):
     return True
   if request.registry.get('privileged', False):
     return True

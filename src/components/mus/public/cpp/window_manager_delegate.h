@@ -8,18 +8,28 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
-#include "components/mus/public/interfaces/input_event_matcher.mojom.h"
-#include "components/mus/public/interfaces/input_events.mojom.h"
+#include "components/mus/public/interfaces/cursor.mojom.h"
+#include "components/mus/public/interfaces/event_matcher.mojom.h"
 #include "components/mus/public/interfaces/window_manager_constants.mojom.h"
+#include "ui/events/mojo/event.mojom.h"
+
+namespace display {
+class Display;
+}
 
 namespace gfx {
 class Insets;
 class Rect;
 class Vector2d;
+}
+
+namespace ui {
+class Event;
 }
 
 namespace mus {
@@ -32,6 +42,8 @@ class WindowManagerClient {
  public:
   virtual void SetFrameDecorationValues(
       mojom::FrameDecorationValuesPtr values) = 0;
+  virtual void SetNonClientCursor(Window* window,
+                                  mojom::Cursor non_client_cursor) = 0;
 
   virtual void AddAccelerator(uint32_t id,
                               mojom::EventMatcherPtr event_matcher,
@@ -68,9 +80,10 @@ class WindowManagerDelegate {
   // A client requested the shared property named |name| to change to
   // |new_data|. Return true to allow the change to |new_data|, false
   // otherwise.
-  virtual bool OnWmSetProperty(Window* window,
-                               const std::string& name,
-                               scoped_ptr<std::vector<uint8_t>>* new_data) = 0;
+  virtual bool OnWmSetProperty(
+      Window* window,
+      const std::string& name,
+      std::unique_ptr<std::vector<uint8_t>>* new_data) = 0;
 
   // A client has requested a new top level window. The delegate should create
   // and parent the window appropriately and return it. |properties| is the
@@ -81,7 +94,18 @@ class WindowManagerDelegate {
   virtual Window* OnWmCreateTopLevelWindow(
       std::map<std::string, std::vector<uint8_t>>* properties) = 0;
 
-  virtual void OnAccelerator(uint32_t id, mus::mojom::EventPtr event) = 0;
+  // Called when a Mus client's jankiness changes. |windows| is the set of
+  // windows owned by the window manager in which the client is embedded.
+  virtual void OnWmClientJankinessChanged(
+      const std::set<Window*>& client_windows,
+      bool janky) = 0;
+
+  // Called when a display is added. |window| is the root of the window tree for
+  // the specified display.
+  virtual void OnWmNewDisplay(Window* window,
+                              const display::Display& display) = 0;
+
+  virtual void OnAccelerator(uint32_t id, const ui::Event& event) = 0;
 
  protected:
   virtual ~WindowManagerDelegate() {}

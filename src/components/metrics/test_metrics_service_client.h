@@ -37,18 +37,28 @@ class TestMetricsServiceClient : public MetricsServiceClient {
   void InitializeSystemProfileMetrics(
       const base::Closure& done_callback) override;
   void CollectFinalMetricsForLog(const base::Closure& done_callback) override;
-  scoped_ptr<MetricsLogUploader> CreateUploader(
+  std::unique_ptr<MetricsLogUploader> CreateUploader(
       const base::Callback<void(int)>& on_upload_complete) override;
   base::TimeDelta GetStandardUploadInterval() override;
+  bool IsReportingPolicyManaged() override;
+  EnableMetricsDefault GetMetricsReportingDefaultState() override;
 
   const std::string& get_client_id() const { return client_id_; }
   void set_version_string(const std::string& str) { version_string_ = str; }
   void set_product(int32_t product) { product_ = product; }
+  void set_reporting_is_managed(bool managed) {
+    reporting_is_managed_ = managed;
+  }
+  void set_enable_default(EnableMetricsDefault enable_default) {
+    enable_default_ = enable_default;
+  }
 
  private:
   std::string client_id_;
   std::string version_string_;
   int32_t product_;
+  bool reporting_is_managed_;
+  EnableMetricsDefault enable_default_;
 
   DISALLOW_COPY_AND_ASSIGN(TestMetricsServiceClient);
 };

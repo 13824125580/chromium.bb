@@ -12,6 +12,8 @@
 #include "public/platform/WebCanvasCaptureHandler.h"
 #include "public/platform/WebMediaStream.h"
 #include "public/platform/WebMediaStreamTrack.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace {
 const double kDefaultFrameRate = 60.0;
@@ -42,26 +44,29 @@ MediaStream* HTMLCanvasElementCapture::captureStream(HTMLCanvasElement& element,
     }
 
     WebMediaStreamTrack track;
-    WebSize size(element.width(), element.height());
-    OwnPtr<WebCanvasCaptureHandler> handler;
+    const WebSize size(element.width(), element.height());
+    std::unique_ptr<WebCanvasCaptureHandler> handler;
     if (givenFrameRate)
-        handler = adoptPtr(Platform::current()->createCanvasCaptureHandler(size, frameRate, &track));
+        handler = wrapUnique(Platform::current()->createCanvasCaptureHandler(size, frameRate, &track));
     else
-        handler = adoptPtr(Platform::current()->createCanvasCaptureHandler(size, kDefaultFrameRate, &track));
-    ASSERT(handler);
+        handler = wrapUnique(Platform::current()->createCanvasCaptureHandler(size, kDefaultFrameRate, &track));
+
     if (!handler) {
         exceptionState.throwDOMException(NotSupportedError, "No CanvasCapture handler can be created.");
         return nullptr;
     }
 
-    MediaStreamTrackVector tracks;
+    CanvasCaptureMediaStreamTrack* canvasTrack;
     if (givenFrameRate)
-        tracks.append(CanvasCaptureMediaStreamTrack::create(track, &element, handler.release(), frameRate));
+        canvasTrack = CanvasCaptureMediaStreamTrack::create(track, &element, std::move(handler), frameRate);
     else
-        tracks.append(CanvasCaptureMediaStreamTrack::create(track, &element, handler.release()));
-    // We want to capture one frame in the beginning.
-    element.notifyListenersCanvasChanged();
-    return MediaStream::create(element.executionContext(), tracks);
+        canvasTrack = CanvasCaptureMediaStreamTrack::create(track, &element, std::move(handler));
+    // We want to capture a frame in the beginning.
+    canvasTrack->requestFrame();
+
+    MediaStreamTrackVector tracks;
+    tracks.append(canvasTrack);
+    return MediaStream::create(element.getExecutionContext(), tracks);
 }
 
 } // namespace blink

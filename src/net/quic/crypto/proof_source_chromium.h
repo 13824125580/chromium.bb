@@ -36,13 +36,15 @@ class NET_EXPORT_PRIVATE ProofSourceChromium : public ProofSource {
   bool GetProof(const IPAddress& server_ip,
                 const std::string& hostname,
                 const std::string& server_config,
+                QuicVersion quic_version,
+                base::StringPiece chlo_hash,
                 bool ecdsa_ok,
                 scoped_refptr<ProofSource::Chain>* out_chain,
                 std::string* out_signature,
                 std::string* out_leaf_cert_sct) override;
 
  private:
-  scoped_ptr<crypto::RSAPrivateKey> private_key_;
+  std::unique_ptr<crypto::RSAPrivateKey> private_key_;
   scoped_refptr<ProofSource::Chain> chain_;
   std::string signed_certificate_timestamp_;
 

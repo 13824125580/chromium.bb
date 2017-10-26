@@ -16,9 +16,9 @@
 namespace {
 
 void SerializeOnFileThread(
-    scoped_ptr<extensions::UserScriptList> user_scripts,
+    std::unique_ptr<extensions::UserScriptList> user_scripts,
     extensions::UserScriptLoader::LoadScriptsCallback callback) {
-  scoped_ptr<base::SharedMemory> memory =
+  std::unique_ptr<base::SharedMemory> memory =
       extensions::UserScriptLoader::Serialize(*user_scripts);
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
@@ -61,7 +61,7 @@ void WebUIUserScriptLoader::AddScripts(
 }
 
 void WebUIUserScriptLoader::LoadScripts(
-    scoped_ptr<extensions::UserScriptList> user_scripts,
+    std::unique_ptr<extensions::UserScriptList> user_scripts,
     const std::set<HostID>& changed_hosts,
     const std::set<int>& added_script_ids,
     LoadScriptsCallback callback) {
@@ -114,7 +114,7 @@ void WebUIUserScriptLoader::CreateWebUIURLFetchers(
       // The WebUIUserScriptLoader owns these WebUIURLFetchers. Once the
       // loader is destroyed, all the fetchers will be destroyed. Therefore,
       // we are sure it is safe to use base::Unretained(this) here.
-      scoped_ptr<WebUIURLFetcher> fetcher(new WebUIURLFetcher(
+      std::unique_ptr<WebUIURLFetcher> fetcher(new WebUIURLFetcher(
           browser_context, render_process_id, render_view_id, file.url(),
           base::Bind(&WebUIUserScriptLoader::OnSingleWebUIURLFetchComplete,
                      base::Unretained(this), &file)));
@@ -128,12 +128,13 @@ void WebUIUserScriptLoader::OnSingleWebUIURLFetchComplete(
     bool success,
     const std::string& data) {
   if (success) {
-    // Remove BOM from the content.
-    std::string::size_type index = data.find(base::kUtf8ByteOrderMark);
-    if (index == 0)
+    // Remove BOM from |data|.
+    if (base::StartsWith(data, base::kUtf8ByteOrderMark,
+                         base::CompareCase::SENSITIVE)) {
       script_file->set_content(data.substr(strlen(base::kUtf8ByteOrderMark)));
-    else
+    } else {
       script_file->set_content(data);
+    }
   }
 
   ++complete_fetchers_;

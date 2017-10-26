@@ -29,7 +29,6 @@
 """Unit tests for MockDRT."""
 
 import io
-import sys
 import unittest
 
 from webkitpy.common.system.systemhost_mock import MockSystemHost
@@ -37,10 +36,10 @@ from webkitpy.layout_tests.port import mock_drt
 from webkitpy.layout_tests.port import port_testcase
 from webkitpy.layout_tests.port import test
 from webkitpy.layout_tests.port.factory import PortFactory
-from webkitpy.tool import mocktool
+from webkitpy.tool.mock_tool import MockOptions
 
 
-mock_options = mocktool.MockOptions(configuration='Release')
+mock_options = MockOptions(configuration='Release')
 
 
 class MockDRTPortTest(port_testcase.PortTestCase):
@@ -82,6 +81,7 @@ class MockDRTPortTest(port_testcase.PortTestCase):
 
 
 class MockDRTTest(unittest.TestCase):
+
     def input_line(self, port, test_name, pixel_tests, checksum=None):
         url = port.create_driver(0).test_to_uri(test_name)
         if url.startswith('file://'):
@@ -127,7 +127,7 @@ class MockDRTTest(unittest.TestCase):
         test.add_unit_tests_to_mock_filesystem(host.filesystem)
         port = PortFactory(host).get(port_name)
         drt_input, drt_output = self.make_input_output(port, test_name,
-            pixel_tests, expected_checksum, drt_output, drt_input=None, expected_text=expected_text)
+                                                       pixel_tests, expected_checksum, drt_output, drt_input=None, expected_text=expected_text)
 
         args = ['--run-layout-test', '--platform', port_name, '-']
         stdin = io.BytesIO(drt_input)

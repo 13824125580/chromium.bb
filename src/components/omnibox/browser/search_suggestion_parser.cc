@@ -76,7 +76,7 @@ SearchSuggestionParser::SuggestResult::SuggestResult(
     const base::string16& annotation,
     const base::string16& answer_contents,
     const base::string16& answer_type,
-    scoped_ptr<SuggestionAnswer> answer,
+    std::unique_ptr<SuggestionAnswer> answer,
     const std::string& suggest_query_params,
     const std::string& deletion_url,
     bool from_keyword_provider,
@@ -228,8 +228,7 @@ SearchSuggestionParser::NavigationResult::NavigationResult(
     bool from_keyword_provider,
     int relevance,
     bool relevance_from_server,
-    const base::string16& input_text,
-    const std::string& languages)
+    const base::string16& input_text)
     : Result(from_keyword_provider,
              relevance,
              relevance_from_server,
@@ -239,7 +238,6 @@ SearchSuggestionParser::NavigationResult::NavigationResult(
       formatted_url_(AutocompleteInput::FormattedStringWithEquivalentMeaning(
           url,
           url_formatter::FormatUrl(url,
-                                   languages,
                                    url_formatter::kFormatUrlOmitAll &
                                        ~url_formatter::kFormatUrlOmitHTTP,
                                    net::UnescapeRule::SPACES,
@@ -249,7 +247,7 @@ SearchSuggestionParser::NavigationResult::NavigationResult(
           scheme_classifier)),
       description_(description) {
   DCHECK(url_.is_valid());
-  CalculateAndClassifyMatchContents(true, input_text, languages);
+  CalculateAndClassifyMatchContents(true, input_text);
 }
 
 SearchSuggestionParser::NavigationResult::~NavigationResult() {}
@@ -257,8 +255,7 @@ SearchSuggestionParser::NavigationResult::~NavigationResult() {}
 void
 SearchSuggestionParser::NavigationResult::CalculateAndClassifyMatchContents(
     const bool allow_bolding_nothing,
-    const base::string16& input_text,
-    const std::string& languages) {
+    const base::string16& input_text) {
   if (input_text.empty()) {
     // In case of zero-suggest results, do not highlight matches.
     match_contents_class_.push_back(
@@ -280,7 +277,7 @@ SearchSuggestionParser::NavigationResult::CalculateAndClassifyMatchContents(
       ~(trim_http ? 0 : url_formatter::kFormatUrlOmitHTTP);
 
   base::string16 match_contents = url_formatter::FormatUrl(
-      url_, languages, format_types, net::UnescapeRule::SPACES, nullptr,
+      url_, format_types, net::UnescapeRule::SPACES, nullptr,
       nullptr, &match_start);
   // If the first match in the untrimmed string was inside a scheme that we
   // trimmed, look for a subsequent match.
@@ -368,7 +365,7 @@ std::string SearchSuggestionParser::ExtractJsonData(
 }
 
 // static
-scoped_ptr<base::Value> SearchSuggestionParser::DeserializeJsonData(
+std::unique_ptr<base::Value> SearchSuggestionParser::DeserializeJsonData(
     base::StringPiece json_data) {
   // The JSON response should be an array.
   for (size_t response_start_index = json_data.find("["), i = 0;
@@ -380,11 +377,12 @@ scoped_ptr<base::Value> SearchSuggestionParser::DeserializeJsonData(
     JSONStringValueDeserializer deserializer(json_data);
     deserializer.set_allow_trailing_comma(true);
     int error_code = 0;
-    scoped_ptr<base::Value> data = deserializer.Deserialize(&error_code, NULL);
+    std::unique_ptr<base::Value> data =
+        deserializer.Deserialize(&error_code, NULL);
     if (error_code == 0)
       return data;
   }
-  return scoped_ptr<base::Value>();
+  return std::unique_ptr<base::Value>();
 }
 
 // static
@@ -393,7 +391,6 @@ bool SearchSuggestionParser::ParseSuggestResults(
     const AutocompleteInput& input,
     const AutocompleteSchemeClassifier& scheme_classifier,
     int default_result_relevance,
-    const std::string& languages,
     bool is_keyword_result,
     Results* results) {
   base::string16 query;
@@ -457,9 +454,6 @@ bool SearchSuggestionParser::ParseSuggestResults(
   base::string16 suggestion;
   std::string type;
   int relevance = default_result_relevance;
-  // Prohibit navsuggest in FORCED_QUERY mode.  Users wants queries, not URLs.
-  const bool allow_navsuggest =
-      input.type() != metrics::OmniboxInputType::FORCED_QUERY;
   const base::string16& trimmed_input =
       base::CollapseWhitespace(input.text(), false);
   for (size_t index = 0; results_list->GetString(index, &suggestion); ++index) {
@@ -487,14 +481,13 @@ bool SearchSuggestionParser::ParseSuggestResults(
       // Do not blindly trust the URL coming from the server to be valid.
       GURL url(url_formatter::FixupURL(base::UTF16ToUTF8(suggestion),
                                        std::string()));
-      if (url.is_valid() && allow_navsuggest) {
+      if (url.is_valid()) {
         base::string16 title;
         if (descriptions != NULL)
           descriptions->GetString(index, &title);
         results->navigation_results.push_back(NavigationResult(
             scheme_classifier, url, match_type, title, deletion_url,
-            is_keyword_result, relevance, relevances != NULL, input.text(),
-            languages));
+            is_keyword_result, relevance, relevances != NULL, input.text()));
       }
     } else {
       // TODO(dschuyler) If the "= " is no longer sent from the back-end
@@ -508,7 +501,7 @@ bool SearchSuggestionParser::ParseSuggestResults(
       base::string16 annotation;
       base::string16 answer_contents;
       base::string16 answer_type_str;
-      scoped_ptr<SuggestionAnswer> answer;
+      std::unique_ptr<SuggestionAnswer> answer;
       std::string suggest_query_params;
 
       if (suggestion_details) {

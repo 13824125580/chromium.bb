@@ -36,8 +36,8 @@
 #include "core/plugins/PluginView.h"
 #include "platform/Widget.h"
 #include "public/web/WebPluginContainer.h"
-
-#include "wtf/OwnPtr.h"
+#include "web/WebExport.h"
+#include "wtf/Compiler.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/Vector.h"
 #include "wtf/text/WTFString.h"
@@ -60,19 +60,18 @@ class Widget;
 struct WebPrintParams;
 struct WebPrintPresetOptions;
 
-class WebPluginContainerImpl final : public PluginView, public WebPluginContainer, public LocalFrameLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(WebPluginContainerImpl);
-    WILL_BE_USING_PRE_FINALIZER(WebPluginContainerImpl, dispose);
+class WEB_EXPORT WebPluginContainerImpl final : public PluginView, WTF_NON_EXPORTED_BASE(public WebPluginContainer), public LocalFrameLifecycleObserver {
+    USING_GARBAGE_COLLECTED_MIXIN(WebPluginContainerImpl);
+    USING_PRE_FINALIZER(WebPluginContainerImpl, dispose);
 public:
-    static PassRefPtrWillBeRawPtr<WebPluginContainerImpl> create(HTMLPlugInElement* element, WebPlugin* webPlugin)
+    static WebPluginContainerImpl* create(HTMLPlugInElement* element, WebPlugin* webPlugin)
     {
-        return adoptRefWillBeNoop(new WebPluginContainerImpl(element, webPlugin));
+        return new WebPluginContainerImpl(element, webPlugin);
     }
 
     // PluginView methods
     WebLayer* platformLayer() const override;
     v8::Local<v8::Object> scriptableObject(v8::Isolate*) override;
-    bool getFormValue(String&) override;
     bool supportsKeyboardFocus() const override;
     bool supportsInputMethod() const override;
     bool canProcessDrag() const override;
@@ -93,19 +92,19 @@ public:
     void setParent(Widget*) override;
     void widgetGeometryMayHaveChanged() override;
     bool isPluginContainer() const override { return true; }
-    void eventListenersRemoved() override;
+    void eventListenersRemoved() override;    
 
     // WebPluginContainer methods
     WebElement element() override;
+    WebDocument document() override;
     void dispatchProgressEvent(const WebString& type, bool lengthComputable, unsigned long long loaded, unsigned long long total, const WebString& url) override;
+    void enqueueMessageEvent(const WebDOMMessageEvent&) override;
+    void enqueueEvent(const WebDOMEvent& event) override;
     void invalidate() override;
     void invalidateRect(const WebRect&) override;
     void scrollRect(const WebRect&) override;
     void scheduleAnimation() override;
     void reportGeometry() override;
-    void allowScriptObjects() override;
-    void clearScriptObjects() override;
-    NPObject* scriptableObjectForElement() override;
     v8::Local<v8::Object> v8ObjectForElement() override;
     WebString executeScriptURL(const WebURL&, bool popupsAllowed) override;
     void loadFrameRequest(const WebURLRequest&, const WebString& target) override;
@@ -124,7 +123,11 @@ public:
     float pageScaleFactor() override;
     float pageZoomFactor() override;
 
-    virtual void setWebLayer(WebLayer*);
+    void setWebLayer(WebLayer*) override;
+
+    void requestFullscreen() override;
+    bool isFullscreenElement() const override;
+    void cancelFullscreen() override;
 
     // Printing interface. The plugin can support custom printing
     // (which means it controls the layout, number of pages etc).
@@ -193,7 +196,7 @@ private:
 
     friend class WebPluginContainerTest;
 
-    RawPtrWillBeMember<HTMLPlugInElement> m_element;
+    Member<HTMLPlugInElement> m_element;
     WebPlugin* m_webPlugin;
 
     WebLayer* m_webLayer;

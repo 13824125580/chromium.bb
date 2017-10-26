@@ -10,7 +10,7 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "remoting/protocol/host_stub.h"
@@ -48,7 +48,7 @@ AppRemotingConnectedClientFixture::~AppRemotingConnectedClientFixture() {}
 void AppRemotingConnectedClientFixture::SetUp() {
   connection_helper_.reset(
       new AppRemotingConnectionHelper(application_details_));
-  scoped_ptr<TestChromotingClient> test_chromoting_client(
+  std::unique_ptr<TestChromotingClient> test_chromoting_client(
       new TestChromotingClient());
 
   test_chromoting_client->AddRemoteConnectionObserver(this);

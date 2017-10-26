@@ -8,8 +8,10 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
@@ -22,7 +24,6 @@
 #include "extensions/renderer/v8_helpers.h"
 #include "gin/modules/module_registry.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebScopedMicrotaskSuppression.h"
 
 namespace extensions {
 
@@ -132,15 +133,18 @@ std::string ModuleSystem::ExceptionHandler::CreateExceptionString(
     error_message.assign(*error_message_v8, error_message_v8.length());
   }
 
-  auto maybe = message->GetLineNumber(context_->v8_context());
-  int line_number = maybe.IsJust() ? maybe.FromJust() : 0;
+  int line_number = 0;
+  if (context_) {  // |context_| can be null in unittests.
+    auto maybe = message->GetLineNumber(context_->v8_context());
+    line_number = maybe.IsJust() ? maybe.FromJust() : 0;
+  }
   return base::StringPrintf("%s:%d: %s",
                             resource_name.c_str(),
                             line_number,
                             error_message.c_str());
 }
 
-ModuleSystem::ModuleSystem(ScriptContext* context, SourceMap* source_map)
+ModuleSystem::ModuleSystem(ScriptContext* context, const SourceMap* source_map)
     : ObjectBackedNativeHandler(context),
       context_(context),
       source_map_(source_map),
@@ -335,7 +339,7 @@ v8::Local<v8::Value> ModuleSystem::CallModuleMethod(
 
 void ModuleSystem::RegisterNativeHandler(
     const std::string& name,
-    scoped_ptr<NativeHandler> native_handler) {
+    std::unique_ptr<NativeHandler> native_handler) {
   ClobberExistingNativeHandler(name);
   native_handler_map_[name] = std::move(native_handler);
 }
@@ -377,6 +381,7 @@ void ModuleSystem::LazyFieldGetterInner(
     v8::Local<v8::String> property,
     const v8::PropertyCallbackInfo<v8::Value>& info,
     RequireFunction require_function) {
+  base::ElapsedTimer timer;
   CHECK(!info.Data().IsEmpty());
   CHECK(info.Data()->IsObject());
   v8::Isolate* isolate = info.GetIsolate();
@@ -399,7 +404,7 @@ void ModuleSystem::LazyFieldGetterInner(
       v8::Local<v8::External>::Cast(module_system_value)->Value());
 
   v8::Local<v8::Value> v8_module_name;
-  if (!GetProperty(context, parameters, kModuleName, &v8_module_name)) {
+  if (!GetPrivateProperty(context, parameters, kModuleName, &v8_module_name)) {
     Warn(isolate, "Cannot find module.");
     return;
   }
@@ -419,7 +424,7 @@ void ModuleSystem::LazyFieldGetterInner(
 
   v8::Local<v8::Object> module = v8::Local<v8::Object>::Cast(module_value);
   v8::Local<v8::Value> field_value;
-  if (!GetProperty(context, parameters, kModuleField, &field_value)) {
+  if (!GetPrivateProperty(context, parameters, kModuleField, &field_value)) {
     module_system->HandleException(try_catch);
     return;
   }
@@ -458,6 +463,8 @@ void ModuleSystem::LazyFieldGetterInner(
     NOTREACHED();
   }
   info.GetReturnValue().Set(new_field);
+
+  UMA_HISTOGRAM_TIMES("Extensions.ApiBindingGenerationTime", timer.Elapsed());
 }
 
 void ModuleSystem::SetLazyField(v8::Local<v8::Object> object,
@@ -479,9 +486,9 @@ void ModuleSystem::SetLazyField(v8::Local<v8::Object> object,
   v8::HandleScope handle_scope(GetIsolate());
   v8::Local<v8::Object> parameters = v8::Object::New(GetIsolate());
   v8::Local<v8::Context> context = context_->v8_context();
-  SetProperty(context, parameters, kModuleName,
+  SetPrivateProperty(context, parameters, kModuleName,
               ToV8StringUnsafe(GetIsolate(), module_name.c_str()));
-  SetProperty(context, parameters, kModuleField,
+  SetPrivateProperty(context, parameters, kModuleField,
               ToV8StringUnsafe(GetIsolate(), module_field.c_str()));
   auto maybe = object->SetAccessor(
       context, ToV8StringUnsafe(GetIsolate(), field.c_str()), getter, NULL,
@@ -564,7 +571,7 @@ void ModuleSystem::RequireAsync(
   v8::Local<v8::Promise::Resolver> resolver(
       v8::Promise::Resolver::New(v8_context).ToLocalChecked());
   args.GetReturnValue().Set(resolver->GetPromise());
-  scoped_ptr<v8::Global<v8::Promise::Resolver>> global_resolver(
+  std::unique_ptr<v8::Global<v8::Promise::Resolver>> global_resolver(
       new v8::Global<v8::Promise::Resolver>(GetIsolate(), resolver));
   gin::ModuleRegistry* module_registry =
       gin::ModuleRegistry::From(v8_context);
@@ -616,6 +623,10 @@ void ModuleSystem::Private(const v8::FunctionCallbackInfo<v8::Value>& args) {
           ToV8StringUnsafe(GetIsolate(), "Failed to create privates"));
       return;
     }
+    v8::Maybe<bool> maybe =
+        privates.As<v8::Object>()->SetPrototype(context()->v8_context(),
+                                                v8::Null(args.GetIsolate()));
+    CHECK(maybe.IsJust() && maybe.FromJust());
     SetPrivate(obj, "privates", privates);
   }
   args.GetReturnValue().Set(privates);
@@ -656,6 +667,7 @@ v8::Local<v8::Value> ModuleSystem::LoadModule(const std::string& module_name) {
   v8::Local<v8::FunctionTemplate> tmpl = v8::FunctionTemplate::New(
       GetIsolate(),
       &SetExportsProperty);
+  tmpl->RemovePrototype();
   v8::Local<v8::String> v8_key;
   if (!v8_helpers::ToV8String(GetIsolate(), "$set", &v8_key)) {
     NOTREACHED();
@@ -733,7 +745,7 @@ void ModuleSystem::OnDidAddPendingModule(
 }
 
 void ModuleSystem::OnModuleLoaded(
-    scoped_ptr<v8::Global<v8::Promise::Resolver>> resolver,
+    std::unique_ptr<v8::Global<v8::Promise::Resolver>> resolver,
     v8::Local<v8::Value> value) {
   if (!is_valid())
     return;

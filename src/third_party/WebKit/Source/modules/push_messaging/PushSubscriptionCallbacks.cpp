@@ -9,6 +9,8 @@
 #include "modules/push_messaging/PushSubscription.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
 #include "public/platform/modules/push_messaging/WebPushSubscription.h"
+#include "wtf/Assertions.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
@@ -16,25 +18,25 @@ PushSubscriptionCallbacks::PushSubscriptionCallbacks(ScriptPromiseResolver* reso
     : m_resolver(resolver)
     , m_serviceWorkerRegistration(serviceWorkerRegistration)
 {
-    ASSERT(m_resolver);
-    ASSERT(m_serviceWorkerRegistration);
+    DCHECK(m_resolver);
+    DCHECK(m_serviceWorkerRegistration);
 }
 
 PushSubscriptionCallbacks::~PushSubscriptionCallbacks()
 {
 }
 
-void PushSubscriptionCallbacks::onSuccess(WebPassOwnPtr<WebPushSubscription> webPushSubscription)
+void PushSubscriptionCallbacks::onSuccess(std::unique_ptr<WebPushSubscription> webPushSubscription)
 {
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+    if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
         return;
 
-    m_resolver->resolve(PushSubscription::take(m_resolver.get(), webPushSubscription.release(), m_serviceWorkerRegistration));
+    m_resolver->resolve(PushSubscription::take(m_resolver.get(), wrapUnique(webPushSubscription.release()), m_serviceWorkerRegistration));
 }
 
 void PushSubscriptionCallbacks::onError(const WebPushError& error)
 {
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+    if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
         return;
     m_resolver->reject(PushError::take(m_resolver.get(), error));
 }

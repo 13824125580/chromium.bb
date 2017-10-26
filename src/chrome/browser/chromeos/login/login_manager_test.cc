@@ -11,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
@@ -50,7 +51,6 @@ const char kTestRefreshToken2[] = "fake-refresh-token-2";
 UserContext CreateUserContext(const std::string& user_id) {
   UserContext user_context(AccountId::FromUserEmailGaiaId(
       user_id, LoginManagerTest::GetGaiaIDForUserID(user_id)));
-  user_context.SetGaiaID(LoginManagerTest::GetGaiaIDForUserID(user_id));
   user_context.SetKey(Key("password"));
   if (user_id == LoginManagerTest::kEnterpriseUser1) {
     user_context.SetRefreshToken(kTestRefreshToken1);
@@ -96,7 +96,7 @@ void LoginManagerTest::TearDownOnMainThread() {
   MixinBasedBrowserTest::TearDownOnMainThread();
   if (LoginDisplayHost::default_host())
     LoginDisplayHost::default_host()->Finalize();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
 }
 

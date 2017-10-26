@@ -6,6 +6,8 @@
 #define MEDIA_AUDIO_WIN_AUDIO_DEVICE_LISTENER_WIN_H_
 
 #include <MMDeviceAPI.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
@@ -65,7 +67,7 @@ class MEDIA_EXPORT AudioDeviceListenerWin : public IMMNotificationClient {
   // AudioDeviceListenerWin must be constructed and destructed on one thread.
   base::ThreadChecker thread_checker_;
 
-  scoped_ptr<base::TickClock> tick_clock_;
+  std::unique_ptr<base::TickClock> tick_clock_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioDeviceListenerWin);
 };

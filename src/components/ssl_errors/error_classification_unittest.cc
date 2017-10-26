@@ -5,13 +5,19 @@
 #include "components/ssl_errors/error_classification.h"
 
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
+#include "base/time/default_clock.h"
+#include "base/time/default_tick_clock.h"
+#include "components/network_time/network_time_tracker.h"
+#include "components/prefs/testing_pref_service.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/x509_cert_types.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_certificate_data.h"
+#include "net/test/test_data_directory.h"
+#include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -21,7 +27,7 @@ TEST_F(SSLErrorClassificationTest, TestNameMismatch) {
   scoped_refptr<net::X509Certificate> google_cert(
       net::X509Certificate::CreateFromBytes(
           reinterpret_cast<const char*>(google_der), sizeof(google_der)));
-  ASSERT_NE(static_cast<net::X509Certificate*>(NULL), google_cert.get());
+  ASSERT_TRUE(google_cert.get());
   std::vector<std::string> dns_names_google;
   google_cert->GetDNSNames(&dns_names_google);
   ASSERT_EQ(1u, dns_names_google.size());  // ["www.google.com"]
@@ -109,7 +115,7 @@ TEST_F(SSLErrorClassificationTest, TestNameMismatch) {
   scoped_refptr<net::X509Certificate> webkit_cert(
       net::X509Certificate::CreateFromBytes(
           reinterpret_cast<const char*>(webkit_der), sizeof(webkit_der)));
-  ASSERT_NE(static_cast<net::X509Certificate*>(NULL), webkit_cert.get());
+  ASSERT_TRUE(webkit_cert.get());
   std::vector<std::string> dns_names_webkit;
   webkit_cert->GetDNSNames(&dns_names_webkit);
   ASSERT_EQ(2u, dns_names_webkit.size());  // ["*.webkit.org", "webkit.org"]
@@ -177,4 +183,82 @@ TEST(ErrorClassification, LevenshteinDistance) {
 
   EXPECT_EQ(7u, ssl_errors::GetLevenshteinDistance("yyy", "xxxxxxx"));
   EXPECT_EQ(7u, ssl_errors::GetLevenshteinDistance("xxxxxxx", "yyy"));
+}
+
+TEST_F(SSLErrorClassificationTest, GetClockState) {
+  // This test aims to obtain all possible return values of
+  // |GetClockState|.
+  TestingPrefServiceSimple pref_service;
+  network_time::NetworkTimeTracker::RegisterPrefs(pref_service.registry());
+  base::MessageLoop loop;
+  network_time::NetworkTimeTracker network_time_tracker(
+      base::WrapUnique(new base::DefaultClock()),
+      base::WrapUnique(new base::DefaultTickClock()), &pref_service,
+      new net::TestURLRequestContextGetter(
+          base::ThreadTaskRunnerHandle::Get()));
+
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_UNKNOWN,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  ssl_errors::SetBuildTimeForTesting(base::Time::Now() -
+                                     base::TimeDelta::FromDays(367));
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_FUTURE,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  ssl_errors::SetBuildTimeForTesting(base::Time::Now() +
+                                     base::TimeDelta::FromDays(3));
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_PAST,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  // Intentionally leave the build time alone.  It should be ignored
+  // in favor of network time.
+  network_time_tracker.UpdateNetworkTime(
+      base::Time::Now() + base::TimeDelta::FromHours(1),
+      base::TimeDelta::FromSeconds(1),         // resolution
+      base::TimeDelta::FromMilliseconds(250),  // latency
+      base::TimeTicks::Now());                 // posting time
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_PAST,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  network_time_tracker.UpdateNetworkTime(
+      base::Time::Now() - base::TimeDelta::FromHours(1),
+      base::TimeDelta::FromSeconds(1),         // resolution
+      base::TimeDelta::FromMilliseconds(250),  // latency
+      base::TimeTicks::Now());                 // posting time
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_FUTURE,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  network_time_tracker.UpdateNetworkTime(
+      base::Time::Now(),
+      base::TimeDelta::FromSeconds(1),         // resolution
+      base::TimeDelta::FromMilliseconds(250),  // latency
+      base::TimeTicks::Now());                 // posting time
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_OK,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  // Now clear the network time.  The build time should reassert
+  // itself.
+  network_time_tracker.UpdateNetworkTime(
+      base::Time(),
+      base::TimeDelta::FromSeconds(1),         // resolution
+      base::TimeDelta::FromMilliseconds(250),  // latency
+      base::TimeTicks::Now());                 // posting time
+  ssl_errors::SetBuildTimeForTesting(base::Time::Now() +
+                                     base::TimeDelta::FromDays(3));
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_PAST,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
+
+  // Now set the build time to something reasonable.  We should be
+  // back to the know-nothing state.
+  ssl_errors::SetBuildTimeForTesting(base::Time::Now());
+  EXPECT_EQ(
+      ssl_errors::ClockState::CLOCK_STATE_UNKNOWN,
+      ssl_errors::GetClockState(base::Time::Now(), &network_time_tracker));
 }

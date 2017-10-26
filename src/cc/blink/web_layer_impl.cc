@@ -11,29 +11,25 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/lazy_instance.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
 #include "base/trace_event/trace_event_impl.h"
-#include "cc/animation/animation.h"
+#include "cc/animation/element_id.h"
 #include "cc/base/region.h"
 #include "cc/base/switches.h"
 #include "cc/blink/web_blend_mode.h"
-#include "cc/blink/web_to_cc_animation_delegate_adapter.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_position_constraint.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/trees/layer_tree_host.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/platform/WebLayerPositionConstraint.h"
 #include "third_party/WebKit/public/platform/WebLayerScrollClient.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
 
-using cc::Animation;
 using cc::Layer;
 using blink::WebLayer;
 using blink::WebFloatPoint;
@@ -43,35 +39,16 @@ using blink::WebSize;
 using blink::WebColor;
 
 namespace cc_blink {
-namespace {
-
-base::LazyInstance<cc::LayerSettings> g_layer_settings =
-    LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
 
 WebLayerImpl::WebLayerImpl()
-    : layer_(Layer::Create(LayerSettings())), contents_opaque_is_fixed_(false) {
-}
+    : layer_(Layer::Create()), contents_opaque_is_fixed_(false) {}
 
 WebLayerImpl::WebLayerImpl(scoped_refptr<Layer> layer)
     : layer_(layer), contents_opaque_is_fixed_(false) {
 }
 
 WebLayerImpl::~WebLayerImpl() {
-  if (animation_delegate_adapter_.get())
-    layer_->set_layer_animation_delegate(nullptr);
   layer_->SetLayerClient(nullptr);
-}
-
-// static
-void WebLayerImpl::SetLayerSettings(const cc::LayerSettings& settings) {
-  g_layer_settings.Get() = settings;
-}
-
-// static
-const cc::LayerSettings& WebLayerImpl::LayerSettings() {
-  return g_layer_settings.Get();
 }
 
 int WebLayerImpl::id() const {
@@ -243,50 +220,12 @@ void WebLayerImpl::setBackgroundFilters(const cc::FilterOperations& filters) {
   layer_->SetBackgroundFilters(filters);
 }
 
-void WebLayerImpl::setAnimationDelegate(
-    blink::WebCompositorAnimationDelegate* delegate) {
-  if (!delegate) {
-    animation_delegate_adapter_.reset();
-    layer_->set_layer_animation_delegate(nullptr);
-    return;
-  }
-  animation_delegate_adapter_.reset(
-      new WebToCCAnimationDelegateAdapter(delegate));
-  layer_->set_layer_animation_delegate(animation_delegate_adapter_.get());
-}
-
-bool WebLayerImpl::addAnimation(cc::Animation* animation) {
-  return layer_->AddAnimation(make_scoped_ptr(animation));
-}
-
-void WebLayerImpl::removeAnimation(int animation_id) {
-  layer_->RemoveAnimation(animation_id);
-}
-
-void WebLayerImpl::pauseAnimation(int animation_id, double time_offset) {
-  layer_->PauseAnimation(animation_id, time_offset);
-}
-
-void WebLayerImpl::abortAnimation(int animation_id) {
-  layer_->AbortAnimation(animation_id);
-}
-
-bool WebLayerImpl::hasActiveAnimation() {
-  return layer_->HasActiveAnimation();
-}
-
-void WebLayerImpl::setForceRenderSurface(bool force_render_surface) {
-  layer_->SetForceRenderSurface(force_render_surface);
+bool WebLayerImpl::hasActiveAnimationForTesting() {
+  return layer_->HasActiveAnimationForTesting();
 }
 
 void WebLayerImpl::setScrollPositionDouble(blink::WebDoublePoint position) {
   layer_->SetScrollOffset(gfx::ScrollOffset(position.x, position.y));
-}
-
-void WebLayerImpl::setScrollCompensationAdjustment(
-    blink::WebDoublePoint position) {
-  layer_->SetScrollCompensationAdjustment(
-      gfx::Vector2dF(position.x, position.y));
 }
 
 blink::WebDoublePoint WebLayerImpl::scrollPositionDouble() const {
@@ -363,31 +302,6 @@ WebVector<WebRect> WebLayerImpl::nonFastScrollableRegion() const {
        region_rects.next()) {
     result[i] = region_rects.rect();
     ++i;
-  }
-  return result;
-}
-
-void WebLayerImpl::setFrameTimingRequests(
-    const WebVector<std::pair<int64_t, WebRect>>& requests) {
-  std::vector<cc::FrameTimingRequest> frame_timing_requests(requests.size());
-  for (size_t i = 0; i < requests.size(); ++i) {
-    frame_timing_requests[i] = cc::FrameTimingRequest(
-        requests[i].first, gfx::Rect(requests[i].second));
-  }
-  layer_->SetFrameTimingRequests(frame_timing_requests);
-}
-
-WebVector<std::pair<int64_t, WebRect>> WebLayerImpl::frameTimingRequests()
-    const {
-  const std::vector<cc::FrameTimingRequest>& frame_timing_requests =
-      layer_->FrameTimingRequests();
-
-  size_t num_requests = frame_timing_requests.size();
-
-  WebVector<std::pair<int64_t, WebRect>> result(num_requests);
-  for (size_t i = 0; i < num_requests; ++i) {
-    result[i] = std::make_pair(frame_timing_requests[i].id(),
-                               frame_timing_requests[i].rect());
   }
   return result;
 }
@@ -470,11 +384,15 @@ const cc::Layer* WebLayerImpl::ccLayer() const {
   return layer_.get();
 }
 
-void WebLayerImpl::setElementId(uint64_t id) {
+cc::Layer* WebLayerImpl::ccLayer() {
+  return layer_.get();
+}
+
+void WebLayerImpl::setElementId(const cc::ElementId& id) {
   layer_->SetElementId(id);
 }
 
-uint64_t WebLayerImpl::elementId() const {
+cc::ElementId WebLayerImpl::elementId() const {
   return layer_->element_id();
 }
 
@@ -506,6 +424,10 @@ Layer* WebLayerImpl::layer() const {
 
 void WebLayerImpl::SetContentsOpaqueIsFixed(bool fixed) {
   contents_opaque_is_fixed_ = fixed;
+}
+
+void WebLayerImpl::setHasWillChangeTransformHint(bool has_will_change) {
+  layer_->SetHasWillChangeTransformHint(has_will_change);
 }
 
 }  // namespace cc_blink

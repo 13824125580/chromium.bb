@@ -36,9 +36,12 @@
 #include "core/events/Event.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/EventTargetModules.h"
+#include "modules/serviceworkers/ServiceWorkerContainerClient.h"
 #include "public/platform/WebMessagePortChannel.h"
+#include "public/platform/WebSecurityOrigin.h"
 #include "public/platform/WebString.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerState.h"
+#include <memory>
 
 namespace blink {
 
@@ -47,10 +50,16 @@ const AtomicString& ServiceWorker::interfaceName() const
     return EventTargetNames::ServiceWorker;
 }
 
-void ServiceWorker::postMessage(ExecutionContext* context, PassRefPtr<SerializedScriptValue> message, const MessagePortArray* ports, ExceptionState& exceptionState)
+void ServiceWorker::postMessage(ExecutionContext* context, PassRefPtr<SerializedScriptValue> message, const MessagePortArray& ports, ExceptionState& exceptionState)
 {
+    ServiceWorkerContainerClient* client = ServiceWorkerContainerClient::from(getExecutionContext());
+    if (!client || !client->provider()) {
+        exceptionState.throwDOMException(InvalidStateError, "Failed to post a message: No associated provider is available.");
+        return;
+    }
+
     // Disentangle the port in preparation for sending it to the remote context.
-    OwnPtr<MessagePortChannelArray> channels = MessagePort::disentanglePorts(context, ports, exceptionState);
+    std::unique_ptr<MessagePortChannelArray> channels = MessagePort::disentanglePorts(context, ports, exceptionState);
     if (exceptionState.hadException())
         return;
     if (m_handle->serviceWorker()->state() == WebServiceWorkerStateRedundant) {
@@ -62,8 +71,8 @@ void ServiceWorker::postMessage(ExecutionContext* context, PassRefPtr<Serialized
         context->addConsoleMessage(ConsoleMessage::create(JSMessageSource, WarningMessageLevel, "ServiceWorker cannot send an ArrayBuffer as a transferable object yet. See http://crbug.com/511119"));
 
     WebString messageString = message->toWireString();
-    OwnPtr<WebMessagePortChannelArray> webChannels = MessagePort::toWebMessagePortChannelArray(channels.release());
-    m_handle->serviceWorker()->postMessage(messageString, webChannels.leakPtr());
+    std::unique_ptr<WebMessagePortChannelArray> webChannels = MessagePort::toWebMessagePortChannelArray(std::move(channels));
+    m_handle->serviceWorker()->postMessage(client->provider(), messageString, WebSecurityOrigin(getExecutionContext()->getSecurityOrigin()), webChannels.release());
 }
 
 void ServiceWorker::internalsTerminate()
@@ -104,15 +113,13 @@ String ServiceWorker::state() const
     }
 }
 
-ServiceWorker* ServiceWorker::from(ExecutionContext* executionContext, PassOwnPtr<WebServiceWorker::Handle> handle)
+ServiceWorker* ServiceWorker::from(ExecutionContext* executionContext, std::unique_ptr<WebServiceWorker::Handle> handle)
 {
-    return getOrCreate(executionContext, handle);
+    return getOrCreate(executionContext, std::move(handle));
 }
 
 bool ServiceWorker::hasPendingActivity() const
 {
-    if (AbstractWorker::hasPendingActivity())
-        return true;
     if (m_wasStopped)
         return false;
     return m_handle->serviceWorker()->state() != WebServiceWorkerStateRedundant;
@@ -123,25 +130,26 @@ void ServiceWorker::stop()
     m_wasStopped = true;
 }
 
-ServiceWorker* ServiceWorker::getOrCreate(ExecutionContext* executionContext, PassOwnPtr<WebServiceWorker::Handle> handle)
+ServiceWorker* ServiceWorker::getOrCreate(ExecutionContext* executionContext, std::unique_ptr<WebServiceWorker::Handle> handle)
 {
     if (!handle)
         return nullptr;
 
     ServiceWorker* existingWorker = static_cast<ServiceWorker*>(handle->serviceWorker()->proxy());
     if (existingWorker) {
-        ASSERT(existingWorker->executionContext() == executionContext);
+        ASSERT(existingWorker->getExecutionContext() == executionContext);
         return existingWorker;
     }
 
-    ServiceWorker* newWorker = new ServiceWorker(executionContext, handle);
+    ServiceWorker* newWorker = new ServiceWorker(executionContext, std::move(handle));
     newWorker->suspendIfNeeded();
     return newWorker;
 }
 
-ServiceWorker::ServiceWorker(ExecutionContext* executionContext, PassOwnPtr<WebServiceWorker::Handle> handle)
+ServiceWorker::ServiceWorker(ExecutionContext* executionContext, std::unique_ptr<WebServiceWorker::Handle> handle)
     : AbstractWorker(executionContext)
-    , m_handle(handle)
+    , ActiveScriptWrappable(this)
+    , m_handle(std::move(handle))
     , m_wasStopped(false)
 {
     ASSERT(m_handle);
@@ -150,6 +158,11 @@ ServiceWorker::ServiceWorker(ExecutionContext* executionContext, PassOwnPtr<WebS
 
 ServiceWorker::~ServiceWorker()
 {
+}
+
+DEFINE_TRACE(ServiceWorker)
+{
+    AbstractWorker::trace(visitor);
 }
 
 } // namespace blink

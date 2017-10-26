@@ -4,8 +4,9 @@
 
 #include "net/quic/congestion_control/pacing_sender.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/quic_test_utils.h"
@@ -42,7 +43,7 @@ class PacingSenderTest : public ::testing::Test {
     mock_sender_ = new StrictMock<MockSendAlgorithm>();
     pacing_sender_.reset(new PacingSender(
         mock_sender_, QuicTime::Delta::FromMilliseconds(1), burst_size));
-    EXPECT_CALL(*mock_sender_, PacingRate()).WillRepeatedly(Return(bandwidth));
+    EXPECT_CALL(*mock_sender_, PacingRate(_)).WillRepeatedly(Return(bandwidth));
   }
 
   void CheckPacketIsSentImmediately(HasRetransmittableData retransmittable_data,
@@ -51,13 +52,11 @@ class PacingSenderTest : public ::testing::Test {
     // In order for the packet to be sendable, the underlying sender must
     // permit it to be sent immediately.
     for (int i = 0; i < 2; ++i) {
-      EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), bytes_in_flight,
-                                               retransmittable_data))
+      EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), bytes_in_flight))
           .WillOnce(Return(zero_time_));
       // Verify that the packet can be sent immediately.
       EXPECT_EQ(zero_time_,
-                pacing_sender_->TimeUntilSend(clock_.Now(), bytes_in_flight,
-                                              retransmittable_data));
+                pacing_sender_->TimeUntilSend(clock_.Now(), bytes_in_flight));
     }
 
     // Actually send the packet.
@@ -77,22 +76,15 @@ class PacingSenderTest : public ::testing::Test {
                                  false);
   }
 
-  void CheckAckIsSentImmediately() {
-    CheckPacketIsSentImmediately(NO_RETRANSMITTABLE_DATA, kBytesInFlight,
-                                 false);
-  }
-
   void CheckPacketIsDelayed(QuicTime::Delta delay) {
     // In order for the packet to be sendable, the underlying sender must
     // permit it to be sent immediately.
     for (int i = 0; i < 2; ++i) {
-      EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kBytesInFlight,
-                                               HAS_RETRANSMITTABLE_DATA))
+      EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kBytesInFlight))
           .WillOnce(Return(zero_time_));
       // Verify that the packet is delayed.
       EXPECT_EQ(delay.ToMicroseconds(),
-                pacing_sender_->TimeUntilSend(clock_.Now(), kBytesInFlight,
-                                              HAS_RETRANSMITTABLE_DATA)
+                pacing_sender_->TimeUntilSend(clock_.Now(), kBytesInFlight)
                     .ToMicroseconds());
     }
   }
@@ -109,28 +101,24 @@ class PacingSenderTest : public ::testing::Test {
   MockClock clock_;
   QuicPacketNumber packet_number_;
   StrictMock<MockSendAlgorithm>* mock_sender_;
-  scoped_ptr<PacingSender> pacing_sender_;
+  std::unique_ptr<PacingSender> pacing_sender_;
 };
 
 TEST_F(PacingSenderTest, NoSend) {
   for (int i = 0; i < 2; ++i) {
-    EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kBytesInFlight,
-                                             HAS_RETRANSMITTABLE_DATA))
+    EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kBytesInFlight))
         .WillOnce(Return(infinite_time_));
     EXPECT_EQ(infinite_time_,
-              pacing_sender_->TimeUntilSend(clock_.Now(), kBytesInFlight,
-                                            HAS_RETRANSMITTABLE_DATA));
+              pacing_sender_->TimeUntilSend(clock_.Now(), kBytesInFlight));
   }
 }
 
 TEST_F(PacingSenderTest, SendNow) {
   for (int i = 0; i < 2; ++i) {
-    EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kBytesInFlight,
-                                             HAS_RETRANSMITTABLE_DATA))
+    EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kBytesInFlight))
         .WillOnce(Return(zero_time_));
     EXPECT_EQ(zero_time_,
-              pacing_sender_->TimeUntilSend(clock_.Now(), kBytesInFlight,
-                                            HAS_RETRANSMITTABLE_DATA));
+              pacing_sender_->TimeUntilSend(clock_.Now(), kBytesInFlight));
   }
 }
 
@@ -154,7 +142,6 @@ TEST_F(PacingSenderTest, VariousSending) {
   CheckPacketIsSentImmediately();
   CheckPacketIsSentImmediately();
   CheckPacketIsDelayed(QuicTime::Delta::FromMilliseconds(2));
-  CheckAckIsSentImmediately();
 
   // Wake up late.
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(4));
@@ -311,6 +298,32 @@ TEST_F(PacingSenderTest, FastSending) {
   CheckPacketIsDelayed(QuicTime::Delta::FromMicroseconds(1500));
 }
 
+TEST_F(PacingSenderTest, NoBurstEnteringRecovery) {
+  ValueRestore<bool> old_flag(&FLAGS_quic_allow_noprr, true);
+  // Configure pacing rate of 1 packet per 1 ms with no burst tokens.
+  InitPacingRate(0, QuicBandwidth::FromBytesAndTimeDelta(
+                        kMaxPacketSize, QuicTime::Delta::FromMilliseconds(1)));
+  // Sending a packet will set burst tokens.
+  CheckPacketIsSentImmediately();
+
+  // Losing a packet will set clear burst tokens.
+  SendAlgorithmInterface::CongestionVector lost_packets;
+  lost_packets.push_back(std::make_pair(1, kMaxPacketSize));
+  SendAlgorithmInterface::CongestionVector empty;
+  EXPECT_CALL(*mock_sender_,
+              OnCongestionEvent(true, kMaxPacketSize, empty, lost_packets));
+  pacing_sender_->OnCongestionEvent(true, kMaxPacketSize, empty, lost_packets);
+  // One packet is sent immediately, because of 1ms pacing granularity.
+  CheckPacketIsSentImmediately();
+  // Ensure packets are immediately paced.
+  EXPECT_CALL(*mock_sender_, TimeUntilSend(clock_.Now(), kDefaultTCPMSS))
+      .WillOnce(Return(zero_time_));
+  // Verify the next packet is paced and delayed 2ms due to granularity.
+  EXPECT_EQ(QuicTime::Delta::FromMilliseconds(2),
+            pacing_sender_->TimeUntilSend(clock_.Now(), kDefaultTCPMSS));
+  CheckPacketIsDelayed(QuicTime::Delta::FromMilliseconds(2));
+}
+
 TEST_F(PacingSenderTest, NoBurstInRecovery) {
   // Configure pacing rate of 1 packet per 1 ms with no burst tokens.
   InitPacingRate(0, QuicBandwidth::FromBytesAndTimeDelta(
@@ -350,7 +363,7 @@ TEST_F(PacingSenderTest, VerifyInnerSenderCalled) {
 
   EXPECT_CALL(*mock_sender_, OnPacketSent(kTime, kBytes, 123u, kBytes,
                                           HAS_RETRANSMITTABLE_DATA));
-  EXPECT_CALL(*mock_sender_, PacingRate()).WillOnce(Return(kBandwidth));
+  EXPECT_CALL(*mock_sender_, PacingRate(_)).WillOnce(Return(kBandwidth));
   pacing_sender_->OnPacketSent(kTime, kBytes, 123u, kBytes,
                                HAS_RETRANSMITTABLE_DATA);
 
@@ -360,13 +373,12 @@ TEST_F(PacingSenderTest, VerifyInnerSenderCalled) {
   EXPECT_CALL(*mock_sender_, OnConnectionMigration());
   pacing_sender_->OnConnectionMigration();
 
-  EXPECT_CALL(*mock_sender_,
-              TimeUntilSend(kTime, kBytes, HAS_RETRANSMITTABLE_DATA))
+  EXPECT_CALL(*mock_sender_, TimeUntilSend(kTime, kBytes))
       .WillOnce(Return(kTimeDelta));
-  pacing_sender_->TimeUntilSend(kTime, kBytes, HAS_RETRANSMITTABLE_DATA);
+  pacing_sender_->TimeUntilSend(kTime, kBytes);
 
-  EXPECT_CALL(*mock_sender_, PacingRate()).WillOnce(Return(kBandwidth));
-  EXPECT_EQ(kBandwidth, pacing_sender_->PacingRate());
+  EXPECT_CALL(*mock_sender_, PacingRate(_)).WillOnce(Return(kBandwidth));
+  EXPECT_EQ(kBandwidth, pacing_sender_->PacingRate(0));
 
   EXPECT_CALL(*mock_sender_, BandwidthEstimate()).WillOnce(Return(kBandwidth));
   EXPECT_EQ(kBandwidth, pacing_sender_->BandwidthEstimate());

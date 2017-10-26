@@ -30,14 +30,16 @@ class FakeMessageCenter : public MessageCenter {
   size_t UnreadNotificationCount() const override;
   bool HasPopupNotifications() const override;
   bool IsQuietMode() const override;
+  bool IsLockedState() const override;
   bool HasClickedListener(const std::string& id) override;
   message_center::Notification* FindVisibleNotificationById(
       const std::string& id) override;
   const NotificationList::Notifications& GetVisibleNotifications() override;
   NotificationList::PopupNotifications GetPopupNotifications() override;
-  void AddNotification(scoped_ptr<Notification> notification) override;
-  void UpdateNotification(const std::string& old_id,
-                          scoped_ptr<Notification> new_notification) override;
+  void AddNotification(std::unique_ptr<Notification> notification) override;
+  void UpdateNotification(
+      const std::string& old_id,
+      std::unique_ptr<Notification> new_notification) override;
 
   void RemoveNotification(const std::string& id, bool by_user) override;
   void RemoveAllNotifications(bool by_user, RemoveType type) override;
@@ -62,6 +64,7 @@ class FakeMessageCenter : public MessageCenter {
   void SetNotifierSettingsProvider(NotifierSettingsProvider* provider) override;
   NotifierSettingsProvider* GetNotifierSettingsProvider() override;
   void SetQuietMode(bool in_quiet_mode) override;
+  void SetLockedState(bool locked) override;
   void EnterQuietModeWithExpire(const base::TimeDelta& expires_in) override;
   void SetVisibility(Visibility visible) override;
   bool IsMessageCenterVisible() const override;

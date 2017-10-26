@@ -5,14 +5,24 @@
 package org.chromium.chrome.browser.offlinepages;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.os.Environment;
 
 import org.chromium.base.BaseChromiumApplication;
+import org.chromium.base.test.shadows.ShadowMultiDex;
 import org.chromium.base.test.util.Feature;
+import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.components.bookmarks.BookmarkId;
+import org.chromium.components.bookmarks.BookmarkType;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.testing.local.LocalRobolectricTestRunner;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,15 +41,39 @@ import java.io.File;
 @RunWith(LocalRobolectricTestRunner.class)
 @Config(manifest = Config.NONE,
         application = BaseChromiumApplication.class,
-        shadows = { OfflinePageUtilsTest.WrappedEnvironment.class })
+        shadows = { OfflinePageUtilsTest.WrappedEnvironment.class, ShadowMultiDex.class })
 public class OfflinePageUtilsTest {
 
     @Mock private File mMockDataDirectory;
+    @Mock private Tab mTab;
+    @Mock private WebContents mWebContents;
+    @Mock private OfflinePageBridge mOfflinePageBridge;
+    @Mock private OfflinePageUtils mOfflinePageUtils;
 
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
         WrappedEnvironment.setDataDirectoryForTest(mMockDataDirectory);
+
+        // Setting up a mock tab. These are the values common to most tests, but individual
+        // tests might easily overwrite them.
+        doReturn(false).when(mTab).isShowingErrorPage();
+        doReturn(false).when(mTab).isShowingSadTab();
+        doReturn(mWebContents).when(mTab).getWebContents();
+        doReturn(false).when(mWebContents).isDestroyed();
+        doReturn(false).when(mWebContents).isIncognito();
+
+        doNothing()
+                .when(mOfflinePageBridge)
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        doReturn(mOfflinePageBridge)
+                .when(mOfflinePageUtils)
+                .getOfflinePageBridge(any(Profile.class));
+        OfflinePageUtils.setInstanceForTesting(mOfflinePageUtils);
+
+        OfflinePageBridge.setOfflineBookmarksEnabledForTesting(true);
     }
 
     @Test
@@ -58,12 +92,90 @@ public class OfflinePageUtilsTest {
 
     @Test
     @Feature({"OfflinePages"})
-    public void testIsStorageAlmostFull() {
-        when(mMockDataDirectory.getUsableSpace()).thenReturn(16L * (1 << 20));  // 16MB
-        assertFalse(OfflinePageUtils.isStorageAlmostFull());
+    public void testStripSchemeFromOnlineUrl() {
+        // Only scheme gets stripped.
+        assertEquals("cs.chromium.org",
+                OfflinePageUtils.stripSchemeFromOnlineUrl("https://cs.chromium.org"));
+        assertEquals("cs.chromium.org",
+                OfflinePageUtils.stripSchemeFromOnlineUrl("http://cs.chromium.org"));
+        // If there is no scheme, nothing changes.
+        assertEquals("cs.chromium.org",
+                OfflinePageUtils.stripSchemeFromOnlineUrl("cs.chromium.org"));
+        // Path is not touched/changed.
+        String urlWithPath = "code.google.com/p/chromium/codesearch#search"
+                + "/&q=offlinepageutils&sq=package:chromium&type=cs";
+        assertEquals(urlWithPath,
+                OfflinePageUtils.stripSchemeFromOnlineUrl("https://" + urlWithPath));
+        // Beginning and ending spaces get trimmed.
+        assertEquals("cs.chromium.org",
+                OfflinePageUtils.stripSchemeFromOnlineUrl("  https://cs.chromium.org  "));
+    }
 
-        when(mMockDataDirectory.getUsableSpace()).thenReturn(8L * (1 << 20));  // 8MB
-        assertTrue(OfflinePageUtils.isStorageAlmostFull());
+    @Test
+    @Feature({"OfflinePages"})
+    public void testSaveBookmarkOffline() {
+        OfflinePageUtils.saveBookmarkOffline(new BookmarkId(42, BookmarkType.NORMAL), mTab);
+        verify(mOfflinePageBridge, times(1))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+    }
+
+    @Test
+    @Feature({"OfflinePages"})
+    public void testSaveBookmarkOffline_inputValidation() {
+        OfflinePageUtils.saveBookmarkOffline(null, mTab);
+        // Save page not called because bookmarkId is null.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        BookmarkId bookmarkId = new BookmarkId(42, BookmarkType.NORMAL);
+        OfflinePageBridge.setOfflineBookmarksEnabledForTesting(false);
+        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
+        // Save page not called because offline bookmarks are disabled.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        OfflinePageBridge.setOfflineBookmarksEnabledForTesting(true);
+        doReturn(true).when(mTab).isShowingErrorPage();
+        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
+        // Save page not called because tab is showing an error page.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        doReturn(false).when(mTab).isShowingErrorPage();
+        doReturn(true).when(mTab).isShowingSadTab();
+        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
+        // Save page not called because tab is showing a sad tab.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        doReturn(false).when(mTab).isShowingSadTab();
+        doReturn(null).when(mTab).getWebContents();
+        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
+        // Save page not called because tab returns null web contents.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        doReturn(mWebContents).when(mTab).getWebContents();
+        doReturn(true).when(mWebContents).isDestroyed();
+        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
+        // Save page not called because web contents is destroyed.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
+
+        doReturn(false).when(mWebContents).isDestroyed();
+        doReturn(true).when(mWebContents).isIncognito();
+        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
+        // Save page not called because web contents is incognito.
+        verify(mOfflinePageBridge, times(0))
+                .savePage(eq(mWebContents), any(ClientId.class),
+                        any(OfflinePageBridge.SavePageCallback.class));
     }
 
     /** A shadow/wrapper of android.os.Environment that allows injecting a test directory. */

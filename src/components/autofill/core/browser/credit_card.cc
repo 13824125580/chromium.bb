@@ -22,6 +22,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/autofill/core/browser/autofill_data_util.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/validation.h"
@@ -34,11 +35,16 @@
 #include "third_party/icu/source/i18n/unicode/dtfmtsym.h"
 #include "ui/base/l10n/l10n_util.h"
 
+using base::ASCIIToUTF16;
+
 namespace autofill {
+
+const base::char16 kMidlineEllipsis[] = { 0x22ef, 0 };
 
 namespace {
 
 const base::char16 kCreditCardObfuscationSymbol = '*';
+const base::char16 kNonBreakingSpace[] = { 0x00a0, 0 };
 
 bool ConvertYear(const base::string16& year, int* num) {
   // If the |year| is empty, clear the stored value.
@@ -114,7 +120,7 @@ CreditCard::~CreditCard() {}
 // static
 const base::string16 CreditCard::StripSeparators(const base::string16& number) {
   base::string16 stripped;
-  base::RemoveChars(number, base::ASCIIToUTF16("- "), &stripped);
+  base::RemoveChars(number, ASCIIToUTF16("- "), &stripped);
   return stripped;
 }
 
@@ -264,8 +270,14 @@ CreditCard::ServerStatus CreditCard::GetServerStatus() const {
 base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
   DCHECK_EQ(CREDIT_CARD, AutofillType(type).group());
   switch (type) {
-    case CREDIT_CARD_NAME:
+    case CREDIT_CARD_NAME_FULL:
       return name_on_card_;
+
+    case CREDIT_CARD_NAME_FIRST:
+      return data_util::SplitName(name_on_card_).given;
+
+    case CREDIT_CARD_NAME_LAST:
+      return data_util::SplitName(name_on_card_).family;
 
     case CREDIT_CARD_EXP_MONTH:
       return ExpirationMonthAsString();
@@ -280,7 +292,7 @@ base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
       base::string16 month = ExpirationMonthAsString();
       base::string16 year = Expiration2DigitYearAsString();
       if (!month.empty() && !year.empty())
-        return month + base::ASCIIToUTF16("/") + year;
+        return month + ASCIIToUTF16("/") + year;
       return base::string16();
     }
 
@@ -288,7 +300,7 @@ base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
       base::string16 month = ExpirationMonthAsString();
       base::string16 year = Expiration4DigitYearAsString();
       if (!month.empty() && !year.empty())
-        return month + base::ASCIIToUTF16("/") + year;
+        return month + ASCIIToUTF16("/") + year;
       return base::string16();
     }
 
@@ -312,7 +324,7 @@ void CreditCard::SetRawInfo(ServerFieldType type,
                             const base::string16& value) {
   DCHECK_EQ(CREDIT_CARD, AutofillType(type).group());
   switch (type) {
-    case CREDIT_CARD_NAME:
+    case CREDIT_CARD_NAME_FULL:
       name_on_card_ = value;
       break;
 
@@ -321,7 +333,7 @@ void CreditCard::SetRawInfo(ServerFieldType type,
       break;
 
     case CREDIT_CARD_EXP_2_DIGIT_YEAR:
-      // This is a read-only attribute.
+      SetExpirationYearFromString(value);
       break;
 
     case CREDIT_CARD_EXP_4_DIGIT_YEAR:
@@ -329,11 +341,11 @@ void CreditCard::SetRawInfo(ServerFieldType type,
       break;
 
     case CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR:
-      // This is a read-only attribute.
+      SetExpirationDateFromString(value);
       break;
 
     case CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR:
-      // This is a read-only attribute.
+      SetExpirationDateFromString(value);
       break;
 
     case CREDIT_CARD_TYPE:
@@ -421,7 +433,7 @@ const std::pair<base::string16, base::string16> CreditCard::LabelPieces()
     return std::make_pair(obfuscated_cc_number, base::string16());
 
   base::string16 formatted_date(ExpirationMonthAsString());
-  formatted_date.append(base::ASCIIToUTF16("/"));
+  formatted_date.append(ASCIIToUTF16("/"));
   formatted_date.append(Expiration4DigitYearAsString());
 
   base::string16 separator =
@@ -435,8 +447,7 @@ void CreditCard::SetInfoForMonthInputType(const base::string16& value) {
     return;
 
   std::vector<base::StringPiece16> year_month = base::SplitStringPiece(
-      value, base::ASCIIToUTF16("-"),
-      base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+      value, ASCIIToUTF16("-"), base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   DCHECK_EQ(2u, year_month.size());
   int num = 0;
   bool converted = false;
@@ -455,9 +466,20 @@ void CreditCard::SetExpirationMonth(int expiration_month) {
 }
 
 void CreditCard::SetExpirationYear(int expiration_year) {
-  if (expiration_year != 0 &&
-      (expiration_year < 2006 || expiration_year > 10000))
+  // If |expiration_year| is beyond this millenium, or more than 2 digits but
+  // before the current millenium (e.g. "545", "1995"), return. What is left are
+  // values like "45" or "2018".
+  if (expiration_year > 2999 ||
+      (expiration_year > 99 && expiration_year < 2000))
     return;
+
+  // Will normalize 2-digit years to the 4-digit version.
+  if (expiration_year > 0 && expiration_year < 100) {
+    base::Time::Exploded now_exploded;
+    base::Time::Now().LocalExplode(&now_exploded);
+    expiration_year += (now_exploded.year / 100) * 100;
+  }
+
   expiration_year_ = expiration_year;
 }
 
@@ -482,10 +504,9 @@ base::string16 CreditCard::TypeAndLastFourDigits() const {
   if (digits.empty())
     return type;
 
-  // The separator character is a non breaking space and a horizontal midline
-  // ellipsis.
   // TODO(estade): i18n?
-  return type + base::UTF8ToUTF16("\xC2\xA0\xE2\x8B\xAF") + digits;
+  return type + base::string16(kNonBreakingSpace) +
+         base::string16(kMidlineEllipsis) + digits;
 }
 
 base::string16 CreditCard::AbbreviatedExpirationDateForDisplay() const {
@@ -513,6 +534,7 @@ void CreditCard::operator=(const CreditCard& credit_card) {
   expiration_year_ = credit_card.expiration_year_;
   server_id_ = credit_card.server_id_;
   server_status_ = credit_card.server_status_;
+  billing_address_id_ = credit_card.billing_address_id_;
 
   set_guid(credit_card.guid());
   set_origin(credit_card.origin());
@@ -525,12 +547,22 @@ bool CreditCard::UpdateFromImportedCard(const CreditCard& imported_card,
     return false;
   }
 
-  // Heuristically aggregated data should never overwrite verified data.
-  // Instead, discard any heuristically aggregated credit cards that disagree
-  // with explicitly entered data, so that the UI is not cluttered with
-  // duplicate cards.
-  if (this->IsVerified() && !imported_card.IsVerified())
+  // Heuristically aggregated data should never overwrite verified data, with
+  // the exception of expired verified cards. Instead, discard any heuristically
+  // aggregated credit cards that disagree with explicitly entered data, so that
+  // the UI is not cluttered with duplicate cards.
+  if (this->IsVerified() && !imported_card.IsVerified()) {
+    // If the original card is expired and the imported card is not, and the
+    // name on the cards are identical, update the expiration date.
+    if (this->IsExpired(base::Time::Now()) &&
+        !imported_card.IsExpired(base::Time::Now()) &&
+        (name_on_card_ == imported_card.name_on_card_)) {
+      DCHECK(imported_card.expiration_month_ && imported_card.expiration_year_);
+      expiration_month_ = imported_card.expiration_month_;
+      expiration_year_ = imported_card.expiration_year_;
+    }
     return true;
+  }
 
   set_origin(imported_card.origin());
 
@@ -552,10 +584,9 @@ int CreditCard::Compare(const CreditCard& credit_card) const {
   // The following CreditCard field types are the only types we store in the
   // WebDB so far, so we're only concerned with matching these types in the
   // credit card.
-  const ServerFieldType types[] = { CREDIT_CARD_NAME,
-                                    CREDIT_CARD_NUMBER,
-                                    CREDIT_CARD_EXP_MONTH,
-                                    CREDIT_CARD_EXP_4_DIGIT_YEAR };
+  const ServerFieldType types[] = {CREDIT_CARD_NAME_FULL, CREDIT_CARD_NUMBER,
+                                   CREDIT_CARD_EXP_MONTH,
+                                   CREDIT_CARD_EXP_4_DIGIT_YEAR};
   for (size_t i = 0; i < arraysize(types); ++i) {
     int comparison =
         GetRawInfo(types[i]).compare(credit_card.GetRawInfo(types[i]));
@@ -564,6 +595,10 @@ int CreditCard::Compare(const CreditCard& credit_card) const {
   }
 
   int comparison = server_id_.compare(credit_card.server_id_);
+  if (comparison != 0)
+    return comparison;
+
+  comparison = billing_address_id_.compare(credit_card.billing_address_id_);
   if (comparison != 0)
     return comparison;
 
@@ -627,12 +662,6 @@ bool CreditCard::IsEmpty(const std::string& app_locale) const {
   return types.empty();
 }
 
-bool CreditCard::IsComplete() const {
-  return IsValidCreditCardNumber(number_) &&
-         expiration_month_ != 0 &&
-         expiration_year_ != 0;
-}
-
 bool CreditCard::IsValid() const {
   return IsValidCreditCardNumber(number_) &&
          IsValidCreditCardExpirationDate(
@@ -640,7 +669,9 @@ bool CreditCard::IsValid() const {
 }
 
 void CreditCard::GetSupportedTypes(ServerFieldTypeSet* supported_types) const {
-  supported_types->insert(CREDIT_CARD_NAME);
+  supported_types->insert(CREDIT_CARD_NAME_FULL);
+  supported_types->insert(CREDIT_CARD_NAME_FIRST);
+  supported_types->insert(CREDIT_CARD_NAME_LAST);
   supported_types->insert(CREDIT_CARD_NUMBER);
   supported_types->insert(CREDIT_CARD_TYPE);
   supported_types->insert(CREDIT_CARD_EXP_MONTH);
@@ -658,7 +689,7 @@ base::string16 CreditCard::ExpirationMonthAsString() const {
   if (expiration_month_ >= 10)
     return month;
 
-  base::string16 zero = base::ASCIIToUTF16("0");
+  base::string16 zero = ASCIIToUTF16("0");
   zero.append(month);
   return zero;
 }
@@ -700,6 +731,52 @@ void CreditCard::SetExpirationYearFromString(const base::string16& text) {
     return;
 
   SetExpirationYear(year);
+}
+
+void CreditCard::SetExpirationDateFromString(const base::string16& text) {
+  // Check that |text| fits the supported patterns: mmyy, mmyyyy, m-yy,
+  // mm-yy, m-yyyy and mm-yyyy. Note that myy and myyyy matched by this pattern
+  // but are not supported (ambiguous). Separators: -, / and |.
+  if (!MatchesPattern(text, base::UTF8ToUTF16("^[0-9]{1,2}[-/|]?[0-9]{2,4}$")))
+    return;
+
+  base::string16 month;
+  base::string16 year;
+
+  // Check for a separator.
+  base::string16 found_separator;
+  const std::vector<base::string16> kSeparators{
+      ASCIIToUTF16("-"), ASCIIToUTF16("/"), ASCIIToUTF16("|")};
+  for (const base::string16& separator : kSeparators) {
+    if (text.find(separator) != base::string16::npos) {
+      found_separator = separator;
+      break;
+    }
+  }
+
+  if (!found_separator.empty()) {
+    std::vector<base::string16> month_year = base::SplitString(
+        text, found_separator, base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+    DCHECK_EQ(2u, month_year.size());
+    month = month_year[0];
+    year = month_year[1];
+  } else if (text.size() % 2 == 0) {
+    // If there are no separators, the supported formats are mmyy and mmyyyy.
+    month = text.substr(0, 2);
+    year = text.substr(2);
+  } else {
+    // Odd number of digits with no separator is too ambiguous.
+    return;
+  }
+
+  int num = 0;
+  bool converted = false;
+  converted = base::StringToInt(month, &num);
+  DCHECK(converted);
+  SetExpirationMonth(num);
+  converted = base::StringToInt(year, &num);
+  DCHECK(converted);
+  SetExpirationYear(num);
 }
 
 void CreditCard::SetNumber(const base::string16& number) {
@@ -754,10 +831,10 @@ bool CreditCard::ConvertMonth(const base::string16& month,
   // Some abbreviations have . at the end (e.g., "janv." in French). We don't
   // care about matching that.
   base::string16 trimmed_month;
-  base::TrimString(month, base::ASCIIToUTF16("."), &trimmed_month);
+  base::TrimString(month, ASCIIToUTF16("."), &trimmed_month);
   for (int32_t i = 0; i < num_months; ++i) {
     base::string16 icu_month(months[i].getBuffer(), months[i].length());
-    base::TrimString(icu_month, base::ASCIIToUTF16("."), &icu_month);
+    base::TrimString(icu_month, ASCIIToUTF16("."), &icu_month);
     if (compare.StringsEqual(icu_month, trimmed_month)) {
       *num = i + 1;  // Adjust from 0-indexed to 1-indexed.
       return true;
@@ -767,25 +844,30 @@ bool CreditCard::ConvertMonth(const base::string16& month,
   return false;
 }
 
+bool CreditCard::IsExpired(const base::Time& current_time) const {
+  return !IsValidCreditCardExpirationDate(expiration_year_, expiration_month_,
+                                          current_time);
+}
+
+bool CreditCard::ShouldUpdateExpiration(const base::Time& current_time) const {
+  // Local cards always have OK server status.
+  DCHECK(server_status_ == OK || record_type_ != LOCAL_CARD);
+  return server_status_ == EXPIRED || IsExpired(current_time);
+}
+
 // So we can compare CreditCards with EXPECT_EQ().
 std::ostream& operator<<(std::ostream& os, const CreditCard& credit_card) {
-  return os
-      << base::UTF16ToUTF8(credit_card.Label())
-      << " "
-      << credit_card.guid()
-      << " "
-      << credit_card.origin()
-      << " "
-      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NAME))
-      << " "
-      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_TYPE))
-      << " "
-      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NUMBER))
-      << " "
-      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_EXP_MONTH))
-      << " "
-      << base::UTF16ToUTF8(
-             credit_card.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
+  return os << base::UTF16ToUTF8(credit_card.Label()) << " "
+            << credit_card.guid() << " " << credit_card.origin() << " "
+            << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NAME_FULL))
+            << " "
+            << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_TYPE))
+            << " "
+            << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NUMBER))
+            << " "
+            << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_EXP_MONTH))
+            << " " << base::UTF16ToUTF8(
+                          credit_card.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 }
 
 // These values must match the values in WebKitPlatformSupportImpl in

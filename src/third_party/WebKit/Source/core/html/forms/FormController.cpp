@@ -26,7 +26,9 @@
 #include "platform/FileChooser.h"
 #include "wtf/Deque.h"
 #include "wtf/HashTableDeletedValueType.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/StringBuilder.h"
+#include <memory>
 
 namespace blink {
 
@@ -56,7 +58,7 @@ static inline HTMLFormElement* ownerFormForState(const HTMLFormControlElementWit
 
 void FormControlState::serializeTo(Vector<String>& stateVector) const
 {
-    ASSERT(!isFailure());
+    DCHECK(!isFailure());
     stateVector.append(String::number(m_values.size()));
     for (size_t i = 0; i < m_values.size(); ++i)
         stateVector.append(m_values[i].isNull() ? emptyString() : m_values[i]);
@@ -176,8 +178,8 @@ class SavedFormState {
     USING_FAST_MALLOC(SavedFormState);
 
 public:
-    static PassOwnPtr<SavedFormState> create();
-    static PassOwnPtr<SavedFormState> deserialize(const Vector<String>&, size_t& index);
+    static std::unique_ptr<SavedFormState> create();
+    static std::unique_ptr<SavedFormState> deserialize(const Vector<String>&, size_t& index);
     void serializeTo(Vector<String>&) const;
     bool isEmpty() const { return m_stateForNewFormElements.isEmpty(); }
     void appendControlState(const AtomicString& name, const AtomicString& type, const FormControlState&);
@@ -193,9 +195,9 @@ private:
     size_t m_controlStateCount;
 };
 
-PassOwnPtr<SavedFormState> SavedFormState::create()
+std::unique_ptr<SavedFormState> SavedFormState::create()
 {
-    return adoptPtr(new SavedFormState);
+    return wrapUnique(new SavedFormState);
 }
 
 static bool isNotFormControlTypeCharacter(UChar ch)
@@ -203,7 +205,7 @@ static bool isNotFormControlTypeCharacter(UChar ch)
     return ch != '-' && (ch > 'z' || ch < 'a');
 }
 
-PassOwnPtr<SavedFormState> SavedFormState::deserialize(const Vector<String>& stateVector, size_t& index)
+std::unique_ptr<SavedFormState> SavedFormState::deserialize(const Vector<String>& stateVector, size_t& index)
 {
     if (index >= stateVector.size())
         return nullptr;
@@ -211,7 +213,7 @@ PassOwnPtr<SavedFormState> SavedFormState::deserialize(const Vector<String>& sta
     size_t itemCount = stateVector[index++].toUInt();
     if (!itemCount)
         return nullptr;
-    OwnPtr<SavedFormState> savedFormState = adoptPtr(new SavedFormState);
+    std::unique_ptr<SavedFormState> savedFormState = wrapUnique(new SavedFormState);
     while (itemCount--) {
         if (index + 1 >= stateVector.size())
             return nullptr;
@@ -222,7 +224,7 @@ PassOwnPtr<SavedFormState> SavedFormState::deserialize(const Vector<String>& sta
             return nullptr;
         savedFormState->appendControlState(AtomicString(name), AtomicString(type), state);
     }
-    return savedFormState.release();
+    return savedFormState;
 }
 
 void SavedFormState::serializeTo(Vector<String>& stateVector) const
@@ -260,7 +262,7 @@ FormControlState SavedFormState::takeControlState(const AtomicString& name, cons
     FormElementStateMap::iterator it = m_stateForNewFormElements.find(FormElementKey(name.impl(), type.impl()));
     if (it == m_stateForNewFormElements.end())
         return FormControlState();
-    ASSERT(it->value.size());
+    DCHECK_GT(it->value.size(), 0u);
     FormControlState state = it->value.takeFirst();
     m_controlStateCount--;
     if (!it->value.size())
@@ -287,17 +289,13 @@ Vector<String> SavedFormState::getReferencedFilePaths() const
 
 // ----------------------------------------------------------------------------
 
-class FormKeyGenerator final : public NoBaseWillBeGarbageCollectedFinalized<FormKeyGenerator> {
+class FormKeyGenerator final : public GarbageCollectedFinalized<FormKeyGenerator> {
     WTF_MAKE_NONCOPYABLE(FormKeyGenerator);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(FormKeyGenerator);
-
 public:
-    static PassOwnPtrWillBeRawPtr<FormKeyGenerator> create() { return adoptPtrWillBeNoop(new FormKeyGenerator); }
+    static FormKeyGenerator* create() { return new FormKeyGenerator; }
     DEFINE_INLINE_TRACE()
     {
-#if ENABLE(OILPAN)
         visitor->trace(m_formToKeyMap);
-#endif
     }
     const AtomicString& formKey(const HTMLFormControlElementWithState&);
     void willDeleteForm(HTMLFormElement*);
@@ -305,7 +303,7 @@ public:
 private:
     FormKeyGenerator() { }
 
-    using FormToKeyMap = WillBeHeapHashMap<RawPtrWillBeMember<HTMLFormElement>, AtomicString>;
+    using FormToKeyMap = HeapHashMap<Member<HTMLFormElement>, AtomicString>;
     using FormSignatureToNextIndexMap = HashMap<String, unsigned>;
     FormToKeyMap m_formToKeyMap;
     FormSignatureToNextIndexMap m_formSignatureToNextIndexMap;
@@ -316,7 +314,7 @@ static inline void recordFormStructure(const HTMLFormElement& form, StringBuilde
     // 2 is enough to distinguish forms in webkit.org/b/91209#c0
     const size_t namedControlsToBeRecorded = 2;
     const FormAssociatedElement::List& controls = form.associatedElements();
-    builder.appendLiteral(" [");
+    builder.append(" [");
     for (size_t i = 0, namedControls = 0; i < controls.size() && namedControls < namedControlsToBeRecorded; ++i) {
         if (!controls[i]->isFormControlElementWithState())
             continue;
@@ -343,7 +341,7 @@ static inline String formSignature(const HTMLFormElement& form)
 
     StringBuilder builder;
     if (!actionURL.isEmpty())
-        builder.append(actionURL.string());
+        builder.append(actionURL.getString());
 
     recordFormStructure(form, builder);
     return builder.toString();
@@ -353,7 +351,7 @@ const AtomicString& FormKeyGenerator::formKey(const HTMLFormControlElementWithSt
 {
     HTMLFormElement* form = ownerFormForState(control);
     if (!form) {
-        DEFINE_STATIC_LOCAL(const AtomicString, formKeyForNoOwner, ("No owner", AtomicString::ConstructFromLiteral));
+        DEFINE_STATIC_LOCAL(const AtomicString, formKeyForNoOwner, ("No owner"));
         return formKeyForNoOwner;
     }
     FormToKeyMap::const_iterator it = m_formToKeyMap.find(form);
@@ -361,13 +359,13 @@ const AtomicString& FormKeyGenerator::formKey(const HTMLFormControlElementWithSt
         return it->value;
 
     String signature = formSignature(*form);
-    ASSERT(!signature.isNull());
+    DCHECK(!signature.isNull());
     FormSignatureToNextIndexMap::AddResult result = m_formSignatureToNextIndexMap.add(signature, 0);
     unsigned nextIndex = result.storedValue->value++;
 
     StringBuilder formKeyBuilder;
     formKeyBuilder.append(signature);
-    formKeyBuilder.appendLiteral(" #");
+    formKeyBuilder.append(" #");
     formKeyBuilder.appendNumber(nextIndex);
     FormToKeyMap::AddResult addFormKeyresult = m_formToKeyMap.add(form, formKeyBuilder.toAtomicString());
     return addFormKeyresult.storedValue->value;
@@ -375,29 +373,25 @@ const AtomicString& FormKeyGenerator::formKey(const HTMLFormControlElementWithSt
 
 void FormKeyGenerator::willDeleteForm(HTMLFormElement* form)
 {
-    ASSERT(form);
+    DCHECK(form);
     m_formToKeyMap.remove(form);
 }
 
 // ----------------------------------------------------------------------------
 
-PassRefPtrWillBeRawPtr<DocumentState> DocumentState::create()
+DocumentState* DocumentState::create()
 {
-    return adoptRefWillBeNoop(new DocumentState);
+    return new DocumentState;
 }
-
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(DocumentState)
 
 DEFINE_TRACE(DocumentState)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_formControls);
-#endif
 }
 
 void DocumentState::addControl(HTMLFormControlElementWithState* control)
 {
-    ASSERT(!m_formControls.contains(control));
+    DCHECK(!m_formControls.contains(control));
     m_formControls.add(control);
 }
 
@@ -418,11 +412,11 @@ static String formStateSignature()
 
 Vector<String> DocumentState::toStateVector()
 {
-    OwnPtrWillBeRawPtr<FormKeyGenerator> keyGenerator = FormKeyGenerator::create();
-    OwnPtr<SavedFormStateMap> stateMap = adoptPtr(new SavedFormStateMap);
+    FormKeyGenerator* keyGenerator = FormKeyGenerator::create();
+    std::unique_ptr<SavedFormStateMap> stateMap = wrapUnique(new SavedFormStateMap);
     for (const auto& formControl : m_formControls) {
         HTMLFormControlElementWithState* control = formControl.get();
-        ASSERT(control->inDocument());
+        DCHECK(control->inShadowIncludingDocument());
         if (!control->shouldSaveAndRestoreFormControlState())
             continue;
         SavedFormStateMap::AddResult result = stateMap->add(keyGenerator->formKey(*control), nullptr);
@@ -457,7 +451,6 @@ FormController::~FormController()
 
 DEFINE_TRACE(FormController)
 {
-    visitor->trace(m_radioButtonGroupScope);
     visitor->trace(m_documentState);
     visitor->trace(m_formKeyGenerator);
 }
@@ -470,6 +463,11 @@ DocumentState* FormController::formElementsState() const
 void FormController::setStateForNewFormElements(const Vector<String>& stateVector)
 {
     formStatesFromStateVector(stateVector, m_savedFormStateMap);
+}
+
+bool FormController::hasFormStates() const
+{
+    return !m_savedFormStateMap.isEmpty();
 }
 
 FormControlState FormController::takeStateForFormElement(const HTMLFormControlElementWithState& control)
@@ -497,12 +495,12 @@ void FormController::formStatesFromStateVector(const Vector<String>& stateVector
 
     while (i + 1 < stateVector.size()) {
         AtomicString formKey = AtomicString(stateVector[i++]);
-        OwnPtr<SavedFormState> state = SavedFormState::deserialize(stateVector, i);
+        std::unique_ptr<SavedFormState> state = SavedFormState::deserialize(stateVector, i);
         if (!state) {
             i = 0;
             break;
         }
-        map.add(formKey, state.release());
+        map.add(formKey, std::move(state));
     }
     if (i != stateVector.size())
         map.clear();

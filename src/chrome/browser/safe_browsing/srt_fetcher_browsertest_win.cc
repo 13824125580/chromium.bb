@@ -4,10 +4,11 @@
 
 #include "chrome/browser/safe_browsing/srt_fetcher_win.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
@@ -39,15 +40,15 @@ class SRTFetcherTest : public InProcessBrowserTest {
   }
 
   void RunReporter() {
-    RunSwReporter(base::FilePath(), "bla", task_runner_, task_runner_);
+    RunSwReporter(base::FilePath(), base::Version("1.2.3"), task_runner_,
+                  task_runner_);
   }
 
   void PromptTriggerForTesting(Browser* browser, const std::string& version) {
     prompt_trigger_called_ = true;
   }
 
-  int ReporterLauncherForTesting(const base::FilePath& exe_path,
-                       const std::string& version) {
+  int ReporterLauncherForTesting(const base::FilePath& exe_path) {
     reporter_launched_ = true;
     return exit_code_to_report_;
   }
@@ -80,7 +81,7 @@ IN_PROC_BROWSER_TEST_F(SRTFetcherTest, NothingFound) {
   RunReporter();
   task_runner_->RunPendingTasks();
   EXPECT_TRUE(reporter_launched_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(prompt_trigger_called_);
   ExpectToRunAgain(kDaysBetweenSuccessfulSwReporterRuns);
 }
@@ -94,7 +95,7 @@ IN_PROC_BROWSER_TEST_F(SRTFetcherTest, CleanupNeeded) {
   // The reply task from the task posted to run the reporter is run on a
   // specific thread, as opposed to a specific task runner, and that thread is
   // the current message loop's thread.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(prompt_trigger_called_);
   ExpectToRunAgain(kDaysBetweenSuccessfulSwReporterRuns);
 }
@@ -135,7 +136,7 @@ IN_PROC_BROWSER_TEST_F(SRTFetcherTest, Failure) {
   task_runner_->RunPendingTasks();
   EXPECT_TRUE(reporter_launched_);
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(prompt_trigger_called_);
   ExpectToRunAgain(kDaysBetweenSuccessfulSwReporterRuns);
 }
@@ -152,13 +153,13 @@ IN_PROC_BROWSER_TEST_F(SRTFetcherTest, RunDaily) {
   task_runner_->RunPendingTasks();
   EXPECT_TRUE(reporter_launched_);
   reporter_launched_ = false;
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ExpectToRunAgain(kDaysBetweenSwReporterRunsForPendingPrompt);
 
   local_state->SetBoolean(prefs::kSwReporterPendingPrompt, false);
   task_runner_->RunPendingTasks();
   EXPECT_FALSE(reporter_launched_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ExpectToRunAgain(kDaysBetweenSuccessfulSwReporterRuns);
 }
 

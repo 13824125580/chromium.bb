@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_DEVTOOLS_DEVTOOLS_FILE_HELPER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -140,7 +141,7 @@ class DevToolsFileHelper {
   PathsMap saved_files_;
   PrefChangeRegistrar pref_change_registrar_;
   std::set<std::string> file_system_paths_;
-  scoped_ptr<DevToolsFileWatcher> file_watcher_;
+  std::unique_ptr<DevToolsFileWatcher> file_watcher_;
   base::WeakPtrFactory<DevToolsFileHelper> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(DevToolsFileHelper);
 };

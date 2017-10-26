@@ -23,10 +23,15 @@
 #ifndef LayoutTheme_h
 #define LayoutTheme_h
 
+#include "core/CSSValueKeywords.h"
 #include "core/CoreExport.h"
-#include "core/layout/LayoutObject.h"
 #include "platform/ThemeTypes.h"
+#include "platform/fonts/Font.h"
+#include "platform/fonts/FontDescription.h"
+#include "platform/fonts/FontTraits.h"
+#include "platform/graphics/Color.h"
 #include "platform/scroll/ScrollTypes.h"
+#include "platform/text/PlatformLocale.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
@@ -37,7 +42,7 @@ class ComputedStyle;
 class Element;
 class FileList;
 class HTMLInputElement;
-class LayoutMeter;
+class LayoutObject;
 class Theme;
 class ThemePainter;
 
@@ -69,7 +74,7 @@ public:
     virtual String extraDefaultStyleSheet();
     virtual String extraQuirksStyleSheet() { return String(); }
     virtual String extraMediaControlsStyleSheet() { return String(); }
-    virtual String extraFullScreenStyleSheet() { return String(); }
+    virtual String extraFullscreenStyleSheet() { return String(); }
 
     // A method to obtain the baseline position for a "leaf" control.  This will only be used if a baseline
     // position cannot be determined by examining child content. Checkboxes and radio buttons are examples of
@@ -97,10 +102,9 @@ public:
     // A method asking if the theme's controls actually care about redrawing when hovered.
     virtual bool supportsHover(const ComputedStyle&) const { return false; }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
-    // A method asking if the platform is able to show a calendar picker for a given input type.
+    // A method asking if the platform is able to show a calendar picker for a
+    // given input type.
     virtual bool supportsCalendarPicker(const AtomicString&) const;
-#endif
 
     // Text selection colors.
     Color activeSelectionBackgroundColor() const;
@@ -150,7 +154,6 @@ public:
     virtual int popupInternalPaddingRight(const ComputedStyle&) const { return 0; }
     virtual int popupInternalPaddingTop(const ComputedStyle&) const { return 0; }
     virtual int popupInternalPaddingBottom(const ComputedStyle&) const { return 0; }
-    virtual bool popupOptionSupportsTextIndent() const { return false; }
 
     virtual ScrollbarControlSize scrollbarControlSizeForPart(ControlPart) { return RegularScrollbar; }
 
@@ -162,9 +165,6 @@ public:
     // Media controls
     String formatMediaControlsTime(float time) const;
     String formatMediaControlsCurrentTime(float currentTime, float duration) const;
-
-    virtual IntSize meterSizeForBounds(const LayoutMeter&, const IntRect&) const;
-    virtual bool supportsMeter(ControlPart) const;
 
     // Returns size of one slider tick mark for a horizontal track.
     // For vertical tracks we rotate it and use it. i.e. Width is always length along the track.
@@ -220,8 +220,6 @@ protected:
     virtual void adjustSliderThumbStyle(ComputedStyle&) const;
     virtual void adjustSearchFieldStyle(ComputedStyle&) const;
     virtual void adjustSearchFieldCancelButtonStyle(ComputedStyle&) const;
-    virtual void adjustSearchFieldDecorationStyle(ComputedStyle&) const;
-    virtual void adjustSearchFieldResultsDecorationStyle(ComputedStyle&) const;
     void adjustStyleUsingFallbackTheme(ComputedStyle&);
     void adjustCheckboxStyleUsingFallbackTheme(ComputedStyle&) const;
     void adjustRadioStyleUsingFallbackTheme(ComputedStyle&) const;

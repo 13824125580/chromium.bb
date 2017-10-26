@@ -22,28 +22,9 @@ source_set("browser") {
     "//ipc",
     "//net",
   ]
-
-  if (is_android) {
-    sources += [
-      "content_data_reduction_proxy_debug_ui_service.cc",
-      "content_data_reduction_proxy_debug_ui_service.h",
-      "data_reduction_proxy_debug_blocking_page.cc",
-      "data_reduction_proxy_debug_blocking_page.h",
-      "data_reduction_proxy_debug_resource_throttle.cc",
-      "data_reduction_proxy_debug_resource_throttle.h",
-      "data_reduction_proxy_debug_ui_manager.cc",
-      "data_reduction_proxy_debug_ui_manager.h",
-    ]
-
-    deps += [
-      "//components/resources",
-      "//components/strings",
-      "//skia",
-      "//ui/base",
-    ]
-  }
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -64,17 +45,6 @@ source_set("unit_tests") {
     "//testing/gmock",
     "//testing/gtest",
   ]
-
-  if (is_android) {
-    sources += [
-      "data_reduction_proxy_debug_blocking_page_unittest.cc",
-      "data_reduction_proxy_debug_resource_throttle_unittest.cc",
-      "data_reduction_proxy_debug_ui_manager_unittest.cc",
-    ]
-
-    deps += [
-      "//mojo/public/cpp/bindings",
-      "//skia",
-    ]
-  }
 }
+}
+

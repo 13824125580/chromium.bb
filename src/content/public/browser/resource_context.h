@@ -7,10 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/supports_user_data.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
@@ -18,7 +18,6 @@
 class GURL;
 
 namespace net {
-class ClientCertStore;
 class HostResolver;
 class KeygenHandler;
 class URLRequestContext;
@@ -33,9 +32,7 @@ class AppCacheService;
 // the UI thread. It must be destructed on the IO thread.
 class CONTENT_EXPORT ResourceContext : public base::SupportsUserData {
  public:
-#if !defined(OS_IOS)
   ResourceContext();
-#endif
   ~ResourceContext() override;
   virtual net::HostResolver* GetHostResolver() = 0;
 
@@ -44,40 +41,26 @@ class CONTENT_EXPORT ResourceContext : public base::SupportsUserData {
   // with a BrowsingContext.
   virtual net::URLRequestContext* GetRequestContext() = 0;
 
-  // Get platform ClientCertStore. May return nullptr.
-  virtual scoped_ptr<net::ClientCertStore> CreateClientCertStore();
-
   // Create a platform KeygenHandler and pass it to |callback|. The |callback|
   // may be run synchronously.
   virtual void CreateKeygenHandler(
       uint32_t key_size_in_bits,
       const std::string& challenge_string,
       const GURL& url,
-      const base::Callback<void(scoped_ptr<net::KeygenHandler>)>& callback);
+      const base::Callback<void(std::unique_ptr<net::KeygenHandler>)>&
+          callback);
 
-  // Returns a callback that can be invoked to get a random salt
-  // string that is used for creating media device IDs.  The salt
-  // should be stored in the current user profile and should be reset
-  // if cookies are cleared. The default is an empty string.
-  //
-  // It is safe to hold on to the callback returned and use it without
-  // regard to the lifetime of ResourceContext, although in general
-  // you should not use it long after the profile has been destroyed.
-  //
-  // TODO(joi): We don't think it should be unnecessary to use this
-  // after ResourceContext goes away. There is likely an underying bug
-  // in the lifetime of ProfileIOData vs. ResourceProcessHost, where
-  // sometimes ProfileIOData has gone away before RPH has finished
-  // being torn down (on the IO thread). The current interface that
-  // allows using the salt object after ResourceContext has gone away
-  // was put in place to fix http://crbug.com/341211 but I intend to
-  // try to figure out how the lifetime should be fixed properly. The
-  // original interface was just a method that returns a string.
-  //
-  // TODO(perkj): Make this method pure virtual when crbug/315022 is
-  // fixed.
-  typedef base::Callback<std::string()> SaltCallback;
-  virtual SaltCallback GetMediaDeviceIDSalt();
+  // Returns a random salt string that is used for creating media device IDs.
+  // Returns a random string by default.
+  virtual std::string GetMediaDeviceIDSalt();
+
+  // Utility function useful for embedders. Only needs to be called if
+  // 1) The embedder needs to use a new salt, and
+  // 2) The embedder saves its salt across restarts.
+  static std::string CreateRandomMediaDeviceIDSalt();
+
+ private:
+  const std::string media_device_id_salt_;
 };
 
 }  // namespace content

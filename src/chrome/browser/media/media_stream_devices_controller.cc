@@ -9,6 +9,7 @@
 
 #include "base/auto_reset.h"
 #include "base/callback_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -29,6 +30,7 @@
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/url_formatter/elide_url.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_frame_host.h"
@@ -72,17 +74,21 @@ bool ContentTypeIsRequested(content::PermissionType type,
 using PermissionActionCallback =
     base::Callback<void(content::PermissionType, const GURL&)>;
 
+void RecordSinglePermissionAction(const content::MediaStreamRequest& request,
+                                  content::PermissionType permission_type,
+                                  PermissionActionCallback callback) {
+  if (ContentTypeIsRequested(permission_type, request)) {
+    callback.Run(permission_type, request.security_origin);
+  }
+}
+
 // Calls |action_function| for each permission requested by |request|.
 void RecordPermissionAction(const content::MediaStreamRequest& request,
                             PermissionActionCallback callback) {
-  if (ContentTypeIsRequested(content::PermissionType::VIDEO_CAPTURE, request)) {
-    callback.Run(content::PermissionType::VIDEO_CAPTURE,
-                 request.security_origin);
-  }
-  if (ContentTypeIsRequested(content::PermissionType::AUDIO_CAPTURE, request)) {
-    callback.Run(content::PermissionType::AUDIO_CAPTURE,
-                 request.security_origin);
-  }
+  RecordSinglePermissionAction(request, content::PermissionType::AUDIO_CAPTURE,
+                               callback);
+  RecordSinglePermissionAction(request, content::PermissionType::VIDEO_CAPTURE,
+                               callback);
 }
 
 // This helper class helps to measure the number of media stream requests that
@@ -91,8 +97,8 @@ void RecordPermissionAction(const content::MediaStreamRequest& request,
 class MediaPermissionRequestLogger : content::WebContentsObserver {
   // Map of <render process id, render frame id> ->
   // MediaPermissionRequestLogger.
-  using RequestMap =
-      std::map<std::pair<int, int>, scoped_ptr<MediaPermissionRequestLogger>>;
+  using RequestMap = std::map<std::pair<int, int>,
+                              std::unique_ptr<MediaPermissionRequestLogger>>;
 
  public:
   static void LogRequest(content::WebContents* contents,
@@ -105,7 +111,7 @@ class MediaPermissionRequestLogger : content::WebContentsObserver {
       UMA_HISTOGRAM_BOOLEAN("Pepper.SecureOrigin.MediaStreamRequest",
                             is_secure);
       GetRequestMap()[key] =
-          make_scoped_ptr(new MediaPermissionRequestLogger(contents, key));
+          base::WrapUnique(new MediaPermissionRequestLogger(contents, key));
     }
   }
 
@@ -202,7 +208,7 @@ MediaStreamDevicesController::~MediaStreamDevicesController() {
         request_, base::Bind(PermissionUmaUtil::PermissionIgnored));
     callback_.Run(content::MediaStreamDevices(),
                   content::MEDIA_DEVICE_FAILED_DUE_TO_SHUTDOWN,
-                  scoped_ptr<content::MediaStreamUI>());
+                  std::unique_ptr<content::MediaStreamUI>());
   }
 }
 
@@ -231,8 +237,16 @@ bool MediaStreamDevicesController::IsAskingForVideo() const {
   return old_video_setting_ == CONTENT_SETTING_ASK;
 }
 
-const std::string& MediaStreamDevicesController::GetSecurityOriginSpec() const {
-  return request_.security_origin.spec();
+base::string16 MediaStreamDevicesController::GetMessageText() const {
+  int message_id = IDS_MEDIA_CAPTURE_AUDIO_AND_VIDEO;
+  if (!IsAskingForAudio())
+    message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY;
+  else if (!IsAskingForVideo())
+    message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY;
+  return l10n_util::GetStringFUTF16(
+      message_id,
+      url_formatter::FormatUrlForSecurityDisplay(
+          GetOrigin(), url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC));
 }
 
 void MediaStreamDevicesController::ForcePermissionDeniedTemporarily() {
@@ -250,16 +264,6 @@ int MediaStreamDevicesController::GetIconId() const {
     return IDR_INFOBAR_MEDIA_STREAM_CAMERA;
 
   return IDR_INFOBAR_MEDIA_STREAM_MIC;
-}
-
-base::string16 MediaStreamDevicesController::GetMessageText() const {
-  int message_id = IDS_MEDIA_CAPTURE_AUDIO_AND_VIDEO;
-  if (!IsAskingForAudio())
-    message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY;
-  else if (!IsAskingForVideo())
-    message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY;
-  return l10n_util::GetStringFUTF16(
-      message_id, base::UTF8ToUTF16(GetSecurityOriginSpec()));
 }
 
 base::string16 MediaStreamDevicesController::GetMessageTextFragment() const {
@@ -295,6 +299,28 @@ void MediaStreamDevicesController::PermissionDenied() {
               content::MEDIA_DEVICE_PERMISSION_DENIED);
 }
 
+void MediaStreamDevicesController::GroupedRequestFinished(bool audio_accepted,
+                                                          bool video_accepted) {
+  RecordSinglePermissionAction(
+      request_, content::PermissionType::AUDIO_CAPTURE,
+      base::Bind(audio_accepted ? PermissionUmaUtil::PermissionGranted
+                                : PermissionUmaUtil::PermissionDenied));
+  RecordSinglePermissionAction(
+      request_, content::PermissionType::VIDEO_CAPTURE,
+      base::Bind(video_accepted ? PermissionUmaUtil::PermissionGranted
+                                : PermissionUmaUtil::PermissionDenied));
+
+  ContentSetting audio_setting =
+      audio_accepted ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK;
+  ContentSetting video_setting =
+      video_accepted ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK;
+  RunCallback(GetNewSetting(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
+                            old_audio_setting_, audio_setting),
+              GetNewSetting(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
+                            old_video_setting_, video_setting),
+              content::MEDIA_DEVICE_PERMISSION_DENIED);
+}
+
 void MediaStreamDevicesController::Cancelled() {
   RecordPermissionAction(
       request_, base::Bind(PermissionUmaUtil::PermissionDismissed));
@@ -304,6 +330,11 @@ void MediaStreamDevicesController::Cancelled() {
 
 void MediaStreamDevicesController::RequestFinished() {
   delete this;
+}
+
+PermissionBubbleType MediaStreamDevicesController::GetPermissionBubbleType()
+    const {
+  return PermissionBubbleType::MEDIA_STREAM;
 }
 
 content::MediaStreamDevices MediaStreamDevicesController::GetDevices(
@@ -445,7 +476,7 @@ void MediaStreamDevicesController::RunCallback(
     request_result = content::MEDIA_DEVICE_NO_HARDWARE;
   }
 
-  scoped_ptr<content::MediaStreamUI> ui;
+  std::unique_ptr<content::MediaStreamUI> ui;
   if (!devices.empty()) {
     ui = MediaCaptureDevicesDispatcher::GetInstance()
              ->GetMediaStreamCaptureIndicator()
@@ -458,29 +489,21 @@ void MediaStreamDevicesController::StorePermission(
     ContentSetting new_audio_setting,
     ContentSetting new_video_setting) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  ContentSettingsPattern primary_pattern =
-      ContentSettingsPattern::FromURLNoWildcard(request_.security_origin);
-
-  bool is_pepper_request =
-      request_.request_type == content::MEDIA_OPEN_DEVICE_PEPPER_ONLY;
+  DCHECK(content::IsOriginSecure(request_.security_origin) ||
+         request_.request_type == content::MEDIA_OPEN_DEVICE_PEPPER_ONLY);
 
   if (IsAskingForAudio() && new_audio_setting != CONTENT_SETTING_ASK) {
-    if (ShouldPersistContentSetting(new_audio_setting, request_.security_origin,
-                                    is_pepper_request)) {
-      HostContentSettingsMapFactory::GetForProfile(profile_)->SetContentSetting(
-          primary_pattern, ContentSettingsPattern::Wildcard(),
-          CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC, std::string(),
-          new_audio_setting);
-    }
+    HostContentSettingsMapFactory::GetForProfile(profile_)
+        ->SetContentSettingDefaultScope(request_.security_origin, GURL(),
+                                        CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
+                                        std::string(), new_audio_setting);
   }
   if (IsAskingForVideo() && new_video_setting != CONTENT_SETTING_ASK) {
-    if (ShouldPersistContentSetting(new_video_setting, request_.security_origin,
-                                    is_pepper_request)) {
-      HostContentSettingsMapFactory::GetForProfile(profile_)->SetContentSetting(
-          primary_pattern, ContentSettingsPattern::Wildcard(),
-          CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, std::string(),
-          new_video_setting);
-    }
+    HostContentSettingsMapFactory::GetForProfile(profile_)
+        ->SetContentSettingDefaultScope(
+            request_.security_origin, GURL(),
+            CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, std::string(),
+            new_video_setting);
   }
 }
 
@@ -557,11 +580,9 @@ ContentSetting MediaStreamDevicesController::GetContentSetting(
   }
 
   if (ContentTypeIsRequested(permission_type, request)) {
-    bool is_insecure_pepper_request =
-        request.request_type == content::MEDIA_OPEN_DEVICE_PEPPER_ONLY &&
-        request.security_origin.SchemeIs(url::kHttpScheme);
-    MediaPermission permission(
-        content_type, is_insecure_pepper_request, request.security_origin,
+    DCHECK(content::IsOriginSecure(request_.security_origin) ||
+           request_.request_type == content::MEDIA_OPEN_DEVICE_PEPPER_ONLY);
+    MediaPermission permission(content_type, request.security_origin,
         web_contents_->GetLastCommittedURL().GetOrigin(), profile_);
     return permission.GetPermissionStatusWithDeviceRequired(requested_device_id,
                                                             denial_reason);

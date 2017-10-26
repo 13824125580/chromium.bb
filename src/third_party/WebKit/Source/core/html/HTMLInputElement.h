@@ -48,7 +48,7 @@ struct DateTimeChooserParameters;
 class CORE_EXPORT HTMLInputElement : public HTMLTextFormControlElement {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static PassRefPtrWillBeRawPtr<HTMLInputElement> create(Document&, HTMLFormElement*, bool createdByParser);
+    static HTMLInputElement* create(Document&, HTMLFormElement*, bool createdByParser);
     ~HTMLInputElement() override;
     DECLARE_VIRTUAL_TRACE();
 
@@ -92,8 +92,9 @@ public:
     // Returns true if the type is email, number, password, search, tel, text,
     // or url.
     bool isTextField() const;
-
-    bool isImage() const;
+    // Do not add type check predicates for concrete input types; e.g.  isImage,
+    // isRadio, isFile.  If you want to check the input type, you may use
+    // |input->type() == InputTypeNames::image|, etc.
 
     bool checked() const;
     void setChecked(bool, TextFieldEventBehavior = DispatchNoEvent);
@@ -163,8 +164,6 @@ public:
     void setActivatedSubmit(bool flag) final;
 
     String altText() const final;
-
-    int maxResults() const { return m_maxResults; }
 
     const AtomicString& defaultValue() const;
 
@@ -267,6 +266,8 @@ public:
     bool isPlaceholderVisible() const override { return m_isPlaceholderVisible; }
     void setPlaceholderVisibility(bool) override;
 
+    unsigned sizeOfRadioGroup() const;
+
 protected:
     HTMLInputElement(Document&, HTMLFormElement*, bool createdByParser);
 
@@ -276,7 +277,6 @@ private:
     enum AutoCompleteSetting { Uninitialized, On, Off };
 
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
-    void willAddFirstAuthorShadowRoot() final;
 
     void willChangeForm() final;
     void didChangeForm() final;
@@ -291,6 +291,7 @@ private:
     bool isEnumeratable() const final;
     bool isInteractiveContent() const final;
     bool supportLabels() const final;
+    bool matchesDefaultPseudoClass() const override;
 
     bool isTextFormControl() const final { return isTextField(); }
 
@@ -324,8 +325,8 @@ private:
     void resetImpl() final;
     bool supportsAutofocus() const final;
 
-    void* preDispatchEventHandler(Event*) final;
-    void postDispatchEventHandler(Event*, void* dataFromPreDispatch) final;
+    EventDispatchHandlingState* preDispatchEventHandler(Event*) final;
+    void postDispatchEventHandler(Event*, EventDispatchHandlingState*) final;
 
     bool isURLAttribute(const Attribute&) const final;
     bool hasLegalLinkAttribute(const QualifiedName&) const final;
@@ -350,6 +351,7 @@ private:
     bool isRequiredFormControl() const final;
     bool recalcWillValidate() const final;
     void requiredAttributeChanged() final;
+    void disabledAttributeChanged() final;
 
     void updateTouchEventHandlerRegistry();
     void initializeTypeInParsing();
@@ -357,7 +359,7 @@ private:
 
     void subtreeHasChanged() final;
 
-    void setListAttributeTargetObserver(PassOwnPtrWillBeRawPtr<ListAttributeTargetObserver>);
+    void setListAttributeTargetObserver(ListAttributeTargetObserver*);
     void resetListAttributeTargetObserver();
     void parseMaxLengthAttribute(const AtomicString&);
     void parseMinLengthAttribute(const AtomicString&);
@@ -377,9 +379,10 @@ private:
     int m_size;
     int m_maxLength;
     int m_minLength;
-    short m_maxResults;
+    // https://html.spec.whatwg.org/multipage/forms.html#concept-fe-checked
     unsigned m_isChecked : 1;
-    unsigned m_reflectsCheckedAttribute : 1;
+    // https://html.spec.whatwg.org/multipage/forms.html#concept-input-checked-dirty-flag
+    unsigned m_dirtyCheckedness : 1;
     unsigned m_isIndeterminate : 1;
     unsigned m_isActivatedSubmit : 1;
     unsigned m_autocomplete : 2; // AutoCompleteSetting
@@ -392,13 +395,13 @@ private:
     unsigned m_shouldRevealPassword : 1;
     unsigned m_needsToUpdateViewValue : 1;
     unsigned m_isPlaceholderVisible : 1;
-    RefPtrWillBeMember<InputType> m_inputType;
-    RefPtrWillBeMember<InputTypeView> m_inputTypeView;
+    Member<InputType> m_inputType;
+    Member<InputTypeView> m_inputTypeView;
     // The ImageLoader must be owned by this element because the loader code assumes
     // that it lives as long as its owning element lives. If we move the loader into
     // the ImageInput object we may delete the loader while this element lives on.
-    OwnPtrWillBeMember<HTMLImageLoader> m_imageLoader;
-    OwnPtrWillBeMember<ListAttributeTargetObserver> m_listAttributeTargetObserver;
+    Member<HTMLImageLoader> m_imageLoader;
+    Member<ListAttributeTargetObserver> m_listAttributeTargetObserver;
 };
 
 } // namespace blink

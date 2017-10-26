@@ -30,8 +30,6 @@
 
 #include "core/animation/ElementAnimations.h"
 
-#include "core/layout/LayoutObject.h"
-
 namespace blink {
 
 ElementAnimations::ElementAnimations()
@@ -41,23 +39,7 @@ ElementAnimations::ElementAnimations()
 
 ElementAnimations::~ElementAnimations()
 {
-#if !ENABLE(OILPAN)
-    ASSERT(m_effects.isEmpty());
-#endif
 }
-
-#if !ENABLE(OILPAN)
-void ElementAnimations::dispose()
-{
-    // The notifyElementDestroyed() is called for elements that happen to live
-    // longer than the KeyframeEffect. This undeterminism is fine because
-    // all the notifyElementDestroyed() does is to clear the raw pointers
-    // held by the KeyframeEffect.
-    for (KeyframeEffect* effect : m_effects)
-        effect->notifyElementDestroyed();
-    m_effects.clear();
-}
-#endif
 
 void ElementAnimations::updateAnimationFlags(ComputedStyle& style)
 {
@@ -75,7 +57,7 @@ void ElementAnimations::updateAnimationFlags(ComputedStyle& style)
                 || effect.affects(PropertyHandle(CSSPropertyScale))
                 || effect.affects(PropertyHandle(CSSPropertyTranslate)))
                 style.setHasCurrentTransformAnimation(true);
-            if (effect.affects(PropertyHandle(CSSPropertyWebkitFilter)))
+            if (effect.affects(PropertyHandle(CSSPropertyFilter)))
                 style.setHasCurrentFilterAnimation(true);
             if (effect.affects(PropertyHandle(CSSPropertyBackdropFilter)))
                 style.setHasCurrentBackdropFilterAnimation(true);
@@ -87,7 +69,7 @@ void ElementAnimations::updateAnimationFlags(ComputedStyle& style)
     if (style.hasCurrentTransformAnimation())
         style.setIsRunningTransformAnimationOnCompositor(m_animationStack.hasActiveAnimationsOnCompositor(CSSPropertyTransform));
     if (style.hasCurrentFilterAnimation())
-        style.setIsRunningFilterAnimationOnCompositor(m_animationStack.hasActiveAnimationsOnCompositor(CSSPropertyWebkitFilter));
+        style.setIsRunningFilterAnimationOnCompositor(m_animationStack.hasActiveAnimationsOnCompositor(CSSPropertyFilter));
     if (style.hasCurrentBackdropFilterAnimation())
         style.setIsRunningBackdropFilterAnimationOnCompositor(m_animationStack.hasActiveAnimationsOnCompositor(CSSPropertyBackdropFilter));
 }
@@ -101,11 +83,9 @@ void ElementAnimations::restartAnimationOnCompositor()
 DEFINE_TRACE(ElementAnimations)
 {
     visitor->trace(m_cssAnimations);
+    visitor->trace(m_customCompositorAnimations);
     visitor->trace(m_animationStack);
     visitor->trace(m_animations);
-#if !ENABLE(OILPAN)
-    visitor->trace(m_effects);
-#endif
 }
 
 const ComputedStyle* ElementAnimations::baseComputedStyle() const

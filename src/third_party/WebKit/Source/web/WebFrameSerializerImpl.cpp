@@ -92,6 +92,7 @@
 #include "core/html/HTMLMetaElement.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoader.h"
+#include "public/platform/WebCString.h"
 #include "public/platform/WebVector.h"
 #include "web/WebLocalFrameImpl.h"
 #include "wtf/text/TextEncoding.h"
@@ -129,7 +130,7 @@ String WebFrameSerializerImpl::preActionBeforeSerializeOpenTag(
         // Skip the open tag of original META tag which declare charset since we
         // have overrided the META which have correct charset declaration after
         // serializing open tag of HEAD element.
-        ASSERT(element);
+        DCHECK(element);
         if (isHTMLMetaElement(element) && toHTMLMetaElement(element)->computeEncoding().isValid()) {
             // Found META tag declared charset, we need to skip it when
             // serializing DOM.
@@ -148,7 +149,7 @@ String WebFrameSerializerImpl::preActionBeforeSerializeOpenTag(
             result.append(WebFrameSerializer::generateMarkOfTheWebDeclaration(param->url));
         } else if (isHTMLBaseElement(*element)) {
             // Comment the BASE tag when serializing dom.
-            result.appendLiteral("<!--");
+            result.append("<!--");
         }
     } else {
         // Write XML declaration.
@@ -160,13 +161,13 @@ String WebFrameSerializerImpl::preActionBeforeSerializeOpenTag(
                 xmlEncoding = param->document->encodingName();
             if (xmlEncoding.isEmpty())
                 xmlEncoding = UTF8Encoding().name();
-            result.appendLiteral("<?xml version=\"");
+            result.append("<?xml version=\"");
             result.append(param->document->xmlVersion());
-            result.appendLiteral("\" encoding=\"");
+            result.append("\" encoding=\"");
             result.append(xmlEncoding);
             if (param->document->xmlStandalone())
-                result.appendLiteral("\" standalone=\"yes");
-            result.appendLiteral("\"?>\n");
+                result.append("\" standalone=\"yes");
+            result.append("\"?>\n");
         }
         // Add doc type declaration if original document has it.
         if (!param->haveSeenDocType) {
@@ -236,7 +237,7 @@ String WebFrameSerializerImpl::postActionAfterSerializeEndTag(
         return result.toString();
     // Comment the BASE tag when serializing DOM.
     if (isHTMLBaseElement(*element)) {
-        result.appendLiteral("-->");
+        result.append("-->");
         // Append a new base tag declaration.
         result.append(WebFrameSerializer::generateBaseTagDeclaration(
             param->document->baseTarget()));
@@ -283,7 +284,7 @@ void WebFrameSerializerImpl::appendAttribute(
     const String& attrValue) {
     result.append(' ');
     result.append(attrName);
-    result.appendLiteral("=\"");
+    result.append("=\"");
     if (isHTMLDocument)
         result.append(m_htmlEntities.convertEntitiesInString(attrValue));
     else
@@ -380,7 +381,7 @@ void WebFrameSerializerImpl::endTagToString(
         return;
     // Write end tag when element has child/children.
     if (element->hasChildren() || param->haveAddedContentsBeforeEnd) {
-        result.appendLiteral("</");
+        result.append("</");
         result.append(element->nodeName().lower());
         result.append('>');
     } else {
@@ -390,13 +391,13 @@ void WebFrameSerializerImpl::endTagToString(
             // FIXME: This code is horribly wrong.  WebFrameSerializerImpl must die.
             if (!element->isHTMLElement() || !toHTMLElement(element)->ieForbidsInsertHTML()) {
                 // We need to write end tag when it is required.
-                result.appendLiteral("</");
+                result.append("</");
                 result.append(element->nodeName().lower());
                 result.append('>');
             }
         } else {
             // For xml base document.
-            result.appendLiteral(" />");
+            result.append(" />");
         }
     }
     // Do post action for end tag.
@@ -426,7 +427,7 @@ void WebFrameSerializerImpl::buildContentForNode(
     case Node::DOCUMENT_NODE:
     case Node::DOCUMENT_FRAGMENT_NODE:
         // Should not exist.
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         break;
     // Document type node can be in DOM?
     case Node::DOCUMENT_TYPE_NODE:
@@ -448,13 +449,13 @@ WebFrameSerializerImpl::WebFrameSerializerImpl(
     , m_xmlEntities(true)
 {
     // Must specify available webframe.
-    ASSERT(frame);
+    DCHECK(frame);
     m_specifiedWebLocalFrameImpl = toWebLocalFrameImpl(frame);
     // Make sure we have non null client and delegate.
-    ASSERT(client);
-    ASSERT(delegate);
+    DCHECK(client);
+    DCHECK(delegate);
 
-    ASSERT(m_dataBuffer.isEmpty());
+    DCHECK(m_dataBuffer.isEmpty());
 }
 
 bool WebFrameSerializerImpl::serialize()
@@ -486,7 +487,7 @@ bool WebFrameSerializerImpl::serialize()
             WebCString(), WebFrameSerializerClient::CurrentFrameIsFinished);
     }
 
-    ASSERT(m_dataBuffer.isEmpty());
+    DCHECK(m_dataBuffer.isEmpty());
     return didSerialization;
 }
 

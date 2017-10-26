@@ -8,16 +8,19 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "components/mus/public/cpp/input_event_handler.h"
 #include "components/mus/public/interfaces/window_tree.mojom.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_tree_host_observer.h"
 #include "ui/platform_window/platform_window_delegate.h"
 #include "ui/views/mus/mus_export.h"
+#include "ui/views/mus/window_tree_host_mus.h"
 #include "ui/views/widget/native_widget_private.h"
 
 namespace aura {
@@ -29,24 +32,36 @@ class WindowTreeClient;
 class Window;
 }
 
-namespace mojo {
-class Connector;
+namespace bitmap_uploader {
+class BitmapUploader;
 }
 
 namespace mus {
 class Window;
-class WindowTreeConnection;
+class WindowTreeClient;
+namespace mojom {
+enum class Cursor;
+enum class EventResult;
+}
+}
 
+namespace shell {
+class Connector;
+}
+
+namespace ui {
+class Event;
+class ViewProp;
 }
 
 namespace wm {
+class CursorManager;
 class FocusController;
 }
 
 namespace views {
 class SurfaceContextFactory;
 class WidgetDelegate;
-class WindowTreeHostMus;
 
 // An implementation of NativeWidget that binds to a mus::Window. Because Aura
 // is used extensively within Views code, this code uses aura and binds to the
@@ -54,12 +69,14 @@ class WindowTreeHostMus;
 // aura::Window in a hierarchy is created without a delegate by the
 // aura::WindowTreeHost, we must create a child aura::Window in this class
 // (content_) and attach it to the root.
-class VIEWS_MUS_EXPORT NativeWidgetMus : public internal::NativeWidgetPrivate,
-                                         public aura::WindowDelegate,
-                                         public aura::WindowTreeHostObserver {
+class VIEWS_MUS_EXPORT NativeWidgetMus
+    : public internal::NativeWidgetPrivate,
+      public aura::WindowDelegate,
+      public aura::WindowTreeHostObserver,
+      public NON_EXPORTED_BASE(mus::InputEventHandler) {
  public:
   NativeWidgetMus(internal::NativeWidgetDelegate* delegate,
-                  mojo::Connector* connector,
+                  shell::Connector* connector,
                   mus::Window* window,
                   mus::mojom::SurfaceType surface_type);
   ~NativeWidgetMus() override;
@@ -71,9 +88,13 @@ class VIEWS_MUS_EXPORT NativeWidgetMus : public internal::NativeWidgetPrivate,
       std::map<std::string, std::vector<uint8_t>>* properties);
 
   // Notifies all widgets the frame constants changed in some way.
-  static void NotifyFrameChanged(mus::WindowTreeConnection* connection);
+  static void NotifyFrameChanged(mus::WindowTreeClient* client);
+
+  // Returns the widget for a mus::Window, or null if there is none.
+  static Widget* GetWidgetForWindow(mus::Window* window);
 
   mus::Window* window() { return window_; }
+  WindowTreeHostMus* window_tree_host() { return window_tree_host_.get(); }
 
   aura::Window* GetRootWindow();
 
@@ -117,6 +138,7 @@ class VIEWS_MUS_EXPORT NativeWidgetMus : public internal::NativeWidgetPrivate,
   gfx::Rect GetWindowBoundsInScreen() const override;
   gfx::Rect GetClientAreaBoundsInScreen() const override;
   gfx::Rect GetRestoredBounds() const override;
+  std::string GetWorkspace() const override;
   void SetBounds(const gfx::Rect& bounds) override;
   void SetSize(const gfx::Size& size) override;
   void StackAbove(gfx::NativeView native_view) override;
@@ -143,8 +165,7 @@ class VIEWS_MUS_EXPORT NativeWidgetMus : public internal::NativeWidgetPrivate,
   void Restore() override;
   void SetFullscreen(bool fullscreen) override;
   bool IsFullscreen() const override;
-  void SetOpacity(unsigned char opacity) override;
-  void SetUseDragFrame(bool use_drag_frame) override;
+  void SetOpacity(float opacity) override;
   void FlashFrame(bool flash_frame) override;
   void RunShellDrag(View* view,
                     const ui::OSExchangeData& data,
@@ -170,6 +191,7 @@ class VIEWS_MUS_EXPORT NativeWidgetMus : public internal::NativeWidgetPrivate,
   bool IsTranslucentWindowOpacitySupported() const override;
   void OnSizeConstraintsChanged() override;
   void RepostNativeEvent(gfx::NativeEvent native_event) override;
+  std::string GetName() const override;
 
   // Overridden from aura::WindowDelegate:
   gfx::Size GetMinimumSize() const override;
@@ -200,25 +222,62 @@ class VIEWS_MUS_EXPORT NativeWidgetMus : public internal::NativeWidgetPrivate,
   // Overridden from aura::WindowTreeHostObserver:
   void OnHostCloseRequested(const aura::WindowTreeHost* host) override;
 
- private:
+  // Overridden from mus::InputEventHandler:
+  void OnWindowInputEvent(
+      mus::Window* view,
+      const ui::Event& event,
+      std::unique_ptr<base::Callback<void(mus::mojom::EventResult)>>*
+          ack_callback) override;
+
+private:
+  friend class NativeWidgetMusTest;
+  class MusWindowObserver;
+  class MusCaptureClient;
+
+  ui::PlatformWindowDelegate* platform_window_delegate() {
+    return window_tree_host();
+  }
+
+  void set_last_cursor(mus::mojom::Cursor cursor) { last_cursor_ = cursor; }
+  void SetShowState(mus::mojom::ShowState show_state);
+
+  void OnMusWindowVisibilityChanging(mus::Window* window);
+  void OnMusWindowVisibilityChanged(mus::Window* window);
+
+  // Propagates the widget hit test mask, if any, to the mus::Window.
+  // TODO(jamescook): Wire this through views::Widget so widgets can push
+  // updates if needed.
+  void UpdateHitTestMask();
+
   mus::Window* window_;
+  mus::mojom::Cursor last_cursor_;
 
   internal::NativeWidgetDelegate* native_widget_delegate_;
 
   const mus::mojom::SurfaceType surface_type_;
-  ui::PlatformWindowState show_state_before_fullscreen_;
+  mus::mojom::ShowState show_state_before_fullscreen_;
 
   // See class documentation for Widget in widget.h for a note about ownership.
   Widget::InitParams::Ownership ownership_;
 
+  // Functions with the same name require the mus::WindowObserver to be in
+  // a separate class.
+  std::unique_ptr<MusWindowObserver> mus_window_observer_;
+
   // Aura configuration.
-  scoped_ptr<SurfaceContextFactory> context_factory_;
-  scoped_ptr<WindowTreeHostMus> window_tree_host_;
+  std::unique_ptr<SurfaceContextFactory> context_factory_;
+  std::unique_ptr<WindowTreeHostMus> window_tree_host_;
   aura::Window* content_;
-  scoped_ptr<wm::FocusController> focus_client_;
-  scoped_ptr<aura::client::DefaultCaptureClient> capture_client_;
-  scoped_ptr<aura::client::WindowTreeClient> window_tree_client_;
-  scoped_ptr<aura::client::ScreenPositionClient> screen_position_client_;
+  std::unique_ptr<wm::FocusController> focus_client_;
+  std::unique_ptr<MusCaptureClient> capture_client_;
+  std::unique_ptr<aura::client::WindowTreeClient> window_tree_client_;
+  std::unique_ptr<aura::client::ScreenPositionClient> screen_position_client_;
+  std::unique_ptr<wm::CursorManager> cursor_manager_;
+
+  // Bitmap management.
+  std::unique_ptr<bitmap_uploader::BitmapUploader> bitmap_uploader_;
+  std::unique_ptr<ui::ViewProp> prop_;
+
   base::WeakPtrFactory<NativeWidgetMus> close_widget_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeWidgetMus);

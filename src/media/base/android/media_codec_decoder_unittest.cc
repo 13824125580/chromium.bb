@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "media/base/android/audio_media_codec_decoder.h"
 #include "media/base/android/media_codec_util.h"
@@ -157,7 +159,7 @@ class MediaCodecDecoderTest : public testing::Test {
   bool WaitForCondition(const Predicate& condition,
                         const base::TimeDelta& timeout = kDefaultTimeout);
 
-  void SetDataFactory(scoped_ptr<TestDataFactory> factory) {
+  void SetDataFactory(std::unique_ptr<TestDataFactory> factory) {
     data_factory_ = std::move(factory);
   }
 
@@ -205,8 +207,8 @@ class MediaCodecDecoderTest : public testing::Test {
 
   void OnVideoCodecCreated() {}
 
-  scoped_ptr<MediaCodecDecoder> decoder_;
-  scoped_ptr<TestDataFactory> data_factory_;
+  std::unique_ptr<MediaCodecDecoder> decoder_;
+  std::unique_ptr<TestDataFactory> data_factory_;
   Minimax<base::TimeDelta> pts_stat_;
   gfx::Size video_size_;
 
@@ -225,7 +227,7 @@ class MediaCodecDecoderTest : public testing::Test {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   FrameStatistics frame_statistics_;
   DataAvailableCallback data_available_cb_;
-  scoped_refptr<gfx::SurfaceTexture> surface_texture_;
+  scoped_refptr<gl::SurfaceTexture> surface_texture_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaCodecDecoderTest);
 };
@@ -266,7 +268,7 @@ bool MediaCodecDecoderTest::WaitForCondition(const Predicate& condition,
 }
 
 void MediaCodecDecoderTest::CreateAudioDecoder() {
-  decoder_ = scoped_ptr<MediaCodecDecoder>(new AudioMediaCodecDecoder(
+  decoder_ = base::WrapUnique(new AudioMediaCodecDecoder(
       task_runner_, &frame_statistics_,
       base::Bind(&MediaCodecDecoderTest::OnDataRequested,
                  base::Unretained(this)),
@@ -284,7 +286,7 @@ void MediaCodecDecoderTest::CreateAudioDecoder() {
 }
 
 void MediaCodecDecoderTest::CreateVideoDecoder() {
-  decoder_ = scoped_ptr<MediaCodecDecoder>(new VideoMediaCodecDecoder(
+  decoder_ = base::WrapUnique(new VideoMediaCodecDecoder(
       task_runner_, &frame_statistics_,
       base::Bind(&MediaCodecDecoderTest::OnDataRequested,
                  base::Unretained(this)),
@@ -317,8 +319,8 @@ void MediaCodecDecoderTest::OnDataRequested() {
 }
 
 void MediaCodecDecoderTest::SetVideoSurface() {
-  surface_texture_ = gfx::SurfaceTexture::Create(0);
-  gfx::ScopedJavaSurface surface(surface_texture_.get());
+  surface_texture_ = gl::SurfaceTexture::Create(0);
+  gl::ScopedJavaSurface surface(surface_texture_.get());
   ASSERT_NE(nullptr, decoder_.get());
   VideoMediaCodecDecoder* video_decoder =
       static_cast<VideoMediaCodecDecoder*>(decoder_.get());
@@ -329,7 +331,7 @@ TEST_F(MediaCodecDecoderTest, AudioPrefetch) {
   CreateAudioDecoder();
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<TestDataFactory>(new AudioFactory(duration)));
+  SetDataFactory(base::WrapUnique(new AudioFactory(duration)));
 
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
                                 base::Unretained(this), true));
@@ -342,7 +344,7 @@ TEST_F(MediaCodecDecoderTest, VideoPrefetch) {
   CreateVideoDecoder();
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
                                 base::Unretained(this), true));
@@ -366,7 +368,7 @@ TEST_F(MediaCodecDecoderTest, AudioConfigureValidParams) {
   CreateAudioDecoder();
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  scoped_ptr<AudioFactory> factory(new AudioFactory(duration));
+  std::unique_ptr<AudioFactory> factory(new AudioFactory(duration));
   decoder_->SetDemuxerConfigs(factory->GetConfigs());
 
   EXPECT_EQ(MediaCodecDecoder::kConfigOk, decoder_->Configure(nullptr));
@@ -381,7 +383,7 @@ TEST_F(MediaCodecDecoderTest, VideoConfigureNoParams) {
   // We have to prefetch decoder.
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
                                 base::Unretained(this), true));
@@ -404,7 +406,7 @@ TEST_F(MediaCodecDecoderTest, VideoConfigureNoSurface) {
   // We have to prefetch decoder.
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
                                 base::Unretained(this), true));
@@ -428,7 +430,7 @@ TEST_F(MediaCodecDecoderTest, VideoConfigureInvalidSurface) {
   // We have to prefetch decoder.
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
                                 base::Unretained(this), true));
@@ -439,9 +441,9 @@ TEST_F(MediaCodecDecoderTest, VideoConfigureInvalidSurface) {
   decoder_->SetDemuxerConfigs(GetConfigs());
 
   // Prepare the surface.
-  scoped_refptr<gfx::SurfaceTexture> surface_texture(
-      gfx::SurfaceTexture::Create(0));
-  gfx::ScopedJavaSurface surface(surface_texture.get());
+  scoped_refptr<gl::SurfaceTexture> surface_texture(
+      gl::SurfaceTexture::Create(0));
+  gl::ScopedJavaSurface surface(surface_texture.get());
 
   // Release the surface texture.
   surface_texture = NULL;
@@ -462,7 +464,7 @@ TEST_F(MediaCodecDecoderTest, VideoConfigureValidParams) {
   // We have to prefetch decoder.
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
                                 base::Unretained(this), true));
@@ -491,7 +493,7 @@ TEST_F(MediaCodecDecoderTest, AudioStartWithoutConfigure) {
 
   // Do the prefetch.
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
-  SetDataFactory(scoped_ptr<AudioFactory>(new AudioFactory(duration)));
+  SetDataFactory(base::WrapUnique(new AudioFactory(duration)));
 
   // Prefetch to avoid starvation at the beginning of playback.
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
@@ -515,7 +517,7 @@ TEST_F(MediaCodecDecoderTest, DISABLED_AudioPlayTillCompletion) {
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(500);
   base::TimeDelta timeout = base::TimeDelta::FromMilliseconds(1500);
 
-  SetDataFactory(scoped_ptr<AudioFactory>(new AudioFactory(duration)));
+  SetDataFactory(base::WrapUnique(new AudioFactory(duration)));
 
   // Prefetch to avoid starvation at the beginning of playback.
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
@@ -547,7 +549,13 @@ TEST_F(MediaCodecDecoderTest, DISABLED_AudioPlayTillCompletion) {
   DVLOG(0) << "AudioPlayTillCompletion stopping";
 }
 
-TEST_F(MediaCodecDecoderTest, VideoPlayTillCompletion) {
+// crbug.com/618274
+#if defined(OS_ANDROID)
+#define MAYBE_VideoPlayTillCompletion DISABLED_VideoPlayTillCompletion
+#else
+#define MAYBE_VideoPlayTillCompletion VideoPlayTillCompletion
+#endif
+TEST_F(MediaCodecDecoderTest, MAYBE_VideoPlayTillCompletion) {
   SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   CreateVideoDecoder();
@@ -557,7 +565,7 @@ TEST_F(MediaCodecDecoderTest, VideoPlayTillCompletion) {
   // the codec does initial configuration at this time. We increase the timeout
   // to leave a room of 1 second for this initial configuration.
   base::TimeDelta timeout = base::TimeDelta::FromMilliseconds(1500);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   // Prefetch
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
@@ -586,7 +594,8 @@ TEST_F(MediaCodecDecoderTest, VideoPlayTillCompletion) {
   EXPECT_EQ(data_factory_->last_pts(), pts_stat_.max());
 }
 
-TEST_F(MediaCodecDecoderTest, VideoStopAndResume) {
+// Disabled per http://crbug.com/611489.
+TEST_F(MediaCodecDecoderTest, DISABLED_VideoStopAndResume) {
   SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   CreateVideoDecoder();
@@ -595,7 +604,7 @@ TEST_F(MediaCodecDecoderTest, VideoStopAndResume) {
   base::TimeDelta stop_request_time = base::TimeDelta::FromMilliseconds(200);
   base::TimeDelta timeout = base::TimeDelta::FromMilliseconds(1000);
 
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   // Prefetch
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
@@ -666,7 +675,7 @@ TEST_F(MediaCodecDecoderTest, DISABLED_AudioStarvationAndStop) {
 
   AudioFactory* factory = new AudioFactory(duration);
   factory->SetStarvationMode(true);
-  SetDataFactory(scoped_ptr<AudioFactory>(factory));
+  SetDataFactory(base::WrapUnique(factory));
 
   // Prefetch.
   decoder_->Prefetch(base::Bind(&MediaCodecDecoderTest::SetPrefetched,
@@ -703,7 +712,8 @@ TEST_F(MediaCodecDecoderTest, DISABLED_AudioStarvationAndStop) {
   EXPECT_FALSE(decoder_->IsCompleted());
 }
 
-TEST_F(MediaCodecDecoderTest, VideoFirstUnitIsReconfig) {
+// Disabled per http://crbug.com/611489.
+TEST_F(MediaCodecDecoderTest, DISABLED_VideoFirstUnitIsReconfig) {
   SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   // Test that the kConfigChanged unit that comes before the first data unit
@@ -713,7 +723,7 @@ TEST_F(MediaCodecDecoderTest, VideoFirstUnitIsReconfig) {
 
   base::TimeDelta duration = base::TimeDelta::FromMilliseconds(200);
   base::TimeDelta timeout = base::TimeDelta::FromMilliseconds(1000);
-  SetDataFactory(scoped_ptr<VideoFactory>(new VideoFactory(duration)));
+  SetDataFactory(base::WrapUnique(new VideoFactory(duration)));
 
   // Ask factory to produce initial configuration unit. The configuraton will
   // be factory.GetConfigs().

@@ -12,7 +12,7 @@
 #import "ios/web/public/web_state/js/crw_js_injection_manager.h"
 #import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #import "ios/web/test/crw_fake_web_controller_observer.h"
-#import "ios/web/test/web_test.h"
+#import "ios/web/test/web_test_with_web_controller.h"
 #include "testing/gtest_mac.h"
 
 namespace web {
@@ -24,11 +24,11 @@ class CRWWebControllerObserverTest : public web::WebTestWithWebController {
     web::WebTestWithWebController::SetUp();
     fake_web_controller_observer_.reset(
         [[CRWFakeWebControllerObserver alloc] initWithCommandPrefix:@"test"]);
-    [webController_ addObserver:fake_web_controller_observer_];
+    [web_controller() addObserver:fake_web_controller_observer_];
   }
 
   void TearDown() override {
-    [webController_ removeObserver:fake_web_controller_observer_];
+    [web_controller() removeObserver:fake_web_controller_observer_];
     fake_web_controller_observer_.reset();
     web::WebTestWithWebController::TearDown();
   }
@@ -51,7 +51,7 @@ TEST_F(CRWWebControllerObserverTest, HandleCommand) {
   command.SetString("command", "test.testMessage");
   std::string message;
   base::JSONWriter::Write(command, &message);
-  RunJavaScript([NSString
+  EvaluateJavaScriptAsString([NSString
       stringWithFormat:@"__gCrWeb.message.invokeOnHost(%s)", message.c_str()]);
   WaitForBackgroundTasks();
   ASSERT_EQ(1U, [fake_web_controller_observer_ commandsReceived].size());
@@ -63,7 +63,7 @@ TEST_F(CRWWebControllerObserverTest, HandleCommand) {
 TEST_F(CRWWebControllerObserverTest, HandleImmediateCommand) {
   LoadHtml(@"<p></p>");
   ASSERT_NSNE(@"http://testimmediate#target",
-              [webController_ externalRequestWindowName]);
+              [web_controller() externalRequestWindowName]);
   // The only valid immediate commands are window.unload and externalRequest.
   base::DictionaryValue command;
   command.SetString("command", "externalRequest");
@@ -72,12 +72,12 @@ TEST_F(CRWWebControllerObserverTest, HandleImmediateCommand) {
   command.SetString("referrerPolicy", "referrerPolicy");
   std::string message;
   base::JSONWriter::Write(command, &message);
-  RunJavaScript(
+  EvaluateJavaScriptAsString(
       [NSString stringWithFormat:@"__gCrWeb.message.invokeOnHostImmediate(%s)",
                                  message.c_str()]);
   WaitForBackgroundTasks();
   ASSERT_NSEQ(@"http://testimmediate#target",
-              [webController_ externalRequestWindowName]);
+              [web_controller() externalRequestWindowName]);
 }
 
 // Send a large number of commands and check each one is immediately received.
@@ -92,7 +92,7 @@ TEST_F(CRWWebControllerObserverTest, HandleMultipleCommands) {
     command.SetInteger("number", count);
     base::JSONWriter::Write(command, &message);
     ASSERT_EQ(0U, [fake_web_controller_observer_ commandsReceived].size());
-    RunJavaScript(
+    EvaluateJavaScriptAsString(
         [NSString stringWithFormat:@"__gCrWeb.message.invokeOnHost(%s)",
                                    message.c_str()]);
     WaitForBackgroundTasks();

@@ -4,9 +4,11 @@
 
 #include "modules/battery/BatteryManager.h"
 
+#include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/events/Event.h"
 #include "modules/battery/BatteryDispatcher.h"
+#include "wtf/Assertions.h"
 
 namespace blink {
 
@@ -19,13 +21,11 @@ BatteryManager* BatteryManager::create(ExecutionContext* context)
 
 BatteryManager::~BatteryManager()
 {
-#if !ENABLE(OILPAN)
-    stopUpdating();
-#endif
 }
 
 BatteryManager::BatteryManager(ExecutionContext* context)
-    : ActiveDOMObject(context)
+    : ActiveScriptWrappable(this)
+    , ActiveDOMObject(context)
     , PlatformEventController(toDocument(context)->page())
 {
 }
@@ -33,10 +33,10 @@ BatteryManager::BatteryManager(ExecutionContext* context)
 ScriptPromise BatteryManager::startRequest(ScriptState* scriptState)
 {
     if (!m_batteryProperty) {
-        m_batteryProperty = new BatteryProperty(scriptState->executionContext(), this, BatteryProperty::Ready);
+        m_batteryProperty = new BatteryProperty(scriptState->getExecutionContext(), this, BatteryProperty::Ready);
 
         // If the context is in a stopped state already, do not start updating.
-        if (!executionContext() || executionContext()->activeDOMObjectsAreStopped()) {
+        if (!getExecutionContext() || getExecutionContext()->activeDOMObjectsAreStopped()) {
             m_batteryProperty->resolve(this);
         } else {
             m_hasEventListener = true;
@@ -69,18 +69,18 @@ double BatteryManager::level()
 
 void BatteryManager::didUpdateData()
 {
-    ASSERT(m_batteryProperty);
+    DCHECK(m_batteryProperty);
 
     BatteryStatus oldStatus = m_batteryStatus;
     m_batteryStatus = *BatteryDispatcher::instance().latestData();
 
-    if (m_batteryProperty->state() == ScriptPromisePropertyBase::Pending) {
+    if (m_batteryProperty->getState() == ScriptPromisePropertyBase::Pending) {
         m_batteryProperty->resolve(this);
         return;
     }
 
-    Document* document = toDocument(executionContext());
-    ASSERT(document);
+    Document* document = toDocument(getExecutionContext());
+    DCHECK(document);
     if (document->activeDOMObjectsAreSuspended() || document->activeDOMObjectsAreStopped())
         return;
 
@@ -139,7 +139,7 @@ DEFINE_TRACE(BatteryManager)
 {
     visitor->trace(m_batteryProperty);
     PlatformEventController::trace(visitor);
-    RefCountedGarbageCollectedEventTargetWithInlineData<BatteryManager>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     ActiveDOMObject::trace(visitor);
 }
 

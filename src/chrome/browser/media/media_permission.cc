@@ -7,8 +7,8 @@
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/media_stream_device_permission_context.h"
 #include "chrome/browser/media/media_stream_device_permissions.h"
-#include "chrome/browser/permissions/permission_context.h"
 #include "chrome/browser/permissions/permission_context_base.h"
+#include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/permission_manager.h"
@@ -31,12 +31,10 @@ content::PermissionType ContentSettingsTypeToPermission(
 }  // namespace
 
 MediaPermission::MediaPermission(ContentSettingsType content_type,
-                                 bool is_insecure_pepper_request,
                                  const GURL& requesting_origin,
                                  const GURL& embedding_origin,
                                  Profile* profile)
     : content_type_(content_type),
-      is_insecure_pepper_request_(is_insecure_pepper_request),
       requesting_origin_(requesting_origin),
       embedding_origin_(embedding_origin),
       profile_(profile) {}
@@ -54,8 +52,11 @@ ContentSetting MediaPermission::GetPermissionStatus(
   // denial reason to kill switch.
   content::PermissionType permission_type =
       ContentSettingsTypeToPermission(content_type_);
+  // TODO(raymes): This calls into GetPermissionContext which is a private
+  // member of PermissionManager. Remove this call when this class is refactored
+  // into a PermissionContext. See crbug.com/596786.
   PermissionContextBase* permission_context =
-      PermissionContext::Get(profile_, permission_type);
+      PermissionManager::Get(profile_)->GetPermissionContext(permission_type);
 
   if (!permission_context) {
     *denial_reason = content::MEDIA_DEVICE_PERMISSION_DENIED;
@@ -94,14 +95,8 @@ ContentSetting MediaPermission::GetPermissionStatusWithDeviceRequired(
 
 ContentSetting MediaPermission::GetStoredContentSetting(
     MediaStreamDevicePermissionContext* media_device_permission_context) const {
-  if (is_insecure_pepper_request_) {
-    return media_device_permission_context
-        ->GetPermissionStatusAllowingInsecureForPepper(requesting_origin_,
-                                                       embedding_origin_);
-  } else {
-    return media_device_permission_context->GetPermissionStatus(
-        requesting_origin_, embedding_origin_);
-  }
+  return media_device_permission_context->GetPermissionStatus(
+      requesting_origin_, embedding_origin_);
 }
 
 bool MediaPermission::HasAvailableDevices(const std::string& device_id) const {

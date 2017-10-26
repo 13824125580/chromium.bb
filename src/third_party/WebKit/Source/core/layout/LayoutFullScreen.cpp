@@ -26,7 +26,7 @@
 
 #include "core/dom/Fullscreen.h"
 #include "core/frame/FrameHost.h"
-#include "core/frame/Settings.h"
+#include "core/frame/VisualViewport.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/page/Page.h"
 
@@ -48,13 +48,15 @@ public:
 
 private:
     bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectLayoutFullScreenPlaceholder || LayoutBlockFlow::isOfType(type); }
+    bool anonymousHasStylePropagationOverride() override { return true; }
+
     void willBeDestroyed() override;
     LayoutFullScreen* m_owner;
 };
 
 void LayoutFullScreenPlaceholder::willBeDestroyed()
 {
-    m_owner->setPlaceholder(nullptr);
+    m_owner->resetPlaceholder();
     LayoutBlockFlow::willBeDestroyed();
 }
 
@@ -137,7 +139,8 @@ LayoutObject* LayoutFullScreen::wrapLayoutObject(LayoutObject* object, LayoutObj
             ASSERT(containingBlock);
             // Since we are moving the |object| to a new parent |fullscreenLayoutObject|,
             // the line box tree underneath our |containingBlock| is not longer valid.
-            containingBlock->deleteLineBoxTree();
+            if (containingBlock->isLayoutBlockFlow())
+                toLayoutBlockFlow(containingBlock)->deleteLineBoxTree();
 
             parent->addChildWithWritingModeOfParent(fullscreenLayoutObject, object);
             object->remove();
@@ -179,11 +182,6 @@ void LayoutFullScreen::unwrapLayoutObject()
         placeholder()->remove();
     remove();
     destroy();
-}
-
-void LayoutFullScreen::setPlaceholder(LayoutBlock* placeholder)
-{
-    m_placeholder = placeholder;
 }
 
 void LayoutFullScreen::createPlaceholder(PassRefPtr<ComputedStyle> style, const LayoutRect& frameRect)

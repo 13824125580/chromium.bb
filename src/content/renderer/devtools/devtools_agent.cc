@@ -8,24 +8,26 @@
 
 #include <map>
 
+#include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "content/common/devtools_messages.h"
 #include "content/common/frame_messages.h"
+#include "content/public/common/manifest.h"
 #include "content/renderer/devtools/devtools_client.h"
 #include "content/renderer/devtools/devtools_cpu_throttler.h"
+#include "content/renderer/manifest/manifest_manager.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_widget.h"
 #include "ipc/ipc_channel.h"
+#include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebConsoleMessage.h"
 #include "third_party/WebKit/public/web/WebDevToolsAgent.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 
-using blink::WebConsoleMessage;
 using blink::WebDevToolsAgent;
 using blink::WebDevToolsAgentClient;
 using blink::WebLocalFrame;
@@ -39,6 +41,8 @@ namespace content {
 namespace {
 
 const size_t kMaxMessageChunkSize = IPC::Channel::kMaximumMessageSize / 4;
+const char kPageGetAppManifest[] = "Page.getAppManifest";
+
 
 class WebKitClientMessageLoopImpl
     : public WebDevToolsAgentClient::WebKitClientMessageLoop {
@@ -68,7 +72,8 @@ DevToolsAgent::DevToolsAgent(RenderFrameImpl* frame)
       paused_in_mouse_move_(false),
       paused_(false),
       frame_(frame),
-      cpu_throttler_(new DevToolsCPUThrottler()) {
+      cpu_throttler_(new DevToolsCPUThrottler()),
+      weak_factory_(this) {
   g_agent_for_routing_id.Get()[routing_id()] = this;
   frame_->GetWebFrame()->setDevToolsAgentClient(this);
 }
@@ -103,17 +108,32 @@ void DevToolsAgent::WidgetWillClose() {
   ContinueProgram();
 }
 
+void DevToolsAgent::OnDestruct() {
+  delete this;
+}
+
 void DevToolsAgent::sendProtocolMessage(int session_id,
                                         int call_id,
                                         const blink::WebString& message,
                                         const blink::WebString& state_cookie) {
+  if (!send_protocol_message_callback_for_test_.is_null()) {
+    send_protocol_message_callback_for_test_.Run(
+        session_id, call_id, message.utf8(), state_cookie.utf8());
+    return;
+  }
   SendChunkedProtocolMessage(this, routing_id(), session_id, call_id,
                              message.utf8(), state_cookie.utf8());
 }
 
+// static
 blink::WebDevToolsAgentClient::WebKitClientMessageLoop*
-    DevToolsAgent::createClientMessageLoop() {
+DevToolsAgent::createMessageLoopWrapper() {
   return new WebKitClientMessageLoopImpl();
+}
+
+blink::WebDevToolsAgentClient::WebKitClientMessageLoop*
+DevToolsAgent::createClientMessageLoop() {
+  return createMessageLoopWrapper();
 }
 
 void DevToolsAgent::willEnterDebugLoop() {
@@ -207,90 +227,60 @@ void DevToolsAgent::SendChunkedProtocolMessage(IPC::Sender* sender,
 }
 
 void DevToolsAgent::OnAttach(const std::string& host_id, int session_id) {
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent) {
-    web_agent->attach(WebString::fromUTF8(host_id), session_id);
-    is_attached_ = true;
-  }
+  GetWebAgent()->attach(WebString::fromUTF8(host_id), session_id);
+  is_attached_ = true;
 }
 
 void DevToolsAgent::OnReattach(const std::string& host_id,
                                int session_id,
                                const std::string& agent_state) {
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent) {
-    web_agent->reattach(WebString::fromUTF8(host_id), session_id,
-                        WebString::fromUTF8(agent_state));
-    is_attached_ = true;
-  }
+  GetWebAgent()->reattach(WebString::fromUTF8(host_id), session_id,
+                          WebString::fromUTF8(agent_state));
+  is_attached_ = true;
 }
 
 void DevToolsAgent::OnDetach() {
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent) {
-    web_agent->detach();
-    is_attached_ = false;
-  }
+  GetWebAgent()->detach();
+  is_attached_ = false;
 }
 
 void DevToolsAgent::OnDispatchOnInspectorBackend(int session_id,
+                                                 int call_id,
+                                                 const std::string& method,
                                                  const std::string& message) {
   TRACE_EVENT0("devtools", "DevToolsAgent::OnDispatchOnInspectorBackend");
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent)
-    web_agent->dispatchOnInspectorBackend(session_id,
-                                          WebString::fromUTF8(message));
+  if (method == kPageGetAppManifest) {
+    ManifestManager* manager = frame_->manifest_manager();
+    manager->GetManifest(
+        base::Bind(&DevToolsAgent::GotManifest,
+        weak_factory_.GetWeakPtr(), session_id, call_id));
+    return;
+  }
+  GetWebAgent()->dispatchOnInspectorBackend(session_id,
+                                            call_id,
+                                            WebString::fromUTF8(method),
+                                            WebString::fromUTF8(message));
 }
 
 void DevToolsAgent::OnInspectElement(int x, int y) {
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent) {
-    DCHECK(is_attached_);
-    web_agent->inspectElementAt(WebPoint(x, y));
-  }
+  blink::WebFloatRect point_rect(x, y, 0, 0);
+  frame_->GetRenderWidget()->convertWindowToViewport(&point_rect);
+  GetWebAgent()->inspectElementAt(WebPoint(point_rect.x, point_rect.y));
 }
 
 void DevToolsAgent::OnRequestNewWindowACK(bool success) {
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent && !success)
-    web_agent->failedToRequestDevTools();
-}
-
-void DevToolsAgent::AddMessageToConsole(ConsoleMessageLevel level,
-                                        const std::string& message) {
-  WebLocalFrame* web_frame = frame_->GetWebFrame();
-  if (!web_frame)
-    return;
-
-  WebConsoleMessage::Level target_level = WebConsoleMessage::LevelLog;
-  switch (level) {
-    case CONSOLE_MESSAGE_LEVEL_DEBUG:
-      target_level = WebConsoleMessage::LevelDebug;
-      break;
-    case CONSOLE_MESSAGE_LEVEL_LOG:
-      target_level = WebConsoleMessage::LevelLog;
-      break;
-    case CONSOLE_MESSAGE_LEVEL_WARNING:
-      target_level = WebConsoleMessage::LevelWarning;
-      break;
-    case CONSOLE_MESSAGE_LEVEL_ERROR:
-      target_level = WebConsoleMessage::LevelError;
-      break;
-  }
-  web_frame->addMessageToConsole(
-      WebConsoleMessage(target_level, WebString::fromUTF8(message)));
+  if (!success)
+    GetWebAgent()->failedToRequestDevTools();
 }
 
 void DevToolsAgent::ContinueProgram() {
-  WebDevToolsAgent* web_agent = GetWebAgent();
-  if (web_agent)
-    web_agent->continueProgram();
+  GetWebAgent()->continueProgram();
 }
 
 void DevToolsAgent::OnSetupDevToolsClient(
     const std::string& compatibility_script) {
   // We only want to register once; and only in main frame.
-  DCHECK(!frame_->GetWebFrame() || !frame_->GetWebFrame()->parent());
+  DCHECK(!frame_->GetWebFrame()->parent());
   if (is_devtools_client_)
     return;
   is_devtools_client_ = true;
@@ -298,12 +288,48 @@ void DevToolsAgent::OnSetupDevToolsClient(
 }
 
 WebDevToolsAgent* DevToolsAgent::GetWebAgent() {
-  WebLocalFrame* web_frame = frame_->GetWebFrame();
-  return web_frame ? web_frame->devToolsAgent() : nullptr;
+  return frame_->GetWebFrame()->devToolsAgent();
 }
 
 bool DevToolsAgent::IsAttached() {
   return is_attached_;
+}
+
+void DevToolsAgent::GotManifest(int session_id,
+                                int call_id,
+                                const Manifest& manifest,
+                                const ManifestDebugInfo& debug_info) {
+  if (!is_attached_)
+    return;
+
+  std::unique_ptr<base::DictionaryValue> response(new base::DictionaryValue());
+  response->SetInteger("id", call_id);
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  std::unique_ptr<base::ListValue> errors(new base::ListValue());
+
+  bool failed = false;
+  for (const auto& error : debug_info.errors) {
+    base::DictionaryValue* error_value = new base::DictionaryValue();
+    errors->Append(error_value);
+    error_value->SetString("message", error.message);
+    error_value->SetBoolean("critical", error.critical);
+    error_value->SetInteger("line", error.line);
+    error_value->SetInteger("column", error.column);
+    if (error.critical)
+      failed = true;
+  }
+
+  WebString url = frame_->GetWebFrame()->document().manifestURL().string();
+  result->SetString("url", url);
+  if (!failed)
+    result->SetString("data", debug_info.raw_data);
+  result->Set("errors", errors.release());
+  response->Set("result", result.release());
+
+  std::string json_message;
+  base::JSONWriter::Write(*response, &json_message);
+  SendChunkedProtocolMessage(this, routing_id(), session_id, call_id,
+                             json_message, std::string());
 }
 
 }  // namespace content

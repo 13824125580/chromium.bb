@@ -11,9 +11,6 @@
  *
  *    <settings-user-list prefs="{{prefs}}">
  *    </settings-user-list>
- *
- * @group Chrome Settings Elements
- * @element settings-user-list
  */
 Polymer({
   is: 'settings-user-list',
@@ -57,7 +54,10 @@ Polymer({
     }.bind(this));
   },
 
-  /** @private */
+  /**
+   * @private
+   * @param {!{model: !{item: !User}}} e
+   */
   removeUser_: function(e) {
     chrome.usersPrivate.removeWhitelistedUser(
         e.model.item.email, /* callback */ function() {});
@@ -68,4 +68,3 @@ Polymer({
     return disabled || isUserOwner;
   }
 });
-

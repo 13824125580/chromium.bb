@@ -12,8 +12,10 @@
 #define WEBRTC_MODULES_REMOTE_BITRATE_ESTIMATOR_REMOTE_BITRATE_ESTIMATOR_SINGLE_STREAM_H_
 
 #include <map>
+#include <memory>
 #include <vector>
 
+#include "webrtc/base/constructormagic.h"
 #include "webrtc/base/rate_statistics.h"
 #include "webrtc/modules/remote_bitrate_estimator/aimd_rate_control.h"
 #include "webrtc/modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h"
@@ -29,8 +31,7 @@ class RemoteBitrateEstimatorSingleStream : public RemoteBitrateEstimator {
 
   void IncomingPacket(int64_t arrival_time_ms,
                       size_t payload_size,
-                      const RTPHeader& header,
-                      bool was_paced) override;
+                      const RTPHeader& header) override;
   void Process() override;
   int64_t TimeUntilNextProcess() override;
   void OnRttUpdate(int64_t avg_rtt_ms, int64_t max_rtt_ms) override;
@@ -54,9 +55,10 @@ class RemoteBitrateEstimatorSingleStream : public RemoteBitrateEstimator {
   Clock* clock_;
   SsrcOveruseEstimatorMap overuse_detectors_ GUARDED_BY(crit_sect_.get());
   RateStatistics incoming_bitrate_ GUARDED_BY(crit_sect_.get());
-  rtc::scoped_ptr<AimdRateControl> remote_rate_ GUARDED_BY(crit_sect_.get());
+  uint32_t last_valid_incoming_bitrate_ GUARDED_BY(crit_sect_.get());
+  std::unique_ptr<AimdRateControl> remote_rate_ GUARDED_BY(crit_sect_.get());
   RemoteBitrateObserver* observer_ GUARDED_BY(crit_sect_.get());
-  rtc::scoped_ptr<CriticalSectionWrapper> crit_sect_;
+  std::unique_ptr<CriticalSectionWrapper> crit_sect_;
   int64_t last_process_time_;
   int64_t process_interval_ms_ GUARDED_BY(crit_sect_.get());
 

@@ -4,12 +4,14 @@
 
 #include "ui/ozone/platform/cast/surface_factory_cast.h"
 
-#include <dlfcn.h>
 #include <EGL/egl.h>
+#include <dlfcn.h>
+
 #include <utility>
 
 #include "base/callback_helpers.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chromecast/public/cast_egl_platform.h"
 #include "chromecast/public/graphics_types.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -48,21 +50,21 @@ class DummySurface : public SurfaceOzoneCanvas {
   ~DummySurface() override {}
 
   // SurfaceOzoneCanvas implementation:
-  skia::RefPtr<SkSurface> GetSurface() override { return surface_; }
+  sk_sp<SkSurface> GetSurface() override { return surface_; }
 
   void ResizeCanvas(const gfx::Size& viewport_size) override {
-    surface_ = skia::AdoptRef(SkSurface::NewRaster(SkImageInfo::MakeN32Premul(
-        viewport_size.width(), viewport_size.height())));
+    surface_ = SkSurface::MakeRaster(SkImageInfo::MakeN32Premul(
+        viewport_size.width(), viewport_size.height()));
   }
 
   void PresentCanvas(const gfx::Rect& damage) override {}
 
-  scoped_ptr<gfx::VSyncProvider> CreateVSyncProvider() override {
+  std::unique_ptr<gfx::VSyncProvider> CreateVSyncProvider() override {
     return nullptr;
   }
 
  private:
-  skia::RefPtr<SkSurface> surface_;
+  sk_sp<SkSurface> surface_;
 
   DISALLOW_COPY_AND_ASSIGN(DummySurface);
 };
@@ -71,7 +73,8 @@ class DummySurface : public SurfaceOzoneCanvas {
 
 SurfaceFactoryCast::SurfaceFactoryCast() : SurfaceFactoryCast(nullptr) {}
 
-SurfaceFactoryCast::SurfaceFactoryCast(scoped_ptr<CastEglPlatform> egl_platform)
+SurfaceFactoryCast::SurfaceFactoryCast(
+    std::unique_ptr<CastEglPlatform> egl_platform)
     : state_(kUninitialized),
       display_type_(0),
       have_display_type_(false),
@@ -155,12 +158,12 @@ void SurfaceFactoryCast::OnOverlayScheduled(const gfx::Rect& display_bounds) {
   overlay_bounds_ = display_bounds;
 }
 
-scoped_ptr<SurfaceOzoneCanvas> SurfaceFactoryCast::CreateCanvasForWidget(
+std::unique_ptr<SurfaceOzoneCanvas> SurfaceFactoryCast::CreateCanvasForWidget(
     gfx::AcceleratedWidget widget) {
   // Software canvas support only in headless mode
   if (egl_platform_)
     return nullptr;
-  return make_scoped_ptr<SurfaceOzoneCanvas>(new DummySurface());
+  return base::WrapUnique<SurfaceOzoneCanvas>(new DummySurface());
 }
 
 intptr_t SurfaceFactoryCast::GetNativeDisplay() {
@@ -225,11 +228,11 @@ void SurfaceFactoryCast::DestroyDisplayTypeAndWindow() {
   }
 }
 
-scoped_ptr<SurfaceOzoneEGL> SurfaceFactoryCast::CreateEGLSurfaceForWidget(
+std::unique_ptr<SurfaceOzoneEGL> SurfaceFactoryCast::CreateEGLSurfaceForWidget(
     gfx::AcceleratedWidget widget) {
   new_display_size_ = gfx::Size(widget >> 16, widget & 0xFFFF);
   new_display_size_.SetToMax(GetMinDisplaySize());
-  return make_scoped_ptr<SurfaceOzoneEGL>(new SurfaceOzoneEglCast(this));
+  return base::WrapUnique<SurfaceOzoneEGL>(new SurfaceOzoneEglCast(this));
 }
 
 void SurfaceFactoryCast::ChildDestroyed() {
@@ -250,8 +253,11 @@ scoped_refptr<NativePixmap> SurfaceFactoryCast::CreateNativePixmap(
       // TODO(halliwell): try to implement this through CastEglPlatform.
       return nullptr;
     }
-    int GetDmaBufFd() const override { return -1; }
-    int GetDmaBufPitch() const override { return 0; }
+    bool AreDmaBufFdsValid() const override { return false; }
+    size_t GetDmaBufFdCount() const override { return 0; }
+    int GetDmaBufFd(size_t plane) const override { return -1; }
+    int GetDmaBufPitch(size_t plane) const override { return 0; }
+    int GetDmaBufOffset(size_t plane) const override { return 0; }
     gfx::BufferFormat GetBufferFormat() const override {
       return gfx::BufferFormat::BGRA_8888;
     }

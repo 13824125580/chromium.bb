@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "remoting/base/logging.h"
@@ -34,10 +35,17 @@ Me2MeDesktopEnvironment::~Me2MeDesktopEnvironment() {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 }
 
-scoped_ptr<ScreenControls> Me2MeDesktopEnvironment::CreateScreenControls() {
+std::unique_ptr<ScreenControls>
+Me2MeDesktopEnvironment::CreateScreenControls() {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new ResizingHostObserver(DesktopResizer::Create()));
+  // We only want to restore the host resolution on disconnect if we are not
+  // curtained so we don't mess up the user's window layout unnecessarily if
+  // they disconnect and reconnect. Both OS X and Windows will restore the
+  // resolution automatically when the user logs back in on the console, and on
+  // Linux the curtain-mode uses a separate session.
+  return base::WrapUnique(new ResizingHostObserver(DesktopResizer::Create(),
+                                                   curtain_ == nullptr));
 }
 
 std::string Me2MeDesktopEnvironment::GetCapabilities() const {
@@ -78,10 +86,12 @@ bool Me2MeDesktopEnvironment::InitializeSecurity(
     curtain_ = CurtainMode::Create(caller_task_runner(),
                                    ui_task_runner(),
                                    client_session_control);
-    bool active = curtain_->Activate();
-    if (!active)
+    if (!curtain_->Activate()) {
       LOG(ERROR) << "Failed to activate the curtain mode.";
-    return active;
+      curtain_ = nullptr;
+      return false;
+    }
+    return true;
   }
 
   // Otherwise, if the session is shared with the local user start monitoring
@@ -98,9 +108,9 @@ bool Me2MeDesktopEnvironment::InitializeSecurity(
   // running in the LoginWindow context, and refactor this into a separate
   // function to be used here and in CurtainMode::ActivateCurtain().
   bool want_user_interface = getuid() != 0;
-#elif defined(OS_WIN)
+#else
   bool want_user_interface = true;
-#endif  // defined(OS_WIN)
+#endif
 
   // Create the disconnect window.
   if (want_user_interface) {
@@ -132,11 +142,11 @@ Me2MeDesktopEnvironmentFactory::Me2MeDesktopEnvironmentFactory(
 Me2MeDesktopEnvironmentFactory::~Me2MeDesktopEnvironmentFactory() {
 }
 
-scoped_ptr<DesktopEnvironment> Me2MeDesktopEnvironmentFactory::Create(
+std::unique_ptr<DesktopEnvironment> Me2MeDesktopEnvironmentFactory::Create(
     base::WeakPtr<ClientSessionControl> client_session_control) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  scoped_ptr<Me2MeDesktopEnvironment> desktop_environment(
+  std::unique_ptr<Me2MeDesktopEnvironment> desktop_environment(
       new Me2MeDesktopEnvironment(
           caller_task_runner(), video_capture_task_runner(),
           input_task_runner(), ui_task_runner(), supports_touch_events()));

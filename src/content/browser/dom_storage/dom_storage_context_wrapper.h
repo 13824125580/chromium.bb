@@ -9,13 +9,19 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "content/common/storage_partition_service.mojom.h"
 #include "content/public/browser/dom_storage_context.h"
+#include "url/origin.h"
 
 namespace base {
 class FilePath;
+}
+
+namespace shell {
+class Connector;
 }
 
 namespace storage {
@@ -35,7 +41,9 @@ class CONTENT_EXPORT DOMStorageContextWrapper :
  public:
   // If |data_path| is empty, nothing will be saved to disk.
   DOMStorageContextWrapper(
+      shell::Connector* connector,
       const base::FilePath& data_path,
+      const base::FilePath& local_partition_path,
       storage::SpecialStoragePolicy* special_storage_policy);
 
   // DOMStorageContext implementation.
@@ -61,11 +69,14 @@ class CONTENT_EXPORT DOMStorageContextWrapper :
 
   void Flush();
 
-  // See StoragePartitionService interface.
-  void OpenLocalStorage(
-      const mojo::String& origin,
-      LevelDBObserverPtr observer,
-      mojo::InterfaceRequest<LevelDBWrapper> request);
+  // See mojom::StoragePartitionService interface.
+  void OpenLocalStorage(const url::Origin& origin,
+                        mojom::LevelDBObserverPtr observer,
+                        mojom::LevelDBWrapperRequest request);
+
+  // Called on UI thread when the system is under memory pressure.
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
  private:
   friend class DOMStorageMessageFilter;  // for access to context()
@@ -75,12 +86,13 @@ class CONTENT_EXPORT DOMStorageContextWrapper :
   ~DOMStorageContextWrapper() override;
   DOMStorageContextImpl* context() const { return context_.get(); }
 
-  void LevelDBWrapperImplHasNoBindings(const std::string& origin);
+  // An inner class to keep all mojo-ish details together and not bleed them
+  // through the public interface.
+  class MojoState;
+  std::unique_ptr<MojoState> mojo_state_;
 
-  // Used for mojo-based LocalStorage implementation (behind
-  // --mojo-local-storage for now). Maps between an origin and its prefixed
-  // LevelDB view.
-  std::map<std::string, scoped_ptr<LevelDBWrapperImpl>> level_db_wrappers_;
+  // To receive memory pressure signals.
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
   scoped_refptr<DOMStorageContextImpl> context_;
 

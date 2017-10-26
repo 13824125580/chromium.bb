@@ -88,15 +88,14 @@ goog.scope(function() {
     es3fDrawTests.addTestIterations = function(test, baseSpec, type) {
         var spec = /** @type {glsDrawTests.DrawTestSpec} */ (deUtil.clone(baseSpec));
 
-        //JS RefRast only draws quads, so changing the primitive counts, leave original commented
         if (type == es3fDrawTests.TestIterationType.DRAW_COUNT) {
-            spec.primitiveCount = 2;
+            spec.primitiveCount = 1;
             test.addIteration(spec, 'draw count = ' + spec.primitiveCount);
 
-            spec.primitiveCount = 6;
+            spec.primitiveCount = 5;
             test.addIteration(spec, 'draw count = ' + spec.primitiveCount);
 
-            spec.primitiveCount = 26;
+            spec.primitiveCount = 25;
             test.addIteration(spec, 'draw count = ' + spec.primitiveCount);
         } else if (type == es3fDrawTests.TestIterationType.INSTANCE_COUNT) {
             spec.instanceCount = 1;
@@ -109,11 +108,11 @@ goog.scope(function() {
             test.addIteration(spec, 'instance count = ' + spec.instanceCount);
         } else if (type == es3fDrawTests.TestIterationType.INDEX_RANGE) {
             spec.indexMin = 0;
-            spec.indexMax = 24;
+            spec.indexMax = 23;
             test.addIteration(spec, 'index range = [' + spec.indexMin + ', ' + spec.indexMax + ']');
 
-            spec.indexMin = 24;
-            spec.indexMax = 41;
+            spec.indexMin = 23;
+            spec.indexMax = 40;
             test.addIteration(spec, 'index range = [' + spec.indexMin + ', ' + spec.indexMax + ']');
 
             // Only makes sense with points
@@ -206,7 +205,7 @@ goog.scope(function() {
 
         //spec.apiType = glu::ApiType::es(3,0);
         spec.primitive = this.m_primitive;
-        spec.primitiveCount = 6; //JS refrast value for quads
+        spec.primitiveCount = 5;
         spec.drawMethod = this.m_method;
         spec.indexType = this.m_indexType;
         spec.indexPointerOffset = 0;
@@ -238,7 +237,7 @@ goog.scope(function() {
 
         test = new glsDrawTests.DrawTest(null, 'multiple_attributes', 'Multiple attribute arrays.');
         spec.primitive = this.m_primitive;
-        spec.primitiveCount = 6; //JS refrast value for quads
+        spec.primitiveCount = 5;
         spec.drawMethod = this.m_method;
         spec.indexType = this.m_indexType;
         spec.indexPointerOffset = 0;
@@ -284,7 +283,7 @@ goog.scope(function() {
 
         //spec.apiType = glu::ApiType::es(3,0);
         spec.primitive = this.m_primitive;
-        spec.primitiveCount = 6; //JS refrast value for quads
+        spec.primitiveCount = 5;
         spec.drawMethod = this.m_method;
         spec.indexType = this.m_indexType;
         spec.indexPointerOffset = 0;
@@ -344,7 +343,7 @@ goog.scope(function() {
 
         //spec.apiType = glu::ApiType::es(3,0);
         spec.primitive = this.m_primitive;
-        spec.primitiveCount = 6; //JS refrast value for quads
+        spec.primitiveCount = 5;
         spec.drawMethod = this.m_method;
         spec.indexType = this.m_indexType;
         spec.indexPointerOffset = 0;
@@ -1004,6 +1003,7 @@ goog.scope(function() {
             if (!spec.valid())
                 continue;
 
+            var hasZeroDivisor = false;
             for (var attrNdx = 0; attrNdx < attributeCount;) {
                 /** @type {boolean} */ var valid;
                 /** @type {glsDrawTests.DrawTestSpec.AttributeSpec} */ var attribSpec = new glsDrawTests.DrawTestSpec.AttributeSpec();
@@ -1030,12 +1030,22 @@ goog.scope(function() {
                 if (valid) {
                     spec.attribs.push(attribSpec);
                     ++attrNdx;
+                    if (attribSpec.instanceDivisor == 0)
+                        hasZeroDivisor = true;
                 }
             }
 
             // Do not collapse all vertex positions to a single positions
-            if (spec.primitive != glsDrawTests.DrawTestSpec.Primitive.POINTS)
+            if (spec.primitive != glsDrawTests.DrawTestSpec.Primitive.POINTS) {
                 spec.attribs[0].instanceDivisor = 0;
+                hasZeroDivisor = true;
+            }
+
+            // There should be at least one enabled vertex attribute array that has a divisor of zero in WebGL.
+            // This limitation is added to keep compatible with D3D. It differs from the feature in gles.
+            // See the section <Enabled Attribute> in WebGL spec: https://www.khronos.org/registry/webgl/specs/latest/2.0/#5.6
+            if (hasZeroDivisor == false)
+                continue;
 
             // Is render result meaningful?
             // Only one vertex
@@ -1117,7 +1127,7 @@ goog.scope(function() {
      * Create and execute the test cases
      * @param {WebGL2RenderingContext} context
      */
-    es3fDrawTests.run = function(context) {
+    es3fDrawTests.run = function(context, range) {
         gl = context;
         //Set up Test Root parameters
         var state = tcuTestCase.runner;
@@ -1130,6 +1140,9 @@ goog.scope(function() {
         description(rootTest.getDescription());
 
         try {
+            if (range) {
+                state.setRange(range);
+            }
             //Run test cases
             tcuTestCase.runTestCases();
         }

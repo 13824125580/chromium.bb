@@ -6,6 +6,8 @@
 
 #include "core/css/CSSPrimitiveValueMappings.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -56,9 +58,9 @@ class UnderlyingVisibilityChecker : public InterpolationType::ConversionChecker 
 public:
     ~UnderlyingVisibilityChecker() final {}
 
-    static PassOwnPtr<UnderlyingVisibilityChecker> create(EVisibility visibility)
+    static std::unique_ptr<UnderlyingVisibilityChecker> create(EVisibility visibility)
     {
-        return adoptPtr(new UnderlyingVisibilityChecker(visibility));
+        return wrapUnique(new UnderlyingVisibilityChecker(visibility));
     }
 
 private:
@@ -78,9 +80,9 @@ private:
 
 class ParentVisibilityChecker : public InterpolationType::ConversionChecker {
 public:
-    static PassOwnPtr<ParentVisibilityChecker> create(EVisibility visibility)
+    static std::unique_ptr<ParentVisibilityChecker> create(EVisibility visibility)
     {
-        return adoptPtr(new ParentVisibilityChecker(visibility));
+        return wrapUnique(new ParentVisibilityChecker(visibility));
     }
 
 private:
@@ -109,7 +111,7 @@ InterpolationValue CSSVisibilityInterpolationType::maybeConvertNeutral(const Int
     return createVisibilityValue(underlyingVisibility);
 }
 
-InterpolationValue CSSVisibilityInterpolationType::maybeConvertInitial() const
+InterpolationValue CSSVisibilityInterpolationType::maybeConvertInitial(const StyleResolverState&, ConversionCheckers&) const
 {
     return createVisibilityValue(VISIBLE);
 }
@@ -146,7 +148,7 @@ InterpolationValue CSSVisibilityInterpolationType::maybeConvertUnderlyingValue(c
     return createVisibilityValue(environment.state().style()->visibility());
 }
 
-PairwiseInterpolationValue CSSVisibilityInterpolationType::mergeSingleConversions(InterpolationValue& start, InterpolationValue& end) const
+PairwiseInterpolationValue CSSVisibilityInterpolationType::maybeMergeSingles(InterpolationValue&& start, InterpolationValue&& end) const
 {
     return PairwiseInterpolationValue(
         InterpolableNumber::create(0),
@@ -156,7 +158,7 @@ PairwiseInterpolationValue CSSVisibilityInterpolationType::mergeSingleConversion
             toCSSVisibilityNonInterpolableValue(*end.nonInterpolableValue).visibility()));
 }
 
-void CSSVisibilityInterpolationType::composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value) const
+void CSSVisibilityInterpolationType::composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value, double interpolationFraction) const
 {
     underlyingValueOwner.set(*this, value);
 }

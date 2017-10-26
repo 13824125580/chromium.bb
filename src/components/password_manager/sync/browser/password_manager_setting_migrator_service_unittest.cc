@@ -116,10 +116,11 @@ void StartSyncingPref(syncable_prefs::PrefServiceSyncable* prefs,
     type = syncer::PRIORITY_PREFERENCES;
   ASSERT_NE(syncer::UNSPECIFIED, type) << "Wrong preference name: " << name;
   syncer::SyncableService* sync = prefs->GetSyncableService(type);
-  sync->MergeDataAndStartSyncing(
-      type, sync_data_list, scoped_ptr<syncer::SyncChangeProcessor>(
-                                new syncer::FakeSyncChangeProcessor),
-      scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock));
+  sync->MergeDataAndStartSyncing(type, sync_data_list,
+                                 std::unique_ptr<syncer::SyncChangeProcessor>(
+                                     new syncer::FakeSyncChangeProcessor),
+                                 std::unique_ptr<syncer::SyncErrorFactory>(
+                                     new syncer::SyncErrorFactoryMock));
 }
 
 class SyncServiceMock : public sync_driver::FakeSyncService {
@@ -188,7 +189,7 @@ class PasswordManagerSettingMigratorServiceTest : public testing::Test {
         new user_prefs::PrefRegistrySyncable);
     password_manager::PasswordManager::RegisterProfilePrefs(
         pref_registry.get());
-    scoped_ptr<syncable_prefs::PrefServiceSyncable> pref_service_syncable =
+    std::unique_ptr<syncable_prefs::PrefServiceSyncable> pref_service_syncable =
         factory.CreateSyncable(pref_registry.get());
     migration_service_.reset(
         new PasswordManagerSettingMigratorService(pref_service_syncable.get()));
@@ -217,11 +218,11 @@ class PasswordManagerSettingMigratorServiceTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
   TestPrefModelAssociatorClient client_;
   SyncServiceMock sync_service_;
-  scoped_ptr<syncable_prefs::PrefServiceSyncable> pref_service_;
-  scoped_ptr<PasswordManagerSettingMigratorService> migration_service_;
+  std::unique_ptr<syncable_prefs::PrefServiceSyncable> pref_service_;
+  std::unique_ptr<PasswordManagerSettingMigratorService> migration_service_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordManagerSettingMigratorServiceTest);
 };
@@ -274,7 +275,7 @@ TEST_F(PasswordManagerSettingMigratorServiceTest,
     PasswordManagerPreferencesInitialValues histogram_initial_value;
     PasswordManagerPreferencesInitialAndFinalValues histogram_initial_and_final;
   } kTestingTable[] = {
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_IOS)
     {ON, OFF, ON, EMPTY, false, N1L0, I10F00},
     {ON, OFF, OFF, EMPTY, false, N1L0, I10F00},
     {ON, OFF, EMPTY, EMPTY, false, N1L0, I10F00},
@@ -330,7 +331,7 @@ TEST_F(PasswordManagerSettingMigratorServiceTest,
     NotifyProfileAdded();
     StartSyncingPref(prefs(), prefs::kCredentialsEnableService,
                      test_case.new_pref_sync_value);
-#if !defined(OS_ANDROID)
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
     StartSyncingPref(prefs(), prefs::kPasswordManagerSavingEnabled,
                      test_case.old_pref_sync_value);
 #endif
@@ -356,7 +357,7 @@ TEST_F(PasswordManagerSettingMigratorServiceTest,
     bool result_old_pref_value;
     PasswordManagerPreferencesInitialValues histogram_initial_value;
   } kTestingTable[] = {
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_IOS)
     {ON, OFF, ON, EMPTY, true, false, N1L0},
     {ON, OFF, OFF, EMPTY, false, false, N1L0},
     {ON, OFF, EMPTY, EMPTY, true, false, N1L0},
@@ -410,7 +411,7 @@ TEST_F(PasswordManagerSettingMigratorServiceTest,
     NotifyProfileAdded();
     StartSyncingPref(prefs(), prefs::kCredentialsEnableService,
                      test_case.new_pref_sync_value);
-#if !defined(OS_ANDROID)
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
     StartSyncingPref(prefs(), prefs::kPasswordManagerSavingEnabled,
                      test_case.old_pref_sync_value);
 #endif

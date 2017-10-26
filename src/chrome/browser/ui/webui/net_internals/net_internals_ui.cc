@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <list>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -58,6 +59,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/resource_dispatcher_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -326,7 +328,7 @@ class NetInternalsMessageHandler::IOThreadImpl
   // Adds |entry| to the queue of pending log entries to be sent to the page via
   // Javascript.  Must be called on the IO Thread.  Also creates a delayed task
   // that will call PostPendingEntries, if there isn't one already.
-  void AddEntryToQueue(base::Value* entry);
+  void AddEntryToQueue(std::unique_ptr<base::Value> entry);
 
   // Sends all pending entries to the page via Javascript, and clears the list
   // of pending entries.  Sending multiple entries at once results in a
@@ -367,7 +369,7 @@ class NetInternalsMessageHandler::IOThreadImpl
   // Log entries that have yet to be passed along to Javascript page.  Non-NULL
   // when and only when there is a pending delayed task to call
   // PostPendingEntries.  Read and written to exclusively on the IO Thread.
-  scoped_ptr<base::ListValue> pending_entries_;
+  std::unique_ptr<base::ListValue> pending_entries_;
 
   // Used for getting current status of URLRequests when net-internals is
   // opened.  |main_context_getter_| is automatically added on construction.
@@ -401,7 +403,9 @@ void NetInternalsMessageHandler::RegisterMessages() {
 
   proxy_ = new IOThreadImpl(this->AsWeakPtr(), g_browser_process->io_thread(),
                             profile->GetRequestContext());
-  proxy_->AddRequestContextGetter(profile->GetMediaRequestContext());
+  proxy_->AddRequestContextGetter(
+      content::BrowserContext::GetDefaultStoragePartition(profile)->
+          GetMediaURLRequestContext());
 #if defined(ENABLE_EXTENSIONS)
   proxy_->AddRequestContextGetter(profile->GetRequestContextForExtensions());
 #endif
@@ -507,16 +511,15 @@ void NetInternalsMessageHandler::RegisterMessages() {
 void NetInternalsMessageHandler::SendJavascriptCommand(
     const std::string& command,
     base::Value* arg) {
-  scoped_ptr<base::Value> command_value(new base::StringValue(command));
-  scoped_ptr<base::Value> value(arg);
+  std::unique_ptr<base::Value> command_value(new base::StringValue(command));
+  std::unique_ptr<base::Value> value(arg);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (value.get()) {
-    web_ui()->CallJavascriptFunction("g_browser.receive",
-                                     *command_value.get(),
-                                     *value.get());
+    web_ui()->CallJavascriptFunctionUnsafe("g_browser.receive",
+                                           *command_value.get(), *value.get());
   } else {
-    web_ui()->CallJavascriptFunction("g_browser.receive",
-                                     *command_value.get());
+    web_ui()->CallJavascriptFunctionUnsafe("g_browser.receive",
+                                           *command_value.get());
   }
 }
 
@@ -580,15 +583,17 @@ void NetInternalsMessageHandler::OnGetExtensionInfo(
   if (extension_system) {
     ExtensionService* extension_service = extension_system->extension_service();
     if (extension_service) {
-      scoped_ptr<const extensions::ExtensionSet> extensions(
+      std::unique_ptr<const extensions::ExtensionSet> extensions(
           extensions::ExtensionRegistry::Get(profile)
               ->GenerateInstalledExtensionsSet());
       for (extensions::ExtensionSet::const_iterator it = extensions->begin();
            it != extensions->end(); ++it) {
-        base::DictionaryValue* extension_info = new base::DictionaryValue();
+        std::unique_ptr<base::DictionaryValue> extension_info(
+            new base::DictionaryValue());
         bool enabled = extension_service->IsExtensionEnabled((*it)->id());
-        extensions::GetExtensionBasicInfo(it->get(), enabled, extension_info);
-        extension_list->Append(extension_info);
+        extensions::GetExtensionBasicInfo(it->get(), enabled,
+                                          extension_info.get());
+        extension_list->Append(std::move(extension_info));
       }
     }
   }
@@ -867,14 +872,18 @@ void NetInternalsMessageHandler::IOThreadImpl::OnHSTSDelete(
 void NetInternalsMessageHandler::IOThreadImpl::OnGetSessionNetworkStats(
     const base::ListValue* list) {
   DCHECK(!list);
+  net::URLRequestContext* context =
+      main_context_getter_->GetURLRequestContext();
   net::HttpNetworkSession* http_network_session =
-      GetHttpNetworkSession(main_context_getter_->GetURLRequestContext());
+      GetHttpNetworkSession(context);
 
   base::Value* network_info = NULL;
   if (http_network_session) {
+    // TODO(mmenke):  This cast is ugly.  Can we get rid of it, or, better,
+    // remove DRP data from net-internals entirely?
     data_reduction_proxy::DataReductionProxyNetworkDelegate* net_delegate =
         static_cast<data_reduction_proxy::DataReductionProxyNetworkDelegate*>(
-            http_network_session->network_delegate());
+            context->network_delegate());
     if (net_delegate) {
       network_info = net_delegate->SessionNetworkStatsInfoToValue();
     }
@@ -1095,9 +1104,9 @@ void NetInternalsMessageHandler::IOThreadImpl::OnSetCaptureMode(
 // can be called from ANY THREAD.
 void NetInternalsMessageHandler::IOThreadImpl::OnAddEntry(
     const net::NetLog::Entry& entry) {
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&IOThreadImpl::AddEntryToQueue, this, entry.ToValue()));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&IOThreadImpl::AddEntryToQueue, this,
+                                     base::Passed(entry.ToValue())));
 }
 
 // Note that this can be called from ANY THREAD.
@@ -1124,7 +1133,7 @@ void NetInternalsMessageHandler::IOThreadImpl::SendJavascriptCommand(
 }
 
 void NetInternalsMessageHandler::IOThreadImpl::AddEntryToQueue(
-    base::Value* entry) {
+    std::unique_ptr<base::Value> entry) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!pending_entries_.get()) {
     pending_entries_.reset(new base::ListValue());
@@ -1133,7 +1142,7 @@ void NetInternalsMessageHandler::IOThreadImpl::AddEntryToQueue(
         base::Bind(&IOThreadImpl::PostPendingEntries, this),
         base::TimeDelta::FromMilliseconds(kNetLogEventDelayMilliseconds));
   }
-  pending_entries_->Append(entry);
+  pending_entries_->Append(std::move(entry));
 }
 
 void NetInternalsMessageHandler::IOThreadImpl::PostPendingEntries() {

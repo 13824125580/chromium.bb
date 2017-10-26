@@ -95,14 +95,9 @@ class SourceBufferStreamTest : public testing::Test {
 
   void SetAudioStream() {
     video_config_ = TestVideoConfig::Invalid();
-    audio_config_.Initialize(kCodecVorbis,
-                             kSampleFormatPlanarF32,
-                             CHANNEL_LAYOUT_STEREO,
-                             1000,
-                             EmptyExtraData(),
-                             false,
-                             base::TimeDelta(),
-                             0);
+    audio_config_.Initialize(kCodecVorbis, kSampleFormatPlanarF32,
+                             CHANNEL_LAYOUT_STEREO, 1000, EmptyExtraData(),
+                             Unencrypted(), base::TimeDelta(), 0);
     stream_.reset(new SourceBufferStream(audio_config_, media_log_, true));
 
     // Equivalent to 2ms per frame.
@@ -427,7 +422,7 @@ class SourceBufferStreamTest : public testing::Test {
 
   base::TimeDelta frame_duration() const { return frame_duration_; }
 
-  scoped_ptr<SourceBufferStream> stream_;
+  std::unique_ptr<SourceBufferStream> stream_;
   VideoDecoderConfig video_config_;
   AudioDecoderConfig audio_config_;
   scoped_refptr<StrictMock<MockMediaLog>> media_log_;
@@ -3007,39 +3002,6 @@ TEST_F(SourceBufferStreamTest, GarbageCollection_SaveAppendGOP_Selected3) {
   CheckNoNextBuffer();
 }
 
-// Currently disabled because of bug: crbug.com/140875.
-TEST_F(SourceBufferStreamTest, DISABLED_GarbageCollection_WaitingForKeyframe) {
-  // Set memory limit to 10 buffers.
-  SetMemoryLimit(10);
-
-  // Append 5 buffers at positions 10 through 14 and exhaust the buffers.
-  NewCodedFrameGroupAppend(10, 5, &kDataA);
-  Seek(10);
-  CheckExpectedBuffers(10, 14, &kDataA);
-  CheckExpectedRanges("{ [10,14) }");
-
-  // We are now stalled at position 15.
-  CheckNoNextBuffer();
-
-  // Do an end overlap that causes the latter half of the range to be deleted.
-  NewCodedFrameGroupAppend(5, 6, &kDataA);
-  CheckNoNextBuffer();
-  CheckExpectedRanges("{ [5,10) }");
-
-  // Append buffers from position 20 to 29. This should trigger GC.
-  NewCodedFrameGroupAppend(20, 10, &kDataA);
-
-  // GC should keep the keyframe before the seek position 15, and the next 9
-  // buffers closest to the seek position.
-  CheckNoNextBuffer();
-  CheckExpectedRanges("{ [10,10) [20,28) }");
-
-  // Fulfill the seek by appending one buffer at 15.
-  NewCodedFrameGroupAppend(15, 1, &kDataA);
-  CheckExpectedBuffers(15, 15, &kDataA);
-  CheckExpectedRanges("{ [15,15) [20,28) }");
-}
-
 // Test the performance of garbage collection.
 TEST_F(SourceBufferStreamTest, GarbageCollection_Performance) {
   // Force |keyframes_per_second_| to be equal to kDefaultFramesPerSecond.
@@ -3572,6 +3534,76 @@ TEST_F(SourceBufferStreamTest, OverlapSplitAndMergeWhileWaitingForMoreData) {
   CheckExpectedBuffers("180K 210");
 }
 
+// Verify that a single coded frame at the current read position unblocks the
+// read even if the frame is buffered after the previously read position is
+// removed.
+TEST_F(SourceBufferStreamTest, AfterRemove_SingleFrameRange_Unblocks_Read) {
+  Seek(0);
+  NewCodedFrameGroupAppend("0K 30 60 90D30");
+  CheckExpectedRangesByTimestamp("{ [0,120) }");
+  CheckExpectedBuffers("0K 30 60 90");
+  CheckNoNextBuffer();
+
+  RemoveInMs(0, 120, 120);
+  CheckExpectedRangesByTimestamp("{ }");
+  NewCodedFrameGroupAppend("120D30K");
+  CheckExpectedRangesByTimestamp("{ [120,150) }");
+  CheckExpectedBuffers("120K");
+  CheckNoNextBuffer();
+}
+
+// Verify that multiple short (relative to max-inter-buffer-distance * 2) coded
+// frames at the current read position unblock the read even if the frames are
+// buffered after the previously read position is removed.
+TEST_F(SourceBufferStreamTest, AfterRemove_TinyFrames_Unblock_Read_1) {
+  Seek(0);
+  NewCodedFrameGroupAppend("0K 30 60 90D30");
+  CheckExpectedRangesByTimestamp("{ [0,120) }");
+  CheckExpectedBuffers("0K 30 60 90");
+  CheckNoNextBuffer();
+
+  RemoveInMs(0, 120, 120);
+  CheckExpectedRangesByTimestamp("{ }");
+  NewCodedFrameGroupAppend("120D1K 121D1");
+  CheckExpectedRangesByTimestamp("{ [120,122) }");
+  CheckExpectedBuffers("120K 121");
+  CheckNoNextBuffer();
+}
+
+// Verify that multiple short (relative to max-inter-buffer-distance * 2) coded
+// frames starting at the fudge room boundary unblock the read even if the
+// frames are buffered after the previously read position is removed.
+TEST_F(SourceBufferStreamTest, AfterRemove_TinyFrames_Unblock_Read_2) {
+  Seek(0);
+  NewCodedFrameGroupAppend("0K 30 60 90D30");
+  CheckExpectedRangesByTimestamp("{ [0,120) }");
+  CheckExpectedBuffers("0K 30 60 90");
+  CheckNoNextBuffer();
+
+  RemoveInMs(0, 120, 120);
+  CheckExpectedRangesByTimestamp("{ }");
+  NewCodedFrameGroupAppend("150D1K 151D1");
+  CheckExpectedRangesByTimestamp("{ [150,152) }");
+  CheckExpectedBuffers("150K 151");
+  CheckNoNextBuffer();
+}
+
+// Verify that coded frames starting after the fudge room boundary do not
+// unblock the read when buffered after the previously read position is removed.
+TEST_F(SourceBufferStreamTest, AfterRemove_BeyondFudge_Stalled) {
+  Seek(0);
+  NewCodedFrameGroupAppend("0K 30 60 90D30");
+  CheckExpectedRangesByTimestamp("{ [0,120) }");
+  CheckExpectedBuffers("0K 30 60 90");
+  CheckNoNextBuffer();
+
+  RemoveInMs(0, 120, 120);
+  CheckExpectedRangesByTimestamp("{ }");
+  NewCodedFrameGroupAppend("151D1K 152D1");
+  CheckExpectedRangesByTimestamp("{ [151,153) }");
+  CheckNoNextBuffer();
+}
+
 // Verify that non-keyframes with the same timestamp in the same
 // append are handled correctly.
 TEST_F(SourceBufferStreamTest, SameTimestamp_Video_SingleAppend) {
@@ -3653,7 +3685,7 @@ TEST_F(SourceBufferStreamTest, SameTimestamp_Video_Overlap_3) {
 // Test all the valid same timestamp cases for audio.
 TEST_F(SourceBufferStreamTest, SameTimestamp_Audio) {
   AudioDecoderConfig config(kCodecMP3, kSampleFormatF32, CHANNEL_LAYOUT_STEREO,
-                            44100, EmptyExtraData(), false);
+                            44100, EmptyExtraData(), Unencrypted());
   stream_.reset(new SourceBufferStream(config, media_log_, true));
   Seek(0);
   NewCodedFrameGroupAppend("0K 0K 30K 30 60 60");
@@ -3664,7 +3696,7 @@ TEST_F(SourceBufferStreamTest, SameTimestamp_Audio_SingleAppend_Warning) {
   EXPECT_MEDIA_LOG(ContainsSameTimestampAt30MillisecondsLog());
 
   AudioDecoderConfig config(kCodecMP3, kSampleFormatF32, CHANNEL_LAYOUT_STEREO,
-                            44100, EmptyExtraData(), false);
+                            44100, EmptyExtraData(), Unencrypted());
   stream_.reset(new SourceBufferStream(config, media_log_, true));
   Seek(0);
 
@@ -4229,7 +4261,7 @@ TEST_F(SourceBufferStreamTest, Audio_SpliceFrame_ConfigChange) {
 
   AudioDecoderConfig new_config(kCodecVorbis, kSampleFormatPlanarF32,
                                 CHANNEL_LAYOUT_MONO, 1000, EmptyExtraData(),
-                                false);
+                                Unencrypted());
   ASSERT_NE(new_config.channel_layout(), audio_config_.channel_layout());
 
   Seek(0);
@@ -4270,8 +4302,8 @@ TEST_F(SourceBufferStreamTest, Audio_SpliceFrame_NoMillisecondSplices) {
 
   video_config_ = TestVideoConfig::Invalid();
   audio_config_.Initialize(kCodecVorbis, kSampleFormatPlanarF32,
-                           CHANNEL_LAYOUT_STEREO, 4000, EmptyExtraData(), false,
-                           base::TimeDelta(), 0);
+                           CHANNEL_LAYOUT_STEREO, 4000, EmptyExtraData(),
+                           Unencrypted(), base::TimeDelta(), 0);
   stream_.reset(new SourceBufferStream(audio_config_, media_log_, true));
   // Equivalent to 0.5ms per frame.
   SetStreamInfo(2000, 2000);
@@ -4761,6 +4793,31 @@ TEST_F(SourceBufferStreamTest,
   Seek(0);
   CheckExpectedBuffers("0K 10 20 30K 40 2000K 2010");
   CheckNoNextBuffer();
+}
+
+TEST_F(SourceBufferStreamTest, GetHighestPresentationTimestamp) {
+  // TODO(wolenetz): Add coverage for when DTS != PTS once
+  // https://crbug.com/398130 is fixed.
+
+  EXPECT_EQ(base::TimeDelta(), stream_->GetHighestPresentationTimestamp());
+
+  NewCodedFrameGroupAppend("0K 10K");
+  EXPECT_EQ(base::TimeDelta::FromMilliseconds(10),
+            stream_->GetHighestPresentationTimestamp());
+
+  RemoveInMs(0, 10, 20);
+  EXPECT_EQ(base::TimeDelta::FromMilliseconds(10),
+            stream_->GetHighestPresentationTimestamp());
+
+  RemoveInMs(10, 20, 20);
+  EXPECT_EQ(base::TimeDelta(), stream_->GetHighestPresentationTimestamp());
+
+  NewCodedFrameGroupAppend("0K 10K");
+  EXPECT_EQ(base::TimeDelta::FromMilliseconds(10),
+            stream_->GetHighestPresentationTimestamp());
+
+  RemoveInMs(10, 20, 20);
+  EXPECT_EQ(base::TimeDelta(), stream_->GetHighestPresentationTimestamp());
 }
 
 // TODO(vrk): Add unit tests where keyframes are unaligned between streams.

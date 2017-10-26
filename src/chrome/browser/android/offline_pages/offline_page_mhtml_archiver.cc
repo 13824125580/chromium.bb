@@ -4,15 +4,22 @@
 
 #include "chrome/browser/android/offline_pages/offline_page_mhtml_archiver.h"
 
-#include "base/base64.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/sha1.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/ssl/chrome_security_state_model_client.h"
+#include "components/security_state/security_state_model.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/mhtml_generation_params.h"
 #include "net/base/filename_util.h"
 
 namespace offline_pages {
@@ -25,6 +32,15 @@ const char kMHTMLFileNameExtension[] = ".mhtml";
 const char kFileNameComponentsSeparator[] = "-";
 const char kReplaceChars[] = " ";
 const char kReplaceWith[] = "_";
+
+void DeleteFileOnFileThread(const base::FilePath& file_path,
+                            const base::Closure& callback) {
+  content::BrowserThread::PostTaskAndReply(
+      content::BrowserThread::FILE, FROM_HERE,
+      base::Bind(base::IgnoreResult(&base::DeleteFile), file_path,
+                 false /* recursive */),
+      callback);
+}
 }  // namespace
 
 // static
@@ -35,13 +51,13 @@ std::string OfflinePageMHTMLArchiver::GetFileNameExtension() {
 // static
 base::FilePath OfflinePageMHTMLArchiver::GenerateFileName(
     const GURL& url,
-    const std::string& title) {
+    const std::string& title,
+    int64_t archive_id) {
   std::string title_part(title.substr(0, kTitleLengthMax));
-  std::string url_hash(base::SHA1HashString(url.spec()));
-  base::Base64Encode(url_hash, &url_hash);
-  std::string suggested_name(url.host() + kFileNameComponentsSeparator +
-                             title_part + kFileNameComponentsSeparator +
-                             url_hash);
+  std::string suggested_name(
+      url.host() + kFileNameComponentsSeparator +
+      title_part + kFileNameComponentsSeparator +
+      base::Int64ToString(archive_id));
 
   // Substitute spaces out from title.
   base::ReplaceChars(suggested_name, kReplaceChars, kReplaceWith,
@@ -73,16 +89,22 @@ OfflinePageMHTMLArchiver::~OfflinePageMHTMLArchiver() {
 
 void OfflinePageMHTMLArchiver::CreateArchive(
     const base::FilePath& archives_dir,
+    int64_t archive_id,
     const CreateArchiveCallback& callback) {
   DCHECK(callback_.is_null());
   DCHECK(!callback.is_null());
   callback_ = callback;
 
-  GenerateMHTML(archives_dir);
+  if (HasConnectionSecurityError()) {
+    ReportFailure(ArchiverResult::ERROR_SECURITY_CERTIFICATE);
+    return;
+  }
+
+  GenerateMHTML(archives_dir, archive_id);
 }
 
 void OfflinePageMHTMLArchiver::GenerateMHTML(
-    const base::FilePath& archives_dir) {
+    const base::FilePath& archives_dir, int64_t archive_id) {
   if (archives_dir.empty()) {
     DVLOG(1) << "Archive path was empty. Can't create archive.";
     ReportFailure(ArchiverResult::ERROR_ARCHIVE_CREATION_FAILED);
@@ -107,11 +129,15 @@ void OfflinePageMHTMLArchiver::GenerateMHTML(
   GURL url(web_contents_->GetLastCommittedURL());
   base::string16 title(web_contents_->GetTitle());
   base::FilePath file_path(
-      archives_dir.Append(GenerateFileName(url, base::UTF16ToUTF8(title))));
+      archives_dir.Append(
+          GenerateFileName(url, base::UTF16ToUTF8(title), archive_id)));
+
+  content::MHTMLGenerationParams params(file_path);
+  params.use_binary_encoding = true;
 
   web_contents_->GenerateMHTML(
-      file_path, base::Bind(&OfflinePageMHTMLArchiver::OnGenerateMHTMLDone,
-                            weak_ptr_factory_.GetWeakPtr(), url, file_path));
+      params, base::Bind(&OfflinePageMHTMLArchiver::OnGenerateMHTMLDone,
+                         weak_ptr_factory_.GetWeakPtr(), url, file_path));
 }
 
 void OfflinePageMHTMLArchiver::OnGenerateMHTMLDone(
@@ -119,16 +145,32 @@ void OfflinePageMHTMLArchiver::OnGenerateMHTMLDone(
     const base::FilePath& file_path,
     int64_t file_size) {
   if (file_size < 0) {
-    ReportFailure(ArchiverResult::ERROR_ARCHIVE_CREATION_FAILED);
+    DeleteFileOnFileThread(
+        file_path, base::Bind(&OfflinePageMHTMLArchiver::ReportFailure,
+                              weak_ptr_factory_.GetWeakPtr(),
+                              ArchiverResult::ERROR_ARCHIVE_CREATION_FAILED));
   } else {
-    callback_.Run(this, ArchiverResult::SUCCESSFULLY_CREATED, url, file_path,
-                  file_size);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::Bind(callback_, this, ArchiverResult::SUCCESSFULLY_CREATED, url,
+                   file_path, file_size));
   }
+}
+
+bool OfflinePageMHTMLArchiver::HasConnectionSecurityError() {
+  ChromeSecurityStateModelClient::CreateForWebContents(web_contents_);
+  ChromeSecurityStateModelClient* model_client =
+      ChromeSecurityStateModelClient::FromWebContents(web_contents_);
+  DCHECK(model_client);
+  return security_state::SecurityStateModel::SecurityLevel::SECURITY_ERROR ==
+         model_client->GetSecurityInfo().security_level;
 }
 
 void OfflinePageMHTMLArchiver::ReportFailure(ArchiverResult result) {
   DCHECK(result != ArchiverResult::SUCCESSFULLY_CREATED);
-  callback_.Run(this, result, GURL(), base::FilePath(), 0);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::Bind(callback_, this, result, GURL(), base::FilePath(), 0));
 }
 
 }  // namespace offline_pages

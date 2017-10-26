@@ -30,12 +30,14 @@
 
 #include "core/frame/VisualViewport.h"
 
+#include "core/dom/DOMNodeIds.h"
 #include "core/frame/FrameHost.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/PageScaleConstraints.h"
+#include "core/frame/PageScaleConstraintsSet.h"
 #include "core/frame/Settings.h"
 #include "core/inspector/InspectorInstrumentation.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/TextAutosizer.h"
 #include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/loader/FrameLoaderClient.h"
@@ -46,8 +48,8 @@
 #include "platform/TraceEvent.h"
 #include "platform/geometry/DoubleRect.h"
 #include "platform/geometry/FloatSize.h"
+#include "platform/graphics/CompositorMutableProperties.h"
 #include "platform/graphics/GraphicsLayer.h"
-#include "platform/graphics/GraphicsLayerFactory.h"
 #include "platform/scroll/Scrollbar.h"
 #include "platform/scroll/ScrollbarThemeOverlay.h"
 #include "public/platform/WebCompositorSupport.h"
@@ -55,6 +57,7 @@
 #include "public/platform/WebLayerTreeView.h"
 #include "public/platform/WebScrollbar.h"
 #include "public/platform/WebScrollbarLayer.h"
+#include <memory>
 
 using blink::WebLayer;
 using blink::WebLayerTreeView;
@@ -62,7 +65,6 @@ using blink::WebScrollbar;
 using blink::WebScrollbarLayer;
 using blink::FrameHost;
 using blink::GraphicsLayer;
-using blink::GraphicsLayerFactory;
 
 namespace blink {
 
@@ -87,6 +89,33 @@ DEFINE_TRACE(VisualViewport)
     ScrollableArea::trace(visitor);
 }
 
+void VisualViewport::updateStyleAndLayoutIgnorePendingStylesheets()
+{
+    if (!mainFrame())
+        return;
+
+    if (Document* document = mainFrame()->document())
+        document->updateStyleAndLayoutIgnorePendingStylesheets();
+}
+
+void VisualViewport::enqueueScrollEvent()
+{
+    if (!RuntimeEnabledFeatures::visualViewportAPIEnabled())
+        return;
+
+    if (Document* document = mainFrame()->document())
+        document->enqueueVisualViewportScrollEvent();
+}
+
+void VisualViewport::enqueueResizeEvent()
+{
+    if (!RuntimeEnabledFeatures::visualViewportAPIEnabled())
+        return;
+
+    if (Document* document = mainFrame()->document())
+        document->enqueueVisualViewportResizeEvent();
+}
+
 void VisualViewport::setSize(const IntSize& size)
 {
     if (m_size == size)
@@ -105,6 +134,8 @@ void VisualViewport::setSize(const IntSize& size)
 
     if (!mainFrame())
         return;
+
+    enqueueResizeEvent();
 
     bool autosizerNeedsUpdating = widthDidChange
         && mainFrame()->settings()
@@ -151,7 +182,7 @@ FloatRect VisualViewport::visibleRectInDocument() const
     if (!mainFrame() || !mainFrame()->view())
         return FloatRect();
 
-    FloatPoint viewLocation = FloatPoint(mainFrame()->view()->scrollableArea()->scrollPositionDouble());
+    FloatPoint viewLocation = FloatPoint(mainFrame()->view()->getScrollableArea()->scrollPositionDouble());
     return FloatRect(viewLocation, visibleSize());
 }
 
@@ -191,6 +222,55 @@ void VisualViewport::setScale(float scale)
     setScaleAndLocation(scale, m_offset);
 }
 
+double VisualViewport::scrollLeft()
+{
+    if (!mainFrame())
+        return 0;
+
+    updateStyleAndLayoutIgnorePendingStylesheets();
+
+    return adjustScrollForAbsoluteZoom(visibleRect().x(), mainFrame()->pageZoomFactor());
+}
+
+double VisualViewport::scrollTop()
+{
+    if (!mainFrame())
+        return 0;
+
+    updateStyleAndLayoutIgnorePendingStylesheets();
+
+    return adjustScrollForAbsoluteZoom(visibleRect().y(), mainFrame()->pageZoomFactor());
+}
+
+double VisualViewport::clientWidth()
+{
+    if (!mainFrame())
+        return 0;
+
+    updateStyleAndLayoutIgnorePendingStylesheets();
+
+    double width = adjustScrollForAbsoluteZoom(visibleSize().width(), mainFrame()->pageZoomFactor());
+    return width - mainFrame()->view()->verticalScrollbarWidth();
+}
+
+double VisualViewport::clientHeight()
+{
+    if (!mainFrame())
+        return 0;
+
+    updateStyleAndLayoutIgnorePendingStylesheets();
+
+    double height = adjustScrollForAbsoluteZoom(visibleSize().height(), mainFrame()->pageZoomFactor());
+    return height - mainFrame()->view()->horizontalScrollbarHeight();
+}
+
+double VisualViewport::pageScale()
+{
+    updateStyleAndLayoutIgnorePendingStylesheets();
+
+    return m_scale;
+}
+
 void VisualViewport::setScaleAndLocation(float scale, const FloatPoint& location)
 {
     if (!mainFrame())
@@ -202,6 +282,7 @@ void VisualViewport::setScaleAndLocation(float scale, const FloatPoint& location
         m_scale = scale;
         valuesChanged = true;
         frameHost().chromeClient().pageScaleFactorChanged();
+        enqueueResizeEvent();
     }
 
     FloatPoint clampedOffset(clampOffsetToBoundaries(location));
@@ -218,6 +299,8 @@ void VisualViewport::setScaleAndLocation(float scale, const FloatPoint& location
             if (Document* document = mainFrame()->document())
                 document->enqueueScrollEventForNode(document);
         }
+
+        enqueueScrollEvent();
 
         mainFrame()->loader().client()->didChangeScrollOffset();
         valuesChanged = true;
@@ -276,7 +359,7 @@ bool VisualViewport::magnifyScaleAroundAnchor(float magnifyDelta, const FloatPoi
 //     +- verticalScrollbarLayer [ owned by PaintLayerCompositor ]
 //     +- scroll corner (non-overlay only) [ owned by PaintLayerCompositor ]
 //
-void VisualViewport::attachToLayerTree(GraphicsLayer* currentLayerTreeRoot, GraphicsLayerFactory* graphicsLayerFactory)
+void VisualViewport::attachToLayerTree(GraphicsLayer* currentLayerTreeRoot)
 {
     TRACE_EVENT1("blink", "VisualViewport::attachToLayerTree", "currentLayerTreeRoot", (bool)currentLayerTreeRoot);
     if (!currentLayerTreeRoot) {
@@ -285,7 +368,7 @@ void VisualViewport::attachToLayerTree(GraphicsLayer* currentLayerTreeRoot, Grap
         return;
     }
 
-    if (currentLayerTreeRoot->parent() && currentLayerTreeRoot->parent() == m_innerViewportScrollLayer)
+    if (currentLayerTreeRoot->parent() && currentLayerTreeRoot->parent() == m_innerViewportScrollLayer.get())
         return;
 
     if (!m_innerViewportScrollLayer) {
@@ -296,13 +379,13 @@ void VisualViewport::attachToLayerTree(GraphicsLayer* currentLayerTreeRoot, Grap
             && !m_innerViewportContainerLayer);
 
         // FIXME: The root transform layer should only be created on demand.
-        m_rootTransformLayer = GraphicsLayer::create(graphicsLayerFactory, this);
-        m_innerViewportContainerLayer = GraphicsLayer::create(graphicsLayerFactory, this);
-        m_overscrollElasticityLayer = GraphicsLayer::create(graphicsLayerFactory, this);
-        m_pageScaleLayer = GraphicsLayer::create(graphicsLayerFactory, this);
-        m_innerViewportScrollLayer = GraphicsLayer::create(graphicsLayerFactory, this);
-        m_overlayScrollbarHorizontal = GraphicsLayer::create(graphicsLayerFactory, this);
-        m_overlayScrollbarVertical = GraphicsLayer::create(graphicsLayerFactory, this);
+        m_rootTransformLayer = GraphicsLayer::create(this);
+        m_innerViewportContainerLayer = GraphicsLayer::create(this);
+        m_overscrollElasticityLayer = GraphicsLayer::create(this);
+        m_pageScaleLayer = GraphicsLayer::create(this);
+        m_innerViewportScrollLayer = GraphicsLayer::create(this);
+        m_overlayScrollbarHorizontal = GraphicsLayer::create(this);
+        m_overlayScrollbarVertical = GraphicsLayer::create(this);
 
         ScrollingCoordinator* coordinator = frameHost().page().scrollingCoordinator();
         ASSERT(coordinator);
@@ -316,6 +399,10 @@ void VisualViewport::attachToLayerTree(GraphicsLayer* currentLayerTreeRoot, Grap
         m_innerViewportScrollLayer->platformLayer()->setScrollClipLayer(
             m_innerViewportContainerLayer->platformLayer());
         m_innerViewportScrollLayer->platformLayer()->setUserScrollable(true, true);
+        if (mainFrame()) {
+            if (Document* document = mainFrame()->document())
+                m_innerViewportScrollLayer->setElementId(createCompositorElementId(DOMNodeIds::idForNode(document), CompositorSubElementId::Scroll));
+        }
 
         m_rootTransformLayer->addChild(m_innerViewportContainerLayer.get());
         m_innerViewportContainerLayer->addChild(m_overscrollElasticityLayer.get());
@@ -357,7 +444,7 @@ void VisualViewport::setupScrollbar(WebScrollbar::Orientation orientation)
     bool isHorizontal = orientation == WebScrollbar::Horizontal;
     GraphicsLayer* scrollbarGraphicsLayer = isHorizontal ?
         m_overlayScrollbarHorizontal.get() : m_overlayScrollbarVertical.get();
-    OwnPtr<WebScrollbarLayer>& webScrollbarLayer = isHorizontal ?
+    std::unique_ptr<WebScrollbarLayer>& webScrollbarLayer = isHorizontal ?
         m_webOverlayScrollbarHorizontal : m_webOverlayScrollbarVertical;
 
     ScrollbarThemeOverlay& theme = ScrollbarThemeOverlay::mobileTheme();
@@ -397,9 +484,9 @@ void VisualViewport::registerLayersWithTreeView(WebLayerTreeView* layerTreeView)
     if (!mainFrame())
         return;
 
-    ASSERT(frameHost().page().deprecatedLocalMainFrame()->contentLayoutObject());
+    ASSERT(!frameHost().page().deprecatedLocalMainFrame()->contentLayoutItem().isNull());
 
-    PaintLayerCompositor* compositor = frameHost().page().deprecatedLocalMainFrame()->contentLayoutObject()->compositor();
+    PaintLayerCompositor* compositor = frameHost().page().deprecatedLocalMainFrame()->contentLayoutItem().compositor();
     // Get the outer viewport scroll layer.
     WebLayer* scrollLayer = compositor->scrollLayer() ? compositor->scrollLayer()->platformLayer() : 0;
 
@@ -416,7 +503,7 @@ void VisualViewport::registerLayersWithTreeView(WebLayerTreeView* layerTreeView)
 
 bool VisualViewport::visualViewportSuppliesScrollbars() const
 {
-    return frameHost().settings().viewportMetaEnabled();
+    return frameHost().settings().viewportEnabled();
 }
 
 bool VisualViewport::scrollAnimatorEnabled() const
@@ -431,7 +518,7 @@ void VisualViewport::clearLayersForTreeView(WebLayerTreeView* layerTreeView) con
     layerTreeView->clearViewportLayers();
 }
 
-HostWindow* VisualViewport::hostWindow() const
+HostWindow* VisualViewport::getHostWindow() const
 {
     return &frameHost().chromeClient();
 }
@@ -476,7 +563,7 @@ DoublePoint VisualViewport::maximumScrollPositionDouble() const
     if (!mainFrame())
         return IntPoint();
 
-    // FIXME: We probably shouldn't be storing the bounds in a float. crbug.com/422331.
+    // TODO(bokan): We probably shouldn't be storing the bounds in a float. crbug.com/470718.
     FloatSize frameViewSize(contentsSize());
 
     if (m_topControlsAdjustment) {
@@ -488,7 +575,7 @@ DoublePoint VisualViewport::maximumScrollPositionDouble() const
     frameViewSize = FloatSize(flooredIntSize(frameViewSize));
 
     FloatSize viewportSize(m_size);
-    viewportSize.expand(0, m_topControlsAdjustment);
+    viewportSize.expand(0, ceilf(m_topControlsAdjustment));
 
     FloatSize maxPosition = frameViewSize - viewportSize;
     maxPosition.scale(1 / m_scale);
@@ -544,11 +631,6 @@ IntSize VisualViewport::contentsSize() const
     return frame->view()->visibleContentRect(IncludeScrollbars).size();
 }
 
-void VisualViewport::setScrollOffset(const IntPoint& offset, ScrollType scrollType)
-{
-    setScrollOffset(DoublePoint(offset), scrollType);
-}
-
 void VisualViewport::setScrollOffset(const DoublePoint& offset, ScrollType)
 {
     setLocation(toFloatPoint(offset));
@@ -588,7 +670,7 @@ LocalFrame* VisualViewport::mainFrame() const
     return frameHost().page().mainFrame() && frameHost().page().mainFrame()->isLocalFrame() ? frameHost().page().deprecatedLocalMainFrame() : 0;
 }
 
-Widget* VisualViewport::widget()
+Widget* VisualViewport::getWidget()
 {
     return mainFrame()->view();
 }
@@ -726,6 +808,12 @@ bool VisualViewport::shouldDisableDesktopWorkarounds() const
         || (constraints.minimumScale == constraints.maximumScale && constraints.minimumScale != -1);
 }
 
+CompositorAnimationTimeline* VisualViewport::compositorAnimationTimeline() const
+{
+    ScrollingCoordinator* c = frameHost().page().scrollingCoordinator();
+    return c ? c->compositorAnimationTimeline() : nullptr;
+}
+
 String VisualViewport::debugName(const GraphicsLayer* graphicsLayer) const
 {
     String name;
@@ -741,7 +829,7 @@ String VisualViewport::debugName(const GraphicsLayer* graphicsLayer) const
         name =  "Overlay Scrollbar Horizontal Layer";
     } else if (graphicsLayer == m_overlayScrollbarVertical.get()) {
         name =  "Overlay Scrollbar Vertical Layer";
-    } else if (graphicsLayer == m_rootTransformLayer) {
+    } else if (graphicsLayer == m_rootTransformLayer.get()) {
         name =  "Root Transform Layer";
     } else {
         ASSERT_NOT_REACHED();

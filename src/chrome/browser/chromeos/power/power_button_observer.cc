@@ -4,9 +4,10 @@
 
 #include "chrome/browser/chromeos/power/power_button_observer.h"
 
+#include "ash/common/login_status.h"
+#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray_delegate.h"
-#include "ash/system/user/login_status.h"
 #include "ash/wm/power_button_controller.h"
 #include "base/logging.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -23,18 +24,18 @@ namespace chromeos {
 
 namespace {
 
-ash::user::LoginStatus GetCurrentLoginStatus() {
-  if (!ash::Shell::GetInstance()->system_tray_delegate())
-    return ash::user::LOGGED_IN_NONE;
-  return ash::Shell::GetInstance()->system_tray_delegate()->
-      GetUserLoginStatus();
+ash::LoginStatus GetCurrentLoginStatus() {
+  if (ash::WmShell::Get()->system_tray_delegate())
+    return ash::WmShell::Get()->system_tray_delegate()->GetUserLoginStatus();
+
+  return ash::LoginStatus::NOT_LOGGED_IN;
 }
 
 }  // namespace
 
 PowerButtonObserver::PowerButtonObserver() {
-  ash::Shell::GetInstance()->lock_state_controller()->
-      SetDelegate(scoped_ptr<ash::LockStateControllerDelegate>(
+  ash::Shell::GetInstance()->lock_state_controller()->SetDelegate(
+      std::unique_ptr<ash::LockStateControllerDelegate>(
           new SessionStateControllerDelegateChromeos));
 
   registrar_.Add(

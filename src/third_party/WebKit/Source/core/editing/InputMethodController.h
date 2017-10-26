@@ -41,8 +41,7 @@ class LocalFrame;
 class Range;
 class Text;
 
-class CORE_EXPORT InputMethodController final : public NoBaseWillBeGarbageCollectedFinalized<InputMethodController> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(InputMethodController);
+class CORE_EXPORT InputMethodController final : public GarbageCollected<InputMethodController> {
     WTF_MAKE_NONCOPYABLE(InputMethodController);
 public:
     enum ConfirmCompositionBehavior {
@@ -50,20 +49,19 @@ public:
         KeepSelection,
     };
 
-    static PassOwnPtrWillBeRawPtr<InputMethodController> create(LocalFrame&);
-    ~InputMethodController();
+    static InputMethodController* create(LocalFrame&);
     DECLARE_TRACE();
 
     // international text input composition
     bool hasComposition() const;
-    void setComposition(const String&, const Vector<CompositionUnderline>&, unsigned selectionStart, unsigned selectionEnd);
+    void setComposition(const String&, const Vector<CompositionUnderline>&, int selectionStart, int selectionEnd);
     void setCompositionFromExistingText(const Vector<CompositionUnderline>&, unsigned compositionStart, unsigned compositionEnd);
     // Inserts the text that is being composed as a regular text and returns true
     // if composition exists.
     bool confirmComposition();
     // Inserts the given text string in the place of the existing composition
     // and returns true.
-    bool confirmComposition(const String& text);
+    bool confirmComposition(const String& text, ConfirmCompositionBehavior confirmBehavior = KeepSelection);
     // Inserts the text that is being composed or specified non-empty text and
     // returns true.
     bool confirmCompositionOrInsertText(const String& text, ConfirmCompositionBehavior);
@@ -71,7 +69,7 @@ public:
     void cancelComposition();
     void cancelCompositionIfSelectionIsInvalid();
     EphemeralRange compositionEphemeralRange() const;
-    PassRefPtrWillBeRawPtr<Range> compositionRange() const;
+    Range* compositionRange() const;
 
     void clear();
     void documentDetached();
@@ -89,13 +87,13 @@ private:
         explicit SelectionOffsetsScope(InputMethodController*);
         ~SelectionOffsetsScope();
     private:
-        RawPtrWillBeMember<InputMethodController> m_inputMethodController;
+        Member<InputMethodController> m_inputMethodController;
         const PlainTextRange m_offsets;
     };
     friend class SelectionOffsetsScope;
 
-    RawPtrWillBeMember<LocalFrame> m_frame;
-    RefPtrWillBeMember<Range> m_compositionRange;
+    Member<LocalFrame> m_frame;
+    Member<Range> m_compositionRange;
     bool m_isDirty;
     bool m_hasComposition;
 
@@ -104,12 +102,11 @@ private:
     Editor& editor() const;
     LocalFrame& frame() const
     {
-        ASSERT(m_frame);
+        DCHECK(m_frame);
         return *m_frame;
     }
 
     String composingText() const;
-    bool insertTextForConfirmedComposition(const String& text);
     void selectComposition() const;
     bool setSelectionOffsets(const PlainTextRange&);
 };

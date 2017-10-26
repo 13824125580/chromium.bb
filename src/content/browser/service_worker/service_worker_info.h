@@ -16,6 +16,8 @@
 
 namespace content {
 
+enum class EmbeddedWorkerStatus;
+
 struct CONTENT_EXPORT ServiceWorkerVersionInfo {
  public:
   struct CONTENT_EXPORT ClientInfo {
@@ -29,7 +31,7 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
   };
 
   ServiceWorkerVersionInfo();
-  ServiceWorkerVersionInfo(ServiceWorkerVersion::RunningStatus running_status,
+  ServiceWorkerVersionInfo(EmbeddedWorkerStatus running_status,
                            ServiceWorkerVersion::Status status,
                            const GURL& script_url,
                            int64_t registration_id,
@@ -40,7 +42,7 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
   ServiceWorkerVersionInfo(const ServiceWorkerVersionInfo& other);
   ~ServiceWorkerVersionInfo();
 
-  ServiceWorkerVersion::RunningStatus running_status;
+  EmbeddedWorkerStatus running_status;
   ServiceWorkerVersion::Status status;
   GURL script_url;
   int64_t registration_id;
@@ -56,7 +58,6 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
 struct CONTENT_EXPORT ServiceWorkerRegistrationInfo {
  public:
   enum DeleteFlag { IS_NOT_DELETED, IS_DELETED };
-  enum ForceUpdateOnPageLoad { IS_NOT_FORCED, IS_FORCED };
   ServiceWorkerRegistrationInfo();
   ServiceWorkerRegistrationInfo(const GURL& pattern,
                                 int64_t registration_id,
@@ -65,7 +66,6 @@ struct CONTENT_EXPORT ServiceWorkerRegistrationInfo {
       const GURL& pattern,
       int64_t registration_id,
       DeleteFlag delete_flag,
-      ForceUpdateOnPageLoad force_update_on_page_load,
       const ServiceWorkerVersionInfo& active_version,
       const ServiceWorkerVersionInfo& waiting_version,
       const ServiceWorkerVersionInfo& installing_version,
@@ -76,7 +76,6 @@ struct CONTENT_EXPORT ServiceWorkerRegistrationInfo {
   GURL pattern;
   int64_t registration_id;
   DeleteFlag delete_flag;
-  ForceUpdateOnPageLoad force_update_on_page_load;
   ServiceWorkerVersionInfo active_version;
   ServiceWorkerVersionInfo waiting_version;
   ServiceWorkerVersionInfo installing_version;

@@ -15,45 +15,12 @@
 
 namespace IPC {
 
-void ParamTraits<GURL>::Write(base::Pickle* m, const GURL& p) {
-  if (p.possibly_invalid_spec().length() > content::kMaxURLChars) {
-    m->WriteString(std::string());
-    return;
-  }
-
-  // Beware of print-parse inconsistency which would change an invalid
-  // URL into a valid one. Ideally, the message would contain this flag
-  // so that the read side could make the check, but performing it here
-  // avoids changing the on-the-wire representation of such a fundamental
-  // type as GURL. See https://crbug.com/166486 for additional work in
-  // this area.
-  if (!p.is_valid()) {
-    m->WriteString(std::string());
-    return;
-  }
-
-  m->WriteString(p.possibly_invalid_spec());
-  // TODO(brettw) bug 684583: Add encoding for query params.
-}
-
-bool ParamTraits<GURL>::Read(const base::Pickle* m,
-                             base::PickleIterator* iter,
-                             GURL* p) {
-  std::string s;
-  if (!iter->ReadString(&s) || s.length() > content::kMaxURLChars) {
-    *p = GURL();
-    return false;
-  }
-  *p = GURL(s);
-  if (!s.empty() && !p->is_valid()) {
-    *p = GURL();
-    return false;
-  }
-  return true;
-}
-
-void ParamTraits<GURL>::Log(const GURL& p, std::string* l) {
-  l->append(p.spec());
+void ParamTraits<url::Origin>::GetSize(base::PickleSizer* s,
+                                       const param_type& p) {
+  GetParamSize(s, p.unique());
+  GetParamSize(s, p.scheme());
+  GetParamSize(s, p.host());
+  GetParamSize(s, p.port());
 }
 
 void ParamTraits<url::Origin>::Write(base::Pickle* m, const url::Origin& p) {
@@ -93,6 +60,12 @@ void ParamTraits<url::Origin>::Log(const url::Origin& p, std::string* l) {
   l->append(p.Serialize());
 }
 
+void ParamTraits<net::HostPortPair>::GetSize(base::PickleSizer* s,
+                                             const param_type& p) {
+  GetParamSize(s, p.host());
+  GetParamSize(s, p.port());
+}
+
 void ParamTraits<net::HostPortPair>::Write(base::Pickle* m,
                                            const param_type& p) {
   WriteParam(m, p.host());
@@ -116,6 +89,12 @@ void ParamTraits<net::HostPortPair>::Log(const param_type& p, std::string* l) {
   l->append(p.ToString());
 }
 
+void ParamTraits<net::IPEndPoint>::GetSize(base::PickleSizer* s,
+                                           const param_type& p) {
+  GetParamSize(s, p.address());
+  GetParamSize(s, p.port());
+}
+
 void ParamTraits<net::IPEndPoint>::Write(base::Pickle* m, const param_type& p) {
   WriteParam(m, p.address());
   WriteParam(m, p.port());
@@ -124,21 +103,24 @@ void ParamTraits<net::IPEndPoint>::Write(base::Pickle* m, const param_type& p) {
 bool ParamTraits<net::IPEndPoint>::Read(const base::Pickle* m,
                                         base::PickleIterator* iter,
                                         param_type* p) {
-  net::IPAddressNumber address;
+  net::IPAddress address;
   uint16_t port;
   if (!ReadParam(m, iter, &address) || !ReadParam(m, iter, &port))
     return false;
-  if (address.size() &&
-      address.size() != net::kIPv4AddressSize &&
-      address.size() != net::kIPv6AddressSize) {
+  if (!address.empty() && !address.IsValid())
     return false;
-  }
+
   *p = net::IPEndPoint(address, port);
   return true;
 }
 
 void ParamTraits<net::IPEndPoint>::Log(const param_type& p, std::string* l) {
   LogParam("IPEndPoint:" + p.ToString(), l);
+}
+
+void ParamTraits<net::IPAddress>::GetSize(base::PickleSizer* s,
+                                          const param_type& p) {
+  GetParamSize(s, p.bytes());
 }
 
 void ParamTraits<net::IPAddress>::Write(base::Pickle* m, const param_type& p) {
@@ -164,6 +146,11 @@ void ParamTraits<net::IPAddress>::Log(const param_type& p, std::string* l) {
     LogParam("IPAddress:" + (p.empty() ? "(empty)" : p.ToString()), l);
 }
 
+void ParamTraits<content::PageState>::GetSize(base::PickleSizer* s,
+                                              const param_type& p) {
+  GetParamSize(s, p.ToEncodedData());
+}
+
 void ParamTraits<content::PageState>::Write(base::Pickle* m,
                                             const param_type& p) {
   WriteParam(m, p.ToEncodedData());
@@ -187,6 +174,13 @@ void ParamTraits<content::PageState>::Log(
 }
 
 }  // namespace IPC
+
+// Generate param traits size methods.
+#include "ipc/param_traits_size_macros.h"
+namespace IPC {
+#undef CONTENT_PUBLIC_COMMON_COMMON_PARAM_TRAITS_MACROS_H_
+#include "content/public/common/common_param_traits_macros.h"
+}
 
 // Generate param traits write methods.
 #include "ipc/param_traits_write_macros.h"

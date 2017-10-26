@@ -6,14 +6,16 @@
 
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_host.h"
-#include "cc/animation/animation_registrar.h"
-#include "cc/animation/layer_animation_controller.h"
+#include "cc/animation/element_animations.h"
 #include "cc/animation/timing_function.h"
 #include "cc/base/switches.h"
+#include "cc/blimp/image_serialization_processor.h"
 #include "cc/input/input_handler.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_impl.h"
@@ -21,6 +23,7 @@
 #include "cc/test/animation_test_common.h"
 #include "cc/test/begin_frame_args_test.h"
 #include "cc/test/fake_external_begin_frame_source.h"
+#include "cc/test/fake_image_serialization_processor.h"
 #include "cc/test/fake_layer_tree_host_client.h"
 #include "cc/test/fake_output_surface.h"
 #include "cc/test/remote_channel_impl_for_test.h"
@@ -46,66 +49,56 @@ void CreateVirtualViewportLayers(Layer* root_layer,
                                  scoped_refptr<Layer> outer_scroll_layer,
                                  const gfx::Size& inner_bounds,
                                  const gfx::Size& outer_bounds,
-                                 LayerTreeHost* host,
-                                 const LayerSettings& layer_settings) {
-    scoped_refptr<Layer> inner_viewport_container_layer =
-        Layer::Create(layer_settings);
-    scoped_refptr<Layer> inner_viewport_scroll_layer =
-        Layer::Create(layer_settings);
-    scoped_refptr<Layer> outer_viewport_container_layer =
-        Layer::Create(layer_settings);
-    scoped_refptr<Layer> page_scale_layer = Layer::Create(layer_settings);
+                                 LayerTreeHost* host) {
+  scoped_refptr<Layer> inner_viewport_container_layer = Layer::Create();
+  scoped_refptr<Layer> inner_viewport_scroll_layer = Layer::Create();
+  scoped_refptr<Layer> outer_viewport_container_layer = Layer::Create();
+  scoped_refptr<Layer> page_scale_layer = Layer::Create();
 
-    root_layer->AddChild(inner_viewport_container_layer);
-    inner_viewport_container_layer->AddChild(page_scale_layer);
-    page_scale_layer->AddChild(inner_viewport_scroll_layer);
-    inner_viewport_scroll_layer->AddChild(outer_viewport_container_layer);
-    outer_viewport_container_layer->AddChild(outer_scroll_layer);
+  root_layer->AddChild(inner_viewport_container_layer);
+  inner_viewport_container_layer->AddChild(page_scale_layer);
+  page_scale_layer->AddChild(inner_viewport_scroll_layer);
+  inner_viewport_scroll_layer->AddChild(outer_viewport_container_layer);
+  outer_viewport_container_layer->AddChild(outer_scroll_layer);
 
-    inner_viewport_scroll_layer->SetScrollClipLayerId(
-        inner_viewport_container_layer->id());
-    outer_scroll_layer->SetScrollClipLayerId(
-        outer_viewport_container_layer->id());
+  inner_viewport_scroll_layer->SetScrollClipLayerId(
+      inner_viewport_container_layer->id());
+  outer_scroll_layer->SetScrollClipLayerId(
+      outer_viewport_container_layer->id());
 
-    inner_viewport_container_layer->SetBounds(inner_bounds);
-    inner_viewport_scroll_layer->SetBounds(outer_bounds);
-    outer_viewport_container_layer->SetBounds(outer_bounds);
+  inner_viewport_container_layer->SetBounds(inner_bounds);
+  inner_viewport_scroll_layer->SetBounds(outer_bounds);
+  outer_viewport_container_layer->SetBounds(outer_bounds);
 
-    inner_viewport_scroll_layer->SetIsContainerForFixedPositionLayers(true);
-    outer_scroll_layer->SetIsContainerForFixedPositionLayers(true);
-    host->RegisterViewportLayers(NULL, page_scale_layer,
-                                 inner_viewport_scroll_layer,
-                                 outer_scroll_layer);
+  inner_viewport_scroll_layer->SetIsContainerForFixedPositionLayers(true);
+  outer_scroll_layer->SetIsContainerForFixedPositionLayers(true);
+  host->RegisterViewportLayers(NULL, page_scale_layer,
+                               inner_viewport_scroll_layer, outer_scroll_layer);
 }
 
 void CreateVirtualViewportLayers(Layer* root_layer,
                                  const gfx::Size& inner_bounds,
                                  const gfx::Size& outer_bounds,
                                  const gfx::Size& scroll_bounds,
-                                 LayerTreeHost* host,
-                                 const LayerSettings& layer_settings) {
-    scoped_refptr<Layer> outer_viewport_scroll_layer =
-        Layer::Create(layer_settings);
+                                 LayerTreeHost* host) {
+  scoped_refptr<Layer> outer_viewport_scroll_layer = Layer::Create();
 
-    outer_viewport_scroll_layer->SetBounds(scroll_bounds);
-    outer_viewport_scroll_layer->SetIsDrawable(true);
-    CreateVirtualViewportLayers(root_layer,
-                                outer_viewport_scroll_layer,
-                                inner_bounds,
-                                outer_bounds,
-                                host,
-                                layer_settings);
+  outer_viewport_scroll_layer->SetBounds(scroll_bounds);
+  outer_viewport_scroll_layer->SetIsDrawable(true);
+  CreateVirtualViewportLayers(root_layer, outer_viewport_scroll_layer,
+                              inner_bounds, outer_bounds, host);
 }
 
 // Creates a SingleThreadProxy that notifies the supplied |test_hooks| of
 // various actions.
 class SingleThreadProxyForTest : public SingleThreadProxy {
  public:
-  static scoped_ptr<Proxy> Create(TestHooks* test_hooks,
-                                  LayerTreeHost* host,
-                                  LayerTreeHostSingleThreadClient* client,
-                                  TaskRunnerProvider* task_runner_provider) {
-    return make_scoped_ptr(new SingleThreadProxyForTest(
+  static std::unique_ptr<Proxy> Create(
+      TestHooks* test_hooks,
+      LayerTreeHost* host,
+      LayerTreeHostSingleThreadClient* client,
+      TaskRunnerProvider* task_runner_provider) {
+    return base::WrapUnique(new SingleThreadProxyForTest(
         test_hooks, host, client, task_runner_provider));
   }
 
@@ -163,7 +156,7 @@ class SingleThreadProxyForTest : public SingleThreadProxy {
 // Adapts LayerTreeHostImpl for test. Runs real code, then invokes test hooks.
 class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
  public:
-  static scoped_ptr<LayerTreeHostImplForTesting> Create(
+  static std::unique_ptr<LayerTreeHostImplForTesting> Create(
       TestHooks* test_hooks,
       const LayerTreeSettings& settings,
       LayerTreeHostImplClient* host_impl_client,
@@ -172,7 +165,7 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
       TaskGraphRunner* task_graph_runner,
       RenderingStatsInstrumentation* stats_instrumentation) {
-    return make_scoped_ptr(new LayerTreeHostImplForTesting(
+    return base::WrapUnique(new LayerTreeHostImplForTesting(
         test_hooks, settings, host_impl_client, task_runner_provider,
         shared_bitmap_manager, gpu_memory_buffer_manager, task_graph_runner,
         stats_instrumentation));
@@ -195,16 +188,17 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
                           shared_bitmap_manager,
                           gpu_memory_buffer_manager,
                           task_graph_runner,
+                          AnimationHost::CreateForTesting(ThreadInstance::IMPL),
                           0),
         test_hooks_(test_hooks),
         block_notify_ready_to_activate_for_testing_(false),
         notify_ready_to_activate_was_blocked_(false) {}
 
-  void CreateResourceAndTileTaskWorkerPool(
-      scoped_ptr<TileTaskWorkerPool>* tile_task_worker_pool,
-      scoped_ptr<ResourcePool>* resource_pool) override {
-    test_hooks_->CreateResourceAndTileTaskWorkerPool(
-        this, tile_task_worker_pool, resource_pool);
+  void CreateResourceAndRasterBufferProvider(
+      std::unique_ptr<RasterBufferProvider>* raster_buffer_provider,
+      std::unique_ptr<ResourcePool>* resource_pool) override {
+    test_hooks_->CreateResourceAndRasterBufferProvider(
+        this, raster_buffer_provider, resource_pool);
   }
 
   void WillBeginImplFrame(const BeginFrameArgs& args) override {
@@ -320,11 +314,8 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
   void UpdateAnimationState(bool start_ready_animations) override {
     LayerTreeHostImpl::UpdateAnimationState(start_ready_animations);
     bool has_unfinished_animation = false;
-    AnimationRegistrar* registrar =
-        animation_registrar() ? animation_registrar()
-                              : animation_host()->animation_registrar();
     for (const auto& it :
-         registrar->active_animation_controllers_for_testing()) {
+         animation_host()->active_element_animations_for_testing()) {
       if (it.second->HasActiveAnimation()) {
         has_unfinished_animation = true;
         break;
@@ -348,9 +339,9 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
 class LayerTreeHostClientForTesting : public LayerTreeHostClient,
                                       public LayerTreeHostSingleThreadClient {
  public:
-  static scoped_ptr<LayerTreeHostClientForTesting> Create(
+  static std::unique_ptr<LayerTreeHostClientForTesting> Create(
       TestHooks* test_hooks) {
-    return make_scoped_ptr(new LayerTreeHostClientForTesting(test_hooks));
+    return base::WrapUnique(new LayerTreeHostClientForTesting(test_hooks));
   }
   ~LayerTreeHostClientForTesting() override {}
 
@@ -384,10 +375,6 @@ class LayerTreeHostClientForTesting : public LayerTreeHostClient,
     test_hooks_->DidInitializeOutputSurface();
   }
 
-  void SendBeginFramesToChildren(const BeginFrameArgs& args) override {
-    test_hooks_->SendBeginFramesToChildren(args);
-  }
-
   void DidFailToInitializeOutputSurface() override {
     test_hooks_->DidFailToInitializeOutputSurface();
     RequestNewOutputSurface();
@@ -407,14 +394,9 @@ class LayerTreeHostClientForTesting : public LayerTreeHostClient,
 
   void DidPostSwapBuffers() override {}
   void DidAbortSwapBuffers() override {}
-  void ScheduleComposite() override { test_hooks_->ScheduleComposite(); }
+  void RequestScheduleComposite() override { test_hooks_->ScheduleComposite(); }
   void DidCompletePageScaleAnimation() override {}
   void BeginMainFrameNotExpectedSoon() override {}
-
-  void RecordFrameTimingEvents(
-      scoped_ptr<FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<FrameTimingTracker::MainFrameTimingSet> main_frame_events)
-      override {}
 
  private:
   explicit LayerTreeHostClientForTesting(TestHooks* test_hooks)
@@ -426,7 +408,7 @@ class LayerTreeHostClientForTesting : public LayerTreeHostClient,
 // Adapts LayerTreeHost for test. Injects LayerTreeHostImplForTesting.
 class LayerTreeHostForTesting : public LayerTreeHost {
  public:
-  static scoped_ptr<LayerTreeHostForTesting> Create(
+  static std::unique_ptr<LayerTreeHostForTesting> Create(
       TestHooks* test_hooks,
       CompositorMode mode,
       LayerTreeHostClientForTesting* client,
@@ -437,18 +419,23 @@ class LayerTreeHostForTesting : public LayerTreeHost {
       const LayerTreeSettings& settings,
       scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner,
-      scoped_ptr<BeginFrameSource> external_begin_frame_source) {
+      std::unique_ptr<BeginFrameSource> external_begin_frame_source,
+      ImageSerializationProcessor* image_serialization_processor) {
     LayerTreeHost::InitParams params;
     params.client = client;
     params.shared_bitmap_manager = shared_bitmap_manager;
     params.gpu_memory_buffer_manager = gpu_memory_buffer_manager;
     params.task_graph_runner = task_graph_runner;
     params.settings = &settings;
-    scoped_ptr<LayerTreeHostForTesting> layer_tree_host(
+    params.image_serialization_processor = image_serialization_processor;
+
+    params.animation_host =
+        AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+    std::unique_ptr<LayerTreeHostForTesting> layer_tree_host(
         new LayerTreeHostForTesting(test_hooks, &params, mode));
-    scoped_ptr<TaskRunnerProvider> task_runner_provider =
+    std::unique_ptr<TaskRunnerProvider> task_runner_provider =
         TaskRunnerProvider::Create(main_task_runner, impl_task_runner);
-    scoped_ptr<Proxy> proxy;
+    std::unique_ptr<Proxy> proxy;
     switch (mode) {
       case CompositorMode::SINGLE_THREADED:
         proxy = SingleThreadProxyForTest::Create(test_hooks,
@@ -484,7 +471,7 @@ class LayerTreeHostForTesting : public LayerTreeHost {
     return layer_tree_host;
   }
 
-  scoped_ptr<LayerTreeHostImpl> CreateLayerTreeHostImpl(
+  std::unique_ptr<LayerTreeHostImpl> CreateLayerTreeHostImpl(
       LayerTreeHostImplClient* host_impl_client) override {
     return LayerTreeHostImplForTesting::Create(
         test_hooks_, settings(), host_impl_client, task_runner_provider(),
@@ -522,6 +509,8 @@ LayerTreeTest::LayerTreeTest()
     : output_surface_(nullptr),
       external_begin_frame_source_(nullptr),
       remote_proto_channel_bridge_(this),
+      image_serialization_processor_(
+          base::WrapUnique(new FakeImageSerializationProcessor)),
       beginning_(false),
       end_when_begin_returns_(false),
       timed_out_(false),
@@ -538,6 +527,8 @@ LayerTreeTest::LayerTreeTest()
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(switches::kCCLayerTreeTestNoTimeout))
     timeout_seconds_ = 5;
+  if (command_line->HasSwitch(switches::kCCLayerTreeTestLongTimeout))
+    timeout_seconds_ = 5 * 60;
 }
 
 LayerTreeTest::~LayerTreeTest() {}
@@ -551,6 +542,14 @@ Proxy* LayerTreeTest::remote_client_proxy() const {
 
 bool LayerTreeTest::IsRemoteTest() const {
   return mode_ == CompositorMode::REMOTE;
+}
+
+gfx::Vector2dF LayerTreeTest::ScrollDelta(LayerImpl* layer_impl) {
+  gfx::ScrollOffset delta =
+      layer_impl->layer_tree_impl()
+          ->property_trees()
+          ->scroll_tree.GetScrollOffsetDeltaForTesting(layer_impl->id());
+  return gfx::Vector2dF(delta.x(), delta.y());
 }
 
 void LayerTreeTest::EndTest() {
@@ -574,34 +573,6 @@ void LayerTreeTest::EndTestAfterDelayMs(int delay_milliseconds) {
       FROM_HERE,
       base::Bind(&LayerTreeTest::EndTest, main_thread_weak_ptr_),
       base::TimeDelta::FromMilliseconds(delay_milliseconds));
-}
-
-void LayerTreeTest::PostAddAnimationToMainThread(
-    Layer* layer_to_receive_animation) {
-  main_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&LayerTreeTest::DispatchAddAnimation, main_thread_weak_ptr_,
-                 base::Unretained(layer_to_receive_animation), 0.000004));
-}
-
-void LayerTreeTest::PostAddInstantAnimationToMainThread(
-    Layer* layer_to_receive_animation) {
-  main_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&LayerTreeTest::DispatchAddAnimation,
-                 main_thread_weak_ptr_,
-                 base::Unretained(layer_to_receive_animation),
-                 0.0));
-}
-
-void LayerTreeTest::PostAddLongAnimationToMainThread(
-    Layer* layer_to_receive_animation) {
-  main_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&LayerTreeTest::DispatchAddAnimation,
-                 main_thread_weak_ptr_,
-                 base::Unretained(layer_to_receive_animation),
-                 1.0));
 }
 
 void LayerTreeTest::PostAddAnimationToMainThreadPlayer(
@@ -695,7 +666,7 @@ void LayerTreeTest::PostNextCommitWaitsForActivationToMainThread() {
 }
 
 void LayerTreeTest::SetOutputSurfaceOnLayerTreeHost(
-    scoped_ptr<OutputSurface> output_surface) {
+    std::unique_ptr<OutputSurface> output_surface) {
   if (IsRemoteTest()) {
     DCHECK(remote_client_layer_tree_host_);
     remote_client_layer_tree_host_->SetOutputSurface(std::move(output_surface));
@@ -704,7 +675,8 @@ void LayerTreeTest::SetOutputSurfaceOnLayerTreeHost(
   }
 }
 
-scoped_ptr<OutputSurface> LayerTreeTest::ReleaseOutputSurfaceOnLayerTreeHost() {
+std::unique_ptr<OutputSurface>
+LayerTreeTest::ReleaseOutputSurfaceOnLayerTreeHost() {
   if (IsRemoteTest()) {
     DCHECK(remote_client_layer_tree_host_);
     return remote_client_layer_tree_host_->ReleaseOutputSurface();
@@ -728,11 +700,11 @@ void LayerTreeTest::WillBeginTest() {
 void LayerTreeTest::DoBeginTest() {
   client_ = LayerTreeHostClientForTesting::Create(this);
 
-  scoped_ptr<FakeExternalBeginFrameSource> external_begin_frame_source;
+  std::unique_ptr<FakeExternalBeginFrameSource> external_begin_frame_source;
   if (settings_.use_external_begin_frame_source) {
     DCHECK(!IsRemoteTest());
     external_begin_frame_source.reset(new FakeExternalBeginFrameSource(
-        settings_.renderer_settings.refresh_rate));
+        settings_.renderer_settings.refresh_rate, true));
     external_begin_frame_source_ = external_begin_frame_source.get();
   }
 
@@ -744,7 +716,8 @@ void LayerTreeTest::DoBeginTest() {
         this, mode_, client_.get(), &remote_proto_channel_bridge_.channel_main,
         nullptr, nullptr, task_graph_runner_.get(), settings_,
         base::ThreadTaskRunnerHandle::Get(), nullptr,
-        std::move(external_begin_frame_source));
+        std::move(external_begin_frame_source),
+        image_serialization_processor_.get());
     DCHECK(remote_proto_channel_bridge_.channel_main.HasReceiver());
   } else {
     layer_tree_host_ = LayerTreeHostForTesting::Create(
@@ -752,7 +725,8 @@ void LayerTreeTest::DoBeginTest() {
         gpu_memory_buffer_manager_.get(), task_graph_runner_.get(), settings_,
         base::ThreadTaskRunnerHandle::Get(),
         impl_thread_ ? impl_thread_->task_runner() : NULL,
-        std::move(external_begin_frame_source));
+        std::move(external_begin_frame_source),
+        image_serialization_processor_.get());
   }
 
   ASSERT_TRUE(layer_tree_host_);
@@ -776,7 +750,7 @@ void LayerTreeTest::DoBeginTest() {
 
 void LayerTreeTest::SetupTree() {
   if (!layer_tree_host_->root_layer()) {
-    scoped_refptr<Layer> root_layer = Layer::Create(layer_settings_);
+    scoped_refptr<Layer> root_layer = Layer::Create();
     root_layer->SetBounds(gfx::Size(1, 1));
     layer_tree_host_->SetRootLayer(root_layer);
   }
@@ -814,16 +788,6 @@ void LayerTreeTest::RealEndTest() {
   }
 
   base::MessageLoop::current()->QuitWhenIdle();
-}
-
-void LayerTreeTest::DispatchAddAnimation(Layer* layer_to_receive_animation,
-                                         double animation_duration) {
-  DCHECK(!task_runner_provider() || task_runner_provider()->IsMainThread());
-
-  if (layer_to_receive_animation) {
-    AddOpacityTransitionToLayer(
-        layer_to_receive_animation, animation_duration, 0, 0.5, true);
-  }
 }
 
 void LayerTreeTest::DispatchAddAnimationToPlayer(
@@ -916,8 +880,8 @@ void LayerTreeTest::RunTest(CompositorMode mode, bool delegating_renderer) {
   // mocked out.
   settings_.renderer_settings.refresh_rate = 200.0;
   settings_.background_animation_rate = 200.0;
+  settings_.verify_clip_tree_calculations = true;
   InitializeSettings(&settings_);
-  InitializeLayerSettings(&layer_settings_);
 
   main_task_runner_->PostTask(
       FROM_HERE,
@@ -931,7 +895,7 @@ void LayerTreeTest::RunTest(CompositorMode mode, bool delegating_renderer) {
         base::TimeDelta::FromSeconds(timeout_seconds_));
   }
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   DestroyLayerTreeHost();
 
   timeout_.Cancel();
@@ -949,20 +913,20 @@ void LayerTreeTest::RequestNewOutputSurface() {
   SetOutputSurfaceOnLayerTreeHost(CreateOutputSurface());
 }
 
-scoped_ptr<OutputSurface> LayerTreeTest::CreateOutputSurface() {
-  scoped_ptr<FakeOutputSurface> output_surface = CreateFakeOutputSurface();
+std::unique_ptr<OutputSurface> LayerTreeTest::CreateOutputSurface() {
+  std::unique_ptr<FakeOutputSurface> output_surface = CreateFakeOutputSurface();
   DCHECK_EQ(delegating_renderer_,
             output_surface->capabilities().delegated_rendering);
   output_surface_ = output_surface.get();
 
-  if (settings_.use_external_begin_frame_source) {
+  if (settings_.use_external_begin_frame_source &&
+      settings_.wait_for_beginframe_interval) {
     DCHECK(external_begin_frame_source_);
-    DCHECK(external_begin_frame_source_->is_ready());
   }
   return std::move(output_surface);
 }
 
-scoped_ptr<FakeOutputSurface> LayerTreeTest::CreateFakeOutputSurface() {
+std::unique_ptr<FakeOutputSurface> LayerTreeTest::CreateFakeOutputSurface() {
   if (delegating_renderer_)
     return FakeOutputSurface::CreateDelegating3d();
   else
@@ -972,16 +936,6 @@ scoped_ptr<FakeOutputSurface> LayerTreeTest::CreateFakeOutputSurface() {
 TestWebGraphicsContext3D* LayerTreeTest::TestContext() {
   return static_cast<TestContextProvider*>(output_surface_->context_provider())
       ->TestContext3d();
-}
-
-int LayerTreeTest::LastCommittedSourceFrameNumber(LayerTreeHostImpl* impl)
-    const {
-  if (impl->pending_tree())
-    return impl->pending_tree()->source_frame_number();
-  if (impl->active_tree())
-    return impl->active_tree()->source_frame_number();
-  // Source frames start at 0, so this is invalid.
-  return -1;
 }
 
 void LayerTreeTest::DestroyLayerTreeHost() {
@@ -1015,11 +969,12 @@ void LayerTreeTest::CreateRemoteClientHost(
   proto::InitializeImpl initialize_proto = proto.initialize_impl_message();
   LayerTreeSettings settings;
   settings.FromProtobuf(initialize_proto.layer_tree_settings());
+  settings.abort_commit_before_output_surface_creation = false;
   remote_client_layer_tree_host_ = LayerTreeHostForTesting::Create(
       this, mode_, client_.get(), &remote_proto_channel_bridge_.channel_impl,
       nullptr, nullptr, task_graph_runner_.get(), settings,
-      base::ThreadTaskRunnerHandle::Get(), impl_thread_->task_runner(),
-      nullptr);
+      base::ThreadTaskRunnerHandle::Get(), impl_thread_->task_runner(), nullptr,
+      image_serialization_processor_.get());
 
   DCHECK(remote_proto_channel_bridge_.channel_impl.HasReceiver());
   DCHECK(task_runner_provider()->HasImplThread());
@@ -1051,6 +1006,13 @@ LayerTreeHost* LayerTreeTest::layer_tree_host() {
   DCHECK(!task_runner_provider() || task_runner_provider()->IsMainThread() ||
          task_runner_provider()->IsMainThreadBlocked());
   return layer_tree_host_.get();
+}
+
+LayerTreeHost* LayerTreeTest::remote_client_layer_tree_host() {
+  DCHECK(!task_runner_provider() || task_runner_provider()->IsMainThread() ||
+         task_runner_provider()->IsMainThreadBlocked());
+  DCHECK(IsRemoteTest());
+  return remote_client_layer_tree_host_.get();
 }
 
 ProxyMainForTest* LayerTreeTest::GetProxyMainForTest() const {

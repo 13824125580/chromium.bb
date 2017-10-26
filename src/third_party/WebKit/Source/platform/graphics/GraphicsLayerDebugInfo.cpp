@@ -32,9 +32,10 @@ GraphicsLayerDebugInfo::GraphicsLayerDebugInfo()
 
 GraphicsLayerDebugInfo::~GraphicsLayerDebugInfo() { }
 
-scoped_refptr<base::trace_event::TracedValue> GraphicsLayerDebugInfo::asTracedValue() const
+std::unique_ptr<base::trace_event::TracedValue> GraphicsLayerDebugInfo::asTracedValue() const
 {
-    scoped_refptr<base::trace_event::TracedValue> tracedValue = new base::trace_event::TracedValue;
+    std::unique_ptr<base::trace_event::TracedValue> tracedValue(
+        new base::trace_event::TracedValue());
     appendAnnotatedInvalidateRects(tracedValue.get());
     appendCompositingReasons(tracedValue.get());
     appendSquashingDisallowedReasons(tracedValue.get());
@@ -75,7 +76,7 @@ void GraphicsLayerDebugInfo::appendSquashingDisallowedReasons(base::trace_event:
 {
     tracedValue->BeginArray("squashing_disallowed_reasons");
     for (size_t i = 0; i < kNumberOfSquashingDisallowedReasons; ++i) {
-        if (!(m_compositingReasons & kSquashingDisallowedReasonStringMap[i].reason))
+        if (!(m_squashingDisallowedReasons & kSquashingDisallowedReasonStringMap[i].reason))
             continue;
         tracedValue->AppendString(kSquashingDisallowedReasonStringMap[i].description);
     }

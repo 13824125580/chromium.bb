@@ -8,13 +8,12 @@
 #ifndef NET_TOOLS_QUIC_QUIC_CLIENT_H_
 #define NET_TOOLS_QUIC_QUIC_CLIENT_H_
 
-#include <stddef.h>
-
+#include <cstdint>
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
@@ -25,6 +24,7 @@
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_client_base.h"
 #include "net/tools/quic/quic_client_session.h"
+#include "net/tools/quic/quic_packet_reader.h"
 #include "net/tools/quic/quic_process_packet_interface.h"
 
 namespace net {
@@ -32,7 +32,6 @@ namespace net {
 class QuicServerId;
 
 class QuicEpollConnectionHelper;
-class QuicPacketReader;
 
 namespace test {
 class QuicClientPeer;
@@ -100,6 +99,7 @@ class QuicClient : public QuicClientBase,
   // From QuicClientBase
   bool Initialize() override;
   bool WaitForEvents() override;
+  QuicSpdyClientStream* CreateReliableClientStream() override;
 
   // "Connect" to the QUIC server, including performing synchronous crypto
   // handshake.
@@ -123,7 +123,7 @@ class QuicClient : public QuicClientBase,
                                      base::StringPiece body,
                                      bool fin);
 
-  // Sends a request simple GET for each URL in |args|, and then waits for
+  // Sends a request simple GET for each URL in |url_list|, and then waits for
   // each to complete.
   void SendRequestsAndWaitForResponse(const std::vector<std::string>& url_list);
 
@@ -183,24 +183,14 @@ class QuicClient : public QuicClientBase,
   const std::string& latest_response_body() const;
   const std::string& latest_response_trailers() const;
 
+ protected:
   // Implements ProcessPacketInterface. This will be called for each received
   // packet.
   void ProcessPacket(const IPEndPoint& self_address,
                      const IPEndPoint& peer_address,
-                     const QuicEncryptedPacket& packet) override;
+                     const QuicReceivedPacket& packet) override;
 
-  QuicClientPushPromiseIndex* push_promise_index() {
-    return &push_promise_index_;
-  }
-
- protected:
   virtual QuicPacketWriter* CreateQuicPacketWriter();
-  virtual QuicPacketReader* CreateQuicPacketReader();
-
-  virtual int ReadPacket(char* buffer,
-                         int buffer_len,
-                         IPEndPoint* server_address,
-                         IPAddress* client_ip);
 
   // If |fd| is an open UDP socket, unregister and close it. Otherwise, do
   // nothing.
@@ -243,18 +233,10 @@ class QuicClient : public QuicClientBase,
 
   // Used during initialization: creates the UDP socket FD, sets socket options,
   // and binds the socket to our address.
-  bool CreateUDPSocket();
+  bool CreateUDPSocketAndBind();
 
   // Actually clean up |fd|.
   void CleanUpUDPSocketImpl(int fd);
-
-  // Read a UDP packet and hand it to the framer.
-  bool ReadAndProcessPacket();
-
-  // Read available UDP packets up to kNumPacketsPerReadCall
-  // and hand them to the connection.
-  // TODO(rtenneti): Add support for ReadAndProcessPackets().
-  // bool ReadAndProcessPackets();
 
   // If the request URL matches a push promise, bypass sending the
   // request.
@@ -279,11 +261,8 @@ class QuicClient : public QuicClientBase,
   // map, the order of socket creation can be recorded.
   linked_hash_map<int, IPEndPoint> fd_address_map_;
 
-  // For requests to claim matching push promised streams.
-  QuicClientPushPromiseIndex push_promise_index_;
-
   // Listens for full responses.
-  scoped_ptr<ResponseListener> response_listener_;
+  std::unique_ptr<ResponseListener> response_listener_;
 
   // Tracks if the client is initialized to connect.
   bool initialized_;
@@ -319,7 +298,7 @@ class QuicClient : public QuicClientBase,
   //
   // TODO(rtenneti): Chromium code doesn't use |packet_reader_|. Add support for
   // QuicPacketReader
-  QuicPacketReader* packet_reader_;
+  std::unique_ptr<QuicPacketReader> packet_reader_;
 
   std::unique_ptr<ClientQuicDataToResend> push_promise_data_to_resend_;
 

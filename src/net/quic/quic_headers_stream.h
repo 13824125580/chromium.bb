@@ -7,9 +7,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_export.h"
+#include "net/quic/quic_header_list.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/reliable_quic_stream.h"
 #include "net/spdy/spdy_framer.h"
@@ -18,12 +20,31 @@ namespace net {
 
 class QuicSpdySession;
 
+namespace test {
+class QuicHeadersStreamPeer;
+}  // namespace test
+
 // Headers in QUIC are sent as HTTP/2 HEADERS or PUSH_PROMISE frames
 // over a reserved reliable stream with the id 3.  Each endpoint
 // (client and server) will allocate an instance of QuicHeadersStream
 // to send and receive headers.
 class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
  public:
+  class NET_EXPORT_PRIVATE HpackDebugVisitor {
+   public:
+    HpackDebugVisitor();
+
+    virtual ~HpackDebugVisitor();
+
+    // For each HPACK indexed representation processed, |elapsed| is
+    // the time since the corresponding entry was added to the dynamic
+    // table.
+    virtual void OnUseEntry(QuicTime::Delta elapsed) = 0;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(HpackDebugVisitor);
+  };
+
   explicit QuicHeadersStream(QuicSpdySession* session);
   ~QuicHeadersStream() override;
 
@@ -31,7 +52,7 @@ class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
   // If |fin| is true, the fin flag will be set on the HEADERS frame.  Returns
   // the size, in bytes, of the resulting HEADERS frame.
   virtual size_t WriteHeaders(QuicStreamId stream_id,
-                              const SpdyHeaderBlock& headers,
+                              SpdyHeaderBlock headers,
                               bool fin,
                               SpdyPriority priority,
                               QuicAckListenerInterface* ack_listener);
@@ -41,7 +62,7 @@ class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
   // Return the size, in bytes, of the resulting PUSH_PROMISE frame.
   virtual size_t WritePushPromise(QuicStreamId original_stream_id,
                                   QuicStreamId promised_stream_id,
-                                  const SpdyHeaderBlock& headers,
+                                  SpdyHeaderBlock headers,
                                   QuicAckListenerInterface* ack_listener);
 
   // ReliableQuicStream implementation
@@ -49,7 +70,28 @@ class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
 
   bool supports_push_promise() { return supports_push_promise_; }
 
+  // Experimental: force HPACK to use static table and huffman coding
+  // only.  Part of exploring improvements related to headers stream
+  // induced HOL blocking in QUIC.
+  void DisableHpackDynamicTable();
+
+  // Optional, enables instrumentation related to go/quic-hpack.
+  void SetHpackEncoderDebugVisitor(std::unique_ptr<HpackDebugVisitor> visitor);
+  void SetHpackDecoderDebugVisitor(std::unique_ptr<HpackDebugVisitor> visitor);
+
+  // Sets the maximum size of the header compression table spdy_framer_ is
+  // willing to use to decode header blocks.
+  void UpdateHeaderEncoderTableSize(uint32_t value);
+
+  // Sets how much encoded data the hpack decoder of spdy_framer_ is willing to
+  // buffer.
+  void set_max_decode_buffer_size_bytes(size_t max_decode_buffer_size_bytes) {
+    spdy_framer_.set_max_decode_buffer_size_bytes(max_decode_buffer_size_bytes);
+  }
+
  private:
+  friend class test::QuicHeadersStreamPeer;
+
   class SpdyFramerVisitor;
 
   // The following methods are called by the SimpleVisitor.
@@ -75,6 +117,9 @@ class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
                                 const char* header_data,
                                 size_t len);
 
+  // Called when the complete list of headers is available.
+  void OnHeaderList(const QuicHeaderList& header_list);
+
   // Called when the size of the compressed frame payload is available.
   void OnCompressedFrameSize(size_t frame_len);
 
@@ -88,6 +133,7 @@ class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
   QuicStreamId promised_stream_id_;
   bool fin_;
   size_t frame_len_;
+  size_t uncompressed_frame_len_;
 
   // Helper variables that cache the corresponding feature flag.
   bool measure_headers_hol_blocking_time_;
@@ -103,7 +149,10 @@ class NET_EXPORT_PRIVATE QuicHeadersStream : public ReliableQuicStream {
   QuicTime prev_max_timestamp_;
 
   SpdyFramer spdy_framer_;
-  scoped_ptr<SpdyFramerVisitor> spdy_framer_visitor_;
+  std::unique_ptr<SpdyFramerVisitor> spdy_framer_visitor_;
+
+  // Either empty, or contains the complete list of headers.
+  QuicHeaderList header_list_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicHeadersStream);
 };

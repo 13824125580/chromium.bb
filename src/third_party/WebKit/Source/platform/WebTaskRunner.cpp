@@ -4,23 +4,62 @@
 
 #include "public/platform/WebTaskRunner.h"
 
-#include "platform/Task.h"
-
 namespace blink {
 
-void WebTaskRunner::postTask(const WebTraceLocation& location, PassOwnPtr<ClosureTask> task)
+class SameThreadTask : public WebTaskRunner::Task {
+    USING_FAST_MALLOC(SameThreadTask);
+    WTF_MAKE_NONCOPYABLE(SameThreadTask);
+public:
+    explicit SameThreadTask(std::unique_ptr<WTF::Closure> closure)
+        : m_closure(std::move(closure))
+    {
+    }
+
+    void run() override
+    {
+        (*m_closure)();
+    }
+
+private:
+    std::unique_ptr<WTF::Closure> m_closure;
+};
+
+class CrossThreadTask : public WebTaskRunner::Task {
+    USING_FAST_MALLOC(CrossThreadTask);
+    WTF_MAKE_NONCOPYABLE(CrossThreadTask);
+public:
+    explicit CrossThreadTask(std::unique_ptr<CrossThreadClosure> closure)
+        : m_closure(std::move(closure))
+    {
+    }
+
+    void run() override
+    {
+        (*m_closure)();
+    }
+
+private:
+    std::unique_ptr<CrossThreadClosure> m_closure;
+};
+
+void WebTaskRunner::postTask(const WebTraceLocation& location, std::unique_ptr<CrossThreadClosure> task)
 {
-    postTask(std::move(location), new blink::Task(std::move(task)));
+    postTask(location, new CrossThreadTask(std::move(task)));
 }
 
-void WebTaskRunner::postDelayedTask(const WebTraceLocation& location, PassOwnPtr <ClosureTask> task, long long delayMs)
+void WebTaskRunner::postDelayedTask(const WebTraceLocation& location, std::unique_ptr<CrossThreadClosure> task, long long delayMs)
 {
-    postDelayedTask(location, new blink::Task(std::move(task)), delayMs);
+    postDelayedTask(location, new CrossThreadTask(std::move(task)), delayMs);
 }
 
-void WebTaskRunner::postDelayedTask(const WebTraceLocation& location, PassOwnPtr <ClosureTask> task, double delayMs)
+void WebTaskRunner::postTask(const WebTraceLocation& location, std::unique_ptr<WTF::Closure> task)
 {
-    postDelayedTask(location, new blink::Task(std::move(task)), delayMs);
+    postTask(location, new SameThreadTask(std::move(task)));
+}
+
+void WebTaskRunner::postDelayedTask(const WebTraceLocation& location, std::unique_ptr<WTF::Closure> task, long long delayMs)
+{
+    postDelayedTask(location, new SameThreadTask(std::move(task)), delayMs);
 }
 
 } // namespace blink

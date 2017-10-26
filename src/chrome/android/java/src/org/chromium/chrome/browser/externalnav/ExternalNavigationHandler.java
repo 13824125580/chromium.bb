@@ -40,15 +40,21 @@ public class ExternalNavigationHandler {
     private static final String TAG = "UrlHandler";
     private static final String SCHEME_WTAI = "wtai://wp/";
     private static final String SCHEME_WTAI_MC = "wtai://wp/mc;";
-    private static final String SCHEME_SMS = "sms:";
+    private static final String SCHEME_SMS = "sms";
 
     @VisibleForTesting
-    public static final String EXTRA_BROWSER_FALLBACK_URL = "browser_fallback_url";
+    static final String EXTRA_BROWSER_FALLBACK_URL = "browser_fallback_url";
+
+    // An extra that may be specified on an intent:// URL that contains an encoded value for the
+    // referrer field passed to the market:// URL in the case where the app is not present.
+    @VisibleForTesting
+    static final String EXTRA_MARKET_REFERRER = "market_referrer";
 
     private final ExternalNavigationDelegate mDelegate;
 
     /**
      * Result types for checking if we should override URL loading.
+     * NOTE: this enum is used in UMA, do not reorder values. Changes should be append only.
      */
     public enum OverrideUrlLoadingResult {
         /* We should override the URL loading and launch an intent. */
@@ -120,15 +126,15 @@ public class ExternalNavigationHandler {
         return result;
     }
 
-    private boolean intentsHaveSameResolvers(Intent intent, Intent previousIntent) {
-        HashSet<ComponentName> previousHandlers = new HashSet<>();
-        for (ResolveInfo r : mDelegate.queryIntentActivities(previousIntent)) {
-            previousHandlers.add(new ComponentName(r.activityInfo.packageName,
-                    r.activityInfo.name));
+    private boolean resolversSubsetOf(List<ResolveInfo> infos, List<ResolveInfo> container) {
+        HashSet<ComponentName> containerSet = new HashSet<>();
+        for (ResolveInfo info : container) {
+            containerSet.add(
+                    new ComponentName(info.activityInfo.packageName, info.activityInfo.name));
         }
-        for (ResolveInfo r : mDelegate.queryIntentActivities(intent)) {
-            if (!previousHandlers.contains(new ComponentName(
-                    r.activityInfo.packageName, r.activityInfo.name))) {
+        for (ResolveInfo info : infos) {
+            if (!containerSet.contains(new ComponentName(
+                    info.activityInfo.packageName, info.activityInfo.name))) {
                 return false;
             }
         }
@@ -145,6 +151,11 @@ public class ExternalNavigationHandler {
         }
         // http://crbug.com/464669 : Disallow firing external intent from background tab.
         if (params.isBackgroundTabNavigation()) {
+            return OverrideUrlLoadingResult.NO_OVERRIDE;
+        }
+
+        // http://crbug.com/605302 : Allow Chrome to handle all pdf file downloads.
+        if (mDelegate.isPdfDownload(params.getUrl())) {
             return OverrideUrlLoadingResult.NO_OVERRIDE;
         }
 
@@ -294,10 +305,19 @@ public class ExternalNavigationHandler {
             }
             String packagename = intent.getPackage();
             if (packagename != null) {
+                String marketReferrer =
+                        IntentUtils.safeGetStringExtra(intent, EXTRA_MARKET_REFERRER);
+                if (TextUtils.isEmpty(marketReferrer)) {
+                    marketReferrer = mDelegate.getPackageName();
+                }
                 try {
-                    intent = new Intent(Intent.ACTION_VIEW, Uri.parse(
-                            "market://details?id=" + packagename
-                            + "&referrer=" + mDelegate.getPackageName()));
+                    Uri marketUri = new Uri.Builder()
+                            .scheme("market")
+                            .authority("details")
+                            .appendQueryParameter("id", packagename)
+                            .appendQueryParameter("referrer", Uri.decode(marketReferrer))
+                            .build();
+                    intent = new Intent(Intent.ACTION_VIEW, marketUri);
                     intent.addCategory(Intent.CATEGORY_BROWSABLE);
                     intent.setPackage("com.android.vending");
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -317,8 +337,11 @@ public class ExternalNavigationHandler {
             intent.removeExtra(EXTRA_BROWSER_FALLBACK_URL);
         }
 
-        if (intent.getPackage() == null && params.getUrl().startsWith(SCHEME_SMS)) {
-            intent.setPackage(getDefaultSmsPackageName(resolvingInfos));
+        if (intent.getPackage() == null) {
+            final Uri uri = intent.getData();
+            if (uri != null && SCHEME_SMS.equals(uri.getScheme())) {
+                intent.setPackage(getDefaultSmsPackageName(resolvingInfos));
+            }
         }
 
         // Set the Browser application ID to us in case the user chooses Chrome
@@ -327,6 +350,8 @@ public class ExternalNavigationHandler {
         intent.putExtra(Browser.EXTRA_APPLICATION_ID, mDelegate.getPackageName());
         if (params.isOpenInNewTab()) intent.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        mDelegate.maybeSetWindowId(intent);
+        mDelegate.maybeRecordAppHandlersInIntent(intent, resolvingInfos);
 
         if (params.getReferrerUrl() != null) {
             IntentHandler.setPendingReferrer(intent, params.getReferrerUrl());
@@ -337,6 +362,11 @@ public class ExternalNavigationHandler {
         // startActivityIfNeeded or startActivity.
         if (!isExternalProtocol) {
             if (!mDelegate.isSpecializedHandlerAvailable(resolvingInfos)) {
+                if (params.webApkPackageName() != null) {
+                    intent.setPackage(mDelegate.getPackageName());
+                    mDelegate.startActivity(intent);
+                    return OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT;
+                }
                 return OverrideUrlLoadingResult.NO_OVERRIDE;
             } else if (params.getReferrerUrl() != null && (isLink || isFormSubmit)) {
                 // Current URL has at least one specialized handler available. For navigations
@@ -362,10 +392,10 @@ public class ExternalNavigationHandler {
                         previousIntent = null;
                     }
 
-                    if (previousIntent != null)  {
-                        if (intentsHaveSameResolvers(intent, previousIntent)) {
-                            return OverrideUrlLoadingResult.NO_OVERRIDE;
-                        }
+                    if (previousIntent != null
+                            && resolversSubsetOf(resolvingInfos,
+                                       mDelegate.queryIntentActivities(previousIntent))) {
+                        return OverrideUrlLoadingResult.NO_OVERRIDE;
                     }
                 }
             }
@@ -380,6 +410,7 @@ public class ExternalNavigationHandler {
                         params.shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent());
                 return OverrideUrlLoadingResult.OVERRIDE_WITH_ASYNC_ACTION;
             } else {
+
                 // Some third-party app launched Chrome with an intent, and the URL got redirected.
                 // The user has explicitly chosen Chrome over other intent handlers, so stay in
                 // Chrome unless there was a new intent handler after redirection or Chrome cannot
@@ -395,6 +426,18 @@ public class ExternalNavigationHandler {
                 if (params.hasUserGesture()) {
                     IntentWithGesturesHandler.getInstance().onNewIntentWithGesture(intent);
                 }
+
+                if (CommandLine.getInstance().hasSwitch(ChromeSwitches.ENABLE_WEBAPK)) {
+                    // If the only specialized intent handler is a WebAPK, set the intent's package
+                    // to launch the WebAPK without showing the intent picker.
+                    String targetWebApkPackageName =
+                            mDelegate.findValidWebApkPackageName(resolvingInfos);
+                    if (targetWebApkPackageName != null
+                            && mDelegate.countSpecializedHandlers(resolvingInfos) == 1) {
+                        intent.setPackage(targetWebApkPackageName);
+                    }
+                }
+
                 if (mDelegate.startActivityIfNeeded(intent)) {
                     return OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT;
                 } else {

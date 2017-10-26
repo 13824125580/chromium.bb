@@ -15,18 +15,21 @@
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "jingle/glue/proxy_resolving_client_socket.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/http/transport_security_state.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/buffered_socket_writer.h"
+#include "remoting/base/logging.h"
 #include "remoting/signaling/xmpp_login_handler.h"
 #include "remoting/signaling/xmpp_stream_parser.h"
 #include "third_party/webrtc/libjingle/xmllite/xmlelement.h"
@@ -67,7 +70,7 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
   std::string GetLocalJid() const;
   void AddListener(Listener* listener);
   void RemoveListener(Listener* listener);
-  bool SendStanza(scoped_ptr<buzz::XmlElement> stanza);
+  bool SendStanza(std::unique_ptr<buzz::XmlElement> stanza);
 
   void SetAuthInfo(const std::string& username,
                    const std::string& auth_token);
@@ -99,14 +102,14 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
   void SendMessage(const std::string& message) override;
   void StartTls() override;
   void OnHandshakeDone(const std::string& jid,
-                       scoped_ptr<XmppStreamParser> parser) override;
+                       std::unique_ptr<XmppStreamParser> parser) override;
   void OnLoginHandlerError(SignalStrategy::Error error) override;
 
   // Callback for BufferedSocketWriter.
   void OnMessageSent();
 
   // Event handlers for XmppStreamParser.
-  void OnStanza(const scoped_ptr<buzz::XmlElement> stanza);
+  void OnStanza(const std::unique_ptr<buzz::XmlElement> stanza);
   void OnParserError();
 
   void OnNetworkError(int error);
@@ -118,19 +121,20 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
   XmppServerConfig xmpp_server_config_;
 
   // Used by the |socket_|.
-  scoped_ptr<net::CertVerifier> cert_verifier_;
-  scoped_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::CertVerifier> cert_verifier_;
+  std::unique_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::CTVerifier> cert_transparency_verifier_;
+  std::unique_ptr<net::CTPolicyEnforcer> ct_policy_enforcer_;
 
-  scoped_ptr<net::StreamSocket> socket_;
-  scoped_ptr<BufferedSocketWriter> writer_;
-  int pending_writes_ = 0;
+  std::unique_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<BufferedSocketWriter> writer_;
   scoped_refptr<net::IOBuffer> read_buffer_;
   bool read_pending_ = false;
 
   TlsState tls_state_ = TlsState::NOT_REQUESTED;
 
-  scoped_ptr<XmppLoginHandler> login_handler_;
-  scoped_ptr<XmppStreamParser> stream_parser_;
+  std::unique_ptr<XmppLoginHandler> login_handler_;
+  std::unique_ptr<XmppStreamParser> stream_parser_;
   std::string jid_;
 
   Error error_ = OK;
@@ -236,7 +240,8 @@ void XmppSignalStrategy::Core::RemoveListener(Listener* listener) {
   listeners_.RemoveObserver(listener);
 }
 
-bool XmppSignalStrategy::Core::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
+bool XmppSignalStrategy::Core::SendStanza(
+    std::unique_ptr<buzz::XmlElement> stanza) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!stream_parser_) {
@@ -244,6 +249,9 @@ bool XmppSignalStrategy::Core::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
     return false;
   }
 
+  HOST_DLOG << "Sending outgoing stanza:\n"
+            << stanza->Str()
+            << "\n=========================================================";
   SendMessage(stanza->Str());
 
   // Return false if the SendMessage() call above resulted in the SignalStrategy
@@ -288,15 +296,19 @@ void XmppSignalStrategy::Core::StartTls() {
 
   DCHECK(!read_pending_);
 
-  scoped_ptr<net::ClientSocketHandle> socket_handle(
+  std::unique_ptr<net::ClientSocketHandle> socket_handle(
       new net::ClientSocketHandle());
   socket_handle->SetSocket(std::move(socket_));
 
   cert_verifier_ = net::CertVerifier::CreateDefault();
   transport_security_state_.reset(new net::TransportSecurityState());
+  cert_transparency_verifier_.reset(new net::MultiLogCTVerifier());
+  ct_policy_enforcer_.reset(new net::CTPolicyEnforcer());
   net::SSLClientSocketContext context;
   context.cert_verifier = cert_verifier_.get();
   context.transport_security_state = transport_security_state_.get();
+  context.cert_transparency_verifier = cert_transparency_verifier_.get();
+  context.ct_policy_enforcer = ct_policy_enforcer_.get();
 
   socket_ = socket_factory_->CreateSSLClientSocket(
       std::move(socket_handle),
@@ -311,7 +323,7 @@ void XmppSignalStrategy::Core::StartTls() {
 
 void XmppSignalStrategy::Core::OnHandshakeDone(
     const std::string& jid,
-    scoped_ptr<XmppStreamParser> parser) {
+    std::unique_ptr<XmppStreamParser> parser) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   jid_ = jid;
@@ -345,8 +357,13 @@ void XmppSignalStrategy::Core::OnMessageSent() {
 }
 
 void XmppSignalStrategy::Core::OnStanza(
-    const scoped_ptr<buzz::XmlElement> stanza) {
+    const std::unique_ptr<buzz::XmlElement> stanza) {
   DCHECK(thread_checker_.CalledOnValidThread());
+
+
+  HOST_DLOG << "Received incoming stanza:\n"
+            << stanza->Str()
+            << "\n=========================================================";
 
   base::ObserverListBase<Listener>::Iterator it(&listeners_);
   for (Listener* listener = it.GetNext(); listener; listener = it.GetNext()) {
@@ -526,7 +543,7 @@ void XmppSignalStrategy::AddListener(Listener* listener) {
 void XmppSignalStrategy::RemoveListener(Listener* listener) {
   core_->RemoveListener(listener);
 }
-bool XmppSignalStrategy::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
+bool XmppSignalStrategy::SendStanza(std::unique_ptr<buzz::XmlElement> stanza) {
   return core_->SendStanza(std::move(stanza));
 }
 

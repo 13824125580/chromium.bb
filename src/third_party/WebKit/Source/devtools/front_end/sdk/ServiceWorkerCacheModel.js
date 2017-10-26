@@ -40,8 +40,20 @@ WebInspector.ServiceWorkerCacheModel.prototype = {
         this._enabled = true;
     },
 
+    /**
+     * @param {string} origin
+     */
+    clearForOrigin: function(origin)
+    {
+        this._removeOrigin(origin);
+        this._addOrigin(origin);
+    },
+
     refreshCacheNames: function()
     {
+        for (var cache of this._caches.values())
+            this._cacheRemoved(cache);
+        this._caches.clear();
         var securityOrigins = this.target().resourceTreeModel.securityOrigins();
         for (var securityOrigin of securityOrigins)
             this._loadCacheNames(securityOrigin);
@@ -134,7 +146,7 @@ WebInspector.ServiceWorkerCacheModel.prototype = {
     {
         for (var opaqueId of this._caches.keys()) {
             var cache = this._caches.get(opaqueId);
-            if (cache.securityOrigin == securityOrigin) {
+            if (cache.securityOrigin === securityOrigin) {
                 this._caches.delete(opaqueId);
                 this._cacheRemoved(cache);
             }
@@ -174,7 +186,7 @@ WebInspector.ServiceWorkerCacheModel.prototype = {
          */
         function deleteAndSaveOldCaches(cache)
         {
-            if (cache.securityOrigin == securityOrigin && !updatingCachesIds.has(cache.cacheId)) {
+            if (cache.securityOrigin === securityOrigin && !updatingCachesIds.has(cache.cacheId)) {
                 oldCaches.set(cache.cacheId, cache);
                 this._caches.delete(cache.cacheId);
             }
@@ -296,7 +308,7 @@ WebInspector.ServiceWorkerCacheModel.Cache.prototype = {
      */
     equals: function(cache)
     {
-        return this.cacheId == cache.cacheId;
+        return this.cacheId === cache.cacheId;
     },
 
     /**

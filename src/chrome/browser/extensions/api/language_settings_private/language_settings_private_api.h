@@ -92,7 +92,7 @@ class LanguageSettingsPrivateGetSpellcheckWordsFunction
       const SpellcheckCustomDictionary::Change& dictionary_change) override;
 
   // Returns the list of words from the loaded custom dictionary.
-  scoped_ptr<base::ListValue> GetSpellcheckWords() const;
+  std::unique_ptr<base::ListValue> GetSpellcheckWords() const;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(LanguageSettingsPrivateGetSpellcheckWordsFunction);
@@ -189,6 +189,8 @@ class LanguageSettingsPrivateAddInputMethodFunction
   ResponseAction Run() override;
 
  private:
+  ChromeExtensionFunctionDetails chrome_details_;
+
   DISALLOW_COPY_AND_ASSIGN(LanguageSettingsPrivateAddInputMethodFunction);
 };
 
@@ -207,6 +209,8 @@ class LanguageSettingsPrivateRemoveInputMethodFunction
   ResponseAction Run() override;
 
  private:
+  ChromeExtensionFunctionDetails chrome_details_;
+
   DISALLOW_COPY_AND_ASSIGN(LanguageSettingsPrivateRemoveInputMethodFunction);
 };
 

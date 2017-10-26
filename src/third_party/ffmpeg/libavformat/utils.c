@@ -112,7 +112,11 @@ MAKE_ACCESSORS(AVFormatContext, format, AVCodec *, data_codec)
 MAKE_ACCESSORS(AVFormatContext, format, int, metadata_header_padding)
 MAKE_ACCESSORS(AVFormatContext, format, void *, opaque)
 MAKE_ACCESSORS(AVFormatContext, format, av_format_control_message, control_message_cb)
+#if FF_API_OLD_OPEN_CALLBACKS
+FF_DISABLE_DEPRECATION_WARNINGS
 MAKE_ACCESSORS(AVFormatContext, format, AVOpenCallback, open_cb)
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
 int64_t av_stream_get_end_pts(const AVStream *st)
 {
@@ -139,11 +143,15 @@ void av_format_inject_global_side_data(AVFormatContext *s)
 
 int ff_copy_whitelists(AVFormatContext *dst, AVFormatContext *src)
 {
-    av_assert0(!dst->codec_whitelist && !dst->format_whitelist);
+    av_assert0(!dst->codec_whitelist &&
+               !dst->format_whitelist &&
+               !dst->protocol_whitelist);
     dst-> codec_whitelist = av_strdup(src->codec_whitelist);
     dst->format_whitelist = av_strdup(src->format_whitelist);
+    dst->protocol_whitelist = av_strdup(src->protocol_whitelist);
     if (   (src-> codec_whitelist && !dst-> codec_whitelist)
-        || (src->format_whitelist && !dst->format_whitelist)) {
+        || (src->  format_whitelist && !dst->  format_whitelist)
+        || (src->protocol_whitelist && !dst->protocol_whitelist)) {
         av_log(dst, AV_LOG_ERROR, "Failed to duplicate whitelist\n");
         return AVERROR(ENOMEM);
     }
@@ -313,7 +321,7 @@ int av_demuxer_open(AVFormatContext *ic) {
     int err;
 
     if (ic->format_whitelist && av_match_list(ic->iformat->name, ic->format_whitelist, ',') <= 0) {
-        av_log(ic, AV_LOG_ERROR, "Format not on whitelist\n");
+        av_log(ic, AV_LOG_ERROR, "Format not on whitelist \'%s\'\n", ic->format_whitelist);
         return AVERROR(EINVAL);
     }
 
@@ -352,9 +360,9 @@ static int init_input(AVFormatContext *s, const char *filename,
         (!s->iformat && (s->iformat = av_probe_input_format2(&pd, 0, &score))))
         return score;
 
-    if ((ret = avio_open2(&s->pb, filename, AVIO_FLAG_READ | s->avio_flags,
-                          &s->interrupt_callback, options)) < 0)
+    if ((ret = s->io_open(s, &s->pb, filename, AVIO_FLAG_READ | s->avio_flags, options)) < 0)
         return ret;
+
     if (s->iformat)
         return 0;
     return av_probe_input_buffer2(s->pb, &s->iformat, filename,
@@ -441,8 +449,16 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
         goto fail;
     s->probe_score = ret;
 
+    if (!s->protocol_whitelist && s->pb && s->pb->protocol_whitelist) {
+        s->protocol_whitelist = av_strdup(s->pb->protocol_whitelist);
+        if (!s->protocol_whitelist) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
+    }
+
     if (s->format_whitelist && av_match_list(s->iformat->name, s->format_whitelist, ',') <= 0) {
-        av_log(s, AV_LOG_ERROR, "Format not on whitelist\n");
+        av_log(s, AV_LOG_ERROR, "Format not on whitelist \'%s\'\n", s->format_whitelist);
         ret = AVERROR(EINVAL);
         goto fail;
     }
@@ -2353,7 +2369,7 @@ static void update_stream_timings(AVFormatContext *ic)
             end_time1 = av_rescale_q_rnd(st->duration, st->time_base,
                                          AV_TIME_BASE_Q,
                                          AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-            if (end_time1 != AV_NOPTS_VALUE) {
+            if (end_time1 != AV_NOPTS_VALUE && start_time1 <= INT64_MAX - end_time1) {
                 end_time1 += start_time1;
                 end_time = FFMAX(end_time, end_time1);
             }
@@ -2816,6 +2832,9 @@ enum AVCodecID ff_codec_get_id(const AVCodecTag *tags, unsigned int tag)
 
 enum AVCodecID ff_get_pcm_codec_id(int bps, int flt, int be, int sflags)
 {
+    if (bps <= 0 || bps > 64)
+        return AV_CODEC_ID_NONE;
+
     if (flt) {
         switch (bps) {
         case 32:
@@ -2899,7 +2918,7 @@ static void compute_chapters_end(AVFormatContext *s)
     unsigned int i, j;
     int64_t max_time = 0;
 
-    if (s->duration > 0)
+    if (s->duration > 0 && s->start_time < INT64_MAX - s->duration)
         max_time = s->duration +
                        ((s->start_time == AV_NOPTS_VALUE) ? 0 : s->start_time);
 
@@ -2927,10 +2946,14 @@ static int get_std_framerate(int i)
         return (i + 1) * 1001;
     i -= 30*12;
 
-    if (i < 7)
-        return ((const int[]) { 40, 48, 50, 60, 80, 120, 240})[i] * 1001 * 12;
+    if (i < 30)
+        return (i + 31) * 1001 * 12;
+    i -= 30;
 
-    i -= 7;
+    if (i < 3)
+        return ((const int[]) { 80, 120, 240})[i] * 1001 * 12;
+
+    i -= 3;
 
     return ((const int[]) { 24, 30, 60, 12, 15, 48 })[i] * 1000 * 12;
 }
@@ -4723,4 +4746,11 @@ int av_apply_bitstream_filters(AVCodecContext *codec, AVPacket *pkt,
         bsfc = bsfc->next;
     }
     return ret;
+}
+
+void ff_format_io_close(AVFormatContext *s, AVIOContext **pb)
+{
+    if (*pb)
+        s->io_close(s, *pb);
+    *pb = NULL;
 }

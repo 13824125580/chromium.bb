@@ -10,6 +10,7 @@ var AutofillOptions = options.AutofillOptions;
 var AutomaticSettingsResetBanner = options.AutomaticSettingsResetBanner;
 var BrowserOptions = options.BrowserOptions;
 var ClearBrowserDataOverlay = options.ClearBrowserDataOverlay;
+var ClearBrowserDataHistoryNotice = options.ClearBrowserDataHistoryNotice;
 var ConfirmDialog = options.ConfirmDialog;
 var ContentSettingsExceptionsArea =
     options.contentSettings.ContentSettingsExceptionsArea;
@@ -86,6 +87,9 @@ function load() {
   PageManager.registerOverlay(ClearBrowserDataOverlay.getInstance(),
                               BrowserOptions.getInstance(),
                               [$('privacyClearDataButton')]);
+  PageManager.registerOverlay(
+      ClearBrowserDataHistoryNotice.getInstance(),
+      ClearBrowserDataOverlay.getInstance());
   PageManager.registerOverlay(
       new ConfirmDialog(
           'doNotTrackConfirm',
@@ -199,6 +203,8 @@ function load() {
     PageManager.registerOverlay(ChangePictureOptions.getInstance(),
                                 BrowserOptions.getInstance(),
                                 [$('account-picture')]);
+    PageManager.registerOverlay(StorageClearDriveCacheOverlay.getInstance(),
+                                StorageManager.getInstance());
     PageManager.registerOverlay(ConsumerManagementOverlay.getInstance(),
                                 BrowserOptions.getInstance());
     PageManager.registerOverlay(DetailsInternetPage.getInstance(),
@@ -219,8 +225,23 @@ function load() {
     PageManager.registerOverlay(PowerOverlay.getInstance(),
                                 BrowserOptions.getInstance(),
                                 [$('power-settings-link')]);
+    PageManager.registerOverlay(StorageManager.getInstance(),
+                                BrowserOptions.getInstance(),
+                                [$('storage-manager-button')]);
     PageManager.registerOverlay(ThirdPartyImeConfirmOverlay.getInstance(),
                                 LanguageOptions.getInstance());
+    PageManager.registerOverlay(
+        new ConfirmDialog(
+            'arcOptOutConfirm',
+            loadTimeData.getString('arcOptOutConfirmOverlayTabTitle'),
+            'arc-opt-out-confirm-overlay',
+            /** @type {HTMLButtonElement} */($('arc-opt-out-confirm-ok')),
+            /** @type {HTMLButtonElement} */($('arc-opt-out-confirm-cancel')),
+            $('android-apps-enabled')['pref'],
+            $('android-apps-enabled')['metric'],
+            undefined,
+            false),
+        BrowserOptions.getInstance());
   }
 
   if (!cr.isWindows && !cr.isMac) {

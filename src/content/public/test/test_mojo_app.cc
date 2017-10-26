@@ -8,8 +8,8 @@
 
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "mojo/shell/public/cpp/connection.h"
-#include "mojo/shell/public/cpp/connector.h"
+#include "services/shell/public/cpp/connection.h"
+#include "services/shell/public/cpp/connector.h"
 
 namespace content {
 
@@ -21,14 +21,15 @@ TestMojoApp::TestMojoApp() : service_binding_(this) {
 TestMojoApp::~TestMojoApp() {
 }
 
-bool TestMojoApp::AcceptConnection(mojo::Connection* connection) {
-  requestor_url_ = GURL(connection->GetRemoteApplicationURL());
-  connection->AddInterface<TestMojoService>(this);
+bool TestMojoApp::AcceptConnection(shell::Connection* connection) {
+  requestor_name_ = connection->GetRemoteIdentity().name();
+  connection->AddInterface<mojom::TestMojoService>(this);
   return true;
 }
 
-void TestMojoApp::Create(mojo::Connection* connection,
-                         mojo::InterfaceRequest<TestMojoService> request) {
+void TestMojoApp::Create(
+    shell::Connection* connection,
+    mojo::InterfaceRequest<mojom::TestMojoService> request) {
   DCHECK(!service_binding_.is_bound());
   service_binding_.Bind(std::move(request));
 }
@@ -38,8 +39,17 @@ void TestMojoApp::DoSomething(const DoSomethingCallback& callback) {
   base::MessageLoop::current()->QuitWhenIdle();
 }
 
-void TestMojoApp::GetRequestorURL(const GetRequestorURLCallback& callback) {
-  callback.Run(requestor_url_.spec());
+void TestMojoApp::DoTerminateProcess(
+    const DoTerminateProcessCallback& callback) {
+  NOTREACHED();
+}
+
+void TestMojoApp::CreateFolder(const CreateFolderCallback& callback) {
+  NOTREACHED();
+}
+
+void TestMojoApp::GetRequestorName(const GetRequestorNameCallback& callback) {
+  callback.Run(requestor_name_);
 }
 
 }  // namespace content

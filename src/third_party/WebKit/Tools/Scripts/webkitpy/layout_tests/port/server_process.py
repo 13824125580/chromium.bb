@@ -72,6 +72,7 @@ def quote_data(data):
         lines.append(l)
     return lines
 
+
 class ServerProcess(object):
     """This class provides a wrapper around a subprocess that
     implements a simple request/response usage model. The primary benefit
@@ -80,7 +81,7 @@ class ServerProcess(object):
     as necessary to keep issuing commands."""
 
     def __init__(self, port_obj, name, cmd, env=None, universal_newlines=False, treat_no_data_as_crash=False,
-                 logging=False):
+                 more_logging=False):
         self._port = port_obj
         self._name = name  # Should be the command name (e.g. content_shell, image_diff)
         self._cmd = cmd
@@ -89,7 +90,7 @@ class ServerProcess(object):
         # Don't set if there will be binary data or the data must be ASCII encoded.
         self._universal_newlines = universal_newlines
         self._treat_no_data_as_crash = treat_no_data_as_crash
-        self._logging = logging
+        self._logging = more_logging
         self._host = self._port.host
         self._pid = None
         self._reset()
@@ -137,11 +138,11 @@ class ServerProcess(object):
                 env_str += '\n'.join("%s=%s" % (k, v) for k, v in self._env.items()) + '\n'
             _log.info('CMD: \n%s%s\n', env_str, _quote_cmd(self._cmd))
         self._proc = self._host.executive.popen(self._cmd, stdin=self._host.executive.PIPE,
-            stdout=self._host.executive.PIPE,
-            stderr=self._host.executive.PIPE,
-            close_fds=close_fds,
-            env=self._env,
-            universal_newlines=self._universal_newlines)
+                                                stdout=self._host.executive.PIPE,
+                                                stderr=self._host.executive.PIPE,
+                                                close_fds=close_fds,
+                                                env=self._env,
+                                                universal_newlines=self._universal_newlines)
         self._pid = self._proc.pid
         fd = self._proc.stdout.fileno()
         if not self._use_win32_apis:
@@ -178,7 +179,7 @@ class ServerProcess(object):
         try:
             self._log_data(' IN', bytes)
             self._proc.stdin.write(bytes)
-        except IOError, e:
+        except IOError as e:
             self.stop(0.0)
             # stop() calls _reset(), so we have to set crashed to True after calling stop().
             self._crashed = True
@@ -215,7 +216,8 @@ class ServerProcess(object):
             return None  # Instructs the caller to keep waiting.
 
         return_value = self._read(deadline, retrieve_bytes_from_buffers)
-        # FIXME: This is a bit of a hack around the fact that _read normally only returns one value, but this caller wants it to return two.
+        # FIXME: This is a bit of a hack around the fact that _read normally only
+        # returns one value, but this caller wants it to return two.
         if return_value is None:
             return None, None
         return return_value
@@ -268,7 +270,7 @@ class ServerProcess(object):
         select_fds = (out_fd, err_fd)
         try:
             read_fds, _, _ = select.select(select_fds, [], select_fds, max(deadline - time.time(), 0))
-        except select.error, e:
+        except select.error as e:
             # We can ignore EINVAL since it's likely the process just crashed and we'll
             # figure that out the next time through the loop in _read().
             if e.args[0] == errno.EINVAL:
@@ -294,7 +296,7 @@ class ServerProcess(object):
                     self._crashed = True
                 self._log_data('ERR', data)
                 self._error += data
-        except IOError, e:
+        except IOError as e:
             # We can ignore the IOErrors because we will detect if the subporcess crashed
             # the next time through the loop in _read()
             pass
@@ -327,7 +329,7 @@ class ServerProcess(object):
             if avail > 0:
                 _, buf = win32file.ReadFile(handle, avail, None)
                 return buf
-        except Exception, e:
+        except Exception as e:
             if e[0] not in (109, errno.ESHUTDOWN):  # 109 == win32 ERROR_BROKEN_PIPE
                 raise
         return None

@@ -45,7 +45,6 @@ class HttpProxyClientSocketPool;
 class HttpResponseBodyDrainer;
 class HttpServerProperties;
 class NetLog;
-class NetworkDelegate;
 class ProxyDelegate;
 class ProxyService;
 class QuicClock;
@@ -70,15 +69,14 @@ class NET_EXPORT HttpNetworkSession
     ClientSocketFactory* client_socket_factory;
     HostResolver* host_resolver;
     CertVerifier* cert_verifier;
-    CTPolicyEnforcer* ct_policy_enforcer;
     ChannelIDService* channel_id_service;
     TransportSecurityState* transport_security_state;
     CTVerifier* cert_transparency_verifier;
+    CTPolicyEnforcer* ct_policy_enforcer;
     ProxyService* proxy_service;
     SSLConfigService* ssl_config_service;
     HttpAuthHandlerFactory* http_auth_handler_factory;
-    NetworkDelegate* network_delegate;
-    base::WeakPtr<HttpServerProperties> http_server_properties;
+    HttpServerProperties* http_server_properties;
     NetLog* net_log;
     HostMappingRules* host_mapping_rules;
     SocketPerformanceWatcherFactory* socket_performance_watcher_factory;
@@ -96,27 +94,23 @@ class NET_EXPORT HttpNetworkSession
     size_t spdy_stream_max_recv_window_size;
     // Source of time for SPDY connections.
     SpdySessionPool::TimeFunc time_func;
-    // Whether to parse Alt-Svc headers.
-    bool parse_alternative_services;
-    // Whether to enable Alt-Svc entries with hostname different than that of
-    // the origin.
-    bool enable_alternative_service_with_different_host;
-    // Only honor alternative service entries which have a higher probability
-    // than this value.
-    double alternative_service_probability_threshold;
+    // Whether to enable HTTP/2 Alt-Svc entries with hostname different than
+    // that of the origin.
+    bool enable_http2_alternative_service_with_different_host;
+    // Whether to enable QUIC Alt-Svc entries with hostname different than that
+    // of the origin.
+    bool enable_quic_alternative_service_with_different_host;
 
     // Enables NPN support.  Note that ALPN is always enabled.
     bool enable_npn;
 
-    // Enables Brotli Content-Encoding support.
-    bool enable_brotli;
+    // Enable setting of HTTP/2 dependencies based on priority.
+    bool enable_priority_dependencies;
 
     // Enables QUIC support.
     bool enable_quic;
     // Disable QUIC if a connection times out with open streams.
     bool disable_quic_on_timeout_with_open_streams;
-    // Enables QUIC for proxies.
-    bool enable_quic_for_proxies;
     // Instruct QUIC to use consistent ephemeral ports when talking to
     // the same server.
     bool enable_quic_port_selection;
@@ -151,8 +145,9 @@ class NET_EXPORT HttpNetworkSession
     // Maximum number of server configs that are to be stored in
     // HttpServerProperties, instead of the disk cache.
     size_t quic_max_server_configs_stored_in_properties;
-    // If not empty, QUIC will be used for all connections to this origin.
-    HostPortPair origin_to_force_quic_on;
+    // If not empty, QUIC will be used for all connections to the set of
+    // origins in |origins_to_force_quic_on|.
+    std::set<HostPortPair> origins_to_force_quic_on;
     // Source of time for QUIC connections. Will be owned by QuicStreamFactory.
     QuicClock* quic_clock;
     // Source of entropy for QUIC connections.
@@ -185,6 +180,9 @@ class NET_EXPORT HttpNetworkSession
     // If true, active QUIC sessions experiencing poor connectivity may be
     // migrated onto a new network.
     bool quic_migrate_sessions_early;
+    // If true, bidirectional streams over QUIC will be disabled.
+    bool quic_disable_bidirectional_streams;
+
     ProxyDelegate* proxy_delegate;
     // Enable support for Token Binding.
     bool enable_token_binding;
@@ -228,10 +226,7 @@ class NET_EXPORT HttpNetworkSession
   HttpAuthHandlerFactory* http_auth_handler_factory() {
     return http_auth_handler_factory_;
   }
-  NetworkDelegate* network_delegate() {
-    return network_delegate_;
-  }
-  base::WeakPtr<HttpServerProperties> http_server_properties() {
+  HttpServerProperties* http_server_properties() {
     return http_server_properties_;
   }
   HttpStreamFactory* http_stream_factory() {
@@ -245,14 +240,14 @@ class NET_EXPORT HttpNetworkSession
   }
 
   // Creates a Value summary of the state of the socket pools.
-  scoped_ptr<base::Value> SocketPoolInfoToValue() const;
+  std::unique_ptr<base::Value> SocketPoolInfoToValue() const;
 
   // Creates a Value summary of the state of the SPDY sessions.
-  scoped_ptr<base::Value> SpdySessionPoolInfoToValue() const;
+  std::unique_ptr<base::Value> SpdySessionPoolInfoToValue() const;
 
   // Creates a Value summary of the state of the QUIC sessions and
   // configuration.
-  scoped_ptr<base::Value> QuicInfoToValue() const;
+  std::unique_ptr<base::Value> QuicInfoToValue() const;
 
   void CloseAllConnections();
   void CloseIdleConnections();
@@ -268,14 +263,19 @@ class NET_EXPORT HttpNetworkSession
   // Populates |*npn_protos| with protocols to be used with NPN.
   void GetNpnProtos(NextProtoVector* npn_protos) const;
 
+  // Populates |server_config| and |proxy_config| based on this session and
+  // |request|.
+  void GetSSLConfig(const HttpRequestInfo& request,
+                    SSLConfig* server_config,
+                    SSLConfig* proxy_config) const;
+
  private:
   friend class HttpNetworkSessionPeer;
 
   ClientSocketPoolManager* GetSocketPoolManager(SocketPoolType pool_type);
 
   NetLog* const net_log_;
-  NetworkDelegate* const network_delegate_;
-  const base::WeakPtr<HttpServerProperties> http_server_properties_;
+  HttpServerProperties* const http_server_properties_;
   CertVerifier* const cert_verifier_;
   HttpAuthHandlerFactory* const http_auth_handler_factory_;
 
@@ -285,12 +285,12 @@ class NET_EXPORT HttpNetworkSession
 
   HttpAuthCache http_auth_cache_;
   SSLClientAuthCache ssl_client_auth_cache_;
-  scoped_ptr<ClientSocketPoolManager> normal_socket_pool_manager_;
-  scoped_ptr<ClientSocketPoolManager> websocket_socket_pool_manager_;
+  std::unique_ptr<ClientSocketPoolManager> normal_socket_pool_manager_;
+  std::unique_ptr<ClientSocketPoolManager> websocket_socket_pool_manager_;
   QuicStreamFactory quic_stream_factory_;
   SpdySessionPool spdy_session_pool_;
-  scoped_ptr<HttpStreamFactory> http_stream_factory_;
-  scoped_ptr<HttpStreamFactory> http_stream_factory_for_websocket_;
+  std::unique_ptr<HttpStreamFactory> http_stream_factory_;
+  std::unique_ptr<HttpStreamFactory> http_stream_factory_for_websocket_;
   std::set<HttpResponseBodyDrainer*> response_drainers_;
 
   NextProtoVector next_protos_;

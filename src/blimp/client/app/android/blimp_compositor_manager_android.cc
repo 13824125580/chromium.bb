@@ -5,9 +5,10 @@
 #include "blimp/client/app/android/blimp_compositor_manager_android.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace {
@@ -20,25 +21,28 @@ namespace blimp {
 namespace client {
 
 // static
-scoped_ptr<BlimpCompositorManagerAndroid> BlimpCompositorManagerAndroid::Create(
+std::unique_ptr<BlimpCompositorManagerAndroid>
+BlimpCompositorManagerAndroid::Create(
     const gfx::Size& real_size,
     const gfx::Size& size,
-    RenderWidgetFeature* render_widget_feature) {
+    RenderWidgetFeature* render_widget_feature,
+    BlimpCompositorManagerClient* client) {
   gfx::Size device_size(real_size);
   bool real_size_supported = true;
   if (device_size.IsEmpty()) {
     real_size_supported = false;
     device_size = size;
   }
-  return make_scoped_ptr(new BlimpCompositorManagerAndroid(
-      device_size, real_size_supported, render_widget_feature));
+  return base::WrapUnique(new BlimpCompositorManagerAndroid(
+      device_size, real_size_supported, render_widget_feature, client));
 }
 
 BlimpCompositorManagerAndroid::BlimpCompositorManagerAndroid(
     const gfx::Size& size,
     bool real_size_supported,
-    RenderWidgetFeature* render_widget_feature)
-    : BlimpCompositorManager(render_widget_feature),
+    RenderWidgetFeature* render_widget_feature,
+    BlimpCompositorManagerClient* client)
+    : BlimpCompositorManager(render_widget_feature, client),
       portrait_width_(std::min(size.width(), size.height())),
       landscape_width_(std::max(size.width(), size.height())),
       real_size_supported_(real_size_supported) {}

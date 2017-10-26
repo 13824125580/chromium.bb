@@ -12,19 +12,16 @@
 
 namespace cc {
 
-scoped_refptr<NinePatchLayer> NinePatchLayer::Create(
-    const LayerSettings& settings) {
-  return make_scoped_refptr(new NinePatchLayer(settings));
+scoped_refptr<NinePatchLayer> NinePatchLayer::Create() {
+  return make_scoped_refptr(new NinePatchLayer());
 }
 
-NinePatchLayer::NinePatchLayer(const LayerSettings& settings)
-    : UIResourceLayer(settings),
-      fill_center_(false),
-      nearest_neighbor_(false) {}
+NinePatchLayer::NinePatchLayer()
+    : UIResourceLayer(), fill_center_(false), nearest_neighbor_(false) {}
 
 NinePatchLayer::~NinePatchLayer() {}
 
-scoped_ptr<LayerImpl> NinePatchLayer::CreateLayerImpl(
+std::unique_ptr<LayerImpl> NinePatchLayer::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return NinePatchLayerImpl::Create(tree_impl, id());
 }

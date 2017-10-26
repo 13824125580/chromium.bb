@@ -4,14 +4,17 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/local_discovery/test_service_discovery_client.h"
 #include "chrome/browser/profiles/profile.h"
@@ -325,14 +328,14 @@ class MockableFakeURLFetcherCreator {
 
   MOCK_METHOD1(OnCreateFakeURLFetcher, void(const std::string& url));
 
-  scoped_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* delegate,
       const std::string& response_data,
       net::HttpStatusCode response_code,
       net::URLRequestStatus::Status status) {
     OnCreateFakeURLFetcher(url.spec());
-    return scoped_ptr<net::FakeURLFetcher>(new net::FakeURLFetcher(
+    return std::unique_ptr<net::FakeURLFetcher>(new net::FakeURLFetcher(
         url, delegate, response_data, response_code, status));
   }
 
@@ -450,7 +453,7 @@ class LocalDiscoveryUITest : public WebUIBrowserTest {
     base::CancelableCallback<void()> callback(
         base::Bind(&base::MessageLoop::QuitWhenIdle,
                    base::Unretained(base::MessageLoop::current())));
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, callback.callback(), time_period);
 
     base::MessageLoop::current()->Run();

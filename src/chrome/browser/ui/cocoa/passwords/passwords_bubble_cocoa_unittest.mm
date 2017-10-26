@@ -121,6 +121,7 @@ TEST_F(ManagePasswordsBubbleCocoaTest, ShowShouldCreateAndShowBubble) {
   ShowBubble(false);
   EXPECT_TRUE(ManagePasswordsBubbleCocoa::instance());
   EXPECT_TRUE([bubbleWindow() isVisible]);
+  EXPECT_TRUE([bubbleWindow() autorecalculatesKeyViewLoop]);
 }
 
 TEST_F(ManagePasswordsBubbleCocoaTest, CloseShouldCloseAndDeleteBubble) {
@@ -174,6 +175,17 @@ TEST_F(ManagePasswordsBubbleCocoaTest, HideBubbleOnChangedState) {
   icon()->OnChangingState();
   EXPECT_FALSE(ManagePasswordsBubbleCocoa::instance());
   EXPECT_FALSE([bubbleWindow() isVisible]);
+}
+
+TEST_F(ManagePasswordsBubbleCocoaTest, ShowBubbleTwice) {
+  ShowBubble(false);
+  base::scoped_nsobject<NSWindow> bubble([bubbleWindow() retain]);
+  // Opening the bubble again should retrieve the data from the UI controller
+  // again.
+  ShowBubble(false);
+  EXPECT_TRUE(ManagePasswordsBubbleCocoa::instance());
+  EXPECT_NSNE(bubble, bubbleWindow());
+  EXPECT_TRUE([bubbleWindow() isVisible]);
 }
 
 TEST_F(ManagePasswordsBubbleCocoaTest, OpenWithoutFocus) {

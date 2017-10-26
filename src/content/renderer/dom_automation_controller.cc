@@ -90,7 +90,7 @@ bool DomAutomationController::SendMsg(const gin::Arguments& args) {
 
   std::string json;
   JSONStringValueSerializer serializer(&json);
-  scoped_ptr<base::Value> value;
+  std::unique_ptr<base::Value> value;
 
   // Warning: note that JSON officially requires the root-level object to be
   // an object (e.g. {foo:3}) or an array, while here we're serializing
@@ -102,8 +102,8 @@ bool DomAutomationController::SendMsg(const gin::Arguments& args) {
       (args.PeekNext()->IsString() || args.PeekNext()->IsBoolean() ||
        args.PeekNext()->IsNumber())) {
     V8ValueConverterImpl conv;
-    value.reset(
-        conv.FromV8Value(args.PeekNext(), args.isolate()->GetCurrentContext()));
+    value =
+        conv.FromV8Value(args.PeekNext(), args.isolate()->GetCurrentContext());
   } else {
     return false;
   }

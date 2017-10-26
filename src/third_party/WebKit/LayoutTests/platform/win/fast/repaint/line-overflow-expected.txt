@@ -1,50 +1,106 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [115, 114, 37, 18],
-        [115, 84, 37, 48],
-        [37, 132, 37, 18],
-        [37, 132, 37, 18],
-        [8, 132, 192, 71],
-        [8, 78, 200, 200],
-        [8, 16, 784, 262],
-        [7, 114, 201, 89],
-        [7, 78, 201, 200],
-        [7, 16, 785, 262]
-      ],
-      "paintInvalidationClients": [
-        "InlineTextBox 'convallis,\n'",
-        "InlineTextBox 'augue'",
-        "RootInlineBox",
-        "InlineTextBox 'purus'",
-        "InlineFlowBox",
-        "InlineTextBox ' eleifend lacus,'",
-        "RootInlineBox",
-        "InlineTextBox 'at sagittis eros leo pulvinar'",
-        "RootInlineBox",
-        "InlineTextBox 'velit. Integer sollicitudin nisi'",
-        "RootInlineBox",
-        "InlineTextBox 'ut urna blandit convallis.'",
-        "RootInlineBox",
-        "LayoutBlockFlow BODY",
-        "LayoutBlockFlow DIV",
-        "RootInlineBox",
-        "LayoutInline SPAN id='t'",
-        "InlineFlowBox",
-        "LayoutText #text",
-        "InlineTextBox 'purus'",
-        "LayoutText #text",
-        "InlineTextBox ' eleifend'",
-        "InlineTextBox 'lacus, at sagittis eros leo'",
-        "InlineTextBox 'pulvinar velit. Integer'",
-        "InlineTextBox 'sollicitudin nisi ut urna blandit'",
-        "InlineTextBox 'convallis.'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutText #text",
+          "rect": [7, 114, 201, 89],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [8, 78, 198, 54],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutInline SPAN id='t'",
+          "rect": [115, 84, 37, 48],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [115, 114, 37, 18],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutInline SPAN id='t'",
+          "rect": [37, 132, 37, 18],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [37, 132, 37, 18],
+          "reason": "forced by layout"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'Cras faucibus. Nunc'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'adipiscing, enim in scelerisque'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'convallis,\n'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'augue '",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutInline SPAN id='t'",
+      "reason": "style change"
+    },
+    {
+      "object": "InlineFlowBox",
+      "reason": "style change"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'purus'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox ' eleifend'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'lacus, at sagittis eros leo'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'pulvinar velit. Integer'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'sollicitudin nisi ut urna blandit'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'convallis.'",
+      "reason": "forced by layout"
     }
   ]
 }

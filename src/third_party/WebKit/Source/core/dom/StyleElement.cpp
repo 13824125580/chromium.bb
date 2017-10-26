@@ -55,20 +55,16 @@ StyleElement::StyleElement(Document* document, bool createdByParser)
 
 StyleElement::~StyleElement()
 {
-#if !ENABLE(OILPAN)
-    if (m_sheet)
-        clearSheet();
-#endif
 }
 
 StyleElement::ProcessingResult StyleElement::processStyleSheet(Document& document, Element* element)
 {
     TRACE_EVENT0("blink", "StyleElement::processStyleSheet");
-    ASSERT(element);
-    ASSERT(element->inDocument());
+    DCHECK(element);
+    DCHECK(element->inShadowIncludingDocument());
 
     m_registeredAsCandidate = true;
-    document.styleEngine().addStyleSheetCandidateNode(element, m_createdByParser);
+    document.styleEngine().addStyleSheetCandidateNode(element);
     if (m_createdByParser)
         return ProcessingSuccessful;
 
@@ -77,7 +73,7 @@ StyleElement::ProcessingResult StyleElement::processStyleSheet(Document& documen
 
 void StyleElement::insertedInto(Element* element, ContainerNode* insertionPoint)
 {
-    if (!insertionPoint->inDocument() || !element->isInShadowTree())
+    if (!insertionPoint->inShadowIncludingDocument() || !element->isInShadowTree())
         return;
     if (ShadowRoot* scope = element->containingShadowRoot())
         scope->registerScopedHTMLStyleChild();
@@ -85,7 +81,7 @@ void StyleElement::insertedInto(Element* element, ContainerNode* insertionPoint)
 
 void StyleElement::removedFrom(Element* element, ContainerNode* insertionPoint)
 {
-    if (!insertionPoint->inDocument())
+    if (!insertionPoint->inShadowIncludingDocument())
         return;
 
     ShadowRoot* shadowRoot = element->containingShadowRoot();
@@ -101,12 +97,12 @@ void StyleElement::removedFrom(Element* element, ContainerNode* insertionPoint)
         m_registeredAsCandidate = false;
     }
 
-    RefPtrWillBeRawPtr<StyleSheet> removedSheet = m_sheet.get();
+    StyleSheet* removedSheet = m_sheet.get();
 
     if (m_sheet)
         clearSheet(element);
     if (removedSheet)
-        document.removedStyleSheet(removedSheet.get(), AnalyzedStyleUpdate);
+        document.styleEngine().setNeedsActiveStyleUpdate(removedSheet, AnalyzedStyleUpdate);
 }
 
 void StyleElement::clearDocumentData(Document& document, Element* element)
@@ -115,7 +111,7 @@ void StyleElement::clearDocumentData(Document& document, Element* element)
         m_sheet->clearOwnerNode();
 
     if (m_registeredAsCandidate) {
-        ASSERT(element->inDocument());
+        DCHECK(element->inShadowIncludingDocument());
         document.styleEngine().removeStyleSheetCandidateNode(element, element->treeScope());
         m_registeredAsCandidate = false;
     }
@@ -123,7 +119,7 @@ void StyleElement::clearDocumentData(Document& document, Element* element)
 
 StyleElement::ProcessingResult StyleElement::childrenChanged(Element* element)
 {
-    ASSERT(element);
+    DCHECK(element);
     if (m_createdByParser)
         return ProcessingSuccessful;
 
@@ -132,7 +128,7 @@ StyleElement::ProcessingResult StyleElement::childrenChanged(Element* element)
 
 StyleElement::ProcessingResult StyleElement::finishParsingChildren(Element* element)
 {
-    ASSERT(element);
+    DCHECK(element);
     ProcessingResult result = process(element);
     m_createdByParser = false;
     return result;
@@ -140,17 +136,17 @@ StyleElement::ProcessingResult StyleElement::finishParsingChildren(Element* elem
 
 StyleElement::ProcessingResult StyleElement::process(Element* element)
 {
-    if (!element || !element->inDocument())
+    if (!element || !element->inShadowIncludingDocument())
         return ProcessingSuccessful;
     return createSheet(element, element->textFromChildren());
 }
 
 void StyleElement::clearSheet(Element* ownerElement)
 {
-    ASSERT(m_sheet);
+    DCHECK(m_sheet);
 
     if (ownerElement && m_sheet->isLoading())
-        ownerElement->document().styleEngine().removePendingSheet(ownerElement);
+        ownerElement->document().styleEngine().removePendingSheet(ownerElement, m_styleEngineContext);
 
     m_sheet.release()->clearOwnerNode();
 }
@@ -172,31 +168,30 @@ static bool shouldBypassMainWorldCSP(Element* element)
 
 StyleElement::ProcessingResult StyleElement::createSheet(Element* e, const String& text)
 {
-    ASSERT(e);
-    ASSERT(e->inDocument());
+    DCHECK(e);
+    DCHECK(e->inShadowIncludingDocument());
     Document& document = e->document();
 
     const ContentSecurityPolicy* csp = document.contentSecurityPolicy();
     bool passesContentSecurityPolicyChecks = shouldBypassMainWorldCSP(e)
-        || csp->allowStyleWithHash(text)
-        || csp->allowStyleWithNonce(e->fastGetAttribute(HTMLNames::nonceAttr))
-        || csp->allowInlineStyle(e->document().url(), m_startPosition.m_line, text);
+        || csp->allowStyleWithHash(text, ContentSecurityPolicy::InlineType::Block)
+        || csp->allowInlineStyle(e->document().url(), e->fastGetAttribute(HTMLNames::nonceAttr), m_startPosition.m_line, text);
 
     // Clearing the current sheet may remove the cache entry so create the new sheet first
-    RefPtrWillBeRawPtr<CSSStyleSheet> newSheet = nullptr;
+    CSSStyleSheet* newSheet = nullptr;
 
     // If type is empty or CSS, this is a CSS style sheet.
     const AtomicString& type = this->type();
     if (isCSS(e, type) && passesContentSecurityPolicyChecks) {
-        RefPtrWillBeRawPtr<MediaQuerySet> mediaQueries = MediaQuerySet::create(media());
+        MediaQuerySet* mediaQueries = MediaQuerySet::create(media());
 
         MediaQueryEvaluator screenEval("screen", true);
         MediaQueryEvaluator printEval("print", true);
-        if (screenEval.eval(mediaQueries.get()) || printEval.eval(mediaQueries.get())) {
+        if (screenEval.eval(mediaQueries) || printEval.eval(mediaQueries)) {
             m_loading = true;
             TextPosition startPosition = m_startPosition == TextPosition::belowRangePosition() ? TextPosition::minimumPosition() : m_startPosition;
-            newSheet = document.styleEngine().createSheet(e, text, startPosition);
-            newSheet->setMediaQueries(mediaQueries.release());
+            newSheet = document.styleEngine().createSheet(e, text, startPosition, m_styleEngineContext);
+            newSheet->setMediaQueries(mediaQueries);
             m_loading = false;
         }
     }
@@ -204,7 +199,7 @@ StyleElement::ProcessingResult StyleElement::createSheet(Element* e, const Strin
     if (m_sheet)
         clearSheet(e);
 
-    m_sheet = newSheet.release();
+    m_sheet = newSheet;
     if (m_sheet)
         m_sheet->contents()->checkLoaded();
 
@@ -223,13 +218,13 @@ bool StyleElement::sheetLoaded(Document& document)
     if (isLoading())
         return false;
 
-    document.styleEngine().removePendingSheet(m_sheet->ownerNode());
+    document.styleEngine().removePendingSheet(m_sheet->ownerNode(), m_styleEngineContext);
     return true;
 }
 
 void StyleElement::startLoadingDynamicSheet(Document& document)
 {
-    document.styleEngine().addPendingSheet();
+    document.styleEngine().addPendingSheet(m_styleEngineContext);
 }
 
 DEFINE_TRACE(StyleElement)

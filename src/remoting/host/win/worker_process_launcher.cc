@@ -10,7 +10,6 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
-#include "base/win/windows_version.h"
 #include "ipc/ipc_message.h"
 #include "remoting/host/chromoting_messages.h"
 #include "remoting/host/host_exit_codes.h"
@@ -53,7 +52,7 @@ namespace remoting {
 WorkerProcessLauncher::Delegate::~Delegate() {}
 
 WorkerProcessLauncher::WorkerProcessLauncher(
-    scoped_ptr<WorkerProcessLauncher::Delegate> launcher_delegate,
+    std::unique_ptr<WorkerProcessLauncher::Delegate> launcher_delegate,
     WorkerProcessIpcDelegate* ipc_handler)
     : ipc_handler_(ipc_handler),
       launcher_delegate_(std::move(launcher_delegate)),

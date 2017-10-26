@@ -5,10 +5,12 @@
 #include "components/signin/core/account_id/account_id.h"
 
 #include <functional>
+#include <memory>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/singleton.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
@@ -49,6 +51,12 @@ AccountId::AccountId() {}
 
 AccountId::AccountId(const std::string& gaia_id, const std::string& user_email)
     : gaia_id_(gaia_id), user_email_(user_email) {
+  // Fail if e-mail looks similar to GaiaIdKey.
+  LOG_ASSERT(!base::StartsWith(user_email, kKeyGaiaIdPrefix,
+                               base::CompareCase::SENSITIVE) ||
+             user_email.find('@') != std::string::npos)
+      << "Bad e-mail: '" << user_email << "' with gaia_id='" << gaia_id << "'";
+
   // TODO(alemate): DCHECK(!email.empty());
   // TODO(alemate): check gaia_id is not empty once it is required.
 }
@@ -98,7 +106,14 @@ const std::string& AccountId::GetUserEmail() const {
 }
 
 const std::string AccountId::GetGaiaIdKey() const {
+#ifdef NDEBUG
+  if (gaia_id_.empty())
+    LOG(FATAL) << "GetGaiaIdKey(): no gaia id for " << Serialize();
+
+#else
   CHECK(!gaia_id_.empty());
+#endif
+
   return std::string(kKeyGaiaIdPrefix) + gaia_id_;
 }
 
@@ -144,7 +159,7 @@ std::string AccountId::Serialize() const {
 bool AccountId::Deserialize(const std::string& serialized,
                             AccountId* account_id) {
   base::JSONReader reader;
-  scoped_ptr<const base::Value> value(reader.Read(serialized));
+  std::unique_ptr<const base::Value> value(reader.Read(serialized));
   const base::DictionaryValue* dictionary_value = NULL;
 
   if (!value || !value->GetAsDictionary(&dictionary_value))

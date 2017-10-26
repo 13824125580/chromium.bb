@@ -20,8 +20,7 @@ InputHandlerWrapper::InputHandlerWrapper(
     const scoped_refptr<base::SingleThreadTaskRunner>& main_task_runner,
     const base::WeakPtr<cc::InputHandler>& input_handler,
     const base::WeakPtr<RenderViewImpl>& render_view_impl,
-    bool enable_smooth_scrolling,
-    bool enable_wheel_gestures)
+    bool enable_smooth_scrolling)
     : input_handler_manager_(input_handler_manager),
       routing_id_(routing_id),
       input_handler_proxy_(input_handler.get(), this),
@@ -29,8 +28,6 @@ InputHandlerWrapper::InputHandlerWrapper(
       render_view_impl_(render_view_impl) {
   DCHECK(input_handler);
   input_handler_proxy_.set_smooth_scroll_enabled(enable_smooth_scrolling);
-  input_handler_proxy_.set_use_gesture_events_for_mouse_wheel(
-      enable_wheel_gestures);
 }
 
 InputHandlerWrapper::~InputHandlerWrapper() {
@@ -51,6 +48,7 @@ blink::WebGestureCurve* InputHandlerWrapper::CreateFlingAnimationCurve(
     blink::WebGestureDevice deviceSource,
     const blink::WebFloatPoint& velocity,
     const blink::WebSize& cumulative_scroll) {
+  DidStartFlinging();
   return blink::Platform::current()->createFlingAnimationCurve(
       deviceSource, velocity, cumulative_scroll);
 }
@@ -66,6 +64,10 @@ void InputHandlerWrapper::DidOverscroll(
   params.current_fling_velocity = current_fling_velocity;
   params.causal_event_viewport_point = causal_event_viewport_point;
   input_handler_manager_->DidOverscroll(routing_id_, params);
+}
+
+void InputHandlerWrapper::DidStartFlinging() {
+  input_handler_manager_->DidStartFlinging(routing_id_);
 }
 
 void InputHandlerWrapper::DidStopFlinging() {

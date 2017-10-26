@@ -20,11 +20,14 @@
 <translation id="1467432559032391204">Sinistra</translation>
 <translation id="1484102317210609525"><ph name="DEVICE_NAME" /> (HDMI/DP)</translation>
 <translation id="1510238584712386396">Avvio applicazioni</translation>
+<translation id="1525508553941733066">IGNORA</translation>
 <translation id="15373452373711364">Puntatore del mouse grande</translation>
 <translation id="1550523713251050646">Fai clic per visualizzare altre opzioni</translation>
 <translation id="1602076796624386989">Attiva dati mobili</translation>
 <translation id="1621499497873603021">Tempo rimanente all'esaurimento della batteria: <ph name="TIME_LEFT" /></translation>
 <translation id="164969095109328410">Dispositivo Chrome</translation>
+<translation id="1677472565718498478"><ph name="TIME" /> rimanenti</translation>
+<translation id="1683360892415596327">Partecipa al nostro sondaggio</translation>
 <translation id="1723752762323179280">Uscita dalla sessione</translation>
 <translation id="1747827819627189109">Tastiera sullo schermo attiva</translation>
 <translation id="1812696562331527143">Il metodo di immissione è stato cambiato in <ph name="INPUT_METHOD_ID" />*(<ph name="BEGIN_LINK" />3a parte<ph name="END_LINK" />).
@@ -91,7 +94,6 @@ Premi il tasto per la ricerca o Maiusc per annullare.</translation>
 <translation id="3621712662352432595">Impostazioni audio</translation>
 <translation id="3625258641415618104">Screenshot disabilitati</translation>
 <translation id="3626281679859535460">Luminosità</translation>
-<translation id="3626637461649818317"><ph name="PERCENTAGE" />% rimanente</translation>
 <translation id="3678715477168044796"><ph name="DISPLAY_NAME" />: <ph name="ANNOTATION" /></translation>
 <translation id="3683428399328702079">La risoluzione di <ph name="DISPLAY_NAME" /> è stata modificata in: <ph name="RESOLUTION" /></translation>
 <translation id="370649949373421643">Attiva Wi-Fi</translation>
@@ -110,13 +112,13 @@ Premi il tasto per la ricerca o Maiusc per annullare.</translation>
 <translation id="397105322502079400">Calcolo in corso...</translation>
 <translation id="3995138139523574647">Dispositivo USB-C (porta posteriore destra)</translation>
 <translation id="4053612967614057854">Disattiva tastiera sullo schermo</translation>
-<translation id="412065659894267608"><ph name="HOUR" /> h e <ph name="MINUTE" /> m per completare la ricarica</translation>
 <translation id="4250680216510889253">No</translation>
 <translation id="4279490309300973883">Mirroring</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4421231901400348175">Condividi il controllo dello schermo con <ph name="HELPER_NAME" /> tramite Assistenza remota.</translation>
 <translation id="4430019312045809116">Volume</translation>
 <translation id="4527045527269911712">Il dispositivo Bluetooth "<ph name="DEVICE_NAME" />" chiede l'autorizzazione per essere accoppiato.</translation>
+<translation id="453661520163887813"><ph name="TIME" /> alla ricarica completa</translation>
 <translation id="4544944664594876241">La scorciatoia per bloccare lo schermo è cambiata. Utilizza <ph name="NEW_SHORTCUT" /> invece di <ph name="OLD_SHORTCUT" />.</translation>
 <translation id="479989351350248267">ricerca</translation>
 <translation id="4804818685124855865">Disconnetti</translation>
@@ -128,7 +130,6 @@ Premi il tasto per la ricerca o Maiusc per annullare.</translation>
 <translation id="5011233892417813670">Chromebook</translation>
 <translation id="5012744545445585468">CTRL+MAIUSC+Barra spaziatrice</translation>
 <translation id="5045002648206642691">Impostazioni Google Drive...</translation>
-<translation id="5102001756192215136"><ph name="HOUR" />:<ph name="MINUTE" /> rimanenti</translation>
 <translation id="511445211639755999"><ph name="RESOLUTION" />, <ph name="OVERSCAN" /></translation>
 <translation id="5168181903108465623">Dispositivi di trasmissione disponibili</translation>
 <translation id="5222676887888702881">Esci</translation>
@@ -162,10 +163,10 @@ Premi Maiusc+Alt per cambiare metodo.</translation>
 <translation id="6062360702481658777">Verrai disconnesso automaticamente tra <ph name="LOGOUT_TIME_LEFT" />.</translation>
 <translation id="607652042414456612">Il tuo computer è rilevabile per i dispositivi Bluetooth nelle vicinanze e verrà visualizzato come "<ph name="NAME" />" con l'indirizzo <ph name="ADDRESS" /></translation>
 <translation id="6106745654298855237">In carica: <ph name="POWER_SOURCE" /></translation>
+<translation id="6144938890088808325">Aiutaci a migliorare i Chromebook</translation>
 <translation id="615957422585914272">Mostra tastiera sullo schermo</translation>
 <translation id="6165508094623778733">Ulteriori informazioni</translation>
 <translation id="6203030746557259519">Display virtuale</translation>
-<translation id="6247708409970142803"><ph name="PERCENTAGE" />%</translation>
 <translation id="6248847161401822652">Per uscire premi due volte Ctrl+Maiusc+Q.</translation>
 <translation id="6310121235600822547"><ph name="DISPLAY_NAME" /> è stato ruotato a <ph name="ROTATION" /></translation>
 <translation id="6359806961507272919">SMS da <ph name="PHONE_NUMBER" /></translation>
@@ -206,6 +207,7 @@ Premi Alt+tasto per la ricerca o Maiusc per annullare.</translation>
 <translation id="7510334386202674593">CTRL+MAIUSC+L</translation>
 <translation id="7561014039265304140"><ph name="DISPLAY_NAME" /> non supporta <ph name="SPECIFIED_RESOLUTION" />. La risoluzione è stata modificata in <ph name="FALLBACK_RESOLUTION" /></translation>
 <translation id="7573962313813535744">Modalità dock</translation>
+<translation id="7580671184200851182">Riproduci lo stesso audio su tutti gli altoparlanti (audio mono)</translation>
 <translation id="7593891976182323525">Tasto per la ricerca o Maiusc</translation>
 <translation id="7649070708921625228">Guida</translation>
 <translation id="7692480393933218409">Dispositivi USB-C collegati in carica</translation>
@@ -213,6 +215,7 @@ Premi Alt+tasto per la ricerca o Maiusc per annullare.</translation>
 <translation id="7823564328645135659">La lingua è stata modificata da "<ph name="FROM_LOCALE" />" a "<ph name="TO_LOCALE" />" dopo la sincronizzazione delle impostazioni.</translation>
 <translation id="785750925697875037">Visualizza account per cellulari</translation>
 <translation id="7864539943188674973">Disattiva Bluetooth</translation>
+<translation id="7869829692393275047">Sondaggio HaTS per Chrome OS, digita qui. Sondaggio HaTS per Chrome OS, digita qui. Sondaggio HaTS per Chrome OS, digita qui. Sondaggio HaTS per Chrome OS, digita qui.</translation>
 <translation id="7893838033650689677">Attiva Wi-Fi</translation>
 <translation id="7904094684485781019">L'amministratore di questo account ha bloccato l'accesso simultaneo.</translation>
 <translation id="7957227661277029961">Il tuo dispositivo <ph name="DEVICE_TYPE" /> potrebbe non caricarsi mentre è acceso. Utilizza un caricabatterie originale.</translation>
@@ -224,13 +227,14 @@ Premi Alt+tasto per la ricerca o Maiusc per annullare.</translation>
 <translation id="8308637677604853869">Menu precedente</translation>
 <translation id="8356164830168736643">Chiudi <ph name="WINDOW_TITLE" /></translation>
 <translation id="8428213095426709021">Impostazioni</translation>
-<translation id="8456362689280298700"><ph name="HOUR" />:<ph name="MINUTE" /> al completamento</translation>
 <translation id="8517041960877371778">Il tuo dispositivo <ph name="DEVICE_TYPE" /> potrebbe non caricarsi mentre è acceso.</translation>
 <translation id="8528322925433439945">Reti mobili...</translation>
+<translation id="8639760480004882931"><ph name="PERCENTAGE" /> rimanente</translation>
 <translation id="8673028979667498656">270°</translation>
 <translation id="8676770494376880701">Caricabatterie a basso consumo collegato</translation>
 <translation id="8814190375133053267">Wi-Fi</translation>
 <translation id="882279321799040148">Fai clic per visualizzare</translation>
+<translation id="8825534185036233643">Il mirroring con più di due display non è supportato.</translation>
 <translation id="8828714802988429505">90°</translation>
 <translation id="8850991929411075241">Tasto di ricerca+ESC</translation>
 <translation id="8878886163241303700">Estensione schermo</translation>

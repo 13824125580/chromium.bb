@@ -28,55 +28,45 @@
 
 import unittest
 
+from webkitpy.common.config.builders import BUILDERS
 from webkitpy.layout_tests.layout_package import bot_test_expectations
-from webkitpy.layout_tests.models import test_expectations
-from webkitpy.layout_tests.port import builders
+from webkitpy.layout_tests.builder_list import BuilderList
 
 
 class BotTestExpectationsFactoryTest(unittest.TestCase):
+
+    def fake_builder_list(self):
+        return BuilderList({
+            "Dummy builder name": {"port_name": "dummy-port", "specifiers": []},
+        })
+
     def fake_results_json_for_builder(self, builder):
         return bot_test_expectations.ResultsJSON(builder, 'Dummy content')
 
     def test_expectations_for_builder(self):
-        factory = bot_test_expectations.BotTestExpectationsFactory()
+        factory = bot_test_expectations.BotTestExpectationsFactory(self.fake_builder_list())
         factory._results_json_for_builder = self.fake_results_json_for_builder
 
-        old_builders = builders._exact_matches
-        builders._exact_matches = {
-            "Dummy builder name": {"port_name": "dummy-port", "specifiers": []},
-        }
-
-        try:
-            self.assertIsNotNone(factory.expectations_for_builder('Dummy builder name'))
-        finally:
-            builders._exact_matches = old_builders
+        self.assertIsNotNone(factory.expectations_for_builder('Dummy builder name'))
 
     def test_expectations_for_port(self):
-        factory = bot_test_expectations.BotTestExpectationsFactory()
+        factory = bot_test_expectations.BotTestExpectationsFactory(self.fake_builder_list())
         factory._results_json_for_builder = self.fake_results_json_for_builder
 
-        old_builders = builders._exact_matches
-        builders._exact_matches = {
-            "Dummy builder name": {"port_name": "dummy-port", "specifiers": []},
-        }
-
-        try:
-            self.assertIsNotNone(factory.expectations_for_port('dummy-port'))
-        finally:
-            builders._exact_matches = old_builders
+        self.assertIsNotNone(factory.expectations_for_port('dummy-port'))
 
 
 class BotTestExpectationsTest(unittest.TestCase):
     # FIXME: Find a way to import this map from Tools/TestResultServer/model/jsonresults.py.
     FAILURE_MAP = {"A": "AUDIO", "C": "CRASH", "F": "TEXT", "I": "IMAGE", "O": "MISSING",
-        "N": "NO DATA", "P": "PASS", "T": "TIMEOUT", "Y": "NOTRUN", "X": "SKIP", "Z": "IMAGE+TEXT", "K": "LEAK"}
+                   "N": "NO DATA", "P": "PASS", "T": "TIMEOUT", "Y": "NOTRUN", "X": "SKIP", "Z": "IMAGE+TEXT", "K": "LEAK"}
 
     # All result_string's in this file represent retries from a single run.
     # The left-most entry is the first try, the right-most is the last.
 
     def _assert_is_flaky(self, results_string, should_be_flaky, only_ignore_very_flaky, expected=None):
         results_json = self._results_json_from_test_data({})
-        expectations = bot_test_expectations.BotTestExpectations(results_json, set('test'))
+        expectations = bot_test_expectations.BotTestExpectations(results_json, BuilderList(BUILDERS), set('test'))
 
         results_entry = self._results_from_string(results_string)
         if expected:
@@ -119,12 +109,12 @@ class BotTestExpectationsTest(unittest.TestCase):
 
     def _assert_expectations(self, test_data, expectations_string, only_ignore_very_flaky):
         results_json = self._results_json_from_test_data(test_data)
-        expectations = bot_test_expectations.BotTestExpectations(results_json, set('test'))
+        expectations = bot_test_expectations.BotTestExpectations(results_json, BuilderList(BUILDERS), set('test'))
         self.assertEqual(expectations.flakes_by_path(only_ignore_very_flaky), expectations_string)
 
     def _assert_unexpected_results(self, test_data, expectations_string):
         results_json = self._results_json_from_test_data(test_data)
-        expectations = bot_test_expectations.BotTestExpectations(results_json, set('test'))
+        expectations = bot_test_expectations.BotTestExpectations(results_json, BuilderList(BUILDERS), set('test'))
         self.assertEqual(expectations.unexpected_results_by_path(), expectations_string)
 
     def test_basic(self):
@@ -135,7 +125,7 @@ class BotTestExpectationsTest(unittest.TestCase):
                     'maybeflaky.html': self._results_from_string('FP'),
                     'notflakypass.html': self._results_from_string('P'),
                     'notflakyfail.html': self._results_from_string('F'),
-                    # Even if there are no expected results, it's not very flaky if it didn't do mulitple retries.
+                    # Even if there are no expected results, it's not very flaky if it didn't do multiple retries.
                     # This accounts for the latest expectations not necessarily matching the expectations
                     # at the time of the given run.
                     'notverflakynoexpected.html': self._results_from_string('FT'),

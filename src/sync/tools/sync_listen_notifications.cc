@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 #include "base/at_exit.h"
@@ -11,10 +12,11 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
+#include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "components/invalidation/impl/invalidation_state_tracker.h"
@@ -83,7 +85,7 @@ class MyTestURLRequestContext : public net::TestURLRequestContext {
     context_storage_.set_host_resolver(
         net::HostResolver::CreateDefaultResolver(NULL));
     context_storage_.set_transport_security_state(
-        make_scoped_ptr(new net::TransportSecurityState()));
+        base::WrapUnique(new net::TransportSecurityState()));
     Init();
   }
 
@@ -107,7 +109,7 @@ class MyTestURLRequestContextGetter : public net::TestURLRequestContextGetter {
  private:
   ~MyTestURLRequestContextGetter() override {}
 
-  scoped_ptr<MyTestURLRequestContext> context_;
+  std::unique_ptr<MyTestURLRequestContext> context_;
 };
 
 notifier::NotifierOptions ParseNotifierOptions(
@@ -174,7 +176,7 @@ int SyncListenNotificationsMain(int argc, char* argv[]) {
   }
 
   // Set up objects that monitor the network.
-  scoped_ptr<net::NetworkChangeNotifier> network_change_notifier(
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier(
       net::NetworkChangeNotifier::Create());
 
   const notifier::NotifierOptions& notifier_options =
@@ -186,15 +188,12 @@ int SyncListenNotificationsMain(int argc, char* argv[]) {
           notifier_options);
   const char kClientInfo[] = "sync_listen_notifications";
   NullInvalidationStateTracker null_invalidation_state_tracker;
-  scoped_ptr<Invalidator> invalidator(
-      new NonBlockingInvalidator(
-          network_channel_creator,
-          base::RandBytesAsString(8),
-          null_invalidation_state_tracker.GetSavedInvalidations(),
-          null_invalidation_state_tracker.GetBootstrapData(),
-          &null_invalidation_state_tracker,
-          kClientInfo,
-          notifier_options.request_context_getter));
+  std::unique_ptr<Invalidator> invalidator(new NonBlockingInvalidator(
+      network_channel_creator, base::RandBytesAsString(8),
+      null_invalidation_state_tracker.GetSavedInvalidations(),
+      null_invalidation_state_tracker.GetBootstrapData(),
+      &null_invalidation_state_tracker, kClientInfo,
+      notifier_options.request_context_getter));
 
   NotificationPrinter notification_printer;
 
@@ -205,7 +204,7 @@ int SyncListenNotificationsMain(int argc, char* argv[]) {
   CHECK(invalidator->UpdateRegisteredIds(
       &notification_printer, ModelTypeSetToObjectIdSet(ModelTypeSet::All())));
 
-  ui_loop.Run();
+  base::RunLoop().Run();
 
   invalidator->UnregisterHandler(&notification_printer);
   io_thread.Stop();

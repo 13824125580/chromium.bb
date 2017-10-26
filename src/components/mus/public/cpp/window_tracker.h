@@ -9,13 +9,12 @@
 #include <set>
 
 #include "base/macros.h"
-#include "components/mus/common/window_tracker.h"
 #include "components/mus/public/cpp/window_observer.h"
-#include "mojo/public/cpp/system/macros.h"
+#include "ui/base/window_tracker_template.h"
 
 namespace mus {
 
-using WindowTracker = WindowTrackerTemplate<Window, WindowObserver>;
+using WindowTracker = ui::WindowTrackerTemplate<Window, WindowObserver>;
 
 }  // namespace mus
 

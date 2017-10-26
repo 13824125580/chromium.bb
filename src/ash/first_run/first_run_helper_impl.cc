@@ -4,15 +4,16 @@
 
 #include "ash/first_run/first_run_helper_impl.h"
 
+#include "ash/common/shell_window_ids.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ash/system/tray/system_tray.h"
 #include "base/logging.h"
 #include "ui/app_list/views/app_list_view.h"
 #include "ui/aura/window.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -23,7 +24,7 @@ namespace {
 views::Widget* CreateFirstRunWindow() {
   views::Widget::InitParams params(
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params.bounds = gfx::Screen::GetScreen()->GetPrimaryDisplay().bounds();
+  params.bounds = display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   params.show_state = ui::SHOW_STATE_FULLSCREEN;
   params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
   params.parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
@@ -35,8 +36,7 @@ views::Widget* CreateFirstRunWindow() {
 
 }  // anonymous namespace
 
-FirstRunHelperImpl::FirstRunHelperImpl()
-    : widget_(CreateFirstRunWindow()) {
+FirstRunHelperImpl::FirstRunHelperImpl() : widget_(CreateFirstRunWindow()) {
   Shell::GetInstance()->overlay_filter()->Activate(this);
 }
 

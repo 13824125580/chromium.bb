@@ -30,20 +30,26 @@
 #include "core/layout/LayoutScrollbar.h"
 #include "core/layout/LayoutScrollbarTheme.h"
 #include "core/layout/LayoutView.h"
-#include "core/paint/PaintLayerScrollableArea.h"
 #include "platform/LengthFunctions.h"
 
 namespace blink {
 
-LayoutScrollbarPart::LayoutScrollbarPart(LayoutScrollbar* scrollbar, ScrollbarPart part)
+LayoutScrollbarPart::LayoutScrollbarPart(ScrollableArea* scrollableArea, LayoutScrollbar* scrollbar, ScrollbarPart part)
     : LayoutBlock(nullptr)
+    , m_scrollableArea(scrollableArea)
     , m_scrollbar(scrollbar)
     , m_part(part)
 {
+    ASSERT(m_scrollableArea);
 }
 
 LayoutScrollbarPart::~LayoutScrollbarPart()
 {
+#if CHECK_DISPLAY_ITEM_CLIENT_ALIVENESS
+    // We may not have invalidated the painting layer for now, but the
+    // scrollable area will invalidate during paint invalidation.
+    endShouldKeepAlive();
+#endif
 }
 
 static void recordScrollbarPartStats(Document& document, ScrollbarPart part)
@@ -74,9 +80,10 @@ static void recordScrollbarPartStats(Document& document, ScrollbarPart part)
     }
 }
 
-LayoutScrollbarPart* LayoutScrollbarPart::createAnonymous(Document* document, LayoutScrollbar* scrollbar, ScrollbarPart part)
+LayoutScrollbarPart* LayoutScrollbarPart::createAnonymous(Document* document, ScrollableArea* scrollableArea,
+    LayoutScrollbar* scrollbar, ScrollbarPart part)
 {
-    LayoutScrollbarPart* layoutObject = new LayoutScrollbarPart(scrollbar, part);
+    LayoutScrollbarPart* layoutObject = new LayoutScrollbarPart(scrollableArea, scrollbar, part);
     recordScrollbarPartStats(*document, part);
     layoutObject->setDocumentForAnonymous(document);
     return layoutObject;
@@ -126,7 +133,7 @@ void LayoutScrollbarPart::computeScrollbarWidth()
 {
     if (!m_scrollbar->owningLayoutObject())
         return;
-    // FIXME: We are querying layout information but nothing guarantees that it's up-to-date, especially since we are called at style change.
+    // FIXME: We are querying layout information but nothing guarantees that it's up to date, especially since we are called at style change.
     // FIXME: Querying the style's border information doesn't work on table cells with collapsing borders.
     int visibleSize = m_scrollbar->owningLayoutObject()->size().width() - m_scrollbar->owningLayoutObject()->style()->borderLeftWidth() - m_scrollbar->owningLayoutObject()->style()->borderRightWidth();
     int w = calcScrollbarThicknessUsing(MainOrPreferredSize, style()->width(), visibleSize);
@@ -143,7 +150,7 @@ void LayoutScrollbarPart::computeScrollbarHeight()
 {
     if (!m_scrollbar->owningLayoutObject())
         return;
-    // FIXME: We are querying layout information but nothing guarantees that it's up-to-date, especially since we are called at style change.
+    // FIXME: We are querying layout information but nothing guarantees that it's up to date, especially since we are called at style change.
     // FIXME: Querying the style's border information doesn't work on table cells with collapsing borders.
     int visibleSize = m_scrollbar->owningLayoutObject()->size().height() -  m_scrollbar->owningLayoutObject()->style()->borderTopWidth() - m_scrollbar->owningLayoutObject()->style()->borderBottomWidth();
     int h = calcScrollbarThicknessUsing(MainOrPreferredSize, style()->height(), visibleSize);
@@ -180,7 +187,6 @@ void LayoutScrollbarPart::styleDidChange(StyleDifference diff, const ComputedSty
     setInline(false);
     clearPositionedState();
     setFloating(false);
-    setHasOverflowClip(false);
     if (oldStyle && (diff.needsPaintInvalidation() || diff.needsLayout()))
         setNeedsPaintInvalidation();
 }
@@ -212,8 +218,14 @@ void LayoutScrollbarPart::setNeedsPaintInvalidation()
         }
     }
 
-    // This LayoutScrollbarPart belongs to a PaintLayerScrollableArea.
-    toLayoutBox(parent())->scrollableArea()->setScrollCornerNeedsPaintInvalidation();
+    m_scrollableArea->setScrollCornerNeedsPaintInvalidation();
+}
+
+LayoutRect LayoutScrollbarPart::visualRect() const
+{
+    // This returns the combined bounds of all scrollbar parts, which is sufficient for correctness
+    // but not as tight as it could be.
+    return m_scrollableArea->visualRectForScrollbarParts();
 }
 
 } // namespace blink

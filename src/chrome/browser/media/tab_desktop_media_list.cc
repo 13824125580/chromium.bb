@@ -19,62 +19,36 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/image/image.h"
 
 using content::BrowserThread;
 using content::DesktopMediaID;
 
 namespace {
 
-// Returns a hash of a favicon to detect when the favicon of media source has
-// changed.
-uint32_t GetImageHash(const gfx::Image& favicon) {
-  SkBitmap bitmap = favicon.AsBitmap();
-  bitmap.lockPixels();
-  uint32_t value =
-      base::Hash(reinterpret_cast<char*>(bitmap.getPixels()), bitmap.getSize());
-  bitmap.unlockPixels();
-
-  return value;
-}
-
-gfx::ImageSkia CreateEnlargedFaviconImage(gfx::Size size,
+gfx::ImageSkia CreateEnclosedFaviconImage(gfx::Size size,
                                           const gfx::ImageSkia& favicon) {
   DCHECK_GE(size.width(), 20);
   DCHECK_GE(size.height(), 20);
 
   // Create a bitmap.
   SkBitmap result;
-  result.allocN32Pixels(size.width(), size.height(), true);
+  result.allocN32Pixels(size.width(), size.height(), false);
   SkCanvas canvas(result);
+  canvas.clear(SK_ColorTRANSPARENT);
 
-  // White background.
-  canvas.drawARGB(255, 255, 255, 255);
+  // Draw the favicon image into the center of result image. If the favicon is
+  // too big, scale it down.
+  gfx::Size fill_size = favicon.size();
+  if (result.width() < favicon.width() || result.height() < favicon.height())
+    fill_size = media::ScaleSizeToFitWithinTarget(favicon.size(), size);
 
-  // Black border.
-  const int thickness = 5;
-  SkPaint paint;
-  paint.setARGB(255, 0, 0, 0);
-  paint.setStyle(SkPaint::kStroke_Style);
-  paint.setStrokeWidth(thickness);
-  canvas.drawRectCoords(thickness,                    // left
-                        thickness,                    // top
-                        result.width() - thickness,   // right
-                        result.height() - thickness,  // bottom
-                        paint);
-
-  // Draw a scaled favicon image into the center of result image to take up to
-  // a fraction of result image.
-  const double fraction = 0.75;
-  gfx::Size target_size(result.width() * fraction, result.height() * fraction);
-  gfx::Size scaled_favicon_size =
-      media::ScaleSizeToFitWithinTarget(favicon.size(), target_size);
   gfx::Rect center_rect(result.width(), result.height());
-  center_rect.ClampToCenteredSize(scaled_favicon_size);
+  center_rect.ClampToCenteredSize(fill_size);
   SkRect dest_rect =
       SkRect::MakeLTRB(center_rect.x(), center_rect.y(), center_rect.right(),
                        center_rect.bottom());
-  const scoped_ptr<SkImage> bitmap(SkImage::NewFromBitmap(*favicon.bitmap()));
-  canvas.drawImageRect(bitmap.get(), dest_rect, nullptr);
+  canvas.drawBitmapRect(*favicon.bitmap(), dest_rect, nullptr);
 
   return gfx::ImageSkia::CreateFrom1xBitmap(result);
 }
@@ -128,13 +102,10 @@ void TabDesktopMediaList::Refresh() {
           content::WebContentsMediaCaptureId(main_frame->GetProcess()->GetID(),
                                              main_frame->GetRoutingID()));
 
-      // Create display tab title.
-      const base::string16 title = l10n_util::GetStringFUTF16(
-          IDS_DESKTOP_MEDIA_PICKER_CHROME_TAB_TITLE, contents->GetTitle());
-
       // Get tab's last active time stamp.
       const base::TimeTicks t = contents->GetLastActiveTime();
-      tab_map.insert(std::make_pair(t, SourceDescription(media_id, title)));
+      tab_map.insert(
+          std::make_pair(t, SourceDescription(media_id, contents->GetTitle())));
 
       // Get favicon for tab.
       favicon::FaviconDriver* favicon_driver =
@@ -169,7 +140,7 @@ void TabDesktopMediaList::Refresh() {
     // current thread.
     base::PostTaskAndReplyWithResult(
         thumbnail_task_runner_.get(), FROM_HERE,
-        base::Bind(&CreateEnlargedFaviconImage, thumbnail_size_, it.second),
+        base::Bind(&CreateEnclosedFaviconImage, thumbnail_size_, it.second),
         base::Bind(&TabDesktopMediaList::UpdateSourceThumbnail,
                    weak_factory_.GetWeakPtr(), it.first));
   }

@@ -7,10 +7,9 @@
 
 #include "core/CoreExport.h"
 #include "core/css/CSSPrimitiveValue.h"
+#include "platform/heap/Handle.h"
 #include "public/platform/PointerProperties.h"
 #include "public/platform/WebDisplayMode.h"
-#include "wtf/RefCounted.h"
-#include "wtf/RefPtr.h"
 
 namespace blink {
 
@@ -18,14 +17,14 @@ class Document;
 class CSSPrimitiveValue;
 class LocalFrame;
 
-class CORE_EXPORT MediaValues : public RefCountedWillBeGarbageCollectedFinalized<MediaValues> {
+class CORE_EXPORT MediaValues : public GarbageCollectedFinalized<MediaValues> {
 public:
 
     virtual ~MediaValues() { }
     DEFINE_INLINE_VIRTUAL_TRACE() { }
 
-    static PassRefPtrWillBeRawPtr<MediaValues> createDynamicIfFrameExists(LocalFrame*);
-    virtual PassRefPtrWillBeRawPtr<MediaValues> copy() const = 0;
+    static MediaValues* createDynamicIfFrameExists(LocalFrame*);
+    virtual MediaValues* copy() const = 0;
 
     static bool computeLengthImpl(double value, CSSPrimitiveValue::UnitType, unsigned defaultFontSize, double viewportWidth, double viewportHeight, double& result);
     template<typename T>
@@ -57,6 +56,8 @@ public:
     virtual bool strictMode() const = 0;
     virtual Document* document() const = 0;
     virtual bool hasValues() const = 0;
+
+    virtual void overrideViewportDimensions(double width, double height) = 0;
 
 protected:
     static double calculateViewportWidth(LocalFrame*);

@@ -7,7 +7,6 @@
 
 #include "core/html/LinkResource.h"
 #include "wtf/Allocator.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
@@ -15,10 +14,9 @@ namespace blink {
 class HTMLLinkElement;
 
 class LinkManifest final : public LinkResource {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(LinkManifest);
 public:
 
-    static PassOwnPtrWillBeRawPtr<LinkManifest> create(HTMLLinkElement* owner);
+    static LinkManifest* create(HTMLLinkElement* owner);
 
     ~LinkManifest() override;
 

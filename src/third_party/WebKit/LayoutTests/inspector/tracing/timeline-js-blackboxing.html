@@ -1,7 +1,7 @@
 <html>
 <head>
 <script src="../../http/tests/inspector/inspector-test.js"></script>
-<script src="../tracing-test.js"></script>
+<script src="../../http/tests/inspector/timeline-test.js"></script>
 <script>
 function test()
 {
@@ -283,9 +283,9 @@ function test()
     }
 
     Runtime.experiments.enableForTest("blackboxJSFramesOnTimeline");
-    var tracingTimelineModel = InspectorTest.tracingTimelineModel();
-    tracingTimelineModel.setEventsForTest(rawTraceEvents);
-    var dataProvider = new WebInspector.TimelineFlameChartDataProvider(tracingTimelineModel, new WebInspector.TracingTimelineFrameModel());
+    var timelineModel = InspectorTest.createTimelineModelWithEvents(rawTraceEvents);
+    var frameModel = new WebInspector.TimelineFrameModel(event => WebInspector.TimelineUIUtils.eventStyle(event).category.name);
+    var dataProvider = new WebInspector.TimelineFlameChartDataProvider(timelineModel, frameModel, new WebInspector.TimelineIRModel(), WebInspector.panels.timeline._filters);
 
     InspectorTest.addResult("\nBlackboxed url: lib_script.js");
     WebInspector.blackboxManager._blackboxURL("lib_script.js");

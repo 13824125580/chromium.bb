@@ -73,6 +73,7 @@ component("wm") {
     "//ui/base",
     "//ui/base/ime",
     "//ui/compositor",
+    "//ui/display",
     "//ui/events",
     "//ui/events:events_base",
     "//ui/events/devices",
@@ -85,12 +86,16 @@ component("wm") {
 
   if (use_x11) {
     configs += [ "//build/config/linux:x11" ]
+    deps += [ "//ui/events/devices/x11" ]
   }
 }
 
+if (false) {
 static_library("test_support") {
   testonly = true
   sources = [
+    "test/testing_cursor_client_observer.cc",
+    "test/testing_cursor_client_observer.h",
     "test/wm_test_helper.cc",
     "test/wm_test_helper.h",
   ]
@@ -147,3 +152,5 @@ test("wm_unittests") {
     "//ui/resources:ui_test_pak_data",
   ]
 }
+}
+

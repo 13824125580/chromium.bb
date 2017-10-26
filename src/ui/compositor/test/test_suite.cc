@@ -14,7 +14,7 @@
 #include "ui/gl/test/gl_surface_test_support.h"
 
 #if defined(OS_WIN)
-#include "ui/gfx/win/dpi.h"
+#include "ui/display/win/dpi.h"
 #endif
 
 namespace ui {
@@ -27,15 +27,13 @@ CompositorTestSuite::~CompositorTestSuite() {}
 
 void CompositorTestSuite::Initialize() {
   base::TestSuite::Initialize();
-  gfx::GLSurfaceTestSupport::InitializeOneOff();
+  gl::GLSurfaceTestSupport::InitializeOneOff();
 
   gfx::RegisterPathProvider();
 
 #if defined(OS_WIN)
-  gfx::SetDefaultDeviceScaleFactor(1.0f);
+  display::win::SetDefaultDeviceScaleFactor(1.0f);
 #endif
-
-  ui::Layer::InitializeUILayerSettings();
 
   message_loop_.reset(new base::MessageLoopForUI);
 }

@@ -27,6 +27,7 @@
 #include <blpwtk2_stringref.h>
 #include <blpwtk2_toolkitcreateparams.h>
 #include <blpwtk2_toolkitimpl.h>
+#include <blpwtk2_fontcollectionimpl.h>
 
 #include <base/environment.h>
 #include <base/files/file_path.h>
@@ -37,7 +38,6 @@
 #include <components/printing/renderer/print_web_view_helper.h>
 #include <content/child/font_warmup_win.h>
 #include <content/public/app/content_main_runner.h>
-#include <content/public/common/dwrite_font_platform_win.h>
 #include <content/renderer/render_frame_impl.h>
 #include <content/renderer/render_widget.h>
 #include <net/http/http_network_session.h>
@@ -135,8 +135,6 @@ Toolkit* ToolkitFactory::create(const ToolkitCreateParams& params)
 
     Statics::initApplicationMainThread();
     Statics::threadMode = params.threadMode();
-    Statics::pumpMode = params.pumpMode();
-    Statics::workMessageWhileDoingWorkDisabled = params.workMessageWhileDoingWorkDisabled();
     Statics::inProcessResourceLoader = params.inProcessResourceLoader();
     Statics::isInProcessRendererDisabled = params.isInProcessRendererDisabled();
     Statics::channelErrorHandler = params.channelErrorHandler();
@@ -159,7 +157,7 @@ Toolkit* ToolkitFactory::create(const ToolkitCreateParams& params)
         if (subProcessModule.empty()) {
             subProcessModule = BLPWTK2_DLL_NAME;
         }
-        scoped_ptr<base::Environment> env(base::Environment::Create());
+        std::unique_ptr<base::Environment> env(base::Environment::Create());
         env->SetVar(subProcessModuleEnvVar, subProcessModule);
     }
 
@@ -215,11 +213,17 @@ Toolkit* ToolkitFactory::create(const ToolkitCreateParams& params)
         toolkit->appendCommandLineSwitch(switchString.c_str());
     }
 
+    std::vector<std::wstring> font_files;
+
     for (size_t i = 0; i < params.numSideLoadedFonts(); ++i) {
         StringRef fontFileRef = params.sideLoadedFontAt(i);
-        base::FilePath filePath = base::FilePath::FromUTF8Unsafe(
-            std::string(fontFileRef.data(), fontFileRef.length()));
-        content::AddCustomFontFile(filePath);
+		std::wstring font_filename;
+		base::UTF8ToWide(fontFileRef.data(), fontFileRef.length(), &font_filename);
+		font_files.push_back(font_filename);
+    }
+
+    if (params.numSideLoadedFonts() > 0) {
+        FontCollectionImpl::GetCurrent()->SetCustomFonts(std::move(font_files));
     }
 
     std::string html(params.headerFooterHTMLContent().data(),

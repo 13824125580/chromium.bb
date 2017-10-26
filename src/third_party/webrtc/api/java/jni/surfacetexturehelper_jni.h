@@ -30,28 +30,35 @@ namespace webrtc_jni {
 // SurfaceTextureHelper is reference counted to make sure that it is not
 // destroyed while a VideoFrameBuffer is in use.
 // This class is the C++ counterpart of the java class SurfaceTextureHelper.
+// It owns the corresponding java object, and calls the java dispose
+// method when destroyed.
 // Usage:
-// 1. Create an java instance of SurfaceTextureHelper.
-// 2. Create an instance of this class.
+// 1. Create an instance of this class.
+// 2. Get the Java SurfaceTextureHelper with GetJavaSurfaceTextureHelper().
 // 3. Register a listener to the Java SurfaceListener and start producing
 // new buffers.
 // 4. Call CreateTextureFrame to wrap the Java texture in a VideoFrameBuffer.
 class SurfaceTextureHelper : public rtc::RefCountInterface {
  public:
-  SurfaceTextureHelper(JNIEnv* jni, jobject surface_texture_helper);
+  // Might return null if creating the Java SurfaceTextureHelper fails.
+  static rtc::scoped_refptr<SurfaceTextureHelper> create(
+      JNIEnv* jni, const char* thread_name, jobject j_egl_context);
+
+  jobject GetJavaSurfaceTextureHelper() const;
 
   rtc::scoped_refptr<webrtc::VideoFrameBuffer> CreateTextureFrame(
       int width,
       int height,
       const NativeHandleImpl& native_handle);
 
- protected:
-  ~SurfaceTextureHelper();
-
- private:
-  //  May be called on arbitrary thread.
+  // May be called on arbitrary thread.
   void ReturnTextureFrame() const;
 
+ protected:
+  ~SurfaceTextureHelper();
+  SurfaceTextureHelper(JNIEnv* jni, jobject j_surface_texture_helper);
+
+ private:
   const ScopedGlobalRef<jobject> j_surface_texture_helper_;
   const jmethodID j_return_texture_method_;
 };

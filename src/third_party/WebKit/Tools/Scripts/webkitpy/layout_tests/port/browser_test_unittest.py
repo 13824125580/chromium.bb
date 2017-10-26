@@ -26,11 +26,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import unittest
 
 from webkitpy.common.system.executive_mock import MockExecutive2
 from webkitpy.common.system.systemhost_mock import MockSystemHost
-from webkitpy.tool.mocktool import MockOptions
+from webkitpy.tool.mock_tool import MockOptions
 
 from webkitpy.layout_tests.models import test_run_results
 from webkitpy.layout_tests.port import browser_test
@@ -55,7 +54,8 @@ class _BrowserTestTestCaseMixin(object):
                          3 * self.timeout_ms)
 
     def test_driver_type(self):
-        self.assertTrue(isinstance(self.make_port(options=MockOptions(driver_name='browser_tests')).create_driver(1), browser_test_driver.BrowserTestDriver))
+        self.assertTrue(isinstance(self.make_port(options=MockOptions(driver_name='browser_tests')
+                                                  ).create_driver(1), browser_test_driver.BrowserTestDriver))
 
     def test_layout_tests_dir(self):
         self.assertTrue(self.make_port().layout_tests_dir().endswith('chrome/test/data/printing/layout_tests'))
@@ -94,4 +94,4 @@ class BrowserTestMacTest(_BrowserTestTestCaseMixin, port_testcase.PortTestCase):
 
     def test_driver_path(self):
         test_port = self.make_port(options=MockOptions(driver_name='browser_tests'))
-        self.assertFalse('.app/Contents/MacOS' in test_port._path_to_driver())
+        self.assertNotIn('.app/Contents/MacOS', test_port._path_to_driver())

@@ -32,20 +32,20 @@ Commit::~Commit() {
   DCHECK(cleaned_up_);
 }
 
-Commit* Commit::Init(
-    ModelTypeSet requested_types,
-    ModelTypeSet enabled_types,
-    size_t max_entries,
-    const std::string& account_name,
-    const std::string& cache_guid,
-    CommitProcessor* commit_processor,
-    ExtensionsActivity* extensions_activity) {
+Commit* Commit::Init(ModelTypeSet requested_types,
+                     ModelTypeSet enabled_types,
+                     size_t max_entries,
+                     const std::string& account_name,
+                     const std::string& cache_guid,
+                     bool cookie_jar_mismatch,
+                     bool cookie_jar_empty,
+                     CommitProcessor* commit_processor,
+                     ExtensionsActivity* extensions_activity) {
   // Gather per-type contributions.
   ContributionMap contributions;
-  commit_processor->GatherCommitContributions(
-      requested_types,
-      max_entries,
-      &contributions);
+  commit_processor->GatherCommitContributions(requested_types, max_entries,
+                                              cookie_jar_mismatch,
+                                              cookie_jar_empty, &contributions);
 
   // Give up if no one had anything to commit.
   if (contributions.empty())
@@ -71,6 +71,7 @@ Commit* Commit::Init(
   // Set the client config params.
   commit_util::AddClientConfigParamsToMessage(
       enabled_types,
+      cookie_jar_mismatch,
       commit_message);
 
   int previous_message_size = message.ByteSize();

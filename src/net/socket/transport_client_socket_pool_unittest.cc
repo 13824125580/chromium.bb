@@ -9,7 +9,9 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/threading/platform_thread.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/load_timing_info_test_util.h"
@@ -38,20 +40,19 @@ class TransportClientSocketPoolTest : public testing::Test {
   TransportClientSocketPoolTest()
       : connect_backup_jobs_enabled_(
             ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(true)),
-        params_(
-            new TransportSocketParams(
-                HostPortPair("www.google.com", 80),
-                false,
-                OnHostResolutionCallback(),
-                TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT)),
+        params_(new TransportSocketParams(
+            HostPortPair("www.google.com", 80),
+            false,
+            OnHostResolutionCallback(),
+            TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT)),
         host_resolver_(new MockHostResolver),
         client_socket_factory_(&net_log_),
         pool_(kMaxSockets,
               kMaxSocketsPerGroup,
               host_resolver_.get(),
               &client_socket_factory_,
-              NULL) {
-  }
+              NULL,
+              NULL) {}
 
   ~TransportClientSocketPoolTest() override {
     internal::ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(
@@ -85,7 +86,7 @@ class TransportClientSocketPoolTest : public testing::Test {
     test_base_.ReleaseAllConnections(keep_alive);
   }
 
-  std::vector<scoped_ptr<TestSocketRequest>>* requests() {
+  std::vector<std::unique_ptr<TestSocketRequest>>* requests() {
     return test_base_.requests();
   }
   size_t completion_count() const { return test_base_.completion_count(); }
@@ -93,7 +94,7 @@ class TransportClientSocketPoolTest : public testing::Test {
   bool connect_backup_jobs_enabled_;
   TestNetLog net_log_;
   scoped_refptr<TransportSocketParams> params_;
-  scoped_ptr<MockHostResolver> host_resolver_;
+  std::unique_ptr<MockHostResolver> host_resolver_;
   MockTransportClientSocketFactory client_socket_factory_;
   TransportClientSocketPool pool_;
   ClientSocketPoolTest test_base_;
@@ -103,15 +104,13 @@ class TransportClientSocketPoolTest : public testing::Test {
 };
 
 TEST(TransportConnectJobTest, MakeAddrListStartWithIPv4) {
-  IPAddressNumber ip_number;
-  ASSERT_TRUE(ParseIPLiteralToNumber("192.168.1.1", &ip_number));
-  IPEndPoint addrlist_v4_1(ip_number, 80);
-  ASSERT_TRUE(ParseIPLiteralToNumber("192.168.1.2", &ip_number));
-  IPEndPoint addrlist_v4_2(ip_number, 80);
-  ASSERT_TRUE(ParseIPLiteralToNumber("2001:4860:b006::64", &ip_number));
-  IPEndPoint addrlist_v6_1(ip_number, 80);
-  ASSERT_TRUE(ParseIPLiteralToNumber("2001:4860:b006::66", &ip_number));
-  IPEndPoint addrlist_v6_2(ip_number, 80);
+  IPEndPoint addrlist_v4_1(IPAddress(192, 168, 1, 1), 80);
+  IPEndPoint addrlist_v4_2(IPAddress(192, 168, 1, 2), 80);
+  IPAddress ip_address;
+  ASSERT_TRUE(ip_address.AssignFromIPLiteral("2001:4860:b006::64"));
+  IPEndPoint addrlist_v6_1(ip_address, 80);
+  ASSERT_TRUE(ip_address.AssignFromIPLiteral("2001:4860:b006::66"));
+  IPEndPoint addrlist_v6_2(ip_address, 80);
 
   AddressList addrlist;
 
@@ -501,7 +500,7 @@ class RequestSocketCallback : public TestCompletionCallbackBase {
       {
         base::MessageLoop::ScopedNestableTaskAllower allow(
             base::MessageLoop::current());
-        base::MessageLoop::current()->RunUntilIdle();
+        base::RunLoop().RunUntilIdle();
       }
       within_callback_ = true;
       scoped_refptr<TransportSocketParams> dest(new TransportSocketParams(
@@ -606,7 +605,7 @@ TEST_F(TransportClientSocketPoolTest, IdleSocketLoadTiming) {
 
   handle.Reset();
   // Need to run all pending to release the socket back to the pool.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Now we should have 1 idle socket.
   EXPECT_EQ(1, pool_.IdleSocketCount());
@@ -635,14 +634,14 @@ TEST_F(TransportClientSocketPoolTest, ResetIdleSocketsOnIPAddressChange) {
   handle.Reset();
 
   // Need to run all pending to release the socket back to the pool.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Now we should have 1 idle socket.
   EXPECT_EQ(1, pool_.IdleSocketCount());
 
   // After an IP address change, we should have 0 idle sockets.
   NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-  base::MessageLoop::current()->RunUntilIdle();  // Notification happens async.
+  base::RunLoop().RunUntilIdle();  // Notification happens async.
 
   EXPECT_EQ(0, pool_.IdleSocketCount());
 }
@@ -686,14 +685,14 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketConnect) {
     EXPECT_FALSE(handle.socket());
 
     // Create the first socket, set the timer.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     // Wait for the backup socket timer to fire.
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(
         ClientSocketPool::kMaxConnectRetryIntervalMs + 50));
 
     // Let the appropriate socket connect.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     EXPECT_EQ(OK, callback.WaitForResult());
     EXPECT_TRUE(handle.is_initialized());
@@ -729,7 +728,7 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketCancel) {
     EXPECT_FALSE(handle.socket());
 
     // Create the first socket, set the timer.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     if (index == CANCEL_AFTER_WAIT) {
       // Wait for the backup socket timer to fire.
@@ -738,7 +737,7 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketCancel) {
     }
 
     // Let the appropriate socket connect.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     handle.Reset();
 
@@ -776,7 +775,7 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketFailAfterStall) {
   EXPECT_FALSE(handle.socket());
 
   // Create the first socket, set the timer.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Wait for the backup socket timer to fire.
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(
@@ -787,7 +786,7 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketFailAfterStall) {
   host_resolver_->set_synchronous_mode(true);
 
   // Let the appropriate socket connect.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(ERR_CONNECTION_FAILED, callback.WaitForResult());
   EXPECT_FALSE(handle.is_initialized());
@@ -827,7 +826,7 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketFailAfterDelay) {
   EXPECT_FALSE(handle.socket());
 
   // Create the first socket, set the timer.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Wait for the backup socket timer to fire.
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(
@@ -838,7 +837,7 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketFailAfterDelay) {
   host_resolver_->set_synchronous_mode(true);
 
   // Let the appropriate socket connect.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(ERR_CONNECTION_FAILED, callback.WaitForResult());
   EXPECT_FALSE(handle.is_initialized());
@@ -856,11 +855,9 @@ TEST_F(TransportClientSocketPoolTest, BackupSocketFailAfterDelay) {
 TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv4FinishesFirst) {
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &client_socket_factory_,
+                                 NULL, NULL);
 
   MockTransportClientSocketFactory::ClientSocketType case_types[] = {
       // This is the IPv6 socket. It stalls, but presents one failed connection
@@ -889,14 +886,14 @@ TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv4FinishesFirst) {
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv4AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv4());
 
   // Check that the failed connection attempt on the main socket is collected.
   ConnectionAttempts attempts;
   handle.socket()->GetConnectionAttempts(&attempts);
   ASSERT_EQ(1u, attempts.size());
   EXPECT_EQ(ERR_CONNECTION_FAILED, attempts[0].result);
-  EXPECT_EQ(kIPv6AddressSize, attempts[0].endpoint.address().size());
+  EXPECT_TRUE(attempts[0].endpoint.address().IsIPv6());
 
   EXPECT_EQ(2, client_socket_factory_.allocation_count());
 }
@@ -907,11 +904,9 @@ TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv4FinishesFirst) {
 TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv6FinishesFirst) {
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &client_socket_factory_,
+                                 NULL, NULL);
 
   MockTransportClientSocketFactory::ClientSocketType case_types[] = {
       // This is the IPv6 socket.
@@ -922,7 +917,7 @@ TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv6FinishesFirst) {
 
   client_socket_factory_.set_client_socket_types(case_types, 2);
   client_socket_factory_.set_delay(base::TimeDelta::FromMilliseconds(
-      TransportConnectJobHelper::kIPv6FallbackTimerInMs + 50));
+      TransportConnectJob::kIPv6FallbackTimerInMs + 50));
 
   // Resolve an AddressList with a IPv6 address first and then a IPv4 address.
   host_resolver_->rules()
@@ -942,7 +937,7 @@ TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv6FinishesFirst) {
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv6AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv6());
 
   // Check that the failed connection attempt on the fallback socket is
   // collected.
@@ -950,7 +945,7 @@ TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv6FinishesFirst) {
   handle.socket()->GetConnectionAttempts(&attempts);
   ASSERT_EQ(1u, attempts.size());
   EXPECT_EQ(ERR_CONNECTION_FAILED, attempts[0].result);
-  EXPECT_EQ(kIPv4AddressSize, attempts[0].endpoint.address().size());
+  EXPECT_TRUE(attempts[0].endpoint.address().IsIPv4());
 
   EXPECT_EQ(2, client_socket_factory_.allocation_count());
 }
@@ -958,11 +953,9 @@ TEST_F(TransportClientSocketPoolTest, IPv6FallbackSocketIPv6FinishesFirst) {
 TEST_F(TransportClientSocketPoolTest, IPv6NoIPv4AddressesToFallbackTo) {
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &client_socket_factory_,
+                                 NULL, NULL);
 
   client_socket_factory_.set_default_client_socket_type(
       MockTransportClientSocketFactory::MOCK_DELAYED_CLIENT_SOCKET);
@@ -985,7 +978,7 @@ TEST_F(TransportClientSocketPoolTest, IPv6NoIPv4AddressesToFallbackTo) {
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv6AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv6());
   EXPECT_EQ(0u, handle.connection_attempts().size());
   EXPECT_EQ(1, client_socket_factory_.allocation_count());
 }
@@ -993,11 +986,9 @@ TEST_F(TransportClientSocketPoolTest, IPv6NoIPv4AddressesToFallbackTo) {
 TEST_F(TransportClientSocketPoolTest, IPv4HasNoFallback) {
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &client_socket_factory_,
+                                 NULL, NULL);
 
   client_socket_factory_.set_default_client_socket_type(
       MockTransportClientSocketFactory::MOCK_DELAYED_CLIENT_SOCKET);
@@ -1019,7 +1010,7 @@ TEST_F(TransportClientSocketPoolTest, IPv4HasNoFallback) {
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv4AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv4());
   EXPECT_EQ(0u, handle.connection_attempts().size());
   EXPECT_EQ(1, client_socket_factory_.allocation_count());
 }
@@ -1027,15 +1018,13 @@ TEST_F(TransportClientSocketPoolTest, IPv4HasNoFallback) {
 // Test that if TCP FastOpen is enabled, it is set on the socket
 // when we have only an IPv4 address.
 TEST_F(TransportClientSocketPoolTest, TCPFastOpenOnIPv4WithNoFallback) {
+  SequencedSocketData socket_data(nullptr, 0, nullptr, 0);
+  MockClientSocketFactory factory;
+  factory.AddSocketDataProvider(&socket_data);
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
-  client_socket_factory_.set_default_client_socket_type(
-      MockTransportClientSocketFactory::MOCK_DELAYED_CLIENT_SOCKET);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &factory, NULL, NULL);
   // Resolve an AddressList with only IPv4 addresses.
   host_resolver_->rules()->AddIPLiteralRule("*", "1.1.1.1", std::string());
 
@@ -1046,19 +1035,19 @@ TEST_F(TransportClientSocketPoolTest, TCPFastOpenOnIPv4WithNoFallback) {
   handle.Init("a", params, LOW, ClientSocketPool::RespectLimits::ENABLED,
               callback.callback(), &pool, BoundNetLog());
   EXPECT_EQ(OK, callback.WaitForResult());
-  EXPECT_TRUE(handle.socket()->UsingTCPFastOpen());
+  EXPECT_TRUE(socket_data.IsUsingTCPFastOpen());
 }
 
 // Test that if TCP FastOpen is enabled, it is set on the socket
 // when we have only IPv6 addresses.
 TEST_F(TransportClientSocketPoolTest, TCPFastOpenOnIPv6WithNoFallback) {
+  SequencedSocketData socket_data(nullptr, 0, nullptr, 0);
+  MockClientSocketFactory factory;
+  factory.AddSocketDataProvider(&socket_data);
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &factory, NULL, NULL);
   client_socket_factory_.set_default_client_socket_type(
       MockTransportClientSocketFactory::MOCK_DELAYED_CLIENT_SOCKET);
   // Resolve an AddressList with only IPv6 addresses.
@@ -1072,29 +1061,25 @@ TEST_F(TransportClientSocketPoolTest, TCPFastOpenOnIPv6WithNoFallback) {
   handle.Init("a", params, LOW, ClientSocketPool::RespectLimits::ENABLED,
               callback.callback(), &pool, BoundNetLog());
   EXPECT_EQ(OK, callback.WaitForResult());
-  EXPECT_TRUE(handle.socket()->UsingTCPFastOpen());
+  EXPECT_TRUE(socket_data.IsUsingTCPFastOpen());
 }
 
 // Test that if TCP FastOpen is enabled, it does not do anything when there
 // is a IPv6 address with fallback to an IPv4 address. This test tests the case
 // when the IPv6 connect fails and the IPv4 one succeeds.
 TEST_F(TransportClientSocketPoolTest,
-           NoTCPFastOpenOnIPv6FailureWithIPv4Fallback) {
+       NoTCPFastOpenOnIPv6FailureWithIPv4Fallback) {
+  SequencedSocketData socket_data_1(nullptr, 0, nullptr, 0);
+  socket_data_1.set_connect_data(MockConnect(SYNCHRONOUS, ERR_IO_PENDING));
+  SequencedSocketData socket_data_2(nullptr, 0, nullptr, 0);
+  MockClientSocketFactory factory;
+  factory.AddSocketDataProvider(&socket_data_1);
+  factory.AddSocketDataProvider(&socket_data_2);
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &factory, NULL, NULL);
 
-  MockTransportClientSocketFactory::ClientSocketType case_types[] = {
-    // This is the IPv6 socket.
-    MockTransportClientSocketFactory::MOCK_STALLED_CLIENT_SOCKET,
-    // This is the IPv4 socket.
-    MockTransportClientSocketFactory::MOCK_PENDING_CLIENT_SOCKET
-  };
-  client_socket_factory_.set_client_socket_types(case_types, 2);
   // Resolve an AddressList with a IPv6 address first and then a IPv4 address.
   host_resolver_->rules()
       ->AddIPLiteralRule("*", "2:abcd::3:4:ff,2.2.2.2", std::string());
@@ -1108,33 +1093,25 @@ TEST_F(TransportClientSocketPoolTest,
   EXPECT_EQ(OK, callback.WaitForResult());
   // Verify that the socket used is connected to the fallback IPv4 address.
   IPEndPoint endpoint;
-  handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv4AddressSize, endpoint.address().size());
-  EXPECT_EQ(2, client_socket_factory_.allocation_count());
+  handle.socket()->GetPeerAddress(&endpoint);
+  EXPECT_TRUE(endpoint.address().IsIPv4());
   // Verify that TCP FastOpen was not turned on for the socket.
-  EXPECT_FALSE(handle.socket()->UsingTCPFastOpen());
+  EXPECT_FALSE(socket_data_1.IsUsingTCPFastOpen());
 }
 
 // Test that if TCP FastOpen is enabled, it does not do anything when there
 // is a IPv6 address with fallback to an IPv4 address. This test tests the case
 // when the IPv6 connect succeeds.
 TEST_F(TransportClientSocketPoolTest,
-           NoTCPFastOpenOnIPv6SuccessWithIPv4Fallback) {
+       NoTCPFastOpenOnIPv6SuccessWithIPv4Fallback) {
+  SequencedSocketData socket_data(nullptr, 0, nullptr, 0);
+  MockClientSocketFactory factory;
+  factory.AddSocketDataProvider(&socket_data);
   // Create a pool without backup jobs.
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-  TransportClientSocketPool pool(kMaxSockets,
-                                 kMaxSocketsPerGroup,
-                                 host_resolver_.get(),
-                                 &client_socket_factory_,
-                                 NULL);
+  TransportClientSocketPool pool(kMaxSockets, kMaxSocketsPerGroup,
+                                 host_resolver_.get(), &factory, NULL, NULL);
 
-  MockTransportClientSocketFactory::ClientSocketType case_types[] = {
-    // This is the IPv6 socket.
-    MockTransportClientSocketFactory::MOCK_PENDING_CLIENT_SOCKET,
-    // This is the IPv4 socket.
-    MockTransportClientSocketFactory::MOCK_PENDING_CLIENT_SOCKET
-  };
-  client_socket_factory_.set_client_socket_types(case_types, 2);
   // Resolve an AddressList with a IPv6 address first and then a IPv4 address.
   host_resolver_->rules()
       ->AddIPLiteralRule("*", "2:abcd::3:4:ff,2.2.2.2", std::string());
@@ -1146,13 +1123,12 @@ TEST_F(TransportClientSocketPoolTest,
   handle.Init("a", params, LOW, ClientSocketPool::RespectLimits::ENABLED,
               callback.callback(), &pool, BoundNetLog());
   EXPECT_EQ(OK, callback.WaitForResult());
-  // Verify that the socket used is connected to the IPv6 address.
   IPEndPoint endpoint;
-  handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv6AddressSize, endpoint.address().size());
-  EXPECT_EQ(1, client_socket_factory_.allocation_count());
+  handle.socket()->GetPeerAddress(&endpoint);
+  // Verify that the socket used is connected to the IPv6 address.
+  EXPECT_TRUE(endpoint.address().IsIPv6());
   // Verify that TCP FastOpen was not turned on for the socket.
-  EXPECT_FALSE(handle.socket()->UsingTCPFastOpen());
+  EXPECT_FALSE(socket_data.IsUsingTCPFastOpen());
 }
 
 }  // namespace

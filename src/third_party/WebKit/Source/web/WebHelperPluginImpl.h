@@ -35,7 +35,6 @@
 #include "public/web/WebHelperPlugin.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
 
@@ -66,8 +65,8 @@ private:
     void reallyDestroy(Timer<WebHelperPluginImpl>*);
 
     Timer<WebHelperPluginImpl> m_destructionTimer;
-    RefPtrWillBePersistent<HTMLObjectElement> m_objectElement;
-    RefPtrWillBePersistent<WebPluginContainerImpl> m_pluginContainer;
+    Persistent<HTMLObjectElement> m_objectElement;
+    Persistent<WebPluginContainerImpl> m_pluginContainer;
 };
 
 } // namespace blink

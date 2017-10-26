@@ -39,7 +39,7 @@ class ExtensionOverrideTest : public ExtensionApiTest {
       return false;
 
     std::set<std::string> seen_overrides;
-    for (const base::Value* val : *values) {
+    for (const auto& val : *values) {
       const base::DictionaryValue* dict = nullptr;
       std::string entry;
       if (!val->GetAsDictionary(&dict) || !dict->GetString("entry", &entry) ||
@@ -235,7 +235,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, ShouldCleanUpDuplicateEntries) {
   // the file already contains dupes when an extension is loaded.
   base::ListValue* list = new base::ListValue();
   for (size_t i = 0; i < 3; ++i) {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetString("entry", "http://www.google.com/");
     dict->SetBoolean("active", true);
     list->Append(std::move(dict));

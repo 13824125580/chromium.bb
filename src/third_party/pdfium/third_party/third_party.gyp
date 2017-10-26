@@ -5,22 +5,18 @@
 {
   'variables': {
     'pdf_enable_xfa%': 0,  # Set to 1 by standalone.gypi in standalone builds.
+    'pdf_use_skia%': 0,
   },
   'target_defaults': {
     'defines': [
       'OPJ_STATIC',
       'PNG_PREFIX',
-      'PNGPREFIX_H',
       'PNG_USE_READ_MACROS',
-      '_CRT_SECURE_NO_WARNINGS',
     ],
     'include_dirs': [
       # This is implicit in GN.
       '<(DEPTH)',
       '..',
-    ],
-    'msvs_disabled_warnings': [
-      4005, 4018, 4146, 4333, 4345, 4267
     ],
   },
   'targets': [
@@ -81,6 +77,22 @@
         'freetype/src/truetype/truetype.c',
         'freetype/src/type1/type1.c',
       ],
+      'conditions': [
+        ['pdf_use_skia==1', {
+          'sources': [
+           'freetype/src/base/ftfntfmt.c',
+           'freetype/src/base/ftfstype.c',
+           'freetype/src/base/fttype1.c',
+          ],
+        }],
+        ['os_posix==1 and clang==0', {
+          'cflags': [
+            # open_face_PS_from_sfnt_stream() and open_face_from_buffer() in
+            # ftbase.h are unused. GCC needs this flag too.
+            '-Wno-unused-function',
+          ],
+        }],
+      ],
       'variables': {
         'clang_warning_flags': [
           # open_face_PS_from_sfnt_stream() and open_face_from_buffer() in
@@ -88,39 +100,11 @@
           '-Wno-unused-function',
         ],
       },
-    },
-    {
-      'target_name': 'fx_agg',
-      'type': 'static_library',
-      'sources': [
-        'agg23/agg_basics.h',
-        'agg23/agg_clip_liang_barsky.h',
-        'agg23/agg_conv_dash.h',
-        'agg23/agg_conv_stroke.h',
-        'agg23/agg_curves.cpp',
-        'agg23/agg_curves.h',
-        'agg23/agg_path_storage.cpp',
-        'agg23/agg_path_storage.h',
-        'agg23/agg_rasterizer_scanline_aa.cpp',
-        'agg23/agg_rasterizer_scanline_aa.h',
-        'agg23/agg_renderer_scanline.h',
-        'agg23/agg_rendering_buffer.h',
-        'agg23/agg_scanline_u.h',
-        'agg23/agg_vcgen_dash.cpp',
-        'agg23/agg_vcgen_stroke.cpp',
+      'msvs_disabled_warnings': [
+        # Warnings about conversion from 'size_t' to 'long', possible loss of
+        # data.
+        4267,
       ],
-      'conditions': [
-        ['os_posix==1', {
-          # library contains several enum vs non-enum conditionals.
-          'cflags': [ '-Wno-extra', ],
-        }],
-      ],
-      'variables': {
-        'clang_warning_flags': [
-          # calc_butt_cap() in agg_vcgen_stroke.cpp is unused.
-          '-Wno-unused-function',
-        ],
-      },
     },
     {
       'target_name': 'fx_lcms2',
@@ -240,6 +224,17 @@
           ],
         }],
       ],
+      'variables': {
+        'clang_warning_flags': [
+          # Avoid warning for undefined behaviour.
+          '-Wno-shift-negative-value',
+        ],
+      },
+      'msvs_disabled_warnings': [
+        # Warnings about conversion from 'size_t' to 'long', possible loss of
+        # data.
+        4267,
+      ],
     },
     {
       'target_name': 'fx_libopenjpeg',
@@ -265,6 +260,9 @@
         'libopenjpeg20/tcd.c',
         'libopenjpeg20/tgt.c',
       ],
+      'msvs_disabled_warnings': [
+        4018,
+      ],
     },
     {
       'target_name': 'fx_lpng',
@@ -280,6 +278,7 @@
         'libpng16/pnglibconf.h',
         'libpng16/pngmem.c',
         'libpng16/pngpread.c',
+        'libpng16/pngprefix.h',
         'libpng16/pngpriv.h',
         'libpng16/pngread.c',
         'libpng16/pngrio.c',
@@ -321,8 +320,20 @@
             '-Wno-shift-negative-value',
           ],
         }],
+        ['OS == "win"', {
+          'direct_dependent_settings': {
+            'include_dirs': [
+              'zlib_v128',
+            ],
+          }
+        }],
       ],
-
+      'variables': {
+        'clang_warning_flags': [
+          # Avoid warning for undefined behaviour. https://crbug.com/507712
+          '-Wno-shift-negative-value',
+        ]
+      },
     },
     {
       'target_name': 'pdfium_base',
@@ -383,6 +394,52 @@
             'libtiff/tif_write.c',
             'libtiff/tif_zip.c',
           ],
+          'conditions': [
+            ['OS=="win"', {
+              'defines!': [
+                # Need to undefine the macro since it is redefined in
+                # tif_ojpeg.c and tif_jpeg.c.
+                'WIN32_LEAN_AND_MEAN',
+              ],
+            }],
+          ],
+        },
+      ],
+    }],
+    ['pdf_use_skia!=1', {
+      'targets': [
+        {
+          'target_name': 'fx_agg',
+          'type': 'static_library',
+          'sources': [
+            'agg23/agg_basics.h',
+            'agg23/agg_clip_liang_barsky.h',
+            'agg23/agg_conv_dash.h',
+            'agg23/agg_conv_stroke.h',
+            'agg23/agg_curves.cpp',
+            'agg23/agg_curves.h',
+            'agg23/agg_path_storage.cpp',
+            'agg23/agg_path_storage.h',
+            'agg23/agg_rasterizer_scanline_aa.cpp',
+            'agg23/agg_rasterizer_scanline_aa.h',
+            'agg23/agg_renderer_scanline.h',
+            'agg23/agg_rendering_buffer.h',
+            'agg23/agg_scanline_u.h',
+            'agg23/agg_vcgen_dash.cpp',
+            'agg23/agg_vcgen_stroke.cpp',
+          ],
+          'conditions': [
+            ['os_posix==1', {
+              # library contains several enum vs non-enum conditionals.
+              'cflags': [ '-Wno-extra', ],
+            }],
+          ],
+          'variables': {
+            'clang_warning_flags': [
+              # calc_butt_cap() in agg_vcgen_stroke.cpp is unused.
+              '-Wno-unused-function',
+            ],
+          },
         },
       ],
     }],

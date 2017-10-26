@@ -49,9 +49,6 @@ Methods:
 """
 
 
-import sys
-
-
 class DefaultStyleErrorHandler(object):
 
     """The default style error handler."""
@@ -107,7 +104,7 @@ class DefaultStyleErrorHandler(object):
 
     def _add_reportable_error(self, category):
         """Increment the error count and return the new category total."""
-        self._increment_error_count() # Increment the total.
+        self._increment_error_count()  # Increment the total.
 
         # Increment the category total.
         if not category in self._category_totals:

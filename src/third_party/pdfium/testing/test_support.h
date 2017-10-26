@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"
@@ -63,6 +64,8 @@ struct FreeDeleter {
 std::unique_ptr<char, pdfium::FreeDeleter> GetFileContents(const char* filename,
                                                            size_t* retlen);
 
+std::vector<std::string> StringSplit(const std::string& str, char delimiter);
+
 // Converts a FPDF_WIDESTRING to a std::wstring.
 // Deals with differences between UTF16LE and wchar_t.
 std::wstring GetPlatformWString(const FPDF_WIDESTRING wstr);
@@ -80,7 +83,8 @@ bool InitializeV8ForPDFium(const std::string& exe_path,
                            v8::StartupData* snapshot_blob,
                            v8::Platform** platform);
 #else   // V8_USE_EXTERNAL_STARTUP_DATA
-bool InitializeV8ForPDFium(v8::Platform** platform);
+bool InitializeV8ForPDFium(const std::string& exe_path,
+                           v8::Platform** platform);
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
 #endif  // PDF_ENABLE_V8
 

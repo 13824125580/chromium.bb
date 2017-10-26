@@ -27,7 +27,7 @@ const size_t kMaxFrameSize = 4 * 1024 * 1024;
 
 class DecoderBufferFromMsg : public DecoderBufferBase {
  public:
-  explicit DecoderBufferFromMsg(scoped_ptr<MediaMessage> msg);
+  explicit DecoderBufferFromMsg(std::unique_ptr<MediaMessage> msg);
 
   void Initialize();
 
@@ -55,19 +55,19 @@ class DecoderBufferFromMsg : public DecoderBufferBase {
   base::TimeDelta pts_;
 
   // CENC parameters.
-  scoped_ptr<CastDecryptConfig> decrypt_config_;
+  std::unique_ptr<CastDecryptConfig> decrypt_config_;
 
   // Size of the frame.
   size_t data_size_;
 
   // Keeps the message since frame data is not copied.
-  scoped_ptr<MediaMessage> msg_;
+  std::unique_ptr<MediaMessage> msg_;
   uint8_t* data_;
 
   DISALLOW_COPY_AND_ASSIGN(DecoderBufferFromMsg);
 };
 
-DecoderBufferFromMsg::DecoderBufferFromMsg(scoped_ptr<MediaMessage> msg)
+DecoderBufferFromMsg::DecoderBufferFromMsg(std::unique_ptr<MediaMessage> msg)
     : is_eos_(true), stream_id_(kPrimary), msg_(std::move(msg)), data_(NULL) {
   CHECK(msg_);
 }
@@ -170,27 +170,11 @@ void DecoderBufferBaseMarshaller::Write(
   CHECK(msg->WritePod(buffer->stream_id()));
   CHECK(msg->WritePod(buffer->timestamp()));
 
-  bool has_decrypt_config =
-      (buffer->decrypt_config() != NULL &&
-       buffer->decrypt_config()->iv().size() > 0);
+  bool has_decrypt_config = buffer->decrypt_config() != nullptr;
   CHECK(msg->WritePod(has_decrypt_config));
 
-  if (has_decrypt_config) {
-    // DecryptConfig may contain 0 subsamples if all content is encrypted.
-    // Map this case to a single fully-encrypted "subsample" for more consistent
-    // backend handling.
-    if (buffer->decrypt_config()->subsamples().empty()) {
-      std::vector<SubsampleEntry> encrypted_subsample_list(1);
-      encrypted_subsample_list[0].clear_bytes = 0;
-      encrypted_subsample_list[0].cypher_bytes = buffer->data_size();
-      CastDecryptConfigImpl full_sample_config(
-          buffer->decrypt_config()->key_id(), buffer->decrypt_config()->iv(),
-          encrypted_subsample_list);
-      DecryptConfigMarshaller::Write(full_sample_config, msg);
-    } else {
-      DecryptConfigMarshaller::Write(*buffer->decrypt_config(), msg);
-    }
-  }
+  if (has_decrypt_config)
+    DecryptConfigMarshaller::Write(*buffer->decrypt_config(), msg);
 
   CHECK(msg->WritePod(buffer->data_size()));
   CHECK(msg->WriteBuffer(buffer->data(), buffer->data_size()));
@@ -198,7 +182,7 @@ void DecoderBufferBaseMarshaller::Write(
 
 // static
 scoped_refptr<DecoderBufferBase> DecoderBufferBaseMarshaller::Read(
-    scoped_ptr<MediaMessage> msg) {
+    std::unique_ptr<MediaMessage> msg) {
   scoped_refptr<DecoderBufferFromMsg> buffer(
       new DecoderBufferFromMsg(std::move(msg)));
   buffer->Initialize();

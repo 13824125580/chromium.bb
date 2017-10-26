@@ -4,6 +4,9 @@
 
 #include "chrome/browser/task_profiler/task_profiler_data_serializer.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
@@ -43,7 +46,8 @@ void BirthOnThreadSnapshotToValue(const BirthOnThreadSnapshot& birth,
                                   base::DictionaryValue* dictionary) {
   DCHECK(!prefix.empty());
 
-  scoped_ptr<base::DictionaryValue> location_value(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> location_value(
+      new base::DictionaryValue);
   LocationSnapshotToValue(birth.location, location_value.get());
   dictionary->Set(prefix + "_location", location_value.release());
 
@@ -67,7 +71,7 @@ void TaskSnapshotToValue(const TaskSnapshot& snapshot,
                          base::DictionaryValue* dictionary) {
   BirthOnThreadSnapshotToValue(snapshot.birth, "birth", dictionary);
 
-  scoped_ptr<base::DictionaryValue> death_data(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> death_data(new base::DictionaryValue);
   DeathDataSnapshotToValue(snapshot.death_data, death_data.get());
   dictionary->Set("death_data", death_data.release());
 
@@ -78,13 +82,12 @@ int AsChromeProcessType(
     metrics::ProfilerEventProto::TrackedObject::ProcessType process_type) {
   switch (process_type) {
     case metrics::ProfilerEventProto::TrackedObject::UNKNOWN:
+    case metrics::ProfilerEventProto::TrackedObject::PLUGIN:
       return content::PROCESS_TYPE_UNKNOWN;
     case metrics::ProfilerEventProto::TrackedObject::BROWSER:
       return content::PROCESS_TYPE_BROWSER;
     case metrics::ProfilerEventProto::TrackedObject::RENDERER:
       return content::PROCESS_TYPE_RENDERER;
-    case metrics::ProfilerEventProto::TrackedObject::PLUGIN:
-      return content::PROCESS_TYPE_PLUGIN;
     case metrics::ProfilerEventProto::TrackedObject::WORKER:
       return content::PROCESS_TYPE_WORKER_DEPRECATED;
     case metrics::ProfilerEventProto::TrackedObject::NACL_LOADER:
@@ -120,11 +123,11 @@ void TaskProfilerDataSerializer::ToValue(
     base::ProcessId process_id,
     metrics::ProfilerEventProto::TrackedObject::ProcessType process_type,
     base::DictionaryValue* dictionary) {
-  scoped_ptr<base::ListValue> tasks_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> tasks_list(new base::ListValue);
   for (const auto& task : process_data_phase.tasks) {
-    scoped_ptr<base::DictionaryValue> snapshot(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> snapshot(new base::DictionaryValue);
     TaskSnapshotToValue(task, snapshot.get());
-    tasks_list->Append(snapshot.release());
+    tasks_list->Append(std::move(snapshot));
   }
   dictionary->Set("list", tasks_list.release());
 

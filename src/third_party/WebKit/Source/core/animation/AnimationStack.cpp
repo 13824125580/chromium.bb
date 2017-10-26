@@ -34,7 +34,6 @@
 #include "core/animation/InvalidatableInterpolation.h"
 #include "core/animation/css/CSSAnimations.h"
 #include "platform/RuntimeEnabledFeatures.h"
-#include "wtf/BitArray.h"
 #include "wtf/NonCopyingSort.h"
 #include <algorithm>
 
@@ -45,7 +44,7 @@ namespace {
 void copyToActiveInterpolationsMap(const Vector<RefPtr<Interpolation>>& source, AnimationStack::PropertyHandleFilter propertyHandleFilter, ActiveInterpolationsMap& target)
 {
     for (const auto& interpolation : source) {
-        PropertyHandle property = interpolation->property();
+        PropertyHandle property = interpolation->getProperty();
         if (propertyHandleFilter && !propertyHandleFilter(property))
             continue;
         ActiveInterpolationsMap::AddResult entry = target.add(property, ActiveInterpolations(1));
@@ -152,7 +151,7 @@ bool AnimationStack::getAnimatedBoundingBox(FloatBox& box, CSSPropertyID propert
             double endRange = 1;
             timing.timingFunction->range(&startRange, &endRange);
             FloatBox expandingBox(originalBox);
-            if (!CompositorAnimations::instance()->getAnimatedBoundingBox(expandingBox, *effect->model(), startRange, endRange))
+            if (!CompositorAnimations::getAnimatedBoundingBox(expandingBox, *effect->model(), startRange, endRange))
                 return false;
             box.expandTo(expandingBox);
         }

@@ -80,7 +80,6 @@ allowScriptsToCloseWindows initial=false
 downloadableBinaryFontsEnabled initial=true
 
 xssAuditorEnabled initial=false
-unsafePluginPastingEnabled initial=false
 
 preferCompositingToLCDTextEnabled initial=false, invalidate=AcceleratedCompositing
 
@@ -217,6 +216,12 @@ useWideViewport initial=true, invalidate=ViewportDescription
 # http://developer.android.com/reference/android/webkit/WebSettings.html#setLoadWithOverviewMode(boolean)
 loadWithOverviewMode initial=true, invalidate=ViewportDescription
 
+# Used by android_webview to support legacy apps that inject script into a top-level initial empty
+# document and expect it to persist on navigation, even though the origin is unique. Note that this
+# behavior violates the requirements described by [Initialising a new Document object] in
+# https://html.spec.whatwg.org/multipage/browsers.html#navigating-across-documents.
+shouldReuseGlobalForUnownedMainFrame initial=false
+
 ######## End of settings used by Android WebView ########
 
 
@@ -310,6 +315,9 @@ fullscreenSupported initial=true
 # V8 supports different types of caching. Used by V8 bindings.
 v8CacheOptions type=V8CacheOptions, initial=V8CacheOptionsDefault
 
+# V8 code cache for CacheStorage supports three types of strategies (none, normal and aggressive).
+v8CacheStrategiesForCacheStorage type=V8CacheStrategiesForCacheStorage, initial=V8CacheStrategiesForCacheStorage::Default
+
 # These values are bit fields for the properties of available pointing devices
 # and may take on multiple values (e.g. laptop with touchpad and touchscreen
 # has pointerType coarse *and* fine).
@@ -333,6 +341,11 @@ inlineTextBoxAccessibilityEnabled initial=false
 # Typically enabled on Windows to match platform convention.
 showContextMenuOnMouseUp initial=false
 
+# If true, context menu will be shown on any long press event.
+# Used on Android to prevent a context menu from being shown in certain situations
+# (i.e. long pressing an empty div)
+alwaysShowContextMenuOnTouch initial=true
+
 disableReadingFromCanvas initial=false
 strictMixedContentChecking initial=false
 strictMixedContentCheckingForPlugin initial=false
@@ -342,9 +355,10 @@ allowGeolocationOnInsecureOrigins initial=false
 logDnsPrefetchAndPreconnect initial=false
 logPreload initial=false
 
-# If true, the UA styles will include viewportAndroid.css. It is used for
-# Android, and dynamically set by the inspector for mobile emulation.
-useMobileViewportStyle initial=false, invalidate=ViewportRule
+# These values specify the UA intial viewport style.
+# It is dynamically set by the inspector for mobile emulation and can be
+# used by content embedders to specify custom style on certain platforms.
+viewportStyle type=WebViewportStyle, initial=WebViewportStyle::Default, invalidate=ViewportRule
 
 # Automatic track selection is performed based on user preference for track kind specified
 # by this setting.
@@ -359,30 +373,24 @@ textTrackTextColor type=String
 textTrackTextShadow type=String
 textTrackTextSize type=String
 
+# Margin for title-safe placement of cues with overscan, gives top and bottom margin size as
+# percentage of video element height (for horizontal text) into which cues will not be placed.
+textTrackMarginPercentage type=double, initial=0
+
 lowPriorityIframes initial=false
 
-reportWheelOverscroll initial=false
-
-mainResourceOnlyProgress initial=false
+progressBarCompletion type=ProgressBarCompletion, initial=ProgressBarCompletion::LoadEvent
 
 # Do we want to try to save screen real estate in the media player by hiding
 # the volume slider / mute button?
 preferHiddenVolumeControls initial=false
 
-# Controls for resource fetch prioritization.
-# Overall rationale and details here: https://docs.google.com/document/d/1bCDuq9H1ih9iNjgzyAL0gpwNFiEP4TZS-YLRp_RuMlc/edit?usp=sharing
-fetchDeferLateScripts initial=false
-fetchIncreaseFontPriority initial=false
-fetchIncreaseAsyncScriptPriority initial=false
-# Increases the priorities for CSS, Scripts, Fonts and Images all by one level
-# and parser-blocking scripts and visible images by 2.
-# This is used in conjunction with logic on the Chrome side to raise the threshold
-# of "layout-blocking" resources and provide a boost to resources that are needed
-# as soon as possible for something currently on the screen.
-fetchIncreasePriorities initial=false
+# Whether to disallow network fetches for parser blocking scripts in the main
+# frame inserted via document.write, for users on slow connections.
+disallowFetchForDocWrittenScriptsInMainFrameOnSlowConnections initial=false
 
 # Whether to disallow network fetches for parser blocking scripts in the main
-# frame inserted via document.write.
+# frame inserted via document.write, regardless of connection type.
 disallowFetchForDocWrittenScriptsInMainFrame initial=false
 
 # The autoplay gesture override experiment is described in crbug.com/487345 .
@@ -391,3 +399,22 @@ autoplayExperimentMode type=String, initial="off"
 # When DevTools is emulating mobile device, frame resize may mean device size has changed,
 # which in turn affects media queries.
 resizeIsDeviceSizeChange initial=false
+
+# If set to a positive value, emit a console warning once for each non-passive
+# event listener that caused an event to be dispatched to main thread and
+# delayed by more than the specified time (in seconds).
+blockedMainThreadEventsWarningThreshold type=double, initial=0
+
+# Ability to override the default 'passive' value in AddEventListenerOptions. This
+# is useful to demonstrate the power of passive event listeners. This can be removed
+# when there is greater adoption, interventions to force it on and associated devtools
+# to enable it have been shipped.
+passiveListenerDefault type=PassiveListenerDefault, initial=PassiveListenerDefault::False
+
+# Use default interpolation quality to scale bitmap images if quality is not determined
+# in other ways. This can help us writing reftests containing scaled images.
+useDefaultImageInterpolationQuality initial=false
+
+# Variant of the ParseHTMLOnMainThread experiment. One experiment immediately
+# tokenizes input bytes. The default is to tokenize with a post task.
+parseHTMLOnMainThreadSyncTokenize initial=false

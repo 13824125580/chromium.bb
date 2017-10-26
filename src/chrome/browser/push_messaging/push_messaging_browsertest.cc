@@ -15,6 +15,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
@@ -22,6 +23,10 @@
 #include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/browsing_data_remover_test_util.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/engagement/site_engagement_service.h"
+#include "chrome/browser/lifetime/keep_alive_registry.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/notifications/message_center_display_service.h"
 #include "chrome/browser/notifications/notification_test_util.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/profiles/profile.h"
@@ -44,6 +49,7 @@
 #include "components/gcm_driver/common/gcm_messages.h"
 #include "components/gcm_driver/gcm_client.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -54,6 +60,27 @@
 #endif
 
 namespace {
+
+// NIST P-256 public key made available to tests. Must be an uncompressed
+// point in accordance with SEC1 2.3.3.
+const uint8_t kApplicationServerKey[65] = {
+    0x04, 0x55, 0x52, 0x6A, 0xA5, 0x6E, 0x8E, 0xAA, 0x47, 0x97, 0x36,
+    0x10, 0xC1, 0x66, 0x3C, 0x1E, 0x65, 0xBF, 0xA1, 0x7B, 0xEE, 0x48,
+    0xC9, 0xC6, 0xBB, 0xBF, 0x02, 0x18, 0x53, 0x72, 0x1D, 0x0C, 0x7B,
+    0xA9, 0xE3, 0x11, 0xB7, 0x03, 0x52, 0x21, 0xD3, 0x71, 0x90, 0x13,
+    0xA8, 0xC1, 0xCF, 0xED, 0x20, 0xF7, 0x1F, 0xD1, 0x7F, 0xF2, 0x76,
+    0xB6, 0x01, 0x20, 0xD8, 0x35, 0xA5, 0xD9, 0x3C, 0x43, 0xFD};
+
+// URL-safe base64 encoded version of the |kApplicationServerKey|.
+const char kEncodedApplicationServerKey[] =
+    "BFVSaqVujqpHlzYQwWY8HmW_oXvuSMnGu78CGFNyHQx7qeMRtwNSIdNxkBOowc_tIPcf0X_ydr"
+    "YBINg1pdk8Q_0";
+
+std::string GetTestApplicationServerKey() {
+  return std::string(kApplicationServerKey,
+                     kApplicationServerKey + arraysize(kApplicationServerKey));
+}
+
 // Class to instantiate on the stack that is meant to be used with
 // FakeGCMProfileService. The ::Run() method follows the signature of
 // FakeGCMProfileService::UnregisterCallback.
@@ -92,11 +119,16 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
 
 #if defined(ENABLE_NOTIFICATIONS)
     notification_manager_.reset(new StubNotificationUIManager);
-    notification_service()->SetNotificationUIManagerForTesting(
-        notification_manager());
 #endif
 
     InProcessBrowserTest::SetUp();
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // Enable experimental features for subscription restrictions.
+    command_line->AppendSwitch(
+        switches::kEnableExperimentalWebPlatformFeatures);
+    InProcessBrowserTest::SetUpCommandLine(command_line);
   }
 
   // InProcessBrowserTest:
@@ -107,9 +139,14 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
     gcm_service_->set_collect(true);
     push_service_ =
         PushMessagingServiceFactory::GetForProfile(GetBrowser()->profile());
+#if defined(ENABLE_NOTIFICATIONS)
+    display_service_.reset(new MessageCenterDisplayService(
+        GetBrowser()->profile(), notification_manager_.get()));
+    notification_service()->SetNotificationDisplayServiceForTesting(
+        display_service_.get());
+#endif
 
     LoadTestPage();
-
     InProcessBrowserTest::SetUpOnMainThread();
   }
 
@@ -123,10 +160,25 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
     push_service_ = PushMessagingServiceFactory::GetForProfile(profile);
   }
 
+  // Helper function to test if a Keep Alive is registered while avoiding the
+  // platform checks. Returns a boolean so that assertion failures are reported
+  // at the right line.
+  // Returns true when KeepAlives are not supported by the platform, or when
+  // the registration state is equal to the expectation.
+  bool IsRegisteredKeepAliveEqualTo(bool expectation) {
+#if BUILDFLAG(ENABLE_BACKGROUND)
+    return expectation ==
+           KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+               KeepAliveOrigin::IN_FLIGHT_PUSH_MESSAGE);
+#else
+    return true;
+#endif
+  }
+
   // InProcessBrowserTest:
   void TearDown() override {
 #if defined(ENABLE_NOTIFICATIONS)
-    notification_service()->SetNotificationUIManagerForTesting(nullptr);
+    notification_service()->SetNotificationDisplayServiceForTesting(nullptr);
 #endif
 
     InProcessBrowserTest::TearDown();
@@ -164,10 +216,13 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
   void RequestAndDenyPermission();
 
   void TryToSubscribeSuccessfully(
-      const std::string& expected_push_subscription_id);
+      const std::string& expected_push_subscription_info,
+      bool use_key = true);
 
-  std::string GetEndpointForSubscriptionId(const std::string& subscription_id) {
-    return std::string(kPushMessagingEndpoint) + "/" + subscription_id;
+  std::string GetEndpointForSubscriptionId(const std::string& subscription_id,
+                                           bool standard_protocol = true) {
+    return push_service()->GetEndpoint(standard_protocol).spec() +
+           subscription_id;
   }
 
   PushMessagingAppIdentifier GetAppIdentifierForServiceWorkerRegistration(
@@ -205,18 +260,28 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
 
   PushMessagingServiceImpl* push_service() const { return push_service_; }
 
+  void SetSiteEngagementScore(const GURL& url, double score) {
+    SiteEngagementService* service =
+        SiteEngagementService::Get(GetBrowser()->profile());
+    service->ResetScoreForURL(url, score);
+  }
+
  protected:
   virtual std::string GetTestURL() { return "/push_messaging/test.html"; }
 
   virtual Browser* GetBrowser() const { return browser(); }
 
+  base::HistogramTester* GetHistogramTester() { return &histogram_tester_; }
+
  private:
-  scoped_ptr<net::EmbeddedTestServer> https_server_;
+  std::unique_ptr<net::EmbeddedTestServer> https_server_;
   gcm::FakeGCMProfileService* gcm_service_;
   PushMessagingServiceImpl* push_service_;
+  base::HistogramTester histogram_tester_;
 
 #if defined(ENABLE_NOTIFICATIONS)
-  scoped_ptr<StubNotificationUIManager> notification_manager_;
+  std::unique_ptr<StubNotificationUIManager> notification_manager_;
+  std::unique_ptr<MessageCenterDisplayService> display_service_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(PushMessagingBrowserTest);
@@ -246,7 +311,8 @@ void PushMessagingBrowserTest::RequestAndDenyPermission() {
 }
 
 void PushMessagingBrowserTest::TryToSubscribeSuccessfully(
-    const std::string& expected_push_subscription_id) {
+    const std::string& expected_push_subscription_info,
+    bool use_key) {
   std::string script_result;
 
   EXPECT_TRUE(RunScript("registerServiceWorker()", &script_result));
@@ -254,9 +320,19 @@ void PushMessagingBrowserTest::TryToSubscribeSuccessfully(
 
   RequestAndAcceptPermission();
 
-  EXPECT_TRUE(RunScript("subscribePush()", &script_result));
-  EXPECT_EQ(GetEndpointForSubscriptionId(expected_push_subscription_id),
-            script_result);
+  if (use_key) {
+    ASSERT_TRUE(RunScript("removeManifest()", &script_result));
+    ASSERT_EQ("manifest removed", script_result);
+
+    EXPECT_TRUE(RunScript("documentSubscribePush()", &script_result));
+  } else {
+    // Test backwards compatibility with old ID based subscriptions.
+    EXPECT_TRUE(RunScript("documentSubscribePushWithoutKey()", &script_result));
+  }
+
+  EXPECT_EQ(
+      GetEndpointForSubscriptionId(expected_push_subscription_info, use_key),
+      script_result);
 }
 
 PushMessagingAppIdentifier
@@ -280,13 +356,24 @@ void PushMessagingBrowserTest::SendMessageAndWaitUntilHandled(
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
+                       SubscribeWithoutKeySuccessNotificationsGranted) {
+  TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */, false);
+
+  PushMessagingAppIdentifier app_identifier =
+      GetAppIdentifierForServiceWorkerRegistration(0LL);
+  EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
+  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
                        SubscribeSuccessNotificationsGranted) {
   TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */);
 
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -298,13 +385,29 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GetPermissionBubbleManager()->set_auto_response_for_test(
       PermissionBubbleManager::ACCEPT_ALL);
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePush()", &script_result));
   EXPECT_EQ(GetEndpointForSubscriptionId("1-0"), script_result);
 
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeFailureBadKey) {
+  std::string script_result;
+
+  ASSERT_TRUE(RunScript("registerServiceWorker()", &script_result));
+  ASSERT_EQ("ok - service worker registered", script_result);
+
+  RequestAndAcceptPermission();
+
+  ASSERT_TRUE(RunScript("documentSubscribePushBadKey()", &script_result));
+  EXPECT_EQ(
+      "InvalidAccessError - Failed to execute 'subscribe' on 'PushManager': "
+      "The provided applicationServerKey is not valid.",
+      script_result);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -316,7 +419,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   RequestAndDenyPermission();
 
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePush()", &script_result));
   EXPECT_EQ("PermissionDeniedError - Registration failed - permission denied",
             script_result);
 }
@@ -332,7 +435,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeFailureNoManifest) {
   ASSERT_TRUE(RunScript("removeManifest()", &script_result));
   ASSERT_EQ("manifest removed", script_result);
 
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePushWithoutKey()", &script_result));
   EXPECT_EQ("AbortError - Registration failed - manifest empty or missing",
             script_result);
 }
@@ -348,13 +451,11 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeFailureNoSenderId) {
   ASSERT_TRUE(RunScript("swapManifestNoSenderId()", &script_result));
   ASSERT_EQ("sender id removed from manifest", script_result);
 
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePushWithoutKey()", &script_result));
   EXPECT_EQ(
       "AbortError - Registration failed - gcm_sender_id not found in manifest",
       script_result);
 }
-
-// TODO(johnme): Test subscribing from a worker - see https://crbug.com/437298.
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTestEmptySubscriptionOptions,
                        RegisterFailureEmptyPushSubscriptionOptions) {
@@ -365,9 +466,86 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTestEmptySubscriptionOptions,
 
   RequestAndAcceptPermission();
 
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePush()", &script_result));
   EXPECT_EQ("PermissionDeniedError - Registration failed - permission denied",
             script_result);
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeWorker) {
+  std::string script_result;
+
+  ASSERT_TRUE(RunScript("registerServiceWorker()", &script_result));
+  ASSERT_EQ("ok - service worker registered", script_result);
+
+  RequestAndAcceptPermission();
+
+  LoadTestPage();  // Reload to become controlled.
+
+  ASSERT_TRUE(RunScript("isControlled()", &script_result));
+  ASSERT_EQ("true - is controlled", script_result);
+
+  // Try to subscribe from a worker without a key. This should fail.
+  ASSERT_TRUE(RunScript("workerSubscribePushNoKey()", &script_result));
+  EXPECT_EQ(
+      "AbortError - Registration failed - gcm_sender_id not found in manifest",
+      script_result);
+  // Now run the subscribe from the service worker with a key. This
+  // should succeed, and write the key to the datastore.
+  ASSERT_TRUE(RunScript("workerSubscribePush()", &script_result));
+  EXPECT_EQ(GetEndpointForSubscriptionId("1-0"), script_result);
+
+  ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
+  EXPECT_EQ("unsubscribe result: true", script_result);
+  EXPECT_NE(push_service(), GetAppHandler());
+
+  // Now run the subscribe from the service worker without a key.
+  // In this case, the key will be read from the datastore.
+  ASSERT_TRUE(RunScript("workerSubscribePushNoKey()", &script_result));
+  EXPECT_EQ(GetEndpointForSubscriptionId("1-1"), script_result);
+
+  ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
+  EXPECT_EQ("unsubscribe result: true", script_result);
+  EXPECT_NE(push_service(), GetAppHandler());
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeWorkerUsingManifest) {
+  std::string script_result;
+
+  ASSERT_TRUE(RunScript("registerServiceWorker()", &script_result));
+  ASSERT_EQ("ok - service worker registered", script_result);
+
+  RequestAndAcceptPermission();
+
+  LoadTestPage();  // Reload to become controlled.
+
+  ASSERT_TRUE(RunScript("isControlled()", &script_result));
+  ASSERT_EQ("true - is controlled", script_result);
+
+  // Try to subscribe from a worker without a key. This should fail.
+  ASSERT_TRUE(RunScript("workerSubscribePushNoKey()", &script_result));
+  EXPECT_EQ(
+      "AbortError - Registration failed - gcm_sender_id not found in manifest",
+      script_result);
+  EXPECT_NE(push_service(), GetAppHandler());
+
+  // Run the subscription from the document without a key, this will trigger
+  // the code to read sender id from the manifest and will write it to the
+  // datastore.
+  ASSERT_TRUE(RunScript("documentSubscribePushWithoutKey()", &script_result));
+  EXPECT_EQ(GetEndpointForSubscriptionId("1-0", false), script_result);
+
+  ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
+  EXPECT_EQ("unsubscribe result: true", script_result);
+  EXPECT_NE(push_service(), GetAppHandler());
+
+  // Now run the subscribe from the service worker without a key.
+  // In this case, the sender id will be read from the datastore.
+  ASSERT_TRUE(RunScript("workerSubscribePushNoKey()", &script_result));
+  EXPECT_EQ(GetEndpointForSubscriptionId("1-1", false), script_result);
+
+  ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
+  EXPECT_EQ("unsubscribe result: true", script_result);
+  EXPECT_NE(push_service(), GetAppHandler());
 }
 
 // Disabled on Windows and Linux due to flakiness (http://crbug.com/554003).
@@ -465,7 +643,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventSuccess) {
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("false - is not controlled", script_result);
@@ -475,11 +654,13 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventSuccess) {
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("true - is controlled", script_result);
 
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(false));
   gcm::IncomingMessage message;
-  message.sender_id = "1234567890";
+  message.sender_id = GetTestApplicationServerKey();
   message.raw_data = "testdata";
   message.decrypted = true;
   push_service()->OnMessage(app_identifier.app_id(), message);
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(true));
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result));
   EXPECT_EQ("testdata", script_result);
 }
@@ -492,7 +673,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventWithoutPayload) {
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("false - is not controlled", script_result);
@@ -503,7 +685,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventWithoutPayload) {
   ASSERT_EQ("true - is controlled", script_result);
 
   gcm::IncomingMessage message;
-  message.sender_id = "1234567890";
+  message.sender_id = GetTestApplicationServerKey();
   message.decrypted = false;
 
   push_service()->OnMessage(app_identifier.app_id(), message);
@@ -519,7 +701,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventNoServiceWorker) {
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("false - is not controlled", script_result);
@@ -540,12 +723,14 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventNoServiceWorker) {
       base::Bind(&UnregistrationCallback::Run, base::Unretained(&callback)));
 
   gcm::IncomingMessage message;
-  message.sender_id = "1234567890";
+  message.sender_id = GetTestApplicationServerKey();
   message.raw_data = "testdata";
   message.decrypted = true;
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(false));
   push_service()->OnMessage(app_identifier.app_id(), message);
-
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(true));
   callback.WaitUntilSatisfied();
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(false));
   EXPECT_EQ(app_identifier.app_id(), callback.app_id());
 
   // No push data should have been received.
@@ -563,7 +748,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("false - is not controlled", script_result);
@@ -581,10 +767,14 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   content::WebContents* web_contents =
       GetBrowser()->tab_strip_model()->GetActiveWebContents();
 
+  // Set the site engagement score for the site. Setting it to 4 means it should
+  // have enough budget for two non-shown notification, which cost 2 each.
+  SetSiteEngagementScore(web_contents->GetURL(), 4.0);
+
   // If the site is visible in an active tab, we should not force a notification
   // to be shown. Try it twice, since we allow one mistake per 10 push events.
   gcm::IncomingMessage message;
-  message.sender_id = "1234567890";
+  message.sender_id = GetTestApplicationServerKey();
   message.decrypted = true;
   for (int n = 0; n < 2; n++) {
     message.raw_data = "testdata";
@@ -599,14 +789,30 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
       GetBrowser(), GURL("about:blank"), NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
 
-  // If the Service Worker push event handler does not show a notification, we
-  // should show a forced one, but only on the 2nd occurrence since we allow one
-  // mistake per 10 push events.
-  message.raw_data = "testdata";
+  // If the Service Worker push event handler shows a notification, we
+  // should not show a forced one.
+  message.raw_data = "shownotification";
   SendMessageAndWaitUntilHandled(app_identifier, message);
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
-  EXPECT_EQ("testdata", script_result);
-  EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+  EXPECT_EQ("shownotification", script_result);
+  EXPECT_EQ(1u, notification_manager()->GetNotificationCount());
+  EXPECT_EQ("push_test_tag",
+            notification_manager()->GetNotificationAt(0).tag());
+  notification_manager()->CancelAll();
+
+  // If the Service Worker push event handler does not show a notification, we
+  // should show a forced one, but only once the origin is out of budget.
+  message.raw_data = "testdata";
+  for (int n = 0; n < 2; n++) {
+    // First two missed notifications shouldn't force a default one.
+    SendMessageAndWaitUntilHandled(app_identifier, message);
+    ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
+    EXPECT_EQ("testdata", script_result);
+    EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+  }
+
+  // Third missed notification should trigger a default notification, since the
+  // origin will be out of budget.
   message.raw_data = "testdata";
   SendMessageAndWaitUntilHandled(app_identifier, message);
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
@@ -636,29 +842,107 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
     EXPECT_NE(kPushMessagingForcedNotificationTag, first_notification.tag());
   }
 
+  // Check that the UMA has been recorded correctly.
+  // There should be a total of 7 budget samples, spread across 3 buckets. The
+  // first four notifications (before any budget is consumed) have budget of 4,
+  // which is the starting SES. The next one has 2 (one hidden notification) and
+  // the final two have 0 (two hidden notifications.
+  std::vector<base::Bucket> buckets =
+      GetHistogramTester()->GetAllSamples("PushMessaging.BackgroundBudget");
+  ASSERT_EQ(3.0, buckets.size());
+  // First bucket is for 0 budget, which has 2 samples.
+  EXPECT_EQ(0, buckets[0].min);
+  EXPECT_EQ(2, buckets[0].count);
+  // Second bucket is for 2 budget, which has 1 sample.
+  EXPECT_EQ(2, buckets[1].min);
+  EXPECT_EQ(1, buckets[1].count);
+  // Final bucket is for 4 budget, which has 4 samples.
+  EXPECT_EQ(4, buckets[2].min);
+  EXPECT_EQ(4, buckets[2].count);
+
+  std::vector<base::Bucket> no_budget_buckets =
+      GetHistogramTester()->GetAllSamples("PushMessaging.SESForNoBudgetOrigin");
+  ASSERT_EQ(1.0, no_budget_buckets.size());
+  EXPECT_EQ(4, no_budget_buckets[0].min);
+  EXPECT_EQ(2, no_budget_buckets[0].count);
+
+  std::vector<base::Bucket> low_budget_buckets =
+      GetHistogramTester()->GetAllSamples(
+          "PushMessaging.SESForLowBudgetOrigin");
+  ASSERT_EQ(1.0, low_budget_buckets.size());
+  EXPECT_EQ(4, low_budget_buckets[0].min);
+  EXPECT_EQ(1, low_budget_buckets[0].count);
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
+                       PushEventAllowSilentPushCommandLineFlag) {
+  std::string script_result;
+
+  TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */);
+
+  PushMessagingAppIdentifier app_identifier =
+      GetAppIdentifierForServiceWorkerRegistration(0LL);
+  EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
+
+  ASSERT_TRUE(RunScript("isControlled()", &script_result));
+  ASSERT_EQ("false - is not controlled", script_result);
+
+  LoadTestPage();  // Reload to become controlled.
+
+  ASSERT_TRUE(RunScript("isControlled()", &script_result));
+  ASSERT_EQ("true - is controlled", script_result);
+
   notification_manager()->CancelAll();
-  EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+  ASSERT_EQ(0u, notification_manager()->GetNotificationCount());
 
-  // However if the Service Worker push event handler shows a notification, we
-  // should not show a forced one.
-  message.raw_data = "shownotification";
-  for (int n = 0; n < 9; n++) {
-    SendMessageAndWaitUntilHandled(app_identifier, message);
-    ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
-    EXPECT_EQ("shownotification", script_result);
-    EXPECT_EQ(1u, notification_manager()->GetNotificationCount());
-    EXPECT_EQ("push_test_tag",
-              notification_manager()->GetNotificationAt(0).tag());
-    notification_manager()->CancelAll();
-  }
+  // We'll need to specify the web_contents in which to eval script, since we're
+  // going to run script in a background tab.
+  content::WebContents* web_contents =
+      GetBrowser()->tab_strip_model()->GetActiveWebContents();
 
-  // Now that 10 push messages in a row have shown notifications, we should
-  // allow the next one to mistakenly not show a notification.
+  ui_test_utils::NavigateToURLWithDisposition(
+      GetBrowser(), GURL("about:blank"), NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
+
+  SetSiteEngagementScore(web_contents->GetURL(), 0.0);
+
+  // If the Service Worker push event handler does not show a notification, we
+  // should show a forced one providing there is no foreground tab and the
+  // origin ran out of budget.
+  gcm::IncomingMessage message;
+  message.sender_id = GetTestApplicationServerKey();
   message.raw_data = "testdata";
+  message.decrypted = true;
+
   SendMessageAndWaitUntilHandled(app_identifier, message);
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("testdata", script_result);
-  EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+
+  // Because the --allow-silent-push command line flag has not been passed,
+  // this should have shown a default notification.
+  ASSERT_EQ(1u, notification_manager()->GetNotificationCount());
+  {
+    const Notification& forced_notification =
+        notification_manager()->GetNotificationAt(0);
+
+    EXPECT_EQ(kPushMessagingForcedNotificationTag, forced_notification.tag());
+    EXPECT_TRUE(forced_notification.silent());
+  }
+
+  notification_manager()->CancelAll();
+
+  // Send the message again, but this time with the -allow-silent-push command
+  // line flag set. The default notification should *not* be shown.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kAllowSilentPush);
+
+  SendMessageAndWaitUntilHandled(app_identifier, message);
+  ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
+  EXPECT_EQ("testdata", script_result);
+
+  ASSERT_EQ(0u, notification_manager()->GetNotificationCount());
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -670,7 +954,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("false - is not controlled", script_result);
@@ -688,7 +973,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   std::vector<size_t> number_of_notifications_shown;
 
   gcm::IncomingMessage message;
-  message.sender_id = "1234567890";
+  message.sender_id = GetTestApplicationServerKey();
   message.decrypted = true;
 
   {
@@ -723,7 +1008,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   PushMessagingAppIdentifier app_identifier =
       GetAppIdentifierForServiceWorkerRegistration(0LL);
   EXPECT_EQ(app_identifier.app_id(), gcm_service()->last_registered_app_id());
-  EXPECT_EQ("1234567890", gcm_service()->last_registered_sender_ids()[0]);
+  EXPECT_EQ(kEncodedApplicationServerKey,
+            gcm_service()->last_registered_sender_ids()[0]);
 
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("false - is not controlled", script_result);
@@ -739,15 +1025,18 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
       message_loop_runner->QuitClosure());
 
   gcm::IncomingMessage message;
-  message.sender_id = "1234567890";
+  message.sender_id = GetTestApplicationServerKey();
   message.raw_data = "shownotification-without-waituntil";
   message.decrypted = true;
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(false));
   push_service()->OnMessage(app_identifier.app_id(), message);
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(true));
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("immediate:shownotification-without-waituntil", script_result);
 
   message_loop_runner->Run();
 
+  EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(false));
   ASSERT_EQ(1u, notification_manager()->GetNotificationCount());
   EXPECT_EQ("push_test_tag",
             notification_manager()->GetNotificationAt(0).tag());
@@ -776,7 +1065,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PermissionStateSaysGranted) {
 
   RequestAndAcceptPermission();
 
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePush()", &script_result));
   EXPECT_EQ(GetEndpointForSubscriptionId("1-0"), script_result);
 
   ASSERT_TRUE(RunScript("permissionState()", &script_result));
@@ -791,7 +1080,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PermissionStateSaysDenied) {
 
   RequestAndDenyPermission();
 
-  ASSERT_TRUE(RunScript("subscribePush()", &script_result));
+  ASSERT_TRUE(RunScript("documentSubscribePush()", &script_result));
   EXPECT_EQ("PermissionDeniedError - Registration failed - permission denied",
             script_result);
 
@@ -806,7 +1095,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
   EXPECT_EQ("ok - service worker registered", script_result);
 
   // Resolves true if there was a subscription.
-  TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */);
+  TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */, false);
   gcm_service()->AddExpectedUnregisterResponse(gcm::GCMClient::SUCCESS);
   ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
   EXPECT_EQ("unsubscribe result: true", script_result);
@@ -817,7 +1106,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
 
   // Doesn't reject if there was a network error (deactivates subscription
   // locally anyway).
-  TryToSubscribeSuccessfully("1-1" /* expected_push_subscription_id */);
+  TryToSubscribeSuccessfully("1-1" /* expected_push_subscription_id */, false);
   gcm_service()->AddExpectedUnregisterResponse(gcm::GCMClient::NETWORK_ERROR);
   ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
   EXPECT_EQ("unsubscribe result: true", script_result);
@@ -826,7 +1115,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
 
   // Doesn't reject if there were other push service errors (deactivates
   // subscription locally anyway).
-  TryToSubscribeSuccessfully("1-2" /* expected_push_subscription_id */);
+  TryToSubscribeSuccessfully("1-2" /* expected_push_subscription_id */, false);
   gcm_service()->AddExpectedUnregisterResponse(
       gcm::GCMClient::INVALID_PARAMETER);
   ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
@@ -834,7 +1123,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
 
   // Unsubscribing (with an existing reference to a PushSubscription), after
   // unregistering the Service Worker, just means push subscription isn't found.
-  TryToSubscribeSuccessfully("1-3" /* expected_push_subscription_id */);
+  TryToSubscribeSuccessfully("1-3" /* expected_push_subscription_id */, false);
   ASSERT_TRUE(RunScript("unregisterServiceWorker()", &script_result));
   ASSERT_EQ("service worker unregistration status: true", script_result);
   ASSERT_TRUE(RunScript("unsubscribePush()", &script_result));
@@ -860,6 +1149,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
       ->ClearSettingsForOneType(CONTENT_SETTINGS_TYPE_PUSH_MESSAGING);
+
+  HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
+      ->ClearSettingsForOneType(CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
 
   message_loop_runner->Run();
 
@@ -889,10 +1181,13 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GURL origin = https_server()->GetURL("/").GetOrigin();
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::FromURLNoWildcard(origin),
-                          CONTENT_SETTINGS_TYPE_PUSH_MESSAGING, std::string(),
-                          CONTENT_SETTING_DEFAULT);
+      ->SetContentSettingDefaultScope(origin, origin,
+                                      CONTENT_SETTINGS_TYPE_PUSH_MESSAGING,
+                                      std::string(), CONTENT_SETTING_DEFAULT);
+  HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
+      ->SetContentSettingDefaultScope(origin, origin,
+                                      CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                      std::string(), CONTENT_SETTING_DEFAULT);
 
   message_loop_runner->Run();
 
@@ -922,10 +1217,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GURL origin = https_server()->GetURL("/").GetOrigin();
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::FromURLNoWildcard(origin),
-                          CONTENT_SETTINGS_TYPE_PUSH_MESSAGING, std::string(),
-                          CONTENT_SETTING_BLOCK);
+      ->SetContentSettingDefaultScope(origin, origin,
+                                      CONTENT_SETTINGS_TYPE_PUSH_MESSAGING,
+                                      std::string(), CONTENT_SETTING_BLOCK);
 
   message_loop_runner->Run();
 
@@ -984,10 +1278,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GURL origin = https_server()->GetURL("/").GetOrigin();
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::Wildcard(),
-                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(),
-                          CONTENT_SETTING_DEFAULT);
+      ->SetContentSettingDefaultScope(origin, GURL(),
+                                      CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                      std::string(), CONTENT_SETTING_DEFAULT);
 
   message_loop_runner->Run();
 
@@ -1017,10 +1310,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GURL origin = https_server()->GetURL("/").GetOrigin();
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::Wildcard(),
-                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(),
-                          CONTENT_SETTING_BLOCK);
+      ->SetContentSettingDefaultScope(origin, GURL(),
+                                      CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                      std::string(), CONTENT_SETTING_BLOCK);
 
   message_loop_runner->Run();
 
@@ -1050,15 +1342,13 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GURL origin = https_server()->GetURL("/").GetOrigin();
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::Wildcard(),
-                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(),
-                          CONTENT_SETTING_ALLOW);
+      ->SetContentSettingDefaultScope(origin, GURL(),
+                                      CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                      std::string(), CONTENT_SETTING_ALLOW);
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::FromURLNoWildcard(origin),
-                          CONTENT_SETTINGS_TYPE_PUSH_MESSAGING, std::string(),
-                          CONTENT_SETTING_ALLOW);
+      ->SetContentSettingDefaultScope(origin, origin,
+                                      CONTENT_SETTINGS_TYPE_PUSH_MESSAGING,
+                                      std::string(), CONTENT_SETTING_ALLOW);
 
   message_loop_runner->Run();
 
@@ -1092,25 +1382,22 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   GURL origin = https_server()->GetURL("/").GetOrigin();
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::Wildcard(),
-                          ContentSettingsPattern::Wildcard(),
-                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(),
-                          CONTENT_SETTING_ALLOW);
+      ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                 CONTENT_SETTING_ALLOW);
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromString("https://*"),
-                          ContentSettingsPattern::FromString("https://*"),
-                          CONTENT_SETTINGS_TYPE_PUSH_MESSAGING, std::string(),
-                          CONTENT_SETTING_ALLOW);
+      ->SetContentSettingCustomScope(
+          ContentSettingsPattern::FromString("https://*"),
+          ContentSettingsPattern::FromString("https://*"),
+          CONTENT_SETTINGS_TYPE_PUSH_MESSAGING, std::string(),
+          CONTENT_SETTING_ALLOW);
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::Wildcard(),
-                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(),
-                          CONTENT_SETTING_DEFAULT);
+      ->SetContentSettingDefaultScope(origin, GURL(),
+                                      CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                      std::string(), CONTENT_SETTING_DEFAULT);
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(origin),
-                          ContentSettingsPattern::FromURLNoWildcard(origin),
-                          CONTENT_SETTINGS_TYPE_PUSH_MESSAGING, std::string(),
-                          CONTENT_SETTING_DEFAULT);
+      ->SetContentSettingDefaultScope(origin, origin,
+                                      CONTENT_SETTINGS_TYPE_PUSH_MESSAGING,
+                                      std::string(), CONTENT_SETTING_DEFAULT);
 
   message_loop_runner->Run();
 
@@ -1159,6 +1446,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   // TODO(johnme): Get this test running on Android, which has a different
   // codepath due to sender_id being required for unsubscribing there.
   HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
+      ->ClearSettingsForOneType(CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
+  HostContentSettingsMapFactory::GetForProfile(GetBrowser()->profile())
       ->ClearSettingsForOneType(CONTENT_SETTINGS_TYPE_PUSH_MESSAGING);
 
   run_loop.Run();
@@ -1171,7 +1460,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, EncryptionKeyUniqueness) {
-  TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */);
+  TryToSubscribeSuccessfully("1-0" /* expected_push_subscription_id */, false);
 
   std::string first_public_key;
   ASSERT_TRUE(RunScript("GetP256dh()", &first_public_key));

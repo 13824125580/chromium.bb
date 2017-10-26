@@ -9,9 +9,12 @@
 #include <stdint.h>
 
 #include "base/macros.h"
-#include "skia/ext/refptr.h"
-#include "third_party/skia/include/core/SkSurface.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/ozone/platform/drm/gpu/scanout_buffer.h"
+
+class SkCanvas;
+struct SkImageInfo;
+class SkSurface;
 
 namespace ui {
 
@@ -37,6 +40,7 @@ class DrmBuffer : public ScanoutBuffer {
   uint32_t GetFramebufferPixelFormat() const override;
   uint32_t GetHandle() const override;
   gfx::Size GetSize() const override;
+  const DrmDevice* GetDrmDevice() const override;
   bool RequiresGlFinish() const override;
 
  protected:
@@ -64,7 +68,7 @@ class DrmBuffer : public ScanoutBuffer {
   uint32_t fb_pixel_format_ = 0;
 
   // Wrapper around the native pixel memory.
-  skia::RefPtr<SkSurface> surface_;
+  sk_sp<SkSurface> surface_;
 
   DISALLOW_COPY_AND_ASSIGN(DrmBuffer);
 };

@@ -29,7 +29,7 @@ MutationEvent::MutationEvent()
 {
 }
 
-MutationEvent::MutationEvent(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<Node> relatedNode,
+MutationEvent::MutationEvent(const AtomicString& type, bool canBubble, bool cancelable, Node* relatedNode,
                              const String& prevValue, const String& newValue,
                              const String& attrName, unsigned short attrChange)
     : Event(type, canBubble, cancelable)
@@ -45,11 +45,11 @@ MutationEvent::~MutationEvent()
 {
 }
 
-void MutationEvent::initMutationEvent(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<Node> relatedNode,
+void MutationEvent::initMutationEvent(const AtomicString& type, bool canBubble, bool cancelable, Node* relatedNode,
                                       const String& prevValue, const String& newValue,
                                       const String& attrName, unsigned short attrChange)
 {
-    if (dispatched())
+    if (isBeingDispatched())
         return;
 
     initEvent(type, canBubble, cancelable);

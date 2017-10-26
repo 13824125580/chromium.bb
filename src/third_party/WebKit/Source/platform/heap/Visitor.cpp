@@ -7,40 +7,43 @@
 #include "platform/heap/BlinkGC.h"
 #include "platform/heap/MarkingVisitor.h"
 #include "platform/heap/ThreadState.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-VisitorScope::VisitorScope(ThreadState* state, BlinkGC::GCType gcType)
-    : m_state(state)
+std::unique_ptr<Visitor> Visitor::create(ThreadState* state, BlinkGC::GCType gcType)
 {
-    // See ThreadState::runScheduledGC() why we need to already be in a
-    // GCForbiddenScope before any safe point is entered.
-    m_state->enterGCForbiddenScope();
-
-    ASSERT(m_state->checkThread());
-
     switch (gcType) {
     case BlinkGC::GCWithSweep:
     case BlinkGC::GCWithoutSweep:
-        m_visitor = adoptPtr(new MarkingVisitor<Visitor::GlobalMarking>());
-        break;
+        return wrapUnique(new MarkingVisitor<Visitor::GlobalMarking>(state));
     case BlinkGC::TakeSnapshot:
-        m_visitor = adoptPtr(new MarkingVisitor<Visitor::SnapshotMarking>());
-        break;
+        return wrapUnique(new MarkingVisitor<Visitor::SnapshotMarking>(state));
     case BlinkGC::ThreadTerminationGC:
-        m_visitor = adoptPtr(new MarkingVisitor<Visitor::ThreadLocalMarking>());
-        break;
+        return wrapUnique(new MarkingVisitor<Visitor::ThreadLocalMarking>(state));
     case BlinkGC::ThreadLocalWeakProcessing:
-        m_visitor = adoptPtr(new MarkingVisitor<Visitor::WeakProcessing>());
-        break;
+        return wrapUnique(new MarkingVisitor<Visitor::WeakProcessing>(state));
     default:
         ASSERT_NOT_REACHED();
     }
+    return nullptr;
 }
 
-VisitorScope::~VisitorScope()
+Visitor::Visitor(ThreadState* state, MarkingMode markingMode)
+    : VisitorHelper(state)
+    , m_markingMode(markingMode)
 {
-    m_state->leaveGCForbiddenScope();
+    // See ThreadState::runScheduledGC() why we need to already be in a
+    // GCForbiddenScope before any safe point is entered.
+    state->enterGCForbiddenScope();
+
+    ASSERT(state->checkThread());
+}
+
+Visitor::~Visitor()
+{
+    state()->leaveGCForbiddenScope();
 }
 
 } // namespace blink

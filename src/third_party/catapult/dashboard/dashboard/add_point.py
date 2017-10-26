@@ -19,11 +19,11 @@ from dashboard import math_utils
 from dashboard import post_data_handler
 from dashboard.models import graph_data
 
-_TASK_QUEUE_NAME = 'add-point-queue'
+_TASK_QUEUE_NAME = 'new-points-queue'
 
 # Number of rows to process per task queue task. This limits the task size
 # and execution time (Limits: 100KB object size and 10 minutes execution time).
-_TASK_QUEUE_SIZE = 64
+_TASK_QUEUE_SIZE = 32
 
 # Max length for a Row property name.
 _MAX_COLUMN_NAME_LENGTH = 25
@@ -121,12 +121,12 @@ class AddPointHandler(post_data_handler.PostDataHandler):
     """
     datastore_hooks.SetPrivilegedRequest()
     if not self._CheckIpAgainstWhitelist():
-      # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+      # TODO(qyearsley): Add test coverage. See catapult:#1346.
       return
 
     data = self.request.get('data')
     if not data:
-      # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+      # TODO(qyearsley): Add test coverage. See catapult:#1346.
       self.ReportError('Missing "data" parameter.', status=400)
       return
 
@@ -348,37 +348,7 @@ def _FlattenTrace(test_suite_name, chart_name, trace_name, trace,
     tir_label, chart_name = chart_name.split('@@')
     chart_name = chart_name + '/' + tir_label
 
-  trace_type = trace.get('type')
-  if trace_type == 'scalar':
-    value = trace.get('value')
-    if value is None:
-      if trace.get('none_value_reason'):
-        value = float('nan')
-      else:
-        # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
-        raise BadRequestError('Expected scalar value, got: ' + value)
-    error = 0
-  elif trace_type == 'list_of_scalar_values':
-    values = trace.get('values')
-    if not values or None in values:
-      if trace.get('none_value_reason'):
-        value = float('nan')
-        error = float('nan')
-      else:
-        raise BadRequestError('Expected list of scalar values, got: ' + values)
-    else:
-      value = math_utils.Mean(values)
-      std = trace.get('std')
-      if std is not None:
-        error = std
-      else:
-        error = math_utils.StandardDeviation(values)
-  elif trace_type == 'histogram':
-    value, error = _GeomMeanAndStdDevFromHistogram(trace)
-  elif trace_type is not None:
-    raise BadRequestError('Invalid value type in chart object: ' + trace_type)
-  else:
-    raise BadRequestError('No trace type provided.')
+  value, error = _ExtractValueAndError(trace)
 
   # If there is a link to an about:tracing trace in cloud storage for this
   # test trace_name, cache it.
@@ -389,7 +359,6 @@ def _FlattenTrace(test_suite_name, chart_name, trace_name, trace,
     tracing_uri = tracing_links[trace_name]['cloud_url'].replace('\\/', '/')
 
   trace_name = _EscapeName(trace_name)
-
   if trace_name == 'summary':
     subtest_name = chart_name
   else:
@@ -418,6 +387,62 @@ def _FlattenTrace(test_suite_name, chart_name, trace_name, trace,
         improvement_direction_str)
 
   return row_dict
+
+
+def _ExtractValueAndError(trace):
+  """Returns the value and measure of error from a chartjson trace dict.
+
+  Args:
+    trace: A dict that has one "result" from a performance test, e.g. one
+        "value" in a Telemetry test, with the keys "trace_type", "value", etc.
+
+  Returns:
+    A pair (value, error) where |value| is a float and |error| is some measure
+    of variance used to show error bars; |error| could be None.
+
+  Raises:
+    BadRequestError: Data format was invalid.
+  """
+  trace_type = trace.get('type')
+
+  if trace_type == 'scalar':
+    value = trace.get('value')
+    if value is None and trace.get('none_value_reason'):
+      return float('nan'), 0
+    try:
+      return float(value), 0
+    except:
+      raise BadRequestError('Expected scalar value, got: %r' % value)
+
+  if trace_type == 'list_of_scalar_values':
+    values = trace.get('values')
+    if not isinstance(values, list) and values is not None:
+      # Something else (such as a single scalar, or string) was given.
+      raise BadRequestError('Expected list of scalar values, got: %r' % values)
+    if not values or None in values:
+      # None was included or values is None; this is not an error if there
+      # is a reason.
+      if trace.get('none_value_reason'):
+        return float('nan'), float('nan')
+      raise BadRequestError('Expected list of scalar values, got: %r' % values)
+    if not all(_IsNumber(v) for v in values):
+      raise BadRequestError('Non-number found in values list: %r' % values)
+    value = math_utils.Mean(values)
+    std = trace.get('std')
+    if std is not None:
+      error = std
+    else:
+      error = math_utils.StandardDeviation(values)
+    return value, error
+
+  if trace_type == 'histogram':
+    return _GeomMeanAndStdDevFromHistogram(trace)
+
+  raise BadRequestError('Invalid value type in chart object: %r' % trace_type)
+
+
+def _IsNumber(v):
+  return isinstance(v, float) or isinstance(v, int) or isinstance(v, long)
 
 
 def _EscapeName(name):
@@ -452,7 +477,7 @@ def _GeomMeanAndStdDevFromHistogram(histogram):
   # build/scripts/common/chromium_utils.py and was used initially for
   # processing histogram results on the buildbot side previously.
   if 'buckets' not in histogram:
-    # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+    # TODO(qyearsley): Add test coverage. See catapult:#1346.
     return 0.0, 0.0
   count = 0
   sum_of_logs = 0
@@ -460,7 +485,7 @@ def _GeomMeanAndStdDevFromHistogram(histogram):
     if 'high' in bucket:
       bucket['mean'] = (bucket['low'] + bucket['high']) / 2.0
     else:
-      # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+      # TODO(qyearsley): Add test coverage. See catapult:#1346.
       bucket['mean'] = bucket['low']
     if bucket['mean'] > 0:
       sum_of_logs += math.log(bucket['mean']) * bucket['count']
@@ -515,7 +540,7 @@ def _ConstructTestPathMap(row_dicts):
   try:
     last_added_revision_entities = ndb.get_multi(last_added_revision_keys)
   except datastore_errors.BadRequestError:
-    # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+    # TODO(qyearsley): Add test coverage. See catapult:#1346.
     logging.warn('Datastore BadRequestError when getting %s',
                  repr(last_added_revision_keys))
     return {}
@@ -577,7 +602,7 @@ def _ValidateTestPath(test_path):
 
 
 def _ValidateTestPathPartName(name):
-  """Checks whether a Master, Bot or Test name is OK."""
+  """Checks whether a Master, Bot or TestMetadata name is OK."""
   # NDB Datastore doesn't allow key names to start and with "__" and "__".
   if name.startswith('__') and name.endswith('__'):
     raise BadRequestError(
@@ -615,7 +640,7 @@ def _ValidateRowId(row_dict, test_map):
 def _IsAcceptableRowId(row_id, last_row_id):
   """Checks whether the given row id (aka revision) is not too large or small.
 
-  For each data series (i.e. Test entity), we assume that row IDs are
+  For each data series (i.e. TestMetadata entity), we assume that row IDs are
   monotonically increasing. On a given chart, points are sorted by these
   row IDs. This way, points can arrive out of order but still be shown
   correctly in the chart.
@@ -637,10 +662,10 @@ def _IsAcceptableRowId(row_id, last_row_id):
     True if acceptable, False otherwise.
   """
   if last_row_id is None:
-    # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+    # TODO(qyearsley): Add test coverage. See catapult:#1346.
     return True
   if row_id <= 0:
-    # TODO(qyearsley): Add test coverage. See http://crbug.com/447432
+    # TODO(qyearsley): Add test coverage. See catapult:#1346.
     return False
   # Too big of a decrease.
   if row_id < 0.5 * last_row_id:
@@ -679,7 +704,7 @@ def GetAndValidateRowProperties(row):
 
   This includes the default "value" and "error" columns as well as all
   supplemental columns, but it doesn't include "revision", and it doesn't
-  include input fields that are properties of the parent Test, such as
+  include input fields that are properties of the parent TestMetadata, such as
   "units".
 
   This method is responsible for validating all properties that are to be

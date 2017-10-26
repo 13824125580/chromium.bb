@@ -4,12 +4,16 @@
 
 #include "android_webview/lib/main/aw_main_delegate.h"
 
+#include <memory>
+
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/browser_view_renderer.h"
+#include "android_webview/browser/deferred_gpu_command_service.h"
 #include "android_webview/browser/scoped_allow_wait_for_legacy_web_view_api.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_switches.h"
 #include "android_webview/crash_reporter/aw_microdump_crash_reporter.h"
+#include "android_webview/gpu/aw_content_gpu_client.h"
 #include "android_webview/lib/aw_browser_dependency_factory_impl.h"
 #include "android_webview/native/aw_locale_manager_impl.h"
 #include "android_webview/native/aw_media_url_interceptor.h"
@@ -24,7 +28,6 @@
 #include "base/i18n/icu_util.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_restrictions.h"
 #include "cc/base/switches.h"
 #include "components/external_video_surface/browser/android/external_video_surface_container_impl.h"
@@ -47,9 +50,8 @@ namespace {
 
 // TODO(boliu): Remove this global Allow once the underlying issues are
 // resolved - http://crbug.com/240453. See AwMainDelegate::RunProcess below.
-base::LazyInstance<scoped_ptr<ScopedAllowWaitForLegacyWebViewApi> >
+base::LazyInstance<std::unique_ptr<ScopedAllowWaitForLegacyWebViewApi>>
     g_allow_wait_in_ui_thread = LAZY_INSTANCE_INITIALIZER;
-
 }
 
 AwMainDelegate::AwMainDelegate() {
@@ -61,18 +63,7 @@ AwMainDelegate::~AwMainDelegate() {
 bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   content::SetContentClient(&content_client_);
 
-  content::RegisterMediaUrlInterceptor(new AwMediaUrlInterceptor());
-
-  BrowserViewRenderer::CalculateTileMemoryPolicy();
-
-  // WebView apps can override WebView#computeScroll to achieve custom
-  // scroll/fling. As a result, fling animations may not be ticked, potentially
-  // confusing the tap suppression controller. Simply disable it for WebView.
-  ui::GestureConfiguration::GetInstance()
-      ->set_fling_touchscreen_tap_suppression_enabled(false);
-
   base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
-  cl->AppendSwitch(switches::kIPCSyncCompositing);
   cl->AppendSwitch(cc::switches::kEnableBeginFrameScheduling);
 
   // WebView uses the Android system's scrollbars and overscroll glow.
@@ -119,16 +110,21 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   if (cl->GetSwitchValueASCII(switches::kProcessType).empty()) {
     // Browser process (no type specified).
 
+    content::RegisterMediaUrlInterceptor(new AwMediaUrlInterceptor());
+    BrowserViewRenderer::CalculateTileMemoryPolicy();
+    // WebView apps can override WebView#computeScroll to achieve custom
+    // scroll/fling. As a result, fling animations may not be ticked,
+    // potentially
+    // confusing the tap suppression controller. Simply disable it for WebView
+    ui::GestureConfiguration::GetInstance()
+        ->set_fling_touchscreen_tap_suppression_enabled(false);
+
     base::android::RegisterApkAssetWithGlobalDescriptors(
-        kV8NativesDataDescriptor32,
-        gin::V8Initializer::GetNativesFilePath(true).AsUTF8Unsafe());
+        kV8NativesDataDescriptor,
+        gin::V8Initializer::GetNativesFilePath().AsUTF8Unsafe());
     base::android::RegisterApkAssetWithGlobalDescriptors(
         kV8SnapshotDataDescriptor32,
         gin::V8Initializer::GetSnapshotFilePath(true).AsUTF8Unsafe());
-
-    base::android::RegisterApkAssetWithGlobalDescriptors(
-        kV8NativesDataDescriptor64,
-        gin::V8Initializer::GetNativesFilePath(false).AsUTF8Unsafe());
     base::android::RegisterApkAssetWithGlobalDescriptors(
         kV8SnapshotDataDescriptor64,
         gin::V8Initializer::GetSnapshotFilePath(false).AsUTF8Unsafe());
@@ -216,6 +212,19 @@ content::ContentBrowserClient*
     AwMainDelegate::CreateContentBrowserClient() {
   content_browser_client_.reset(new AwContentBrowserClient(this));
   return content_browser_client_.get();
+}
+
+namespace {
+gpu::SyncPointManager* GetSyncPointManager() {
+  DCHECK(DeferredGpuCommandService::GetInstance());
+  return DeferredGpuCommandService::GetInstance()->sync_point_manager();
+}
+}  // namespace
+
+content::ContentGpuClient* AwMainDelegate::CreateContentGpuClient() {
+  content_gpu_client_.reset(
+      new AwContentGpuClient(base::Bind(&GetSyncPointManager)));
+  return content_gpu_client_.get();
 }
 
 content::ContentRendererClient*

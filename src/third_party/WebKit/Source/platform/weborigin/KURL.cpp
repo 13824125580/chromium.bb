@@ -29,6 +29,7 @@
 
 #include "platform/weborigin/KnownPorts.h"
 #include "url/url_util.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/CString.h"
 #include "wtf/text/StringHash.h"
@@ -145,9 +146,9 @@ String KURL::strippedForUseAsReferrer() const
         referrer.setUser(String());
         referrer.setPass(String());
         referrer.removeFragmentIdentifier();
-        return referrer.string();
+        return referrer.getString();
     }
-    return string();
+    return getString();
 }
 
 String KURL::strippedForUseAsHref() const
@@ -156,9 +157,9 @@ String KURL::strippedForUseAsHref() const
         KURL href(*this);
         href.setUser(String());
         href.setPass(String());
-        return href.string();
+        return href.getString();
     }
-    return string();
+    return getString();
 }
 
 bool KURL::isLocalFile() const
@@ -199,10 +200,10 @@ bool KURL::isAboutSrcdocURL() const
 
 String KURL::elidedString() const
 {
-    if (string().length() <= 1024)
-        return string();
+    if (getString().length() <= 1024)
+        return getString();
 
-    return string().left(511) + "..." + string().right(510);
+    return getString().left(511) + "..." + getString().right(510);
 }
 
 KURL::KURL()
@@ -274,7 +275,7 @@ KURL::KURL(const KURL& other)
     , m_string(other.m_string)
 {
     if (other.m_innerURL.get())
-        m_innerURL = adoptPtr(new KURL(other.m_innerURL->copy()));
+        m_innerURL = wrapUnique(new KURL(other.m_innerURL->copy()));
 }
 
 KURL::~KURL()
@@ -288,9 +289,9 @@ KURL& KURL::operator=(const KURL& other)
     m_parsed = other.m_parsed;
     m_string = other.m_string;
     if (other.m_innerURL)
-        m_innerURL = adoptPtr(new KURL(other.m_innerURL->copy()));
+        m_innerURL = wrapUnique(new KURL(other.m_innerURL->copy()));
     else
-        m_innerURL.clear();
+        m_innerURL.reset();
     return *this;
 }
 
@@ -302,7 +303,7 @@ KURL KURL::copy() const
     result.m_parsed = m_parsed;
     result.m_string = m_string.isolatedCopy();
     if (m_innerURL)
-        result.m_innerURL = adoptPtr(new KURL(m_innerURL->copy()));
+        result.m_innerURL = wrapUnique(new KURL(m_innerURL->copy()));
     return result;
 }
 
@@ -687,7 +688,7 @@ String encodeWithURLEscapeSequences(const String& notEncodedString)
 
     url::RawCanonOutputT<char> buffer;
     int inputLength = utf8.length();
-    if (buffer.length() < inputLength * 3)
+    if (buffer.capacity() < inputLength * 3)
         buffer.Resize(inputLength * 3);
 
     url::EncodeURIComponent(utf8.data(), inputLength, &buffer);
@@ -801,7 +802,7 @@ void KURL::init(const KURL& base, const CHAR* relative, int relativeLength, cons
     KURLCharsetConverter charsetConverterObject(queryEncoding);
     KURLCharsetConverter* charsetConverter = (!queryEncoding || isUnicodeEncoding(queryEncoding)) ? 0 : &charsetConverterObject;
 
-    StringUTF8Adaptor baseUTF8(base.string());
+    StringUTF8Adaptor baseUTF8(base.getString());
 
     url::RawCanonOutputT<char> output;
     m_isValid = url::ResolveRelative(baseUTF8.data(), baseUTF8.length(), base.m_parsed, relative, relativeLength, charsetConverter, &output, &m_parsed);
@@ -814,13 +815,13 @@ void KURL::init(const KURL& base, const CHAR* relative, int relativeLength, cons
 void KURL::initInnerURL()
 {
     if (!m_isValid) {
-        m_innerURL.clear();
+        m_innerURL.reset();
         return;
     }
     if (url::Parsed* innerParsed = m_parsed.inner_parsed())
-        m_innerURL = adoptPtr(new KURL(ParsedURLString, m_string.substring(innerParsed->scheme.begin, innerParsed->Length() - innerParsed->scheme.begin)));
+        m_innerURL = wrapUnique(new KURL(ParsedURLString, m_string.substring(innerParsed->scheme.begin, innerParsed->Length() - innerParsed->scheme.begin)));
     else
-        m_innerURL.clear();
+        m_innerURL.reset();
 }
 
 template<typename CHAR>
@@ -898,7 +899,7 @@ String KURL::componentString(const url::Component& component) const
     // byte) will be longer than what's needed by 'mid'. However, mid
     // truncates len to avoid go past the end of a string so that we can
     // get away without doing anything here.
-    return string().substring(component.begin, component.len);
+    return getString().substring(component.begin, component.len);
 }
 
 template<typename CHAR>

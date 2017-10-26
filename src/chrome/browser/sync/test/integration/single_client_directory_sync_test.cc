@@ -8,7 +8,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/sync/test/integration/bookmarks_helper.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
@@ -39,7 +39,8 @@ void SignalEvent(base::WaitableEvent* e) {
 }
 
 bool WaitForExistingTasksOnLoop(base::MessageLoop* loop) {
-  base::WaitableEvent e(true, false);
+  base::WaitableEvent e(base::WaitableEvent::ResetPolicy::MANUAL,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED);
   loop->task_runner()->PostTask(FROM_HERE, base::Bind(&SignalEvent, &e));
   // Timeout stolen from StatusChangeChecker::GetTimeoutDuration().
   return e.TimedWait(base::TimeDelta::FromSeconds(45));

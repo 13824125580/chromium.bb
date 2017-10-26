@@ -12,17 +12,23 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/containers/scoped_ptr_hash_map.h"
+#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "content/common/mojo/service_registry_impl.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_test_sink.h"
+#include "services/shell/public/interfaces/interface_provider.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-struct EmbeddedWorkerMsg_StartWorker_Params;
 class GURL;
+struct EmbeddedWorkerMsg_StartWorker_Params;
+struct ServiceWorkerMsg_ExtendableMessageEvent_Params;
+
+namespace shell {
+class InterfaceProvider;
+class InterfaceRegistry;
+}
 
 namespace content {
 
@@ -30,11 +36,11 @@ class EmbeddedWorkerRegistry;
 class EmbeddedWorkerTestHelper;
 class MessagePortMessageFilter;
 class MockRenderProcessHost;
-struct PushEventPayload;
 class ServiceWorkerContextCore;
 class ServiceWorkerContextWrapper;
-struct ServiceWorkerFetchRequest;
 class TestBrowserContext;
+struct PushEventPayload;
+struct ServiceWorkerFetchRequest;
 
 // In-Process EmbeddedWorker test helper.
 //
@@ -80,7 +86,7 @@ class EmbeddedWorkerTestHelper : public IPC::Sender,
 
   int GetNextThreadId() { return next_thread_id_++; }
 
-  int mock_render_process_id() const { return mock_render_process_id_;}
+  int mock_render_process_id() const { return mock_render_process_id_; }
   MockRenderProcessHost* mock_render_process_host() {
     return render_process_host_.get();
   }
@@ -114,17 +120,19 @@ class EmbeddedWorkerTestHelper : public IPC::Sender,
                                  const IPC::Message& message);
 
   // Called to setup mojo for a new embedded worker. Override to register
-  // services the worker should expose to the browser.
-  virtual void OnSetupMojo(ServiceRegistry* service_registry);
+  // interfaces the worker should expose to the browser.
+  virtual void OnSetupMojo(shell::InterfaceRegistry* interface_registry);
 
   // On*Event handlers. Called by the default implementation of
   // OnMessageToWorker when events are sent to the embedded
   // worker. By default they just return success via
   // SimulateSendReplyToBrowser.
   virtual void OnActivateEvent(int embedded_worker_id, int request_id);
+  virtual void OnExtendableMessageEvent(int embedded_worker_id, int request_id);
   virtual void OnInstallEvent(int embedded_worker_id, int request_id);
   virtual void OnFetchEvent(int embedded_worker_id,
-                            int request_id,
+                            int response_id,
+                            int event_finish_id,
                             const ServiceWorkerFetchRequest& request);
   virtual void OnPushEvent(int embedded_worker_id,
                            int request_id,
@@ -144,6 +152,10 @@ class EmbeddedWorkerTestHelper : public IPC::Sender,
   EmbeddedWorkerRegistry* registry();
 
  private:
+  using InterfaceRegistryAndProvider =
+      std::pair<std::unique_ptr<shell::InterfaceRegistry>,
+                std::unique_ptr<shell::InterfaceProvider>>;
+
   class MockEmbeddedWorkerSetup;
 
   void OnStartWorkerStub(const EmbeddedWorkerMsg_StartWorker_Params& params);
@@ -153,19 +165,22 @@ class EmbeddedWorkerTestHelper : public IPC::Sender,
                              int embedded_worker_id,
                              const IPC::Message& message);
   void OnActivateEventStub(int request_id);
+  void OnExtendableMessageEventStub(
+      int request_id,
+      const ServiceWorkerMsg_ExtendableMessageEvent_Params& params);
   void OnInstallEventStub(int request_id);
-  void OnFetchEventStub(int request_id,
+  void OnFetchEventStub(int response_id,
+                        int event_finish_id,
                         const ServiceWorkerFetchRequest& request);
   void OnPushEventStub(int request_id, const PushEventPayload& payload);
-  void OnSetupMojoStub(
-      int thread_id,
-      mojo::shell::mojom::InterfaceProviderRequest services,
-      mojo::shell::mojom::InterfaceProviderPtr exposed_services);
+  void OnSetupMojoStub(int thread_id,
+                       shell::mojom::InterfaceProviderRequest services,
+                       shell::mojom::InterfaceProviderPtr exposed_services);
 
   MessagePortMessageFilter* NewMessagePortMessageFilter();
 
-  scoped_ptr<TestBrowserContext> browser_context_;
-  scoped_ptr<MockRenderProcessHost> render_process_host_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<MockRenderProcessHost> render_process_host_;
 
   scoped_refptr<ServiceWorkerContextWrapper> wrapper_;
 
@@ -175,13 +190,13 @@ class EmbeddedWorkerTestHelper : public IPC::Sender,
   int next_thread_id_;
   int mock_render_process_id_;
 
-  ServiceRegistryImpl render_process_service_registry_;
+  std::unique_ptr<shell::InterfaceRegistry> render_process_interface_registry_;
 
   std::map<int, int64_t> embedded_worker_id_service_worker_version_id_map_;
 
-  // Stores the ServiceRegistries that are associated with each individual
-  // service worker.
-  base::ScopedPtrHashMap<int, scoped_ptr<ServiceRegistryImpl>>
+  // Stores the InterfaceRegistry/InterfaceProviders that are associated with
+  // each individual service worker.
+  base::hash_map<int, InterfaceRegistryAndProvider>
       thread_id_service_registry_map_;
 
   // Updated each time MessageToWorker message is received.

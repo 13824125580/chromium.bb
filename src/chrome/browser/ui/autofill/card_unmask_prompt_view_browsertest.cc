@@ -4,9 +4,11 @@
 
 #include "base/bind.h"
 #include "base/guid.h"
+#include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/autofill/card_unmask_prompt_view_tester.h"
 #include "chrome/browser/ui/autofill/create_card_unmask_prompt_view.h"
@@ -105,8 +107,8 @@ class CardUnmaskPromptViewBrowserTest : public InProcessBrowserTest {
 
  private:
   content::WebContents* contents_;
-  scoped_ptr<TestCardUnmaskPromptController> controller_;
-  scoped_ptr<TestCardUnmaskDelegate> delegate_;
+  std::unique_ptr<TestCardUnmaskPromptController> controller_;
+  std::unique_ptr<TestCardUnmaskDelegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(CardUnmaskPromptViewBrowserTest);
 };
@@ -114,6 +116,7 @@ class CardUnmaskPromptViewBrowserTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(CardUnmaskPromptViewBrowserTest, DisplayUI) {
   controller()->ShowPrompt(CreateCardUnmaskPromptView(controller(), contents()),
                            test::GetMaskedServerCard(),
+                           AutofillClient::UNMASK_FOR_AUTOFILL,
                            delegate()->GetWeakPtr());
 }
 
@@ -125,6 +128,7 @@ IN_PROC_BROWSER_TEST_F(CardUnmaskPromptViewBrowserTest,
                        EarlyCloseAfterSuccess) {
   controller()->ShowPrompt(CreateCardUnmaskPromptView(controller(), contents()),
                            test::GetMaskedServerCard(),
+                           AutofillClient::UNMASK_FOR_AUTOFILL,
                            delegate()->GetWeakPtr());
   controller()->OnUnmaskResponse(base::ASCIIToUTF16("123"),
                                  base::ASCIIToUTF16("10"),
@@ -135,7 +139,7 @@ IN_PROC_BROWSER_TEST_F(CardUnmaskPromptViewBrowserTest,
   // Simulate the user clicking [x] before the "Success!" message disappears.
   CardUnmaskPromptViewTester::For(controller()->view())->Close();
   // Wait a little while; there should be no crash.
-  base::MessageLoop::current()->task_runner()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::Bind(&content::MessageLoopRunner::Quit,
                             base::Unretained(runner_.get())),
       2 * controller()->GetSuccessMessageDuration());
@@ -149,6 +153,7 @@ IN_PROC_BROWSER_TEST_F(CardUnmaskPromptViewBrowserTest,
                        CloseTabWhileDialogShowing) {
   controller()->ShowPrompt(CreateCardUnmaskPromptView(controller(), contents()),
                            test::GetMaskedServerCard(),
+                           AutofillClient::UNMASK_FOR_AUTOFILL,
                            delegate()->GetWeakPtr());
   // Simulate AutofillManager (the delegate in production code) being destroyed
   // before CardUnmaskPromptViewBridge::OnConstrainedWindowClosed() is called.

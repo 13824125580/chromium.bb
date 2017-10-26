@@ -15,7 +15,7 @@ from dashboard.models import graph_data
 
 
 class GraphCsvHandler(request_handler.RequestHandler):
-  """Get data from data store and outputs it in CSV format."""
+  """Request handler for getting data from one series as CSV."""
 
   def get(self):
     """Gets CSV from data store and outputs it.
@@ -46,7 +46,7 @@ class GraphCsvHandler(request_handler.RequestHandler):
            not test.internal_only)
     datastore_hooks.SetSinglePrivilegedRequest()
     q = graph_data.Row.query()
-    q = q.filter(graph_data.Row.parent_test == test_key)
+    q = q.filter(graph_data.Row.parent_test == utils.OldStyleTestKey(test_key))
     if rev:
       q = q.filter(graph_data.Row.revision <= int(rev))
     q = q.order(-graph_data.Row.revision)
@@ -58,7 +58,7 @@ class GraphCsvHandler(request_handler.RequestHandler):
     csv.writer(output).writerows(rows)
     self.response.headers['Content-Type'] = 'text/csv'
     self.response.headers['Content-Disposition'] = (
-        'attachment; filename=%s.csv' % test_key.string_id())
+        'attachment; filename=%s.csv' % test.test_name)
     self.response.out.write(output.getvalue())
 
   def post(self):
@@ -66,7 +66,7 @@ class GraphCsvHandler(request_handler.RequestHandler):
     self.get()
 
   def _GenerateRows(self, points, attributes):
-    """Generate all the rows based on the attributes given.
+    """Generates CSV rows based on the attributes given.
 
     Args:
       points: A list of Row entities.

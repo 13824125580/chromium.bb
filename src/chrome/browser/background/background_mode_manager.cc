@@ -19,7 +19,7 @@
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/background/background_application_list_model.h"
@@ -29,6 +29,7 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/keep_alive_registry.h"
 #include "chrome/browser/lifetime/keep_alive_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
@@ -43,7 +44,6 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
@@ -66,7 +66,7 @@
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(OS_WIN)
-#include "chrome/browser/app_icon_win.h"
+#include "chrome/browser/win/app_icon.h"
 #endif
 
 using base::UserMetricsAction;
@@ -311,7 +311,8 @@ BackgroundModeManager::BackgroundModeManager(
   // there are background apps) or exit if there are none.
   if (command_line.HasSwitch(switches::kNoStartupWindow)) {
     keep_alive_for_startup_.reset(
-        new ScopedKeepAlive(KeepAliveOrigin::BACKGROUND_MODE_MANAGER));
+        new ScopedKeepAlive(KeepAliveOrigin::BACKGROUND_MODE_MANAGER_STARTUP,
+                            KeepAliveRestartOption::DISABLED));
   } else {
     // Otherwise, start with background mode suspended in case we're launching
     // in a mode that doesn't open a browser window. It will be resumed when the
@@ -393,8 +394,8 @@ void BackgroundModeManager::RegisterProfile(Profile* profile) {
 void BackgroundModeManager::LaunchBackgroundApplication(
     Profile* profile,
     const Extension* extension) {
-  OpenApplication(AppLaunchParams(profile, extension, NEW_FOREGROUND_TAB,
-                                  extensions::SOURCE_BACKGROUND));
+  OpenApplication(CreateAppLaunchParamsUserContainer(
+      profile, extension, NEW_FOREGROUND_TAB, extensions::SOURCE_BACKGROUND));
 }
 
 // static
@@ -462,24 +463,19 @@ void BackgroundModeManager::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_APP_TERMINATING:
-      // Make sure we aren't still keeping the app alive (only happens if we
-      // don't receive an EXTENSIONS_READY notification for some reason).
-      ReleaseStartupKeepAlive();
-      // Performing an explicit shutdown, so exit background mode (does nothing
-      // if we aren't in background mode currently).
-      EndBackgroundMode();
-      // Shutting down, so don't listen for any more notifications so we don't
-      // try to re-enter/exit background mode again.
-      registrar_.RemoveAll();
-      for (const auto& it : background_mode_data_)
-        it.second->applications_->RemoveObserver(this);
-      break;
-    default:
-      NOTREACHED();
-      break;
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_APP_TERMINATING, type);
+
+  // Make sure we aren't still keeping the app alive (only happens if we
+  // don't receive an EXTENSIONS_READY notification for some reason).
+  ReleaseStartupKeepAlive();
+  // Performing an explicit shutdown, so exit background mode (does nothing
+  // if we aren't in background mode currently).
+  EndBackgroundMode();
+  // Shutting down, so don't listen for any more notifications so we don't
+  // try to re-enter/exit background mode again.
+  registrar_.RemoveAll();
+  for (const auto& it : background_mode_data_)
+    it.second->applications_->RemoveObserver(this);
 }
 
 void BackgroundModeManager::OnExtensionsReady(Profile* profile) {
@@ -647,7 +643,7 @@ void BackgroundModeManager::ExecuteCommand(int command_id, int event_flags) {
       // Background mode must already be enabled (as otherwise this menu would
       // not be visible).
       DCHECK(IsBackgroundModePrefEnabled());
-      DCHECK(chrome::WillKeepAlive());
+      DCHECK(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 
       RecordMenuItemClick(MENU_ITEM_KEEP_RUNNING);
 
@@ -767,7 +763,8 @@ void BackgroundModeManager::UpdateKeepAliveAndTrayIcon() {
   if (in_background_mode_ && !background_mode_suspended_) {
     if (!keep_alive_) {
       keep_alive_.reset(
-          new ScopedKeepAlive(KeepAliveOrigin::BACKGROUND_MODE_MANAGER));
+          new ScopedKeepAlive(KeepAliveOrigin::BACKGROUND_MODE_MANAGER,
+                              KeepAliveRestartOption::ENABLED));
     }
     CreateStatusTrayIcon();
     return;
@@ -882,7 +879,7 @@ gfx::ImageSkia GetStatusTrayIcon() {
   // the ImageFamily abstraction. Note: We could just use the LoadImage function
   // from the Windows API, but that does a *terrible* job scaling images.
   // Therefore, we fetch the images and do our own high-quality scaling.
-  scoped_ptr<gfx::ImageFamily> family = GetAppIconImageFamily();
+  std::unique_ptr<gfx::ImageFamily> family = GetAppIconImageFamily();
   DCHECK(family);
   if (!family)
     return gfx::ImageSkia();
@@ -938,7 +935,7 @@ void BackgroundModeManager::UpdateStatusTrayIconContextMenu() {
   command_id_handler_vector_.clear();
   submenus.clear();
 
-  scoped_ptr<StatusIconMenuModel> menu(new StatusIconMenuModel(this));
+  std::unique_ptr<StatusIconMenuModel> menu(new StatusIconMenuModel(this));
   menu->AddItem(IDC_ABOUT, l10n_util::GetStringUTF16(IDS_ABOUT));
   menu->AddItemWithStringId(IDC_TASK_MANAGER, IDS_TASK_MANAGER);
   menu->AddSeparator(ui::NORMAL_SEPARATOR);

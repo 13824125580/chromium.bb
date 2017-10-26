@@ -7,6 +7,7 @@
 #include "base/metrics/histogram.h"
 
 namespace content {
+namespace command_buffer_metrics {
 
 namespace {
 
@@ -63,6 +64,7 @@ CommandBufferContextLostReason GetContextLostReason(
       case gpu::error::kGenericError:
         return CONTEXT_PARSE_ERROR_GENERIC_ERROR;
       case gpu::error::kDeferCommandUntilLater:
+      case gpu::error::kDeferLaterCommands:
       case gpu::error::kNoError:
       case gpu::error::kLostContext:
         NOTREACHED();
@@ -72,10 +74,10 @@ CommandBufferContextLostReason GetContextLostReason(
   return CONTEXT_LOST_UNKNOWN;
 }
 
-void RecordContextLost(CommandBufferContextType type,
+void RecordContextLost(ContextType type,
                        CommandBufferContextLostReason reason) {
   switch (type) {
-    case BROWSER_COMPOSITOR_ONSCREEN_CONTEXT:
+    case DISPLAY_COMPOSITOR_ONSCREEN_CONTEXT:
       UMA_HISTOGRAM_ENUMERATION("GPU.ContextLost.BrowserCompositor", reason,
                                 CONTEXT_LOST_REASON_MAX_ENUM);
       break;
@@ -111,6 +113,10 @@ void RecordContextLost(CommandBufferContextType type,
       UMA_HISTOGRAM_ENUMERATION("GPU.ContextLost.WebGL", reason,
                                 CONTEXT_LOST_REASON_MAX_ENUM);
       break;
+    case MEDIA_CONTEXT:
+      UMA_HISTOGRAM_ENUMERATION("GPU.ContextLost.Media", reason,
+                                CONTEXT_LOST_REASON_MAX_ENUM);
+      break;
     case CONTEXT_TYPE_UNKNOWN:
       UMA_HISTOGRAM_ENUMERATION("GPU.ContextLost.Unknown", reason,
                                 CONTEXT_LOST_REASON_MAX_ENUM);
@@ -120,12 +126,12 @@ void RecordContextLost(CommandBufferContextType type,
 
 }  // anonymous namespace
 
-std::string CommandBufferContextTypeToString(CommandBufferContextType type) {
+std::string ContextTypeToString(ContextType type) {
   switch (type) {
     case OFFSCREEN_CONTEXT_FOR_TESTING:
       return "Context-For-Testing";
-    case BROWSER_COMPOSITOR_ONSCREEN_CONTEXT:
-      return "Compositor";
+    case DISPLAY_COMPOSITOR_ONSCREEN_CONTEXT:
+      return "DisplayCompositor";
     case BROWSER_OFFSCREEN_MAINTHREAD_CONTEXT:
       return "Offscreen-MainThread";
     case BROWSER_WORKER_CONTEXT:
@@ -142,17 +148,19 @@ std::string CommandBufferContextTypeToString(CommandBufferContextType type) {
       return "Offscreen-CaptureThread";
     case OFFSCREEN_CONTEXT_FOR_WEBGL:
       return "Offscreen-For-WebGL";
+    case MEDIA_CONTEXT:
+      return "Media";
     default:
       NOTREACHED();
       return "unknown";
   }
 }
 
-void UmaRecordContextInitFailed(CommandBufferContextType type) {
+void UmaRecordContextInitFailed(ContextType type) {
   RecordContextLost(type, CONTEXT_INIT_FAILED);
 }
 
-void UmaRecordContextLost(CommandBufferContextType type,
+void UmaRecordContextLost(ContextType type,
                           gpu::error::Error error,
                           gpu::error::ContextLostReason reason) {
   CommandBufferContextLostReason converted_reason =
@@ -160,4 +168,5 @@ void UmaRecordContextLost(CommandBufferContextType type,
   RecordContextLost(type, converted_reason);
 }
 
+}  // namespace command_buffer_metrics
 }  // namespace content

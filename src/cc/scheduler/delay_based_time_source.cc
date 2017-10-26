@@ -14,37 +14,22 @@
 #include "base/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
+#include "cc/output/begin_frame_args.h"
 
 namespace cc {
-
-namespace {
-
-// kIntervalChangeThreshold is the fraction of the interval that will trigger an
-// immediate interval change.  kPhaseChangeThreshold is the fraction of the
-// interval that will trigger an immediate phase change.  If the changes are
-// within the thresholds, the change will take place on the next tick.  If
-// either change is outside the thresholds, the next tick will be canceled and
-// reissued immediately.
-static const double kIntervalChangeThreshold = 0.25;
-static const double kPhaseChangeThreshold = 0.25;
-
-}  // namespace
 
 // The following methods correspond to the DelayBasedTimeSource that uses
 // the base::TimeTicks::Now as the timebase.
 DelayBasedTimeSource::DelayBasedTimeSource(
-    base::TimeDelta interval,
     base::SingleThreadTaskRunner* task_runner)
     : client_(nullptr),
       active_(false),
       timebase_(base::TimeTicks()),
-      interval_(interval),
-      last_tick_time_(base::TimeTicks() - interval),
+      interval_(BeginFrameArgs::DefaultInterval()),
+      last_tick_time_(base::TimeTicks() - interval_),
       next_tick_time_(base::TimeTicks()),
       task_runner_(task_runner),
-      weak_factory_(this) {
-  DCHECK_GT(interval, base::TimeDelta());
-}
+      weak_factory_(this) {}
 
 DelayBasedTimeSource::~DelayBasedTimeSource() {}
 
@@ -97,46 +82,8 @@ void DelayBasedTimeSource::SetClient(DelayBasedTimeSourceClient* client) {
 
 void DelayBasedTimeSource::SetTimebaseAndInterval(base::TimeTicks timebase,
                                                   base::TimeDelta interval) {
-  DCHECK_GT(interval, base::TimeDelta());
-
-  // If the change in interval is larger than the change threshold,
-  // request an immediate reset.
-  double interval_delta = std::abs((interval - interval_).InSecondsF());
-  // Comparing with next_tick_time_ is the right thing to do because we want to
-  // know if we want to cancel the existing tick task and schedule a new one.
-  // Also next_tick_time_ = timebase_ mod interval_.
-  double timebase_delta = std::abs((timebase - next_tick_time_).InSecondsF());
-
   interval_ = interval;
   timebase_ = timebase;
-
-  // If we aren't active, there's no need to reset the timer.
-  if (!active_)
-    return;
-
-  double interval_change = interval_delta / interval.InSecondsF();
-  if (interval_change > kIntervalChangeThreshold) {
-    TRACE_EVENT_INSTANT0("cc", "DelayBasedTimeSource::IntervalChanged",
-                         TRACE_EVENT_SCOPE_THREAD);
-    PostNextTickTask(Now());
-    return;
-  }
-
-  // If the change in phase is greater than the change threshold in either
-  // direction, request an immediate reset. This logic might result in a false
-  // negative if there is a simultaneous small change in the interval and the
-  // fmod just happens to return something near zero. Assuming the timebase
-  // is very recent though, which it should be, we'll still be ok because the
-  // old clock and new clock just happen to line up.
-  double phase_change =
-      fmod(timebase_delta, interval.InSecondsF()) / interval.InSecondsF();
-  if (phase_change > kPhaseChangeThreshold &&
-      phase_change < (1.0 - kPhaseChangeThreshold)) {
-    TRACE_EVENT_INSTANT0("cc", "DelayBasedTimeSource::PhaseChanged",
-                         TRACE_EVENT_SCOPE_THREAD);
-    PostNextTickTask(Now());
-    return;
-  }
 }
 
 base::TimeTicks DelayBasedTimeSource::Now() const {
@@ -198,10 +145,14 @@ base::TimeTicks DelayBasedTimeSource::Now() const {
 //      now=37   tick_target=16.667  new_target=50.000  -->
 //          tick(), PostDelayedTask(floor(50.000-37)) --> PostDelayedTask(13)
 void DelayBasedTimeSource::PostNextTickTask(base::TimeTicks now) {
-  next_tick_time_ = now.SnappedToNextTick(timebase_, interval_);
-  if (next_tick_time_ == now)
-    next_tick_time_ += interval_;
-  DCHECK_GT(next_tick_time_, now);
+  if (interval_.is_zero()) {
+    next_tick_time_ = now;
+  } else {
+    next_tick_time_ = now.SnappedToNextTick(timebase_, interval_);
+    if (next_tick_time_ == now)
+      next_tick_time_ += interval_;
+    DCHECK_GT(next_tick_time_, now);
+  }
   tick_closure_.Reset(base::Bind(&DelayBasedTimeSource::OnTimerTick,
                                  weak_factory_.GetWeakPtr()));
   task_runner_->PostDelayedTask(FROM_HERE, tick_closure_.callback(),

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -102,12 +103,11 @@ void WebEncryptedMediaClientImpl::requestMediaKeySystemAccess(
 
   if (GetMediaClient()) {
     GURL security_origin(
-        blink::WebStringToGURL(request.securityOrigin().toString()));
+        blink::WebStringToGURL(request.getSecurityOrigin().toString()));
 
     GetMediaClient()->RecordRapporURL("Media.OriginUrl.EME", security_origin);
 
-    blink::WebString error_message;
-    if (!request.securityOrigin().isPotentiallyTrustworthy(error_message)) {
+    if (!request.getSecurityOrigin().isPotentiallyTrustworthy()) {
       GetMediaClient()->RecordRapporURL("Media.OriginUrl.EME.Insecure",
                                         security_origin);
     }
@@ -115,7 +115,7 @@ void WebEncryptedMediaClientImpl::requestMediaKeySystemAccess(
 
   key_system_config_selector_.SelectConfig(
       request.keySystem(), request.supportedConfigurations(),
-      request.securityOrigin(), are_secure_codecs_supported_cb_.Run(),
+      request.getSecurityOrigin(), are_secure_codecs_supported_cb_.Run(),
       base::Bind(&WebEncryptedMediaClientImpl::OnRequestSucceeded,
                  weak_factory_.GetWeakPtr(), request),
       base::Bind(&WebEncryptedMediaClientImpl::OnRequestNotSupported,
@@ -126,7 +126,7 @@ void WebEncryptedMediaClientImpl::CreateCdm(
     const blink::WebString& key_system,
     const blink::WebSecurityOrigin& security_origin,
     const CdmConfig& cdm_config,
-    scoped_ptr<blink::WebContentDecryptionModuleResult> result) {
+    std::unique_ptr<blink::WebContentDecryptionModuleResult> result) {
   WebContentDecryptionModuleImpl::Create(
       cdm_factory_, key_system, security_origin, cdm_config, std::move(result));
 }
@@ -139,8 +139,8 @@ void WebEncryptedMediaClientImpl::OnRequestSucceeded(
   // TODO(sandersd): Pass |are_secure_codecs_required| along and use it to
   // configure the CDM security level and use of secure surfaces on Android.
   request.requestSucceeded(WebContentDecryptionModuleAccessImpl::Create(
-      request.keySystem(), request.securityOrigin(), accumulated_configuration,
-      cdm_config, weak_factory_.GetWeakPtr()));
+      request.keySystem(), request.getSecurityOrigin(),
+      accumulated_configuration, cdm_config, weak_factory_.GetWeakPtr()));
 }
 
 void WebEncryptedMediaClientImpl::OnRequestNotSupported(
@@ -162,7 +162,7 @@ WebEncryptedMediaClientImpl::Reporter* WebEncryptedMediaClientImpl::GetReporter(
   Reporter* reporter = reporters_.get(uma_name);
   if (!reporter) {
     reporter = new Reporter(uma_name);
-    reporters_.add(uma_name, make_scoped_ptr(reporter));
+    reporters_.add(uma_name, base::WrapUnique(reporter));
   }
   return reporter;
 }

@@ -6,7 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -46,8 +48,8 @@
 #endif
 
 #if defined(OS_LINUX) && defined(USE_X11)
-#include "ui/base/x/x11_util.h"
-#include "ui/gfx/x/x11_atom_cache.h"
+#include "ui/base/x/x11_util.h"       // nogncheck
+#include "ui/gfx/x/x11_atom_cache.h"  // nogncheck
 #endif
 
 namespace content {
@@ -202,7 +204,7 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
   basic_info->Append(NewDescriptionValuePair("Window manager",
                                              ui::GuessWindowManagerName()));
   {
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     std::string value;
     const char kXDGCurrentDesktop[] = "XDG_CURRENT_DESKTOP";
     if (env->GetVar(kXDGCurrentDesktop, &value))
@@ -210,7 +212,7 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
     const char kGDMSession[] = "GDMSESSION";
     if (env->GetVar(kGDMSession, &value))
       basic_info->Append(NewDescriptionValuePair(kGDMSession, value));
-    const char* kAtomsToCache[] = {
+    const char* const kAtomsToCache[] = {
         "_NET_WM_CM_S0",
         NULL
     };
@@ -239,10 +241,10 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
   info->Set("basic_info", basic_info);
 
 #if defined(OS_WIN)
-  scoped_ptr<base::Value> dx_info = base::Value::CreateNullValue();
+  std::unique_ptr<base::Value> dx_info = base::Value::CreateNullValue();
   if (gpu_info.dx_diagnostics.children.size())
     dx_info.reset(DxDiagNodeToList(gpu_info.dx_diagnostics));
-  info->Set("diagnostics", dx_info.Pass());
+  info->Set("diagnostics", std::move(dx_info));
 #endif
 
   return info;
@@ -262,6 +264,8 @@ const char* BufferFormatToString(gfx::BufferFormat format) {
       return "ETC1";
     case gfx::BufferFormat::R_8:
       return "R_8";
+    case gfx::BufferFormat::BGR_565:
+      return "BGR_565";
     case gfx::BufferFormat::RGBA_4444:
       return "RGBA_4444";
     case gfx::BufferFormat::RGBX_8888:
@@ -272,8 +276,8 @@ const char* BufferFormatToString(gfx::BufferFormat format) {
       return "BGRX_8888";
     case gfx::BufferFormat::BGRA_8888:
       return "BGRA_8888";
-    case gfx::BufferFormat::YUV_420:
-      return "YUV_420";
+    case gfx::BufferFormat::YVU_420:
+      return "YVU_420";
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return "YUV_420_BIPLANAR";
     case gfx::BufferFormat::UYVY_422:
@@ -440,12 +444,11 @@ void GpuMessageHandler::OnCallAsync(const base::ListValue* args) {
 
   // call BrowserBridge.onCallAsyncReply with result
   if (ret) {
-    web_ui()->CallJavascriptFunction("browserBridge.onCallAsyncReply",
-        *requestId,
-        *ret);
+    web_ui()->CallJavascriptFunctionUnsafe("browserBridge.onCallAsyncReply",
+                                           *requestId, *ret);
     delete ret;
   } else {
-    web_ui()->CallJavascriptFunction("browserBridge.onCallAsyncReply",
+    web_ui()->CallJavascriptFunctionUnsafe("browserBridge.onCallAsyncReply",
         *requestId);
   }
 }
@@ -500,8 +503,8 @@ base::Value* GpuMessageHandler::OnRequestLogMessages(const base::ListValue*) {
 
 void GpuMessageHandler::OnGpuInfoUpdate() {
   // Get GPU Info.
-  scoped_ptr<base::DictionaryValue> gpu_info_val(GpuInfoAsDictionaryValue());
-
+  std::unique_ptr<base::DictionaryValue> gpu_info_val(
+      GpuInfoAsDictionaryValue());
 
   // Add in blacklisting features
   base::DictionaryValue* feature_status = new base::DictionaryValue;
@@ -516,7 +519,7 @@ void GpuMessageHandler::OnGpuInfoUpdate() {
   gpu_info_val->Set("gpuMemoryBufferInfo", GpuMemoryBufferInfo());
 
   // Send GPU Info to javascript.
-  web_ui()->CallJavascriptFunction("browserBridge.onGpuInfoUpdate",
+  web_ui()->CallJavascriptFunctionUnsafe("browserBridge.onGpuInfoUpdate",
       *(gpu_info_val.get()));
 }
 
@@ -543,9 +546,9 @@ GpuInternalsUI::GpuInternalsUI(WebUI* web_ui)
   WebUIDataSource::Add(browser_context, CreateGpuHTMLSource());
 }
 
-scoped_ptr<base::ListValue> GpuInternalsUI::GetGpuMemoryBufferInfo()
+std::unique_ptr<base::ListValue> GpuInternalsUI::GetGpuMemoryBufferInfo()
 {
-    scoped_ptr<base::ListValue> gpu_memory_buffer_info_val(
+    std::unique_ptr<base::ListValue> gpu_memory_buffer_info_val(
         GpuMemoryBufferInfo());
 
     return gpu_memory_buffer_info_val;

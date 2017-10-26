@@ -50,11 +50,11 @@
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkMatrix.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
-
 #include <algorithm>
+#include <memory>
 
 namespace blink {
 
@@ -96,7 +96,7 @@ PassRefPtr<SkImage> DragImage::resizeAndOrientImage(PassRefPtr<SkImage> image, I
         return image;
     }
 
-    RefPtr<SkSurface> surface = adoptRef(SkSurface::NewRasterN32Premul(size.width(), size.height()));
+    sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(size.width(), size.height());
     if (!surface)
         return nullptr;
 
@@ -111,7 +111,7 @@ PassRefPtr<SkImage> DragImage::resizeAndOrientImage(PassRefPtr<SkImage> image, I
     canvas->concat(affineTransformToSkMatrix(transform));
     canvas->drawImage(image.get(), 0, 0, &paint);
 
-    return adoptRef(surface->newImageSnapshot());
+    return fromSkSp(surface->makeImageSnapshot());
 }
 
 FloatSize DragImage::clampedImageScale(const IntSize& imageSize, const IntSize& size,
@@ -132,7 +132,7 @@ FloatSize DragImage::clampedImageScale(const IntSize& imageSize, const IntSize& 
     return imageScale;
 }
 
-PassOwnPtr<DragImage> DragImage::create(Image* image,
+std::unique_ptr<DragImage> DragImage::create(Image* image,
     RespectImageOrientationEnum shouldRespectImageOrientation, float deviceScaleFactor,
     InterpolationQuality interpolationQuality, float opacity, FloatSize imageScale)
 {
@@ -153,7 +153,7 @@ PassOwnPtr<DragImage> DragImage::create(Image* image,
     if (!resizedImage || !resizedImage->asLegacyBitmap(&bm, SkImage::kRO_LegacyBitmapMode))
         return nullptr;
 
-    return adoptPtr(new DragImage(bm, deviceScaleFactor, interpolationQuality));
+    return wrapUnique(new DragImage(bm, deviceScaleFactor, interpolationQuality));
 }
 
 static Font deriveDragLabelFont(int size, FontWeight fontWeight, const FontDescription& systemFont)
@@ -167,7 +167,7 @@ static Font deriveDragLabelFont(int size, FontWeight fontWeight, const FontDescr
     return result;
 }
 
-PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, const FontDescription& systemFont, float deviceScaleFactor)
+std::unique_ptr<DragImage> DragImage::create(const KURL& url, const String& inLabel, const FontDescription& systemFont, float deviceScaleFactor)
 {
     const Font labelFont = deriveDragLabelFont(kDragLinkLabelFontSize, FontWeightBold, systemFont);
     const Font urlFont = deriveDragLabelFont(kDragLinkUrlFontSize, FontWeightNormal, systemFont);
@@ -178,7 +178,7 @@ PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, 
     bool clipLabelString = false;
     float maxDragLabelStringWidthDIP = kMaxDragLabelStringWidth / deviceScaleFactor;
 
-    String urlString = url.string();
+    String urlString = url.getString();
     String label = inLabel.stripWhiteSpace();
     if (label.isEmpty()) {
         drawURLString = false;
@@ -188,7 +188,7 @@ PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, 
     // First step is drawing the link drag image width.
     TextRun labelRun(label.impl());
     TextRun urlRun(urlString.impl());
-    IntSize labelSize(labelFont.width(labelRun), labelFont.fontMetrics().ascent() + labelFont.fontMetrics().descent());
+    IntSize labelSize(labelFont.width(labelRun), labelFont.getFontMetrics().ascent() + labelFont.getFontMetrics().descent());
 
     if (labelSize.width() > maxDragLabelStringWidthDIP) {
         labelSize.setWidth(maxDragLabelStringWidthDIP);
@@ -200,7 +200,7 @@ PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, 
 
     if (drawURLString) {
         urlStringSize.setWidth(urlFont.width(urlRun));
-        urlStringSize.setHeight(urlFont.fontMetrics().ascent() + urlFont.fontMetrics().descent());
+        urlStringSize.setHeight(urlFont.getFontMetrics().ascent() + urlFont.getFontMetrics().descent());
         imageSize.setHeight(imageSize.height() + urlStringSize.height());
         if (urlStringSize.width() > maxDragLabelStringWidthDIP) {
             imageSize.setWidth(maxDragLabelStringWidthDIP);
@@ -213,7 +213,7 @@ PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, 
     // fill the background
     IntSize scaledImageSize = imageSize;
     scaledImageSize.scale(deviceScaleFactor);
-    OwnPtr<ImageBuffer> buffer(ImageBuffer::create(scaledImageSize));
+    std::unique_ptr<ImageBuffer> buffer(ImageBuffer::create(scaledImageSize));
     if (!buffer)
         return nullptr;
 
@@ -233,7 +233,7 @@ PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, 
     if (drawURLString) {
         if (clipURLString)
             urlString = StringTruncator::centerTruncate(urlString, imageSize.width() - (kDragLabelBorderX * 2.0f), urlFont);
-        IntPoint textPos(kDragLabelBorderX, imageSize.height() - (kLabelBorderYOffset + urlFont.fontMetrics().descent()));
+        IntPoint textPos(kDragLabelBorderX, imageSize.height() - (kLabelBorderYOffset + urlFont.getFontMetrics().descent()));
         TextRun textRun(urlString);
         urlFont.drawText(buffer->canvas(), TextRunPaintInfo(textRun), textPos, deviceScaleFactor, textPaint);
     }
@@ -243,7 +243,7 @@ PassOwnPtr<DragImage> DragImage::create(const KURL& url, const String& inLabel, 
 
     bool hasStrongDirectionality;
     TextRun textRun = textRunWithDirectionality(label, &hasStrongDirectionality);
-    IntPoint textPos(kDragLabelBorderX, kDragLabelBorderY + labelFont.fontDescription().computedPixelSize());
+    IntPoint textPos(kDragLabelBorderX, kDragLabelBorderY + labelFont.getFontDescription().computedPixelSize());
     if (hasStrongDirectionality && textRun.direction() == RTL) {
         float textWidth = labelFont.width(textRun);
         int availableWidth = imageSize.width() - kDragLabelBorderX * 2;

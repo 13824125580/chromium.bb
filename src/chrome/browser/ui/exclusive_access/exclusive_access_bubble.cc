@@ -157,14 +157,6 @@ void ExclusiveAccessBubble::ExitExclusiveAccess() {
   manager_->ExitExclusiveAccess();
 }
 
-void ExclusiveAccessBubble::Accept() {
-  manager_->OnAcceptExclusiveAccessPermission();
-}
-
-void ExclusiveAccessBubble::Cancel() {
-  manager_->OnDenyExclusiveAccessPermission();
-}
-
 base::string16 ExclusiveAccessBubble::GetCurrentMessageText() const {
   return exclusive_access_bubble::GetLabelTextForType(
       bubble_type_, url_,
@@ -181,11 +173,6 @@ base::string16 ExclusiveAccessBubble::GetCurrentAllowButtonText() const {
 
 base::string16 ExclusiveAccessBubble::GetInstructionText(
     const base::string16& accelerator) const {
-  if (!ExclusiveAccessManager::IsSimplifiedFullscreenUIEnabled()) {
-    return l10n_util::GetStringFUTF16(IDS_FULLSCREEN_PRESS_ESC_TO_EXIT_SENTENCE,
-                                      accelerator);
-  }
-
   return exclusive_access_bubble::GetInstructionTextForType(bubble_type_,
                                                             accelerator);
 }

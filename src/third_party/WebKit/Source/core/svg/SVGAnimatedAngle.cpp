@@ -50,6 +50,11 @@ DEFINE_TRACE(SVGAnimatedAngle)
     SVGAnimatedProperty<SVGAngle>::trace(visitor);
 }
 
+DEFINE_TRACE_WRAPPERS(SVGAnimatedAngle)
+{
+    visitor->traceWrappers(contextElement());
+}
+
 bool SVGAnimatedAngle::needsSynchronizeAttribute()
 {
     return m_orientType->needsSynchronizeAttribute()
@@ -67,7 +72,7 @@ void SVGAnimatedAngle::synchronizeAttribute()
     SVGAnimatedProperty<SVGAngle>::synchronizeAttribute();
 }
 
-void SVGAnimatedAngle::setAnimatedValue(PassRefPtrWillBeRawPtr<SVGPropertyBase> value)
+void SVGAnimatedAngle::setAnimatedValue(SVGPropertyBase* value)
 {
     SVGAnimatedProperty<SVGAngle>::setAnimatedValue(value);
     m_orientType->setAnimatedValue(currentValue()->orientType());

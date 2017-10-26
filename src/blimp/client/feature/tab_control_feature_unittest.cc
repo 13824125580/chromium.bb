@@ -4,8 +4,10 @@
 
 #include "blimp/client/feature/tab_control_feature.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/common/proto/tab_control.pb.h"
 #include "blimp/net/test_common.h"
@@ -20,7 +22,7 @@ namespace blimp {
 namespace client {
 
 MATCHER_P3(EqualsSizeMessage, width, height, dp_to_px, "") {
-  return arg.tab_control().type() == TabControlMessage::SIZE &&
+  return arg.tab_control().tab_control_case() == TabControlMessage::kSize &&
          arg.tab_control().size().width() == width &&
          arg.tab_control().size().height() == height &&
          arg.tab_control().size().device_pixel_ratio() == dp_to_px;
@@ -32,7 +34,7 @@ class TabControlFeatureTest : public testing::Test {
 
   void SetUp() override {
     out_processor_ = new MockBlimpMessageProcessor();
-    feature_.set_outgoing_message_processor(make_scoped_ptr(out_processor_));
+    feature_.set_outgoing_message_processor(base::WrapUnique(out_processor_));
   }
 
  protected:

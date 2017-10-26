@@ -12,12 +12,10 @@
 
 namespace cc {
 
-DisplayScheduler::DisplayScheduler(DisplaySchedulerClient* client,
-                                   BeginFrameSource* begin_frame_source,
+DisplayScheduler::DisplayScheduler(BeginFrameSource* begin_frame_source,
                                    base::SingleThreadTaskRunner* task_runner,
                                    int max_pending_swaps)
-    : client_(client),
-      begin_frame_source_(begin_frame_source),
+    : begin_frame_source_(begin_frame_source),
       task_runner_(task_runner),
       output_surface_lost_(false),
       root_surface_resources_locked_(true),
@@ -33,15 +31,15 @@ DisplayScheduler::DisplayScheduler(DisplaySchedulerClient* client,
       weak_ptr_factory_(this) {
   begin_frame_deadline_closure_ = base::Bind(
       &DisplayScheduler::OnBeginFrameDeadline, weak_ptr_factory_.GetWeakPtr());
-
-  // TODO(tansell): Set this to something useful.
-  begin_frame_source_for_children_ = SyntheticBeginFrameSource::Create(
-      task_runner, BeginFrameArgs::DefaultInterval());
 }
 
 DisplayScheduler::~DisplayScheduler() {
   if (observing_begin_frame_source_)
     begin_frame_source_->RemoveObserver(this);
+}
+
+void DisplayScheduler::SetClient(DisplaySchedulerClient* client) {
+  client_ = client;
 }
 
 // If we try to draw when the root surface resources are locked, the
@@ -59,7 +57,7 @@ void DisplayScheduler::ForceImmediateSwapIfPossible() {
   bool in_begin = inside_begin_frame_deadline_interval_;
   AttemptDrawAndSwap();
   if (in_begin)
-    begin_frame_source_->DidFinishFrame(0);
+    begin_frame_source_->DidFinishFrame(this, 0);
 }
 
 void DisplayScheduler::DisplayResized() {
@@ -82,7 +80,7 @@ void DisplayScheduler::SetNewRootSurface(SurfaceId root_surface_id) {
 // triggering the deadline.
 void DisplayScheduler::SurfaceDamaged(SurfaceId surface_id) {
   TRACE_EVENT1("cc", "DisplayScheduler::SurfaceDamaged", "surface_id",
-               surface_id.id);
+               surface_id.ToString());
 
   needs_draw_ = true;
 
@@ -293,7 +291,7 @@ void DisplayScheduler::OnBeginFrameDeadline() {
   TRACE_EVENT0("cc", "DisplayScheduler::OnBeginFrameDeadline");
 
   AttemptDrawAndSwap();
-  begin_frame_source_->DidFinishFrame(0);
+  begin_frame_source_->DidFinishFrame(this, 0);
 }
 
 void DisplayScheduler::DidSwapBuffers() {

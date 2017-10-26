@@ -4,6 +4,8 @@
 
 #include "chrome/common/service_process_util.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -12,11 +14,11 @@
 #include "base/process/launch.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
+#include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 
 #if !defined(OS_MACOSX)
 #include "base/at_exit.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/multiprocess_test.h"
@@ -126,7 +128,7 @@ TEST_F(ServiceProcessStateTest, DISABLED_ReadyState) {
 TEST_F(ServiceProcessStateTest, AutoRun) {
   ServiceProcessState state;
   ASSERT_TRUE(state.AddToAutoRun());
-  scoped_ptr<base::CommandLine> autorun_command_line;
+  std::unique_ptr<base::CommandLine> autorun_command_line;
 #if defined(OS_WIN)
   std::string value_name = GetServiceProcessScopedName("_service_run");
   base::string16 value;
@@ -226,8 +228,8 @@ MULTIPROCESS_TEST_MAIN(ServiceProcessStateTestReadyFalse) {
 }
 
 MULTIPROCESS_TEST_MAIN(ServiceProcessStateTestShutdown) {
+  base::PlatformThread::SetName("ServiceProcessStateTestShutdownMainThread");
   base::MessageLoop message_loop;
-  message_loop.set_thread_name("ServiceProcessStateTestShutdownMainThread");
   base::Thread io_thread_("ServiceProcessStateTestShutdownIOThread");
   base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
   EXPECT_TRUE(io_thread_.StartWithOptions(options));
@@ -281,8 +283,9 @@ class ServiceProcessStateFileManipulationTest : public ::testing::Test {
     ASSERT_TRUE(service_process_state_.Initialize());
     ASSERT_TRUE(service_process_state_.SignalReady(
         io_thread_.task_runner().get(), base::Closure()));
-    loop_.PostDelayedTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
-                          TestTimeouts::action_max_timeout());
+    loop_.task_runner()->PostDelayedTask(
+        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
+        TestTimeouts::action_max_timeout());
   }
 
   const MockLaunchd* mock_launchd() const { return mock_launchd_.get(); }
@@ -300,8 +303,8 @@ class ServiceProcessStateFileManipulationTest : public ::testing::Test {
   base::MessageLoopForUI loop_;
   base::Thread io_thread_;
   base::FilePath executable_path_, bundle_path_;
-  scoped_ptr<MockLaunchd> mock_launchd_;
-  scoped_ptr<Launchd::ScopedInstance> scoped_launchd_instance_;
+  std::unique_ptr<MockLaunchd> mock_launchd_;
+  std::unique_ptr<Launchd::ScopedInstance> scoped_launchd_instance_;
   ServiceProcessState service_process_state_;
 };
 

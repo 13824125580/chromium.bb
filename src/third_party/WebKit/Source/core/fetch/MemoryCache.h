@@ -27,7 +27,7 @@
 
 #include "core/CoreExport.h"
 #include "core/fetch/Resource.h"
-#include "public/platform/WebMemoryDumpProvider.h"
+#include "platform/MemoryCacheDumpProvider.h"
 #include "public/platform/WebThread.h"
 #include "wtf/Allocator.h"
 #include "wtf/HashMap.h"
@@ -66,7 +66,7 @@ enum UpdateReason {
 // MemoryCacheEntry class is used only in MemoryCache class, but we don't make
 // MemoryCacheEntry class an inner class of MemoryCache because of dependency
 // from MemoryCacheLRUList.
-class MemoryCacheEntry final : public GarbageCollectedFinalized<MemoryCacheEntry> {
+class MemoryCacheEntry final : public GarbageCollected<MemoryCacheEntry> {
 public:
     static MemoryCacheEntry* create(Resource* resource)
     {
@@ -74,8 +74,8 @@ public:
     }
     DECLARE_TRACE();
     void dispose();
+    Resource* resource();
 
-    RefPtrWillBeMember<Resource> m_resource;
     bool m_inLiveDecodedResourcesList;
     unsigned m_accessCount;
     double m_lastDecodedAccessTime; // Used as a thrash guard
@@ -87,16 +87,18 @@ public:
 
 private:
     explicit MemoryCacheEntry(Resource* resource)
-        : m_resource(resource)
-        , m_inLiveDecodedResourcesList(false)
+        : m_inLiveDecodedResourcesList(false)
         , m_accessCount(0)
         , m_lastDecodedAccessTime(0.0)
         , m_previousInLiveResourcesList(nullptr)
         , m_nextInLiveResourcesList(nullptr)
         , m_previousInAllResourcesList(nullptr)
         , m_nextInAllResourcesList(nullptr)
+        , m_resource(resource)
     {
     }
+
+    Member<Resource> m_resource;
 };
 
 WILL_NOT_BE_EAGERLY_TRACED_CLASS(MemoryCacheEntry);
@@ -120,7 +122,8 @@ WTF_ALLOW_MOVE_INIT_AND_COMPARE_WITH_MEM_FUNCTIONS(blink::MemoryCacheLRUList);
 
 namespace blink {
 
-class CORE_EXPORT MemoryCache final : public GarbageCollectedFinalized<MemoryCache>, public WebThread::TaskObserver {
+class CORE_EXPORT MemoryCache final : public GarbageCollectedFinalized<MemoryCache>, public WebThread::TaskObserver, public MemoryCacheDumpClient {
+    USING_GARBAGE_COLLECTED_MIXIN(MemoryCache);
     WTF_MAKE_NONCOPYABLE(MemoryCache);
 public:
     static MemoryCache* create();
@@ -165,7 +168,7 @@ public:
 
     Resource* resourceForURL(const KURL&);
     Resource* resourceForURL(const KURL&, const String& cacheIdentifier);
-    WillBeHeapVector<RawPtrWillBeMember<Resource>> resourcesForURL(const KURL&);
+    HeapVector<Member<Resource>> resourcesForURL(const KURL&);
 
     void add(Resource*);
     void remove(Resource*);
@@ -220,7 +223,7 @@ public:
     void updateFramePaintTimestamp();
 
     // Take memory usage snapshot for tracing.
-    void onMemoryDump(WebMemoryDumpLevelOfDetail, WebProcessMemoryDump*);
+    bool onMemoryDump(WebMemoryDumpLevelOfDetail, WebProcessMemoryDump*) override;
 
     bool isInSameLRUListForTest(const Resource*, const Resource*);
 private:
@@ -291,6 +294,7 @@ private:
 
     // A URL-based map of all resources that are in the cache (including the freshest version of objects that are currently being
     // referenced by a Web page).
+    // removeFragmentIdentifierIfNeeded() should be called for the url before using it as a key for the map.
     using ResourceMap = HeapHashMap<String, Member<MemoryCacheEntry>>;
     using ResourceMapIndex = HeapHashMap<String, Member<ResourceMap>>;
     ResourceMap* ensureResourceMap(const String& cacheIdentifier);

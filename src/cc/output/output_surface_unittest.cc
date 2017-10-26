@@ -4,6 +4,7 @@
 
 #include "cc/output/output_surface.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/test/test_simple_task_runner.h"
 #include "cc/output/managed_memory_policy.h"
 #include "cc/output/output_surface_client.h"
@@ -21,28 +22,33 @@ namespace {
 
 class TestOutputSurface : public OutputSurface {
  public:
-  explicit TestOutputSurface(scoped_refptr<ContextProvider> context_provider)
-      : OutputSurface(context_provider) {}
+  explicit TestOutputSurface(
+      scoped_refptr<TestContextProvider> context_provider)
+      : OutputSurface(std::move(context_provider), nullptr, nullptr) {}
 
-  TestOutputSurface(scoped_refptr<ContextProvider> context_provider,
-                    scoped_refptr<ContextProvider> worker_context_provider)
-      : OutputSurface(worker_context_provider) {}
+  TestOutputSurface(scoped_refptr<TestContextProvider> context_provider,
+                    scoped_refptr<TestContextProvider> worker_context_provider)
+      : OutputSurface(std::move(context_provider),
+                      std::move(worker_context_provider),
+                      nullptr) {}
 
-  explicit TestOutputSurface(scoped_ptr<SoftwareOutputDevice> software_device)
-      : OutputSurface(std::move(software_device)) {}
+  explicit TestOutputSurface(
+      std::unique_ptr<SoftwareOutputDevice> software_device)
+      : OutputSurface(nullptr, nullptr, std::move(software_device)) {}
 
-  TestOutputSurface(scoped_refptr<ContextProvider> context_provider,
-                    scoped_ptr<SoftwareOutputDevice> software_device)
-      : OutputSurface(context_provider, std::move(software_device)) {}
+  TestOutputSurface(scoped_refptr<TestContextProvider> context_provider,
+                    std::unique_ptr<SoftwareOutputDevice> software_device)
+      : OutputSurface(std::move(context_provider),
+                      nullptr,
+                      std::move(software_device)) {}
 
-  void SwapBuffers(CompositorFrame* frame) override {
+  void SwapBuffers(CompositorFrame frame) override {
     client_->DidSwapBuffers();
     client_->DidSwapBuffersComplete();
   }
-
-  void CommitVSyncParametersForTesting(base::TimeTicks timebase,
-                                       base::TimeDelta interval) {
-    CommitVSyncParameters(timebase, interval);
+  uint32_t GetFramebufferCopyTextureFormat() override {
+    // TestContextProvider has no real framebuffer, just use RGB.
+    return GL_RGB;
   }
 
   void DidSwapBuffersForTesting() { client_->DidSwapBuffers(); }
@@ -120,6 +126,8 @@ TEST(OutputSurfaceTest, ClientPointerIndicatesWorkerBindToClientSuccess) {
   EXPECT_TRUE(client.did_lose_output_surface_called());
 }
 
+// TODO(danakj): Add a test for worker context failure as well when
+// OutputSurface creates/binds it.
 TEST(OutputSurfaceTest, ClientPointerIndicatesBindToClientFailure) {
   scoped_refptr<TestContextProvider> context_provider =
       TestContextProvider::Create();
@@ -135,30 +143,13 @@ TEST(OutputSurfaceTest, ClientPointerIndicatesBindToClientFailure) {
   EXPECT_FALSE(output_surface.HasClient());
 }
 
-TEST(OutputSurfaceTest, ClientPointerIndicatesWorkerBindToClientFailure) {
-  scoped_refptr<TestContextProvider> context_provider =
-      TestContextProvider::Create();
-  scoped_refptr<TestContextProvider> worker_context_provider =
-      TestContextProvider::Create();
-
-  // Lose the context so BindToClient fails.
-  worker_context_provider->UnboundTestContext3d()->set_context_lost(true);
-
-  TestOutputSurface output_surface(context_provider, worker_context_provider);
-  EXPECT_FALSE(output_surface.HasClient());
-
-  FakeOutputSurfaceClient client;
-  EXPECT_FALSE(output_surface.BindToClient(&client));
-  EXPECT_FALSE(output_surface.HasClient());
-}
-
 TEST(OutputSurfaceTest, SoftwareOutputDeviceBackbufferManagement) {
   TestSoftwareOutputDevice* software_output_device =
       new TestSoftwareOutputDevice();
 
   // TestOutputSurface now owns software_output_device and has responsibility to
   // free it.
-  TestOutputSurface output_surface(make_scoped_ptr(software_output_device));
+  TestOutputSurface output_surface(base::WrapUnique(software_output_device));
 
   EXPECT_EQ(0, software_output_device->ensure_backbuffer_count());
   EXPECT_EQ(0, software_output_device->discard_backbuffer_count());

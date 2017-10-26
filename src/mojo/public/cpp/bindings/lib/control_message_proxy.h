@@ -7,8 +7,9 @@
 
 #include <stdint.h>
 
-#include "mojo/public/cpp/bindings/callback.h"
-#include "mojo/public/cpp/system/macros.h"
+#include "base/callback_forward.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/lib/serialization_context.h"
 
 namespace mojo {
 
@@ -22,14 +23,15 @@ class ControlMessageProxy {
   // Doesn't take ownership of |receiver|. It must outlive this object.
   explicit ControlMessageProxy(MessageReceiverWithResponder* receiver);
 
-  void QueryVersion(const Callback<void(uint32_t)>& callback);
+  void QueryVersion(const base::Callback<void(uint32_t)>& callback);
   void RequireVersion(uint32_t version);
 
  protected:
   // Not owned.
   MessageReceiverWithResponder* receiver_;
+  SerializationContext context_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(ControlMessageProxy);
+  DISALLOW_COPY_AND_ASSIGN(ControlMessageProxy);
 };
 
 }  // namespace internal

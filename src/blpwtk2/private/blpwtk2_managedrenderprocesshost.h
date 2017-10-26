@@ -29,6 +29,10 @@
 
 #include <string>
 
+namespace base {
+class CommandLine;
+}  // close namespace base
+
 namespace content {
 class BrowserContext;
 class RenderProcessHost;
@@ -51,7 +55,9 @@ class ManagedRenderProcessHost {
     ~ManagedRenderProcessHost();
 
     int id() const;
-    const std::string& channelId() const;
+    const std::string& ipcToken() const;
+    std::string serviceToken() const;
+    void adjustCommandLineForRenderer(base::CommandLine* command_line);
 
   private:
     content::RenderProcessHost* d_impl;

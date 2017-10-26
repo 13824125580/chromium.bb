@@ -32,9 +32,9 @@ namespace blink {
 
 class OutdentBlockCommand : public BlockCommand {
 public:
-    static PassRefPtrWillBeRawPtr<OutdentBlockCommand> create(Document& document)
+    static OutdentBlockCommand* create(Document& document)
     {
-        return adoptRefWillBeNoop(new OutdentBlockCommand(document));
+        return new OutdentBlockCommand(document);
     }
 
     virtual bool preservesTypingStyle() const { return true; }
@@ -43,11 +43,11 @@ private:
     explicit OutdentBlockCommand(Document&);
 
     EditAction editingAction() const override { return EditActionOutdent; }
-    PassRefPtrWillBeRawPtr<Node> splitStart(Node* ancestor, PassRefPtrWillBeRawPtr<Node> prpChild);
-    PassRefPtrWillBeRawPtr<Node> splitEnd(Node* ancestor, PassRefPtrWillBeRawPtr<Node> prpChild);
-    void outdentSiblings(PassRefPtrWillBeRawPtr<Node> prpFirstSibling, PassRefPtrWillBeRawPtr<Node> prpLastSibling, Node* indentBlock, EditingState *editingState);
+    Node* splitStart(Node* ancestor, Node* prpChild);
+    Node* splitEnd(Node* ancestor, Node* prpChild);
+    void outdentSiblings(Node* prpFirstSibling, Node* prpLastSibling, Node* indentBlock, EditingState *editingState);
 
-    void formatBlockSiblings(PassRefPtrWillBeRawPtr<Node> prpFirstSibling, PassRefPtrWillBeRawPtr<Node> prpLastSibling, Node* stayWithin, Node* lastNode, EditingState *editingState) override;
+    void formatBlockSiblings(Node* prpFirstSibling, Node* prpLastSibling, Node* stayWithin, Node* lastNode, EditingState *editingState) override;
 };
 
 } // namespace blink

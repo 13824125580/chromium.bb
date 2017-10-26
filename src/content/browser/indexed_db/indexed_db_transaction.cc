@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
 #include "content/browser/indexed_db/indexed_db_cursor.h"
 #include "content/browser/indexed_db/indexed_db_database.h"
@@ -21,7 +21,18 @@
 
 namespace content {
 
+namespace {
+
 const int64_t kInactivityTimeoutPeriodSeconds = 60;
+
+// Helper for posting a task to call IndexedDBTransaction::Commit when we know
+// the transaction had no requests and therefore the commit must succeed.
+void CommitUnused(scoped_refptr<IndexedDBTransaction> transaction) {
+  leveldb::Status status = transaction->Commit();
+  DCHECK(status.ok());
+}
+
+}  // namespace
 
 IndexedDBTransaction::TaskQueue::TaskQueue() {}
 IndexedDBTransaction::TaskQueue::~TaskQueue() { clear(); }
@@ -204,8 +215,16 @@ void IndexedDBTransaction::Start() {
   state_ = STARTED;
   diagnostics_.start_time = base::Time::Now();
 
-  if (!used_)
+  if (!used_) {
+    if (commit_pending_) {
+      // The transaction has never had requests issued against it, but the
+      // front-end previously requested a commit; do the commit now, but not
+      // re-entrantly as that may renter the coordinator.
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::Bind(&CommitUnused, make_scoped_refptr(this)));
+    }
     return;
+  }
 
   RunTasksIfStarted();
 }
@@ -252,6 +271,12 @@ leveldb::Status IndexedDBTransaction::Commit() {
 
   DCHECK(!used_ || state_ == STARTED);
   commit_pending_ = true;
+
+  // Front-end has requested a commit, but this transaction is blocked by
+  // other transactions. The commit will be initiated when the transaction
+  // coordinator unblocks this transaction.
+  if (state_ != STARTED)
+    return leveldb::Status::OK();
 
   // Front-end has requested a commit, but there may be tasks like
   // create_index which are considered synchronous by the front-end

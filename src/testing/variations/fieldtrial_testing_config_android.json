@@ -1,4 +1,12 @@
 {
+    "AllBookmarks": [
+        {
+            "enable_features": [
+                "AllBookmarks"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
     "AndroidSessionNotifications": [
         {
             "group_name": "Disabled"
@@ -59,17 +67,6 @@
             "group_name": "Enabled"
         }
     ],
-    "CustomTabs": [
-        {
-            "group_name": "Enabled"
-        },
-        {
-            "group_name": "DisablePrerender"
-        },
-        {
-            "group_name": "Disabled"
-        }
-    ],
     "DataCompressionProxyDevRollout": [
         {
             "group_name": "Control"
@@ -92,17 +89,17 @@
             "group_name": "Enabled"
         }
     ],
-    "DataReductionProxyConfigService": [
-        {
-            "group_name": "Enabled",
-            "params": {
-                "minimum_refresh_interval_on_success_msec": "21600000"
-            }
-        }
-    ],
     "DataReductionProxyFREPromo": [
         {
             "group_name": "Enabled"
+        }
+    ],
+    "DataReductionProxyServerExperiments": [
+        {
+            "group_name": "TamperDetection_enabled",
+            "params": {
+                "exp": "ctd"
+            }
         }
     ],
     "DataReductionProxyUseQuic": [
@@ -110,11 +107,14 @@
             "group_name": "Enabled"
         }
     ],
-    "DisableAutoHidingToolbar": [
+    "DisallowFetchForDocWrittenScriptsInMainFrame": [
         {
-            "group_name": "Enabled",
+            "enable_features": [
+                "DocumentWriteEvaluator"
+            ],
+            "group_name": "DocumentWriteEvaluatorGroup",
             "params": {
-                "disable_auto_hiding_toolbar_threshold": "800"
+                "disallowFetchForDocWrittenScriptsInMainFrame": "false"
             }
         }
     ],
@@ -155,6 +155,14 @@
             }
         }
     ],
+    "MainFrameBeforeActivation": [
+        {
+            "enable_features": [
+                "MainFrameBeforeActivation"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
     "MinidumpDirectoryObserver": [
         {
             "group_name": "ObserverExperimentGroup",
@@ -163,13 +171,19 @@
             }
         }
     ],
+    "ModerateBindingOnBackgroundTabCreation": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "MojoChannel": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
     "NTPPopularSites": [
         {
-            "group_name": "Enabled",
-            "params": {
-                "country": "IN",
-                "version": "4"
-            }
+            "group_name": "Enabled"
         }
     ],
     "NetworkQualityEstimator": [
@@ -196,6 +210,38 @@
             }
         }
     ],
+    "NetworkTimeQueries": [
+        {
+            "enable_features": [
+                "NetworkTimeServiceQuerying"
+            ],
+            "group_name": "NetworkTimeQueriesEnabled"
+        }
+    ],
+    "NewAudioRenderingMixingStrategy": [
+        {
+            "enable_features": [
+                "NewAudioRenderingMixingStrategy"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
+    "NonValidatingReloadOnRefreshContent": [
+        {
+            "enable_features": [
+                "NonValidatingReloadOnRefreshContent"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
+    "NonValidatingReloadOnRefreshContentV2": [
+        {
+            "enable_features": [
+                "NonValidatingReloadOnRefreshContentV2"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
     "OfferUploadCreditCards": [
         {
             "group_name": "Enabled"
@@ -203,6 +249,9 @@
     ],
     "OfflinePages": [
         {
+            "enable_features": [
+                "NTPOfflinePages"
+            ],
             "group_name": "EnabledAsBookmarks"
         }
     ],
@@ -216,13 +265,29 @@
             "group_name": "SmartLockBrandingSavePromptOnly"
         }
     ],
+    "PasswordManagerSettingsMigration": [
+        {
+            "group_name": "Enable"
+        }
+    ],
     "PhysicalWeb": [
         {
+            "enable_features": [
+                "PhysicalWeb"
+            ],
             "group_name": "Enabled"
         }
     ],
     "Precache": [
         {
+            "group_name": "Enabled"
+        }
+    ],
+    "PreconnectMore": [
+        {
+            "enable_features": [
+                "PreconnectMore"
+            ],
             "group_name": "Enabled"
         }
     ],
@@ -236,7 +301,26 @@
     ],
     "QUIC": [
         {
+            "group_name": "Enabled",
+            "params": {
+                "delay_tcp_race": "true"
+            }
+        }
+    ],
+    "ReadItLater": [
+        {
+            "enable_features": [
+                "ReadItLaterInMenu"
+            ],
             "group_name": "Enabled"
+        }
+    ],
+    "ReaderModeUI": [
+        {
+            "group_name": "AdaBoost"
+        },
+        {
+            "group_name": "Disabled"
         }
     ],
     "ReaderModeUIFeedback": [
@@ -245,11 +329,6 @@
         },
         {
             "group_name": "DoNotShow"
-        }
-    ],
-    "RenderingPipelineThrottling": [
-        {
-            "group_name": "Enabled"
         }
     ],
     "ReportCertificateErrors": [
@@ -314,11 +393,6 @@
             "group_name": "Enabled"
         }
     ],
-    "SpdyEnableDependencies": [
-        {
-            "group_name": "Enable"
-        }
-    ],
     "SpeculativeResourcePrefetching": [
         {
             "group_name": "v=1a:Prefetching=Enabled:Predictor=Url"
@@ -360,14 +434,29 @@
             "group_name": "Enabled"
         }
     ],
+    "TokenBinding": [
+        {
+            "enable_features": [
+                "token-binding"
+            ],
+            "group_name": "TokenBinding"
+        }
+    ],
     "UMA_EnableCellularLogUpload": [
         {
             "group_name": "Enabled_wo_sampling",
             "params": {
                 "Enabled": "true",
                 "Optimize": "true",
-                "Sample_Probability": "100"
+                "Sample_Probability": "100",
+                "Uma_Quota": "204800",
+                "Uma_Ratio": "0.05"
             }
+        }
+    ],
+    "UnifiedMediaPipelineTrial": [
+        {
+            "group_name": "Enabled"
         }
     ],
     "UpdateMenuItem": [
@@ -414,6 +503,20 @@
             }
         }
     ],
+    "V8CacheStrategiesForCacheStorage": [
+        {
+            "group_name": "default"
+        },
+        {
+            "group_name": "none"
+        },
+        {
+            "group_name": "normal"
+        },
+        {
+            "group_name": "aggressive"
+        }
+    ],
     "VarationsServiceControl": [
         {
             "group_name": "Interval_30min",
@@ -422,8 +525,11 @@
             }
         }
     ],
-    "WebFontsIntervention": [
+    "WebRTC-EnableWebRtcEcdsa": [
         {
+            "enable_features": [
+                "WebRTC-EnableWebRtcEcdsa"
+            ],
             "group_name": "Enabled"
         }
     ],

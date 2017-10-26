@@ -23,8 +23,8 @@
 
       /**
        * Fired when the list of selectable items changes (e.g., items are
-       * added or removed). The detail of the event is a list of mutation
-       * records that describe what changed.
+       * added or removed). The detail of the event is a mutation record that
+       * describes what changed.
        *
        * @event iron-items-changed
        */
@@ -32,8 +32,14 @@
     properties: {
 
       /**
-       * If you want to use the attribute value of an element for `selected` instead of the index,
-       * set this to the name of the attribute.
+       * If you want to use an attribute value or property of an element for
+       * `selected` instead of the index, set this to the name of the attribute
+       * or property. Hyphenated values are converted to camel case when used to
+       * look up the property of a selectable element. Camel cased values are
+       * *not* converted to hyphenated values for attribute lookup. It's
+       * recommended that you provide the hyphenated form of the name so that
+       * selection works in both cases. (Use `attr-or-property-name` instead of
+       * `attrOrPropertyName`.)
        */
       attrForSelected: {
         type: String,
@@ -94,6 +100,15 @@
       },
 
       /**
+       * Default fallback if the selection based on selected with `attrForSelected`
+       * is not found.
+       */
+      fallbackSelection: {
+        type: String,
+        value: null
+      },
+
+      /**
        * The list of items from which a selection can be made.
        */
       items: {
@@ -122,7 +137,9 @@
     },
 
     observers: [
-      '_updateSelected(attrForSelected, selected)'
+      '_updateAttrForSelected(attrForSelected)',
+      '_updateSelected(selected)',
+      '_checkFallback(fallbackSelection)'
     ],
 
     created: function() {
@@ -134,7 +151,7 @@
       this._observer = this._observeItems(this);
       this._updateItems();
       if (!this._shouldUpdateSelection) {
-        this._updateSelected(this.attrForSelected,this.selected)
+        this._updateSelected();
       }
       this._addListener(this.activateEvent);
     },
@@ -189,6 +206,15 @@
     },
 
     /**
+     * Selects the item at the given index.
+     *
+     * @method selectIndex
+     */
+    selectIndex: function(index) {
+      this.select(this._indexToValue(index));
+    },
+
+    /**
      * Force a synchronous update of the `items` property.
      *
      * NOTE: Consider listening for the `iron-items-changed` event to respond to
@@ -206,6 +232,12 @@
 
     get _shouldUpdateSelection() {
       return this.selected != null;
+    },
+
+    _checkFallback: function() {
+      if (this._shouldUpdateSelection) {
+        this._updateSelected();
+      }
     },
 
     _addListener: function(eventName) {
@@ -227,12 +259,23 @@
       this._setItems(nodes);
     },
 
+    _updateAttrForSelected: function() {
+      if (this._shouldUpdateSelection) {
+        this.selected = this._indexToValue(this.indexOf(this.selectedItem));
+      }
+    },
+
     _updateSelected: function() {
       this._selectSelected(this.selected);
     },
 
     _selectSelected: function(selected) {
       this._selection.select(this._valueToItem(this.selected));
+      // Check for items, since this array is populated only when attached
+      // Since Number(0) is falsy, explicitly check for undefined
+      if (this.fallbackSelection && this.items.length && (this._selection.get() === undefined)) {
+        this.selected = this.fallbackSelection;
+      }
     },
 
     _filterItem: function(node) {
@@ -267,7 +310,7 @@
     },
 
     _valueForItem: function(item) {
-      var propValue = item[this.attrForSelected];
+      var propValue = item[Polymer.CaseMap.dashToCamelCase(this.attrForSelected)];
       return propValue != undefined ? propValue : item.getAttribute(this.attrForSelected);
     },
 
@@ -288,7 +331,7 @@
 
     // observe items change under the given node.
     _observeItems: function(node) {
-      return Polymer.dom(node).observeNodes(function(mutations) {
+      return Polymer.dom(node).observeNodes(function(mutation) {
         this._updateItems();
 
         if (this._shouldUpdateSelection) {
@@ -296,8 +339,8 @@
         }
 
         // Let other interested parties know about the change so that
-        // we don't have to recreate mutation observers everywher.
-        this.fire('iron-items-changed', mutations, {
+        // we don't have to recreate mutation observers everywhere.
+        this.fire('iron-items-changed', mutation, {
           bubbles: false,
           cancelable: false
         });

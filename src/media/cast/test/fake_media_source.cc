@@ -283,7 +283,7 @@ void FakeMediaSource::SendNextFakeFrame() {
     if (is_transcoding_audio()) {
       Decode(true);
       CHECK(!audio_bus_queue_.empty()) << "No audio decoded.";
-      scoped_ptr<AudioBus> bus(audio_bus_queue_.front());
+      std::unique_ptr<AudioBus> bus(audio_bus_queue_.front());
       audio_bus_queue_.pop();
       audio_frame_input_->InsertAudio(std::move(bus), start_time_ + audio_time);
     } else {
@@ -374,7 +374,7 @@ bool FakeMediaSource::SendNextTranscodedAudio(base::TimeDelta elapsed_time) {
   base::TimeDelta audio_time = audio_sent_ts_->GetTimestamp();
   if (elapsed_time < audio_time)
     return false;
-  scoped_ptr<AudioBus> bus(audio_bus_queue_.front());
+  std::unique_ptr<AudioBus> bus(audio_bus_queue_.front());
   audio_bus_queue_.pop();
   audio_sent_ts_->AddFrames(bus->frames());
   audio_frame_input_->InsertAudio(std::move(bus), start_time_ + audio_time);
@@ -519,10 +519,9 @@ void FakeMediaSource::DecodeAudio(ScopedAVPacket packet) {
       continue;
     }
 
-    scoped_ptr<media::AudioBus> resampled_bus(
-        media::AudioBus::Create(
-            output_audio_params_.channels(),
-            output_audio_params_.sample_rate() / kAudioPacketsPerSecond));
+    std::unique_ptr<media::AudioBus> resampled_bus(media::AudioBus::Create(
+        output_audio_params_.channels(),
+        output_audio_params_.sample_rate() / kAudioPacketsPerSecond));
     audio_converter_->Convert(resampled_bus.get());
     audio_bus_queue_.push(resampled_bus.release());
   }
@@ -593,7 +592,7 @@ void FakeMediaSource::Decode(bool decode_audio) {
 }
 
 double FakeMediaSource::ProvideInput(media::AudioBus* output_bus,
-                                   base::TimeDelta buffer_delay) {
+                                     uint32_t frames_delayed) {
   if (audio_fifo_->frames() >= output_bus->frames()) {
     audio_fifo_->Consume(output_bus, 0, output_bus->frames());
     return 1.0;

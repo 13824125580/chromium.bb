@@ -22,11 +22,6 @@
     'include_dirs': [
       '..',  # Root of Chromium checkout
     ],
-    'conditions': [
-      ['disable_display==1', {
-        'defines': ['DISABLE_DISPLAY'],
-      }],
-    ],
     'target_conditions': [
       ['_type=="executable"', {
         'ldflags': [
@@ -324,10 +319,12 @@
         'cast_shell_resources',
         'cast_sys_info',
         'cast_version_header',
+        'chromecast_features',
         'chromecast_locales.gyp:chromecast_locales_pak',
         'chromecast_locales.gyp:chromecast_settings',
         'media/media.gyp:media_base',
         'media/media.gyp:media_cdm',
+        'media/media.gyp:media_features',
         '../base/base.gyp:base',
         '../components/components.gyp:breakpad_host',
         '../components/components.gyp:cdm_renderer',
@@ -337,6 +334,7 @@
         '../components/components.gyp:devtools_http_handler',
         '../components/components.gyp:network_hints_browser',
         '../components/components.gyp:network_hints_renderer',
+        '../components/components.gyp:network_session_configurator_switches',
         '../components/components.gyp:metrics',
         '../components/components.gyp:metrics_gpu',
         '../components/components.gyp:metrics_net',
@@ -388,8 +386,6 @@
         'browser/devtools/remote_debugging_server.h',
         'browser/geolocation/cast_access_token_store.cc',
         'browser/geolocation/cast_access_token_store.h',
-        'browser/media/cast_media_client_android.cc',
-        'browser/media/cast_media_client_android.h',
         'browser/metrics/cast_metrics_prefs.cc',
         'browser/metrics/cast_metrics_prefs.h',
         'browser/metrics/cast_metrics_service_client.cc',
@@ -406,6 +402,8 @@
         'common/cast_content_client.h',
         'common/cast_resource_delegate.cc',
         'common/cast_resource_delegate.h',
+        'common/media/cast_media_client_android.cc',
+        'common/media/cast_media_client_android.h',
         'common/media/cast_messages.h',
         'common/media/cast_message_generator.cc',
         'common/media/cast_message_generator.h',
@@ -414,14 +412,15 @@
         'renderer/cast_content_renderer_client.h',
         'renderer/cast_media_load_deferrer.cc',
         'renderer/cast_media_load_deferrer.h',
-        'renderer/cast_render_process_observer.cc',
-        'renderer/cast_render_process_observer.h',
+        'renderer/cast_render_thread_observer.cc',
+        'renderer/cast_render_thread_observer.h',
         'renderer/key_systems_cast.cc',
         'renderer/key_systems_cast.h',
         'renderer/media/capabilities_message_filter.cc',
         'renderer/media/capabilities_message_filter.h',
         'service/cast_service.cc',
         'service/cast_service.h',
+        'utility/cast_content_utility_client.h',
       ],
       'conditions': [
         ['chromecast_branding!="public"', {
@@ -435,6 +434,7 @@
             'browser/pref_service_helper_simple.cc',
             'common/platform_client_auth_simple.cc',
             'renderer/cast_content_renderer_client_simple.cc',
+            'utility/cast_content_utility_client_simple.cc',
           ],
         }],
         # ExternalMetrics not necessary on Android and (as of this writing) uses
@@ -546,7 +546,18 @@
         'graphics/graphics_properties_default.cc',
         'graphics/osd_plane_default.cc'
       ],
-    }
+    },
+    {
+      # GN target: //chromecast:chromecast_features
+      'target_name': 'chromecast_features',
+      'includes': [ '../build/buildflag_header.gypi' ],
+      'variables': {
+        'buildflag_header_path': 'chromecast/chromecast_features.h',
+        'buildflag_flags': [
+          'DISABLE_DISPLAY=<(disable_display)',
+        ]
+      }
+    },  # end of target 'chromecast_features'
   ],  # end of targets
 
   # Targets for Android receiver.
@@ -562,7 +573,7 @@
           'type': 'none',
           'dependencies': [
             '../third_party/icu/icu.gyp:icudata',
-            '../v8/tools/gyp/v8.gyp:v8_external_snapshot',
+            '../v8/src/v8.gyp:v8_external_snapshot',
           ],
           'variables': {
             'dest_path': '<(cast_shell_assets_path)',
@@ -730,8 +741,6 @@
           'sources': [
             'browser/media/cast_browser_cdm_factory.cc',
             'browser/media/cast_browser_cdm_factory.h',
-            'browser/media/cma_media_pipeline_client.cc',
-            'browser/media/cma_media_pipeline_client.h',
             'browser/media/cma_message_filter_host.cc',
             'browser/media/cma_message_filter_host.h',
             'browser/media/media_pipeline_host.cc',
@@ -772,13 +781,6 @@
             'cast_shell_media',
             'cast_shell_common',
             'media/media.gyp:cast_media',
-          ],
-          'conditions': [
-            ['ozone_platform_egltest==1', {
-              'dependencies': [
-                '../ui/ozone/ozone.gyp:eglplatform_shim_x11',
-              ],
-            }],
           ],
         },
         {

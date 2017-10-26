@@ -7,11 +7,13 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/cancelable_callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_single_thread_client.h"
@@ -19,6 +21,7 @@
 #include "content/common/gpu/client/context_provider_command_buffer.h"
 #include "content/public/browser/android/compositor.h"
 #include "gpu/command_buffer/common/capabilities.h"
+#include "gpu/ipc/common/surface_handle.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/resources/ui_resource_provider.h"
@@ -28,11 +31,12 @@ class SkBitmap;
 struct ANativeWindow;
 
 namespace cc {
+class Display;
 class Layer;
 class LayerTreeHost;
-class OnscreenDisplayClient;
 class SurfaceIdAllocator;
 class SurfaceManager;
+class VulkanInProcessContextProvider;
 }
 
 namespace content {
@@ -60,7 +64,10 @@ class CONTENT_EXPORT CompositorImpl
   static bool IsInitialized();
 
   static cc::SurfaceManager* GetSurfaceManager();
-  static scoped_ptr<cc::SurfaceIdAllocator> CreateSurfaceIdAllocator();
+  static std::unique_ptr<cc::SurfaceIdAllocator> CreateSurfaceIdAllocator();
+
+  static scoped_refptr<cc::VulkanInProcessContextProvider>
+  SharedVulkanContextProviderAndroid();
 
   void PopulateGpuCapabilities(gpu::Capabilities gpu_capabilities);
 
@@ -103,10 +110,6 @@ class CONTENT_EXPORT CompositorImpl
   void DidCommitAndDrawFrame() override {}
   void DidCompleteSwapBuffers() override;
   void DidCompletePageScaleAnimation() override {}
-  void RecordFrameTimingEvents(
-      scoped_ptr<cc::FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<cc::FrameTimingTracker::MainFrameTimingSet> main_frame_events)
-      override {}
 
   // LayerTreeHostSingleThreadClient implementation.
   void DidPostSwapBuffers() override;
@@ -115,7 +118,7 @@ class CONTENT_EXPORT CompositorImpl
   // WindowAndroidCompositor implementation.
   void AttachLayerForReadback(scoped_refptr<cc::Layer> layer) override;
   void RequestCopyOfOutputOnRootLayer(
-      scoped_ptr<cc::CopyOutputRequest> request) override;
+      std::unique_ptr<cc::CopyOutputRequest> request) override;
   void OnVSync(base::TimeTicks frame_time,
                base::TimeDelta vsync_period) override;
   void SetNeedsAnimate() override;
@@ -132,19 +135,19 @@ class CONTENT_EXPORT CompositorImpl
   scoped_refptr<cc::Layer> subroot_layer_;
 
   // Destruction order matters here:
+  std::unique_ptr<cc::SurfaceIdAllocator> surface_id_allocator_;
   base::ObserverList<VSyncObserver, true> observer_list_;
-  scoped_ptr<cc::LayerTreeHost> host_;
+  std::unique_ptr<cc::LayerTreeHost> host_;
   ui::ResourceManagerImpl resource_manager_;
 
-  scoped_ptr<cc::OnscreenDisplayClient> display_client_;
-  scoped_ptr<cc::SurfaceIdAllocator> surface_id_allocator_;
+  std::unique_ptr<cc::Display> display_;
 
   gfx::Size size_;
   bool has_transparent_background_;
   float device_scale_factor_;
 
   ANativeWindow* window_;
-  int surface_id_;
+  gpu::SurfaceHandle surface_handle_;
 
   CompositorClient* client_;
 

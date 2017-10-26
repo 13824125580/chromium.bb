@@ -15,6 +15,8 @@
 
 namespace cc {
 
+class LayerTreeMutator;
+
 // ChannelMain and ChannelImpl provide an abstract communication layer for
 // the main and impl side of the compositor.
 //
@@ -30,11 +32,12 @@ class CC_EXPORT ChannelMain {
   virtual ~ChannelMain() {}
 
   // Interface for commands sent to ProxyImpl
-  virtual void SetThrottleFrameProductionOnImpl(bool throttle) = 0;
   virtual void UpdateTopControlsStateOnImpl(TopControlsState constraints,
                                             TopControlsState current,
                                             bool animate) = 0;
   virtual void InitializeOutputSurfaceOnImpl(OutputSurface* output_surface) = 0;
+  virtual void InitializeMutatorOnImpl(
+      std::unique_ptr<LayerTreeMutator> mutator) = 0;
   virtual void MainThreadHasStoppedFlingingOnImpl() = 0;
   virtual void SetInputThrottledUntilCommitOnImpl(bool is_throttled) = 0;
   virtual void SetDeferCommitsOnImpl(bool defer_commits) = 0;
@@ -57,7 +60,7 @@ class CC_EXPORT ChannelMain {
   // Must be called before using the channel.
   virtual void SynchronouslyInitializeImpl(
       LayerTreeHost* layer_tree_host,
-      scoped_ptr<BeginFrameSource> external_begin_frame_source) = 0;
+      std::unique_ptr<BeginFrameSource> external_begin_frame_source) = 0;
 
   // Must be called before deleting the channel.
   virtual void SynchronouslyCloseImpl() = 0;

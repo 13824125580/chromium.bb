@@ -19,7 +19,6 @@
 #include "base/process/process_metrics.h"
 #include "base/system_monitor/system_monitor.h"
 #include "base/threading/thread_restrictions.h"
-#include "crypto/nss_util.h"
 #include "ios/web/net/cookie_notification_bridge.h"
 #include "ios/web/public/app/web_main_parts.h"
 #include "ios/web/public/web_client.h"
@@ -52,12 +51,6 @@ void WebMainLoop::Init() {
 void WebMainLoop::EarlyInitialization() {
   if (parts_) {
     parts_->PreEarlyInitialization();
-  }
-
-  // We want to be sure to init NSPR on the main thread.
-  crypto::EnsureNSPRInit();
-
-  if (parts_) {
     parts_->PostEarlyInitialization();
   }
 }
@@ -80,7 +73,7 @@ void WebMainLoop::MainMessageLoopStart() {
   system_monitor_.reset(new base::SystemMonitor);
 #endif
   // TODO(rohitrao): Do we need PowerMonitor on iOS, or can we get rid of it?
-  scoped_ptr<base::PowerMonitorSource> power_monitor_source(
+  std::unique_ptr<base::PowerMonitorSource> power_monitor_source(
       new base::PowerMonitorDeviceSource());
   power_monitor_.reset(new base::PowerMonitor(std::move(power_monitor_source)));
   network_change_notifier_.reset(net::NetworkChangeNotifier::Create());
@@ -128,7 +121,7 @@ int WebMainLoop::CreateThreads() {
   // Must be size_t so we can increment it.
   for (size_t thread_id = WebThread::UI + 1; thread_id < WebThread::ID_COUNT;
        ++thread_id) {
-    scoped_ptr<WebThreadImpl>* thread_to_start = nullptr;
+    std::unique_ptr<WebThreadImpl>* thread_to_start = nullptr;
     base::Thread::Options options;
 
     switch (thread_id) {
@@ -261,11 +254,7 @@ void WebMainLoop::ShutdownThreadsAndCleanUp() {
 }
 
 void WebMainLoop::InitializeMainThread() {
-  const char* kThreadName = "CrWebMain";
-  base::PlatformThread::SetName(kThreadName);
-  if (main_message_loop_) {
-    main_message_loop_->set_thread_name(kThreadName);
-  }
+  base::PlatformThread::SetName("CrWebMain");
 
   // Register the main thread by instantiating it, but don't call any methods.
   main_thread_.reset(

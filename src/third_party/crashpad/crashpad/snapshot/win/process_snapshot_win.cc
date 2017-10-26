@@ -17,8 +17,10 @@
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "snapshot/win/exception_snapshot_win.h"
 #include "snapshot/win/memory_snapshot_win.h"
 #include "snapshot/win/module_snapshot_win.h"
 #include "util/win/nt_internals.h"
@@ -49,6 +51,7 @@ ProcessSnapshotWin::~ProcessSnapshotWin() {
 bool ProcessSnapshotWin::Initialize(
     HANDLE process,
     ProcessSuspensionState suspension_state,
+    WinVMAddress exception_information_address,
     WinVMAddress debug_critical_section_address) {
   INITIALIZATION_STATE_SET_INITIALIZING(initialized_);
 
@@ -56,6 +59,25 @@ bool ProcessSnapshotWin::Initialize(
 
   if (!process_reader_.Initialize(process, suspension_state))
     return false;
+
+  if (exception_information_address != 0) {
+    ExceptionInformation exception_information = {};
+    if (!process_reader_.ReadMemory(exception_information_address,
+                                    sizeof(exception_information),
+                                    &exception_information)) {
+      LOG(WARNING) << "ReadMemory ExceptionInformation failed";
+      return false;
+    }
+
+    exception_.reset(new internal::ExceptionSnapshotWin());
+    if (!exception_->Initialize(&process_reader_,
+                                exception_information.thread_id,
+                                exception_information.exception_pointers)) {
+      exception_.reset();
+      return false;
+    }
+  }
+
 
   system_.Initialize(&process_reader_);
 
@@ -72,39 +94,22 @@ bool ProcessSnapshotWin::Initialize(
 
   GetCrashpadOptionsInternal(&options_);
 
-  InitializeThreads(options_.gather_indirectly_referenced_memory ==
-                    TriState::kEnabled);
+  InitializeThreads(
+      options_.gather_indirectly_referenced_memory == TriState::kEnabled,
+      options_.indirectly_referenced_memory_cap);
 
   for (const MEMORY_BASIC_INFORMATION64& mbi :
        process_reader_.GetProcessInfo().MemoryInfo()) {
     memory_map_.push_back(new internal::MemoryMapRegionSnapshotWin(mbi));
   }
 
+  for (const auto& module : modules_) {
+    for (const auto& range : module->ExtraMemoryRanges()) {
+      AddMemorySnapshot(range.base(), range.size(), &extra_memory_);
+    }
+  }
+
   INITIALIZATION_STATE_SET_VALID(initialized_);
-  return true;
-}
-
-bool ProcessSnapshotWin::InitializeException(
-    WinVMAddress exception_information_address) {
-  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
-  DCHECK(!exception_);
-
-  ExceptionInformation exception_information;
-  if (!process_reader_.ReadMemory(exception_information_address,
-                                  sizeof(exception_information),
-                                  &exception_information)) {
-    LOG(WARNING) << "ReadMemory ExceptionInformation failed";
-    return false;
-  }
-
-  exception_.reset(new internal::ExceptionSnapshotWin());
-  if (!exception_->Initialize(&process_reader_,
-                              exception_information.thread_id,
-                              exception_information.exception_pointers)) {
-    exception_.reset();
-    return false;
-  }
-
   return true;
 }
 
@@ -224,15 +229,20 @@ std::vector<const MemorySnapshot*> ProcessSnapshotWin::ExtraMemory() const {
 }
 
 void ProcessSnapshotWin::InitializeThreads(
-    bool gather_indirectly_referenced_memory) {
+    bool gather_indirectly_referenced_memory,
+    uint32_t indirectly_referenced_memory_cap) {
   const std::vector<ProcessReaderWin::Thread>& process_reader_threads =
       process_reader_.Threads();
+  uint32_t* budget_remaining_pointer = nullptr;
+  uint32_t budget_remaining = indirectly_referenced_memory_cap;
+  if (gather_indirectly_referenced_memory)
+    budget_remaining_pointer = &budget_remaining;
   for (const ProcessReaderWin::Thread& process_reader_thread :
        process_reader_threads) {
-    auto thread = make_scoped_ptr(new internal::ThreadSnapshotWin());
+    auto thread = base::WrapUnique(new internal::ThreadSnapshotWin());
     if (thread->Initialize(&process_reader_,
                            process_reader_thread,
-                           gather_indirectly_referenced_memory)) {
+                           budget_remaining_pointer)) {
       threads_.push_back(thread.release());
     }
   }
@@ -243,7 +253,7 @@ void ProcessSnapshotWin::InitializeModules() {
       process_reader_.Modules();
   for (const ProcessInfo::Module& process_reader_module :
        process_reader_modules) {
-    auto module = make_scoped_ptr(new internal::ModuleSnapshotWin());
+    auto module = base::WrapUnique(new internal::ModuleSnapshotWin());
     if (module->Initialize(&process_reader_, process_reader_module)) {
       modules_.push_back(module.release());
     }
@@ -316,12 +326,15 @@ void ProcessSnapshotWin::GetCrashpadOptionsInternal(
     if (local_options.gather_indirectly_referenced_memory == TriState::kUnset) {
       local_options.gather_indirectly_referenced_memory =
           module_options.gather_indirectly_referenced_memory;
+      local_options.indirectly_referenced_memory_cap =
+          module_options.indirectly_referenced_memory_cap;
     }
 
     // If non-default values have been found for all options, the loop can end
     // early.
     if (local_options.crashpad_handler_behavior != TriState::kUnset &&
-        local_options.system_crash_reporter_forwarding != TriState::kUnset) {
+        local_options.system_crash_reporter_forwarding != TriState::kUnset &&
+        local_options.gather_indirectly_referenced_memory != TriState::kUnset) {
       break;
     }
   }

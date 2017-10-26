@@ -7,8 +7,8 @@
 
 #include <jni.h>
 
-#include "base/memory/scoped_ptr.h"
-#include "skia/ext/refptr.h"
+#include <memory>
+
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
 
@@ -19,7 +19,7 @@ namespace android_webview {
 
 class SoftwareCanvasHolder {
  public:
-  static scoped_ptr<SoftwareCanvasHolder> Create(
+  static std::unique_ptr<SoftwareCanvasHolder> Create(
       jobject java_canvas,
       const gfx::Vector2d& scroll_correction,
       const gfx::Size& auxiliary_bitmap_size,

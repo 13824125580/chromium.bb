@@ -24,12 +24,12 @@ public:
         case CSSPropertyWebkitMaskBoxImageSource:
             return style.maskBoxImageSource();
         default:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             return nullptr;
         }
     }
 
-    static void setStyleImage(CSSPropertyID property, ComputedStyle& style, PassRefPtrWillBeRawPtr<StyleImage> image)
+    static void setStyleImage(CSSPropertyID property, ComputedStyle& style, StyleImage* image)
     {
         switch (property) {
         case CSSPropertyBorderImageSource:
@@ -42,7 +42,7 @@ public:
             style.setMaskBoxImageSource(image);
             break;
         default:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
         }
     }
 };

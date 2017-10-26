@@ -39,6 +39,34 @@ IN_PROC_BROWSER_TEST_P(FileManagerBrowserTest, Test) {
   StartTest();
 }
 
+// Test fixture class for tests that rely on deprecated event dispatch that send
+// tests.
+class FileManagerBrowserTestWithLegacyEventDispatch
+    : public FileManagerBrowserTest {
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    FileManagerBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII("disable-blink-features",
+                                    "TrustedEventsDefaultAction");
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(FileManagerBrowserTestWithLegacyEventDispatch, Test) {
+  StartTest();
+}
+
+// Test fixture class for details panel.
+// TODO(ryoh): remove after we release details panel feature.
+class FileManagerDetailsPanelBrowserTest : public FileManagerBrowserTest {
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    FileManagerBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch("--enable-files-details-panel");
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(FileManagerDetailsPanelBrowserTest, Test) {
+  StartTest();
+}
+
 // Unlike TEST/TEST_F, which are macros that expand to further macros,
 // INSTANTIATE_TEST_CASE_P is a macro that expands directly to code that
 // stringizes the arguments. As a result, macros passed as parameters (such as
@@ -166,6 +194,14 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
         TestParameter(NOT_IN_GUEST_MODE,
                       "deleteMenuItemIsDisabledWhenNoItemIsSelected"),
         TestParameter(NOT_IN_GUEST_MODE, "deleteOneItemFromToolbar")));
+
+WRAPPED_INSTANTIATE_TEST_CASE_P(
+    DetailsPanel,
+    FileManagerDetailsPanelBrowserTest,
+    ::testing::Values(
+        TestParameter(NOT_IN_GUEST_MODE, "openDetailsPanel"),
+        TestParameter(NOT_IN_GUEST_MODE, "openDetailsPanelForSingleFile"),
+        TestParameter(NOT_IN_GUEST_MODE, "openSingleFileAndSeeDetailsPanel")));
 
 #if defined(DISABLE_SLOW_FILESAPP_TESTS)
 #define MAYBE_DirectoryTreeContextMenu DISABLED_DirectoryTreeContextMenu
@@ -404,7 +440,7 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
 #endif
 WRAPPED_INSTANTIATE_TEST_CASE_P(
     MAYBE_TabIndex,
-    FileManagerBrowserTest,
+    FileManagerBrowserTestWithLegacyEventDispatch,
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "searchBoxFocus")));
 
 #if defined(DISABLE_SLOW_FILESAPP_TESTS)
@@ -414,7 +450,7 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
 #endif
 WRAPPED_INSTANTIATE_TEST_CASE_P(
     MAYBE_TabindexFocus,
-    FileManagerBrowserTest,
+    FileManagerBrowserTestWithLegacyEventDispatch,
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "tabindexFocus")));
 
 #if defined(DISABLE_SLOW_FILESAPP_TESTS)
@@ -424,7 +460,7 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
 #endif
 WRAPPED_INSTANTIATE_TEST_CASE_P(
     MAYBE_TabindexFocusDownloads,
-    FileManagerBrowserTest,
+    FileManagerBrowserTestWithLegacyEventDispatch,
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
                                     "tabindexFocusDownloads"),
                       TestParameter(IN_GUEST_MODE, "tabindexFocusDownloads")));
@@ -437,7 +473,7 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
 #endif
 WRAPPED_INSTANTIATE_TEST_CASE_P(
     MAYBE_TabindexFocusDirectorySelected,
-    FileManagerBrowserTest,
+    FileManagerBrowserTestWithLegacyEventDispatch,
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
                                     "tabindexFocusDirectorySelected")));
 
@@ -447,8 +483,9 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
 #else
 #define MAYBE_TabindexOpenDialog TabindexOpenDialog
 #endif
+// Flaky: crbug.com/615259
 WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_TabindexOpenDialog,
+    DISABLED_TabindexOpenDialog,
     FileManagerBrowserTest,
     ::testing::Values(
         TestParameter(NOT_IN_GUEST_MODE, "tabindexOpenDialogDrive"),
@@ -461,8 +498,9 @@ WRAPPED_INSTANTIATE_TEST_CASE_P(
 #else
 #define MAYBE_TabindexSaveFileDialog TabindexSaveFileDialog
 #endif
+// Flaky: crbug.com/615259
 WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_TabindexSaveFileDialog,
+    DISABLED_TabindexSaveFileDialog,
     FileManagerBrowserTest,
     ::testing::Values(
         TestParameter(NOT_IN_GUEST_MODE, "tabindexSaveFileDialogDrive"),

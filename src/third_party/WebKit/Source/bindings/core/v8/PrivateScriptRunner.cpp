@@ -8,6 +8,7 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/V8Binding.h"
 #include "bindings/core/v8/V8PerContextData.h"
+#include "bindings/core/v8/V8PrivateProperty.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
 #include "core/PrivateScriptSources.h"
 #ifndef NDEBUG
@@ -60,11 +61,12 @@ static v8::Local<v8::Value> compileAndRunPrivateScript(ScriptState* scriptState,
         v8::Local<v8::Value> importFunctionValue = privateScriptControllerObject->Get(context, v8String(isolate, "import")).ToLocalChecked();
         if (importFunctionValue->IsUndefined()) {
             v8::Local<v8::Function> function;
+            // This is a memory leak, FunctionTemplates are eternal.
             if (!v8::FunctionTemplate::New(isolate, importFunction)->GetFunction(context).ToLocal(&function)
                 || !v8CallBoolean(privateScriptControllerObject->Set(context, v8String(isolate, "import"), function))) {
                 fprintf(stderr, "Private script error: Setting import function failed. (Class name = %s)\n", scriptClassName.utf8().data());
                 dumpV8Message(context, block.Message());
-                RELEASE_ASSERT_NOT_REACHED();
+                RELEASE_NOTREACHED();
             }
         }
     }
@@ -73,14 +75,14 @@ static v8::Local<v8::Value> compileAndRunPrivateScript(ScriptState* scriptState,
     if (!v8Call(V8ScriptRunner::compileScript(v8String(isolate, sourceString), fileName, String(), TextPosition::minimumPosition(), isolate, nullptr, nullptr, nullptr, NotSharableCrossOrigin), script, block)) {
         fprintf(stderr, "Private script error: Compile failed. (Class name = %s)\n", scriptClassName.utf8().data());
         dumpV8Message(context, block.Message());
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
 
     v8::Local<v8::Value> result;
     if (!v8Call(V8ScriptRunner::runCompiledInternalScript(isolate, script), result, block)) {
         fprintf(stderr, "Private script error: installClass() failed. (Class name = %s)\n", scriptClassName.utf8().data());
         dumpV8Message(context, block.Message());
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     return result;
 }
@@ -137,7 +139,7 @@ static void installPrivateScript(v8::Isolate* isolate, String className)
 
     if (!compiledScriptCount) {
         fprintf(stderr, "Private script error: Target source code was not found. (Class name = %s)\n", className.utf8().data());
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
 }
 
@@ -153,7 +155,7 @@ static v8::Local<v8::Value> installPrivateScriptRunner(v8::Isolate* isolate)
     }
     if (index == WTF_ARRAY_LENGTH(kPrivateScriptSources)) {
         fprintf(stderr, "Private script error: Target source code was not found. (Class name = %s)\n", className.utf8().data());
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     String resourceData = loadResourceAsASCIIString(kPrivateScriptSources[index].resourceFile);
     return compileAndRunPrivateScript(ScriptState::current(isolate), className, resourceData.utf8().data(), resourceData.length());
@@ -162,7 +164,7 @@ static v8::Local<v8::Value> installPrivateScriptRunner(v8::Isolate* isolate)
 static v8::Local<v8::Object> classObjectOfPrivateScript(ScriptState* scriptState, String className)
 {
     ASSERT(scriptState->perContextData());
-    ASSERT(scriptState->executionContext());
+    ASSERT(scriptState->getExecutionContext());
     v8::Isolate* isolate = scriptState->isolate();
     v8::Local<v8::Value> compiledClass = scriptState->perContextData()->compiledPrivateScript(className);
     if (compiledClass.IsEmpty()) {
@@ -189,40 +191,40 @@ static void initializeHolderIfNeeded(ScriptState* scriptState, v8::Local<v8::Obj
     v8::Local<v8::Object> holderObject = v8::Local<v8::Object>::Cast(holder);
     v8::Isolate* isolate = scriptState->isolate();
     v8::Local<v8::Context> context = scriptState->context();
-    v8::Local<v8::Value> isInitialized = V8HiddenValue::getHiddenValue(scriptState, holderObject, V8HiddenValue::privateScriptObjectIsInitialized(isolate));
-    if (isInitialized.IsEmpty()) {
-        v8::TryCatch block(isolate);
-        v8::Local<v8::Value> initializeFunction;
-        if (classObject->Get(scriptState->context(), v8String(isolate, "initialize")).ToLocal(&initializeFunction) && initializeFunction->IsFunction()) {
-            v8::TryCatch block(isolate);
-            v8::Local<v8::Value> result;
-            if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(initializeFunction), scriptState->executionContext(), holder, 0, 0, isolate).ToLocal(&result)) {
-                fprintf(stderr, "Private script error: Object constructor threw an exception.\n");
-                dumpV8Message(context, block.Message());
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        }
+    auto privateIsInitialized = V8PrivateProperty::getPrivateScriptRunnerIsInitialized(isolate);
+    if (privateIsInitialized.hasValue(context, holderObject))
+        return; // Already initialized.
 
-        // Inject the prototype object of the private script into the prototype chain of the holder object.
-        // This is necessary to let the holder object use properties defined on the prototype object
-        // of the private script. (e.g., if the prototype object has |foo|, the holder object should be able
-        // to use it with |this.foo|.)
-        if (classObject->GetPrototype() != holderObject->GetPrototype()) {
-            if (!v8CallBoolean(classObject->SetPrototype(context, holderObject->GetPrototype()))) {
-                fprintf(stderr, "Private script error: SetPrototype failed.\n");
-                dumpV8Message(context, block.Message());
-                RELEASE_ASSERT_NOT_REACHED();
-            }
+    v8::TryCatch block(isolate);
+    v8::Local<v8::Value> initializeFunction;
+    if (classObject->Get(scriptState->context(), v8String(isolate, "initialize")).ToLocal(&initializeFunction) && initializeFunction->IsFunction()) {
+        v8::TryCatch block(isolate);
+        v8::Local<v8::Value> result;
+        if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(initializeFunction), scriptState->getExecutionContext(), holder, 0, 0, isolate).ToLocal(&result)) {
+            fprintf(stderr, "Private script error: Object constructor threw an exception.\n");
+            dumpV8Message(context, block.Message());
+            RELEASE_NOTREACHED();
         }
-        if (!v8CallBoolean(holderObject->SetPrototype(context, classObject))) {
+    }
+
+    // Inject the prototype object of the private script into the prototype chain of the holder object.
+    // This is necessary to let the holder object use properties defined on the prototype object
+    // of the private script. (e.g., if the prototype object has |foo|, the holder object should be able
+    // to use it with |this.foo|.)
+    if (classObject->GetPrototype() != holderObject->GetPrototype()) {
+        if (!v8CallBoolean(classObject->SetPrototype(context, holderObject->GetPrototype()))) {
             fprintf(stderr, "Private script error: SetPrototype failed.\n");
             dumpV8Message(context, block.Message());
-            RELEASE_ASSERT_NOT_REACHED();
+            RELEASE_NOTREACHED();
         }
-
-        isInitialized = v8Boolean(true, isolate);
-        V8HiddenValue::setHiddenValue(scriptState, holderObject, V8HiddenValue::privateScriptObjectIsInitialized(isolate), isInitialized);
     }
+    if (!v8CallBoolean(holderObject->SetPrototype(context, classObject))) {
+        fprintf(stderr, "Private script error: SetPrototype failed.\n");
+        dumpV8Message(context, block.Message());
+        RELEASE_NOTREACHED();
+    }
+
+    privateIsInitialized.set(context, holderObject, v8Boolean(true, isolate));
 }
 
 v8::Local<v8::Value> PrivateScriptRunner::installClassIfNeeded(Document* document, String className)
@@ -283,7 +285,7 @@ void rethrowExceptionInPrivateScript(v8::Isolate* isolate, v8::TryCatch& block, 
 
     fprintf(stderr, "Private script error: %s was thrown.\n", exceptionName.utf8().data());
     dumpV8Message(context, tryCatchMessage);
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_NOTREACHED();
 }
 
 } // namespace
@@ -295,17 +297,17 @@ v8::Local<v8::Value> PrivateScriptRunner::runDOMAttributeGetter(ScriptState* scr
     v8::Local<v8::Value> descriptor;
     if (!classObject->GetOwnPropertyDescriptor(scriptState->context(), v8String(isolate, attributeName)).ToLocal(&descriptor) || !descriptor->IsObject()) {
         fprintf(stderr, "Private script error: Target DOM attribute getter was not found. (Class name = %s, Attribute name = %s)\n", className, attributeName);
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     v8::Local<v8::Value> getter;
     if (!v8::Local<v8::Object>::Cast(descriptor)->Get(scriptState->context(), v8String(isolate, "get")).ToLocal(&getter) || !getter->IsFunction()) {
         fprintf(stderr, "Private script error: Target DOM attribute getter was not found. (Class name = %s, Attribute name = %s)\n", className, attributeName);
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     initializeHolderIfNeeded(scriptState, classObject, holder);
     v8::TryCatch block(isolate);
     v8::Local<v8::Value> result;
-    if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(getter), scriptState->executionContext(), holder, 0, 0, isolate).ToLocal(&result)) {
+    if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(getter), scriptState->getExecutionContext(), holder, 0, 0, isolate).ToLocal(&result)) {
         rethrowExceptionInPrivateScript(isolate, block, scriptStateInUserScript, ExceptionState::GetterContext, attributeName, className);
         block.ReThrow();
         return v8::Local<v8::Value>();
@@ -320,18 +322,18 @@ bool PrivateScriptRunner::runDOMAttributeSetter(ScriptState* scriptState, Script
     v8::Local<v8::Value> descriptor;
     if (!classObject->GetOwnPropertyDescriptor(scriptState->context(), v8String(isolate, attributeName)).ToLocal(&descriptor) || !descriptor->IsObject()) {
         fprintf(stderr, "Private script error: Target DOM attribute setter was not found. (Class name = %s, Attribute name = %s)\n", className, attributeName);
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     v8::Local<v8::Value> setter;
     if (!v8::Local<v8::Object>::Cast(descriptor)->Get(scriptState->context(), v8String(isolate, "set")).ToLocal(&setter) || !setter->IsFunction()) {
         fprintf(stderr, "Private script error: Target DOM attribute setter was not found. (Class name = %s, Attribute name = %s)\n", className, attributeName);
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     initializeHolderIfNeeded(scriptState, classObject, holder);
     v8::Local<v8::Value> argv[] = { v8Value };
     v8::TryCatch block(isolate);
     v8::Local<v8::Value> result;
-    if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(setter), scriptState->executionContext(), holder, WTF_ARRAY_LENGTH(argv), argv, isolate).ToLocal(&result)) {
+    if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(setter), scriptState->getExecutionContext(), holder, WTF_ARRAY_LENGTH(argv), argv, isolate).ToLocal(&result)) {
         rethrowExceptionInPrivateScript(isolate, block, scriptStateInUserScript, ExceptionState::SetterContext, attributeName, className);
         block.ReThrow();
         return false;
@@ -345,12 +347,12 @@ v8::Local<v8::Value> PrivateScriptRunner::runDOMMethod(ScriptState* scriptState,
     v8::Local<v8::Value> method;
     if (!classObject->Get(scriptState->context(), v8String(scriptState->isolate(), methodName)).ToLocal(&method) || !method->IsFunction()) {
         fprintf(stderr, "Private script error: Target DOM method was not found. (Class name = %s, Method name = %s)\n", className, methodName);
-        RELEASE_ASSERT_NOT_REACHED();
+        RELEASE_NOTREACHED();
     }
     initializeHolderIfNeeded(scriptState, classObject, holder);
     v8::TryCatch block(scriptState->isolate());
     v8::Local<v8::Value> result;
-    if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(method), scriptState->executionContext(), holder, argc, argv, scriptState->isolate()).ToLocal(&result)) {
+    if (!V8ScriptRunner::callFunction(v8::Local<v8::Function>::Cast(method), scriptState->getExecutionContext(), holder, argc, argv, scriptState->isolate()).ToLocal(&result)) {
         rethrowExceptionInPrivateScript(scriptState->isolate(), block, scriptStateInUserScript, ExceptionState::ExecutionContext, methodName, className);
         block.ReThrow();
         return v8::Local<v8::Value>();

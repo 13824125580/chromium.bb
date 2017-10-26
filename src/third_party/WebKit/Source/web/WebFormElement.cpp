@@ -62,19 +62,6 @@ WebString WebFormElement::method() const
     return constUnwrap<HTMLFormElement>()->method();
 }
 
-bool WebFormElement::wasUserSubmitted() const
-{
-    return constUnwrap<HTMLFormElement>()->wasUserSubmitted();
-}
-
-void WebFormElement::getNamedElements(const WebString& name,
-                                      WebVector<WebNode>& result)
-{
-    WillBeHeapVector<RefPtrWillBeMember<Element>> tempVector;
-    unwrap<HTMLFormElement>()->getNamedElements(name, tempVector);
-    result.assign(tempVector);
-}
-
 void WebFormElement::getFormControlElements(WebVector<WebFormControlElement>& result) const
 {
     const HTMLFormElement* form = constUnwrap<HTMLFormElement>();
@@ -88,30 +75,20 @@ void WebFormElement::getFormControlElements(WebVector<WebFormControlElement>& re
     result.assign(formControlElements);
 }
 
-bool WebFormElement::checkValidity()
-{
-    return unwrap<HTMLFormElement>()->checkValidity();
-}
-
-void WebFormElement::finishRequestAutocomplete(WebFormElement::AutocompleteResult result)
-{
-    unwrap<HTMLFormElement>()->finishRequestAutocomplete(static_cast<HTMLFormElement::AutocompleteResult>(result));
-}
-
-WebFormElement::WebFormElement(const PassRefPtrWillBeRawPtr<HTMLFormElement>& e)
+WebFormElement::WebFormElement(HTMLFormElement* e)
     : WebElement(e)
 {
 }
 
 DEFINE_WEB_NODE_TYPE_CASTS(WebFormElement, isHTMLFormElement(constUnwrap<Node>()));
 
-WebFormElement& WebFormElement::operator=(const PassRefPtrWillBeRawPtr<HTMLFormElement>& e)
+WebFormElement& WebFormElement::operator=(HTMLFormElement* e)
 {
     m_private = e;
     return *this;
 }
 
-WebFormElement::operator PassRefPtrWillBeRawPtr<HTMLFormElement>() const
+WebFormElement::operator HTMLFormElement*() const
 {
     return toHTMLFormElement(m_private.get());
 }

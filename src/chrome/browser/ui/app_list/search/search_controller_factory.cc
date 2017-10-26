@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
 #include "base/time/default_clock.h"
@@ -15,7 +16,6 @@
 #include "chrome/browser/ui/app_list/search/app_search_provider.h"
 #include "chrome/browser/ui/app_list/search/history_factory.h"
 #include "chrome/browser/ui/app_list/search/omnibox_provider.h"
-#include "chrome/browser/ui/app_list/search/people/people_provider.h"
 #include "chrome/browser/ui/app_list/search/suggestions/suggestions_search_provider.h"
 #include "chrome/browser/ui/app_list/search/webstore/webstore_provider.h"
 #include "chrome/common/chrome_switches.h"
@@ -37,7 +37,6 @@ const size_t kMaxAppsGroupResults = 4;
 // Ignored unless AppListMixer field trial is "Blended".
 const size_t kMaxOmniboxResults = 4;
 const size_t kMaxWebstoreResults = 2;
-const size_t kMaxPeopleResults = 2;
 const size_t kMaxSuggestionsResults = 6;
 
 #if defined(OS_CHROMEOS)
@@ -59,17 +58,17 @@ bool IsSuggestionsSearchProviderEnabled() {
 
 }  // namespace
 
-scoped_ptr<SearchController> CreateSearchController(
+std::unique_ptr<SearchController> CreateSearchController(
     Profile* profile,
     AppListModel* model,
     AppListControllerDelegate* list_controller) {
-  scoped_ptr<SearchController> controller(
+  std::unique_ptr<SearchController> controller(
       new SearchController(model->search_box(), model->results(),
                            HistoryFactory::GetForBrowserContext(profile)));
 
-  // Add mixer groups. There are four main groups: apps, people, webstore and
+  // Add mixer groups. There are three main groups: apps, webstore and
   // omnibox. The behaviour depends on the AppListMixer field trial:
-  // - If default: The apps, people and webstore groups each have a fixed
+  // - If default: The apps and webstore groups each have a fixed
   //   maximum number of results. The omnibox group fills the remaining slots
   //   (with a minimum of one result).
   // - If "Blended": Each group has a "soft" maximum number of results. However,
@@ -80,29 +79,25 @@ scoped_ptr<SearchController> CreateSearchController(
       controller->AddOmniboxGroup(kMaxOmniboxResults, 2.0, 1.0);
   size_t webstore_group_id =
       controller->AddGroup(kMaxWebstoreResults, 1.0, 0.4);
-  size_t people_group_id = controller->AddGroup(kMaxPeopleResults, 0.0, 0.85);
 
   // Add search providers.
   controller->AddProvider(
       apps_group_id,
-      scoped_ptr<SearchProvider>(new AppSearchProvider(
-          profile, list_controller, make_scoped_ptr(new base::DefaultClock()),
+      std::unique_ptr<SearchProvider>(new AppSearchProvider(
+          profile, list_controller, base::WrapUnique(new base::DefaultClock()),
           model->top_level_item_list())));
   controller->AddProvider(omnibox_group_id,
-                          scoped_ptr<SearchProvider>(
+                          std::unique_ptr<SearchProvider>(
                               new OmniboxProvider(profile, list_controller)));
   controller->AddProvider(webstore_group_id,
-                          scoped_ptr<SearchProvider>(
+                          std::unique_ptr<SearchProvider>(
                               new WebstoreProvider(profile, list_controller)));
-  controller->AddProvider(
-      people_group_id,
-      scoped_ptr<SearchProvider>(new PeopleProvider(profile, list_controller)));
   if (IsSuggestionsSearchProviderEnabled()) {
     size_t suggestions_group_id =
         controller->AddGroup(kMaxSuggestionsResults, 3.0, 1.0);
     controller->AddProvider(
         suggestions_group_id,
-        scoped_ptr<SearchProvider>(
+        std::unique_ptr<SearchProvider>(
             new SuggestionsSearchProvider(profile, list_controller)));
   }
 
@@ -115,7 +110,7 @@ scoped_ptr<SearchController> CreateSearchController(
         controller->AddGroup(kMaxLauncherSearchResults, 0.0, 1.0);
     controller->AddProvider(
         search_api_group_id,
-        scoped_ptr<SearchProvider>(new LauncherSearchProvider(profile)));
+        std::unique_ptr<SearchProvider>(new LauncherSearchProvider(profile)));
   }
 #endif
 

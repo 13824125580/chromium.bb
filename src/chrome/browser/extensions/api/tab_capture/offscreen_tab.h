@@ -167,7 +167,7 @@ class OffscreenTab : protected content::WebContentsDelegate,
                                   content::MediaStreamType type) final;
 
   // content::WebContentsObserver overrides
-  void DidShowFullscreenWidget(int routing_id) final;
+  void DidShowFullscreenWidget() final;
 
  private:
   bool in_fullscreen_mode() const {
@@ -186,10 +186,10 @@ class OffscreenTab : protected content::WebContentsDelegate,
 
   // A non-shared off-the-record profile based on the profile of the extension
   // background page.
-  const scoped_ptr<Profile> profile_;
+  const std::unique_ptr<Profile> profile_;
 
   // The WebContents containing the off-screen tab's page.
-  scoped_ptr<content::WebContents> offscreen_tab_web_contents_;
+  std::unique_ptr<content::WebContents> offscreen_tab_web_contents_;
 
   // The time at which Start() finished creating |offscreen_tab_web_contents_|.
   base::TimeTicks start_time_;

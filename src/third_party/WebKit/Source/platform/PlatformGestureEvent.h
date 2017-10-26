@@ -51,7 +51,7 @@ public:
         memset(&m_data, 0, sizeof(m_data));
     }
 
-    PlatformGestureEvent(Type type, const IntPoint& position,
+    PlatformGestureEvent(EventType type, const IntPoint& position,
         const IntPoint& globalPosition, const IntSize& area, double timestamp,
         PlatformEvent::Modifiers modifiers, PlatformGestureSource source)
         : PlatformEvent(type, modifiers, timestamp)
@@ -64,7 +64,7 @@ public:
     }
 
     void setScrollGestureData(float deltaX, float deltaY, ScrollGranularity deltaUnits, float velocityX, float velocityY,
-        bool inertial, bool preventPropagation, int resendingPluginId)
+        ScrollInertialPhase inertialPhase, bool preventPropagation, int resendingPluginId)
     {
         ASSERT(type() == PlatformEvent::GestureScrollBegin
             || type() == PlatformEvent::GestureScrollUpdate
@@ -78,14 +78,14 @@ public:
         }
 
         if (type() == PlatformEvent::GestureScrollBegin)
-            ASSERT(!inertial);
+            DCHECK_NE(ScrollInertialPhaseMomentum, inertialPhase);
 
         m_data.m_scroll.m_deltaX = deltaX;
         m_data.m_scroll.m_deltaY = deltaY;
         m_data.m_scroll.m_deltaUnits = deltaUnits;
         m_data.m_scroll.m_velocityX = velocityX;
         m_data.m_scroll.m_velocityY = velocityY;
-        m_data.m_scroll.m_inertial = inertial;
+        m_data.m_scroll.m_inertialPhase = inertialPhase;
         m_data.m_scroll.m_resendingPluginId = resendingPluginId;
         m_data.m_scroll.m_preventPropagation = preventPropagation;
     }
@@ -99,19 +99,19 @@ public:
 
     float deltaX() const
     {
-        ASSERT(m_type == PlatformEvent::GestureScrollUpdate);
+        ASSERT(m_type == PlatformEvent::GestureScrollBegin || m_type == PlatformEvent::GestureScrollUpdate);
         return m_data.m_scroll.m_deltaX;
     }
 
     float deltaY() const
     {
-        ASSERT(m_type == PlatformEvent::GestureScrollUpdate);
+        ASSERT(m_type == PlatformEvent::GestureScrollBegin || m_type == PlatformEvent::GestureScrollUpdate);
         return m_data.m_scroll.m_deltaY;
     }
 
     ScrollGranularity deltaUnits() const
     {
-        ASSERT(m_type == PlatformEvent::GestureScrollUpdate);
+        ASSERT(m_type == PlatformEvent::GestureScrollBegin || m_type == PlatformEvent::GestureScrollUpdate || m_type == PlatformEvent::GestureScrollEnd);
         return m_data.m_scroll.m_deltaUnits;
     }
 
@@ -133,10 +133,16 @@ public:
         return m_data.m_scroll.m_velocityY;
     }
 
-    bool inertial() const
+    ScrollInertialPhase inertialPhase() const
     {
-        ASSERT(m_type == PlatformEvent::GestureScrollUpdate || m_type == PlatformEvent::GestureScrollEnd);
-        return m_data.m_scroll.m_inertial;
+        ASSERT(m_type == PlatformEvent::GestureScrollBegin || m_type == PlatformEvent::GestureScrollUpdate || m_type == PlatformEvent::GestureScrollEnd);
+        return m_data.m_scroll.m_inertialPhase;
+    }
+
+    bool synthetic() const
+    {
+        ASSERT(m_type == PlatformEvent::GestureScrollBegin || m_type == PlatformEvent::GestureScrollEnd);
+        return m_data.m_scroll.m_synthetic;
     }
 
     int resendingPluginId() const
@@ -202,6 +208,8 @@ public:
         }
     }
 
+    uint32_t uniqueTouchEventId() const { return m_uniqueTouchEventId; }
+
 protected:
     IntPoint m_position;
     IntPoint m_globalPosition;
@@ -214,20 +222,25 @@ protected:
         } m_tap;
 
         struct {
+            // |m_deltaX| and |m_deltaY| represent deltas in GSU but
+            // are only hints in GSB.
             float m_deltaX;
             float m_deltaY;
             float m_velocityX;
             float m_velocityY;
             int m_preventPropagation;
-            bool m_inertial;
+            ScrollInertialPhase m_inertialPhase;
             ScrollGranularity m_deltaUnits;
             int m_resendingPluginId;
+            bool m_synthetic;
         } m_scroll;
 
         struct {
             float m_scale;
         } m_pinchUpdate;
     } m_data;
+
+    uint32_t m_uniqueTouchEventId;
 };
 
 } // namespace blink

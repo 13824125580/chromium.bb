@@ -49,10 +49,7 @@ static inline bool isFontPresent(const UChar* fontName, SkFontMgr* fontManager)
 {
     String family = fontName;
     SkTypeface* typeface;
-    if (FontCache::useDirectWrite())
-        typeface = fontManager->matchFamilyStyle(family.utf8().data(), SkFontStyle());
-    else
-        typeface = fontManager->legacyCreateTypeface(family.utf8().data(), SkTypeface::kNormal);
+    typeface = fontManager->matchFamilyStyle(family.utf8().data(), SkFontStyle());
 
     if (!typeface)
         return false;
@@ -151,8 +148,6 @@ void initializeScriptFontMap(ScriptToFontMap& scriptFontMap, SkFontMgr* fontMana
     static const UChar* gurmukhiFonts[] = { L"Nirmala UI", L"Raavi", 0 };
     static const UChar* hangulFonts[] = { L"Malgun Gothic", L"Gulim", 0 };
     static const UChar* hebrewFonts[] = { L"David", L"Segoe UI", 0 };
-    static const UChar* hiraganaFonts[] = { L"MS PGothic", L"Yu Gothic",
-        L"Microsoft YaHei", 0 };
     static const UChar* imperialAramaicFonts[] = { L"Segoe UI Historic", 0 };
     static const UChar* inscriptionalPahlaviFonts[] = { L"Segoe UI Historic",
         0 };
@@ -160,10 +155,8 @@ void initializeScriptFontMap(ScriptToFontMap& scriptFontMap, SkFontMgr* fontMana
         0 };
     static const UChar* javaneseFonts[] = { L"Javanese Text", 0 };
     static const UChar* kannadaFonts[] = { L"Tunga", L"Nirmala UI", 0 };
-    static const UChar* katakanaFonts[] = { L"MS PGothic", L"Yu Gothic",
-        L"Microsoft YaHei", 0 };
-    static const UChar* katakanaOrHiraganaFonts[] = { L"MS PGothic",
-        L"Yu Gothic", L"Microsoft YaHei", 0 };
+    static const UChar* katakanaOrHiraganaFonts[] = { L"Meiryo", L"Yu Gothic",
+        L"MS PGothic", L"Microsoft YaHei", 0 };
     static const UChar* kharoshthiFonts[] = { L"Segoe UI Historic", 0 };
     // Try Khmer OS before Vista fonts as it goes along better with Latin
     // and looks better/larger for the same size.
@@ -245,13 +238,13 @@ void initializeScriptFontMap(ScriptToFontMap& scriptFontMap, SkFontMgr* fontMana
         { USCRIPT_GURMUKHI, gurmukhiFonts },
         { USCRIPT_HANGUL, hangulFonts },
         { USCRIPT_HEBREW, hebrewFonts },
-        { USCRIPT_HIRAGANA, hiraganaFonts },
+        { USCRIPT_HIRAGANA, katakanaOrHiraganaFonts },
         { USCRIPT_IMPERIAL_ARAMAIC, imperialAramaicFonts },
         { USCRIPT_INSCRIPTIONAL_PAHLAVI, inscriptionalPahlaviFonts },
         { USCRIPT_INSCRIPTIONAL_PARTHIAN, inscriptionalParthianFonts },
         { USCRIPT_JAVANESE, javaneseFonts },
         { USCRIPT_KANNADA, kannadaFonts },
-        { USCRIPT_KATAKANA, katakanaFonts },
+        { USCRIPT_KATAKANA, katakanaOrHiraganaFonts },
         { USCRIPT_KATAKANA_OR_HIRAGANA, katakanaOrHiraganaFonts },
         { USCRIPT_KHAROSHTHI, kharoshthiFonts },
         { USCRIPT_KHMER, khmerFonts },
@@ -386,7 +379,7 @@ UScriptCode getScript(int ucs4)
     return script;
 }
 
-const UChar* getFontBasedOnUnicodeBlock(int ucs4, SkFontMgr* fontManager)
+const UChar* getFontBasedOnUnicodeBlock(UBlockCode blockCode, SkFontMgr* fontManager)
 {
     static const UChar* emojiFonts[] = {L"Segoe UI Emoji", L"Segoe UI Symbol"};
     static const UChar* mathFonts[] = {L"Cambria Math", L"Segoe UI Symbol", L"Code2000"};
@@ -410,8 +403,7 @@ const UChar* getFontBasedOnUnicodeBlock(int ucs4, SkFontMgr* fontManager)
         initialized = true;
     }
 
-    UBlockCode block = ublock_getCode(ucs4);
-    switch (block) {
+    switch (blockCode) {
     case UBLOCK_EMOTICONS:
     case UBLOCK_ENCLOSED_ALPHANUMERIC_SUPPLEMENT:
         return emojiFont;
@@ -421,7 +413,6 @@ const UChar* getFontBasedOnUnicodeBlock(int ucs4, SkFontMgr* fontManager)
     case UBLOCK_MISCELLANEOUS_SYMBOLS_AND_PICTOGRAPHS:
     case UBLOCK_TRANSPORT_AND_MAP_SYMBOLS:
     case UBLOCK_ALCHEMICAL_SYMBOLS:
-    case UBLOCK_RUNIC:
     case UBLOCK_DINGBATS:
     case UBLOCK_GOTHIC:
         return symbolFont;
@@ -493,11 +484,14 @@ const UChar* getFallbackFamily(UChar32 character,
     UScriptCode contentScript,
     const AtomicString& contentLocale,
     UScriptCode* scriptChecked,
+    FontFallbackPriority fallbackPriority,
     SkFontMgr* fontManager)
 {
     ASSERT(character);
     ASSERT(fontManager);
-    const UChar* family = getFontBasedOnUnicodeBlock(character, fontManager);
+    UBlockCode block = fallbackPriority == FontFallbackPriority::EmojiEmoji ?
+        UBLOCK_EMOTICONS : ublock_getCode(character);
+    const UChar* family = getFontBasedOnUnicodeBlock(block, fontManager);
     if (family) {
         if (scriptChecked)
             *scriptChecked = USCRIPT_INVALID_CODE;

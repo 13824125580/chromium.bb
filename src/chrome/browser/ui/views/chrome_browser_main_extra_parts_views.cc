@@ -9,9 +9,18 @@
 #include "components/constrained_window/constrained_window_views.h"
 
 #if defined(USE_AURA)
-#include "ui/gfx/screen.h"
+#include "ui/display/screen.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
 #include "ui/wm/core/wm_state.h"
+#endif
+
+#if defined(USE_AURA) && defined(MOJO_SHELL_CLIENT)
+#include "components/mus/public/cpp/input_devices/input_device_client.h"
+#include "components/mus/public/interfaces/input_devices/input_device_server.mojom.h"
+#include "content/public/common/mojo_shell_connection.h"
+#include "services/shell/public/cpp/connector.h"
+#include "services/shell/runner/common/client_util.h"
+#include "ui/views/mus/window_manager_connection.h"
 #endif
 
 ChromeBrowserMainExtraPartsViews::ChromeBrowserMainExtraPartsViews() {
@@ -36,6 +45,25 @@ void ChromeBrowserMainExtraPartsViews::ToolkitInitialized() {
 
 void ChromeBrowserMainExtraPartsViews::PreCreateThreads() {
 #if defined(USE_AURA) && !defined(OS_CHROMEOS)
-  gfx::Screen::SetScreenInstance(views::CreateDesktopScreen());
+  display::Screen::SetScreenInstance(views::CreateDesktopScreen());
 #endif
+}
+
+void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
+#if defined(USE_AURA) && defined(MOJO_SHELL_CLIENT)
+  content::MojoShellConnection* mojo_shell_connection =
+      content::MojoShellConnection::GetForProcess();
+  if (mojo_shell_connection && shell::ShellIsRemote()) {
+    input_device_client_.reset(new mus::InputDeviceClient());
+    mus::mojom::InputDeviceServerPtr server;
+    mojo_shell_connection->GetConnector()->ConnectToInterface("mojo:mus",
+                                                              &server);
+    input_device_client_->Connect(std::move(server));
+
+    window_manager_connection_ = views::WindowManagerConnection::Create(
+        mojo_shell_connection->GetConnector(),
+        mojo_shell_connection->GetIdentity());
+  }
+#endif  // defined(USE_AURA) && defined(MOJO_SHELL_CLIENT)
+  ChromeBrowserMainExtraParts::PreProfileInit();
 }

@@ -9,12 +9,14 @@
 #include "content/browser/browser_url_handler_impl.h"
 #include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
+#include "content/browser/frame_host/navigation_handle_impl.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/navigator_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/common/frame_messages.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/navigation_data.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
@@ -34,9 +36,10 @@ TestWebContents::TestWebContents(BrowserContext* browser_context)
 }
 
 TestWebContents* TestWebContents::Create(BrowserContext* browser_context,
-                                         SiteInstance* instance) {
+                                         scoped_refptr<SiteInstance> instance) {
   TestWebContents* test_web_contents = new TestWebContents(browser_context);
-  test_web_contents->Init(WebContents::CreateParams(browser_context, instance));
+  test_web_contents->Init(
+      WebContents::CreateParams(browser_context, std::move(instance)));
   return test_web_contents;
 }
 
@@ -135,7 +138,7 @@ void TestWebContents::TestDidNavigateWithReferrer(
   params.security_info = std::string();
   params.gesture = NavigationGestureUser;
   params.was_within_same_page = false;
-  params.is_post = false;
+  params.method = "GET";
   params.page_state = PageState::CreateFromURL(url);
   params.contents_mime_type = std::string("text/html");
 
@@ -148,10 +151,7 @@ const std::string& TestWebContents::GetSaveFrameHeaders() {
 
 bool TestWebContents::CrossProcessNavigationPending() {
   if (IsBrowserSideNavigationEnabled()) {
-    return GetRenderManager()->speculative_render_frame_host_ &&
-           static_cast<TestRenderFrameHost*>(
-               GetRenderManager()->speculative_render_frame_host_.get())
-               ->pending_commit();
+    return GetRenderManager()->speculative_render_frame_host_ != nullptr;
   }
   return GetRenderManager()->pending_frame_host() != nullptr;
 }
@@ -279,7 +279,9 @@ void TestWebContents::SetOpener(TestWebContents* opener) {
 
 void TestWebContents::AddPendingContents(TestWebContents* contents) {
   // This is normally only done in WebContentsImpl::CreateNewWindow.
-  pending_contents_[contents->GetRenderViewHost()->GetRoutingID()] = contents;
+  ProcessRoutingIdPair key(contents->GetRenderViewHost()->GetProcess()->GetID(),
+                           contents->GetRenderViewHost()->GetRoutingID());
+  pending_contents_[key] = contents;
   AddDestructionObserver(contents);
 }
 
@@ -315,6 +317,13 @@ void TestWebContents::TestDidFailLoadWithError(
   frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
 }
 
+void TestWebContents::SetNavigationData(
+    NavigationHandle* navigation_handle,
+    std::unique_ptr<NavigationData> navigation_data) {
+  static_cast<NavigationHandleImpl*>(navigation_handle)
+      ->set_navigation_data(std::move(navigation_data));
+}
+
 void TestWebContents::CreateNewWindow(
     SiteInstance* source_site_instance,
     int32_t route_id,
@@ -330,17 +339,20 @@ void TestWebContents::CreateNewWidget(int32_t render_process_id,
 void TestWebContents::CreateNewFullscreenWidget(int32_t render_process_id,
                                                 int32_t route_id) {}
 
-void TestWebContents::ShowCreatedWindow(int route_id,
+void TestWebContents::ShowCreatedWindow(int process_id,
+                                        int route_id,
                                         WindowOpenDisposition disposition,
                                         const gfx::Rect& initial_rect,
                                         bool user_gesture) {
 }
 
-void TestWebContents::ShowCreatedWidget(int route_id,
+void TestWebContents::ShowCreatedWidget(int process_id,
+                                        int route_id,
                                         const gfx::Rect& initial_rect) {
 }
 
-void TestWebContents::ShowCreatedFullscreenWidget(int route_id) {
+void TestWebContents::ShowCreatedFullscreenWidget(int process_id,
+                                                  int route_id) {
 }
 
 void TestWebContents::SaveFrameWithHeaders(const GURL& url,

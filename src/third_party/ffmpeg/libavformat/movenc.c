@@ -2400,7 +2400,11 @@ static int mov_write_tkhd_tag(AVIOContext *pb, MOVMuxContext *mov,
             if (!track_width_1616 ||
                 track->height != track->enc->height ||
                 track_width_1616 > UINT32_MAX)
-                track_width_1616 = track->enc->width * 0x10000U;
+                track_width_1616 = track->enc->width * 0x10000ULL;
+            if (track_width_1616 > UINT32_MAX) {
+                av_log(mov->fc, AV_LOG_WARNING, "track width too large\n");
+                track_width_1616 = 0;
+            }
             avio_wb32(pb, track_width_1616);
             avio_wb32(pb, track->height * 0x10000U);
         }
@@ -4362,10 +4366,10 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
             pkt->dts = trk->cluster[trk->entry - 1].dts + 1;
             pkt->pts = AV_NOPTS_VALUE;
         }
-        if (pkt->duration < 0) {
-            av_log(s, AV_LOG_ERROR, "Application provided duration: %"PRId64" is invalid\n", pkt->duration);
-            return AVERROR(EINVAL);
-        }
+    }
+    if (pkt->duration < 0 || pkt->duration > INT_MAX) {
+        av_log(s, AV_LOG_ERROR, "Application provided duration: %"PRId64" is invalid\n", pkt->duration);
+        return AVERROR(EINVAL);
     }
     if (mov->flags & FF_MOV_FLAG_FRAGMENT) {
         int ret;
@@ -5534,7 +5538,7 @@ static int shift_data(AVFormatContext *s)
      * writing, so we re-open the same output, but for reading. It also avoids
      * a read/seek/write/seek back and forth. */
     avio_flush(s->pb);
-    ret = avio_open(&read_pb, s->filename, AVIO_FLAG_READ);
+    ret = s->io_open(s, &read_pb, s->filename, AVIO_FLAG_READ, NULL);
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Unable to re-open %s output file for "
                "the second pass (faststart)\n", s->filename);
@@ -5566,7 +5570,7 @@ static int shift_data(AVFormatContext *s)
         avio_write(s->pb, read_buf[read_buf_id], n);
         pos += n;
     } while (pos < pos_end);
-    avio_close(read_pb);
+    ff_format_io_close(s, &read_pb);
 
 end:
     av_free(buf);

@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+assert(!is_ios)
+
 import("//testing/test.gni")
 import("//third_party/WebKit/Source/config.gni")
 
@@ -11,7 +13,10 @@ gypi_values = exec_script("//build/gypi_to_gn.py",
                           "scope",
                           [ "wtf.gypi" ])
 
-visibility = [ "//third_party/WebKit/*" ]
+visibility = [
+  "//mojo/public/cpp/bindings/*",
+  "//third_party/WebKit/*",
+]
 
 config("wtf_config") {
   if (is_win) {
@@ -119,30 +124,10 @@ test("wtf_unittests") {
   configs += [ "//third_party/WebKit/Source:config" ]
 
   deps = [
-    ":test_support",
     ":wtf",
     "//base",
     "//base/test:test_support",
     "//testing/gmock",
     "//testing/gtest",
-  ]
-}
-
-component("test_support") {
-  output_name = "wtf_test_support"
-  sources = gypi_values.wtf_unittest_helper_files
-  defines = [ "WTF_UNITTEST_HELPERS_IMPLEMENTATION=1" ]
-
-  configs += [
-    ":wtf_config",
-
-    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-    "//build/config/compiler:no_size_t_to_int_warning",
-    "//third_party/WebKit/Source:config",
-    "//third_party/WebKit/Source:non_test_config",
-  ]
-
-  deps = [
-    ":wtf",
   ]
 }

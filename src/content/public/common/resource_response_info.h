@@ -18,6 +18,8 @@
 #include "net/base/load_timing_info.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/nqe/network_quality_estimator.h"
+#include "net/ssl/signed_certificate_timestamp_and_status.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
 #include "url/gurl.h"
 
@@ -135,8 +137,30 @@ struct ResourceResponseInfo {
   // TODO(ksakamoto): Move this to net::LoadTimingInfo.
   base::TimeTicks service_worker_ready_time;
 
+  // True when the response is served from the CacheStorage via the
+  // ServiceWorker.
+  bool is_in_cache_storage = false;
+
+  // The cache name of the CacheStorage from where the response is served via
+  // the ServiceWorker. Empty if the response isn't from the CacheStorage.
+  std::string cache_storage_cache_name;
+
   // Whether or not the request was for a LoFi version of the resource.
   bool is_using_lofi;
+
+  // Effective connection type when the resource was fetched. This is populated
+  // only for responses that correspond to main frame requests.
+  net::NetworkQualityEstimator::EffectiveConnectionType
+      effective_connection_type;
+
+  // List of Signed Certificate Timestamps (SCTs) and their corresponding
+  // validation status. Only present if the renderer process set
+  // report_raw_headers to true.
+  net::SignedCertificateTimestampAndStatusList signed_certificate_timestamps;
+
+  // In case this is a CORS response fetched by a ServiceWorker, this is the
+  // set of headers that should be exposed.
+  std::vector<std::string> cors_exposed_header_names;
 };
 
 }  // namespace content

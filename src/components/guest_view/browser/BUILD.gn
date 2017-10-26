@@ -22,7 +22,7 @@ source_set("browser") {
   deps = [
     "//base",
     "//components/guest_view/common",
-    "//components/ui/zoom",
+    "//components/zoom",
     "//content/public/browser",
     "//content/public/common",
     "//ipc",
@@ -30,6 +30,7 @@ source_set("browser") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -53,3 +54,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

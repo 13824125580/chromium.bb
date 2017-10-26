@@ -11,7 +11,7 @@
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/google_api_keys.h"
 #include "net/url_request/url_fetcher.h"
@@ -123,13 +123,13 @@ void AccessTokenFetcher::OnGetUserIdResponse(const std::string& user_id) {
 }
 
 void AccessTokenFetcher::OnGetUserInfoResponse(
-    scoped_ptr<base::DictionaryValue> user_info) {
+    std::unique_ptr<base::DictionaryValue> user_info) {
   // This callback should not be called as we do not request user info.
   NOTREACHED();
 }
 
 void AccessTokenFetcher::OnGetTokenInfoResponse(
-    scoped_ptr<base::DictionaryValue> token_info) {
+    std::unique_ptr<base::DictionaryValue> token_info) {
   VLOG(1) << "AccessTokenFetcher::OnGetTokenInfoResponse() Called";
 
   std::string error_string;

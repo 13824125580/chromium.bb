@@ -35,6 +35,12 @@ bool IsNewProfileManagementPreviewEnabled();
 // Checks whether the new gaia password separated sign in flow is enabled.
 bool UsePasswordSeparatedSigninFlow();
 
+// Whether the new Material Design User Manager should be displayed.
+bool IsMaterialDesignUserManager();
+
+// Whether the material design user menu should be displayed.
+bool IsMaterialDesignUserMenu();
+
 // Called in tests to force enabling different modes.
 void EnableNewProfileManagementForTesting(base::CommandLine* command_line);
 void EnableAccountConsistencyForTesting(base::CommandLine* command_line);

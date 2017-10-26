@@ -14,8 +14,10 @@
 #include <string.h>
 
 #include <limits>
+#include <memory>
 #include <vector>
 
+#include "webrtc/base/timeutils.h"
 #include "webrtc/system_wrappers/include/cpu_info.h"
 
 namespace webrtc {
@@ -64,8 +66,7 @@ VideoProcessorImpl::VideoProcessorImpl(webrtc::VideoEncoder* encoder,
       num_dropped_frames_(0),
       num_spatial_resizes_(0),
       last_encoder_frame_width_(0),
-      last_encoder_frame_height_(0),
-      scaler_() {
+      last_encoder_frame_height_(0) {
   assert(encoder);
   assert(decoder);
   assert(frame_reader);
@@ -197,7 +198,7 @@ bool VideoProcessorImpl::ProcessFrame(int frame_number) {
     // Ensure we have a new statistics data object we can fill:
     FrameStatistic& stat = stats_->NewFrame(frame_number);
 
-    encode_start_ = TickTime::Now();
+    encode_start_ns_ = rtc::TimeNanos();
     // Use the frame number as "timestamp" to identify frames
     source_frame_.set_timestamp(frame_number);
 
@@ -247,11 +248,11 @@ void VideoProcessorImpl::FrameEncoded(
 
   encoded_frame_type_ = encoded_image._frameType;
 
-  TickTime encode_stop = TickTime::Now();
+  int64_t encode_stop_ns = rtc::TimeNanos();
   int frame_number = encoded_image._timeStamp;
   FrameStatistic& stat = stats_->stats_[frame_number];
   stat.encode_time_in_us =
-      GetElapsedTimeMicroseconds(encode_start_, encode_stop);
+      GetElapsedTimeMicroseconds(encode_start_ns_, encode_stop_ns);
   stat.encoding_successful = true;
   stat.encoded_frame_length_in_bytes = encoded_image._length;
   stat.frame_number = encoded_image._timeStamp;
@@ -283,7 +284,7 @@ void VideoProcessorImpl::FrameEncoded(
   // Make a raw copy of the |encoded_image| buffer.
   size_t copied_buffer_size = encoded_image._length +
                               EncodedImage::GetBufferPaddingBytes(codec);
-  rtc::scoped_ptr<uint8_t[]> copied_buffer(new uint8_t[copied_buffer_size]);
+  std::unique_ptr<uint8_t[]> copied_buffer(new uint8_t[copied_buffer_size]);
   memcpy(copied_buffer.get(), encoded_image._buffer, encoded_image._length);
   // The image to feed to the decoder.
   EncodedImage copied_image;
@@ -298,7 +299,7 @@ void VideoProcessorImpl::FrameEncoded(
 
   // Keep track of if frames are lost due to packet loss so we can tell
   // this to the encoder (this is handled by the RTP logic in the full stack)
-  decode_start_ = TickTime::Now();
+  decode_start_ns_ = rtc::TimeNanos();
   // TODO(kjellander): Pass fragmentation header to the decoder when
   // CL 172001 has been submitted and PacketManipulator supports this.
   int32_t decode_result =
@@ -314,12 +315,12 @@ void VideoProcessorImpl::FrameEncoded(
 }
 
 void VideoProcessorImpl::FrameDecoded(const VideoFrame& image) {
-  TickTime decode_stop = TickTime::Now();
+  int64_t decode_stop_ns = rtc::TimeNanos();
   int frame_number = image.timestamp();
   // Report stats
   FrameStatistic& stat = stats_->stats_[frame_number];
   stat.decode_time_in_us =
-      GetElapsedTimeMicroseconds(decode_start_, decode_stop);
+      GetElapsedTimeMicroseconds(decode_start_ns_, decode_stop_ns);
   stat.decoding_successful = true;
 
   // Check for resize action (either down or up):
@@ -333,24 +334,17 @@ void VideoProcessorImpl::FrameDecoded(const VideoFrame& image) {
   // upsample back to original size: needed for PSNR and SSIM computations.
   if (image.width() != config_.codec_settings->width ||
       image.height() != config_.codec_settings->height) {
-    VideoFrame up_image;
-    int ret_val = scaler_.Set(
-        image.width(), image.height(), config_.codec_settings->width,
-        config_.codec_settings->height, kI420, kI420, kScaleBilinear);
-    assert(ret_val >= 0);
-    if (ret_val < 0) {
-      fprintf(stderr, "Failed to set scalar for frame: %d, return code: %d\n",
-              frame_number, ret_val);
-    }
-    ret_val = scaler_.Scale(image, &up_image);
-    assert(ret_val >= 0);
-    if (ret_val < 0) {
-      fprintf(stderr, "Failed to scale frame: %d, return code: %d\n",
-              frame_number, ret_val);
-    }
+    rtc::scoped_refptr<I420Buffer> up_image(
+        I420Buffer::Create(config_.codec_settings->width,
+                           config_.codec_settings->height));
+
+    // Should be the same aspect ratio, no cropping needed.
+    up_image->ScaleFrom(image.video_frame_buffer());
+
     // TODO(mikhal): Extracting the buffer for now - need to update test.
-    size_t length = CalcBufferSize(kI420, up_image.width(), up_image.height());
-    rtc::scoped_ptr<uint8_t[]> image_buffer(new uint8_t[length]);
+    size_t length =
+        CalcBufferSize(kI420, up_image->width(), up_image->height());
+    std::unique_ptr<uint8_t[]> image_buffer(new uint8_t[length]);
     int extracted_length = ExtractBuffer(up_image, length, image_buffer.get());
     assert(extracted_length > 0);
     // Update our copy of the last successful frame:
@@ -364,7 +358,7 @@ void VideoProcessorImpl::FrameDecoded(const VideoFrame& image) {
     // Update our copy of the last successful frame:
     // TODO(mikhal): Add as a member function, so won't be allocated per frame.
     size_t length = CalcBufferSize(kI420, image.width(), image.height());
-    rtc::scoped_ptr<uint8_t[]> image_buffer(new uint8_t[length]);
+    std::unique_ptr<uint8_t[]> image_buffer(new uint8_t[length]);
     int extracted_length = ExtractBuffer(image, length, image_buffer.get());
     assert(extracted_length > 0);
     memcpy(last_successful_frame_buffer_, image_buffer.get(), extracted_length);
@@ -377,10 +371,9 @@ void VideoProcessorImpl::FrameDecoded(const VideoFrame& image) {
   }
 }
 
-int VideoProcessorImpl::GetElapsedTimeMicroseconds(
-    const webrtc::TickTime& start,
-    const webrtc::TickTime& stop) {
-  uint64_t encode_time = (stop - start).Microseconds();
+int VideoProcessorImpl::GetElapsedTimeMicroseconds(int64_t start,
+                                                   int64_t stop) {
+  uint64_t encode_time = (stop - start) / rtc::kNumNanosecsPerMicrosec;
   assert(encode_time <
          static_cast<unsigned int>(std::numeric_limits<int>::max()));
   return static_cast<int>(encode_time);

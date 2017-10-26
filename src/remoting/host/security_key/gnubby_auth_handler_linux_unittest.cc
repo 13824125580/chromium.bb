@@ -57,7 +57,8 @@ class GnubbyAuthHandlerLinuxTest : public testing::Test {
     send_message_callback_ =
         base::Bind(&GnubbyAuthHandlerLinuxTest::SendMessageToClient,
                    base::Unretained(this));
-    auth_handler_ = remoting::GnubbyAuthHandler::Create(send_message_callback_);
+    auth_handler_ =
+        remoting::GnubbyAuthHandler::Create(nullptr, send_message_callback_);
   }
 
   void WaitForSendMessageToClient() {
@@ -114,10 +115,10 @@ class GnubbyAuthHandlerLinuxTest : public testing::Test {
 
  protected:
   base::MessageLoopForIO message_loop_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   // Object under test.
-  scoped_ptr<GnubbyAuthHandler> auth_handler_;
+  std::unique_ptr<GnubbyAuthHandler> auth_handler_;
 
   GnubbyAuthHandler::SendMessageCallback send_message_callback_;
 

@@ -35,8 +35,7 @@
 #include "bindings/core/v8/ScopedPersistent.h"
 #include "core/CoreExport.h"
 #include "core/events/EventListener.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
+#include "platform/heap/SelfKeepAlive.h"
 #include <v8.h>
 
 namespace blink {
@@ -80,11 +79,6 @@ public:
     // even if the user script is not compilable.
     v8::Local<v8::Object> getListenerObject(ExecutionContext* executionContext)
     {
-        // prepareListenerObject can potentially deref this event listener
-        // as it may attempt to compile a function (lazy event listener), get an error
-        // and invoke onerror callback which can execute arbitrary JS code.
-        // Protect this event listener to keep it alive.
-        RefPtrWillBeRawPtr<V8AbstractEventListener> protect(this);
         prepareListenerObject(executionContext);
         return m_listener.newLocal(m_isolate);
     }
@@ -98,7 +92,7 @@ public:
     // value is a weak handle and so not guaranteed to stay alive.
     v8::Persistent<v8::Object>& existingListenerObjectPersistentHandle()
     {
-        return m_listener.getUnsafe();
+        return m_listener.get();
     }
 
     bool hasExistingListenerObject()
@@ -113,6 +107,8 @@ public:
     DOMWrapperWorld& world() const { return *m_world; }
 
     DECLARE_VIRTUAL_TRACE();
+
+    DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
 protected:
     V8AbstractEventListener(bool isAttribute, DOMWrapperWorld&, v8::Isolate*);
@@ -136,8 +132,7 @@ private:
 
     virtual bool shouldPreventDefault(v8::Local<v8::Value> returnValue);
 
-    static void setWeakCallback(const v8::WeakCallbackInfo<V8AbstractEventListener>&);
-    static void secondWeakCallback(const v8::WeakCallbackInfo<V8AbstractEventListener>&);
+    static void wrapperCleared(const v8::WeakCallbackInfo<V8AbstractEventListener>&);
 
     ScopedPersistent<v8::Object> m_listener;
 
@@ -148,11 +143,9 @@ private:
     v8::Isolate* m_isolate;
 
     // nullptr unless this listener belongs to a worker.
-    RawPtrWillBeMember<WorkerGlobalScope> m_workerGlobalScope;
+    Member<WorkerGlobalScope> m_workerGlobalScope;
 
-#if ENABLE(OILPAN)
     SelfKeepAlive<V8AbstractEventListener> m_keepAlive;
-#endif
 };
 
 } // namespace blink

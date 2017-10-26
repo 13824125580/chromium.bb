@@ -49,8 +49,7 @@ function setupPeerConnection(stream) {
       remotePeerConnection.createAnswer(function(description) {
         remotePeerConnection.setLocalDescription(description);
         localPeerConnection.setRemoteDescription(description);
-      }, function(error) {
-      });
+      }, function(error) { failTest(error.toString()); });
     }
 
     localPeerConnection.onicecandidate = function(event) {
@@ -66,10 +65,9 @@ function setupPeerConnection(stream) {
       }
     };
     remotePeerConnection.onaddstream = function(event) {
-      document.getElementById("remoteVideo").src = URL.createObjectURL(
+      document.getElementById('remoteVideo').src = URL.createObjectURL(
           event.stream);
-      remoteStream = event.stream;
-      resolve(remoteStream);
+      resolve(event.stream);
     };
 
     localPeerConnection.addStream(localStream);
@@ -78,10 +76,10 @@ function setupPeerConnection(stream) {
       localPeerConnection.setLocalDescription(description);
       remotePeerConnection.setRemoteDescription(description);
       createAnswer(description);
-    }, function(error) {
-    });
+    }, function(error) { failTest(error.toString()); });
 
-    document.getElementById("video").src = URL.createObjectURL(localStream);
+    document.getElementById('video').src = URL.createObjectURL(
+        localStream);
   });
 }
 
@@ -89,7 +87,7 @@ function createAndStartMediaRecorder(stream, mimeType, slice) {
   return new Promise(function(resolve, reject) {
     document.getElementById('video').src = URL.createObjectURL(stream);
     var recorder = new MediaRecorder(stream, {'mimeType' : mimeType});
-    console.log('Recorder object created.');
+    console.log('Recorder object created, mimeType = ' + mimeType);
     if (slice != undefined) {
       recorder.start(slice);
       console.log('Recorder started with time slice', slice);
@@ -170,13 +168,14 @@ function testStartStopAndRecorderState() {
 // Tests that when MediaRecorder's start() function is called, some data is
 // made available by media recorder via dataavailable events, containing non
 // empty blob data.
-function testStartAndDataAvailable() {
+function testStartAndDataAvailable(codec) {
   var videoSize = 0;
   var emptyBlobs = 0;
   var timeStamps = [];
+  const mimeType = codec ? "video/webm;codecs=" + String(codec) : "";
   navigator.mediaDevices.getUserMedia(DEFAULT_CONSTRAINTS)
       .then(function(stream) {
-        return createAndStartMediaRecorder(stream, DEFAULT_RECORDER_MIME_TYPE);
+        return createAndStartMediaRecorder(stream, mimeType);
       })
       .then(function(recorder) {
         // Save history of Blobs received via dataavailable.
@@ -208,14 +207,14 @@ function testStartAndDataAvailable() {
 
 // Tests that when MediaRecorder's start(timeSlice) is called, some data
 // available events are fired containing non empty blob data.
-function testStartWithTimeSlice() {
+function testStartWithTimeSlice(codec) {
   var videoSize = 0;
   var emptyBlobs = 0;
   var timeStamps = [];
+  const mimeType = codec ? "video/webm;codecs=" + String(codec) : "";
   navigator.mediaDevices.getUserMedia(DEFAULT_CONSTRAINTS)
       .then(function(stream) {
-        return createAndStartMediaRecorder(stream, DEFAULT_RECORDER_MIME_TYPE,
-            DEFAULT_TIME_SLICE);
+        return createAndStartMediaRecorder(stream, mimeType,                                       DEFAULT_TIME_SLICE);
       })
       .then(function(recorder) {
         recorder.ondataavailable = function(event) {
@@ -236,12 +235,8 @@ function testStartWithTimeSlice() {
         assertTrue(emptyBlobs == 0, 'Recording has ' + emptyBlobs +
             ' empty blobs, there should be no such empty blobs.');
       })
-      .catch(function(err) {
-        return failTest(err.toString());
-      })
-      .then(function() {
-        reportTestSuccess();
-      });
+      .catch(function(err) { return failTest(err.toString()); })
+      .then(function() { reportTestSuccess(); });
 }
 
 
@@ -292,12 +287,13 @@ function testIllegalResumeThrowsDOMError() {
 }
 
 // Tests that MediaRecorder sends data blobs when resume() is called.
-function testResumeAndDataAvailable() {
+function testResumeAndDataAvailable(codec) {
   var videoSize = 0;
   var emptyBlobs = 0;
+  const mimeType = codec ? "video/webm;codecs=" + String(codec) : "";
   navigator.mediaDevices.getUserMedia(DEFAULT_CONSTRAINTS)
       .then(function(stream) {
-        return createAndStartMediaRecorder(stream, DEFAULT_RECORDER_MIME_TYPE);
+        return createAndStartMediaRecorder(stream, mimeType);
       })
       .then(function(recorder) {
         recorder.pause();
@@ -342,7 +338,7 @@ function testPauseAndRecorderState() {
         recorder.onpause = function(event) {
           pauseEventReceived = true;
           assertEquals('paused', recorder.state);
-        }
+        };
         recorder.pause();
       })
       .then(function() {
@@ -430,7 +426,7 @@ function testRecordRemotePeerConnection() {
       .then(function(recorder) {
         recorder.ondataavailable = function(event) {
           timeStamps.push(event.timeStamp);
-          videoSize  += event.data.size;
+          videoSize += event.data.size;
         };
         recorder.start();
       })

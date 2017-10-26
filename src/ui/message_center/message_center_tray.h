@@ -50,8 +50,6 @@ class MESSAGE_CENTER_EXPORT MessageCenterTray : public MessageCenterObserver {
   // message center).
   void MarkMessageCenterHidden();
 
-  void ToggleMessageCenterBubble();
-
   // Causes an update if the popup bubble is already shown.
   void ShowPopupBubble();
 
@@ -62,7 +60,7 @@ class MESSAGE_CENTER_EXPORT MessageCenterTray : public MessageCenterObserver {
   void ShowNotifierSettingsBubble();
 
   // Creates a model for the context menu for a notification card.
-  scoped_ptr<ui::MenuModel> CreateNotificationMenuModel(
+  std::unique_ptr<ui::MenuModel> CreateNotificationMenuModel(
       const NotifierId& notifier_id,
       const base::string16& display_source);
 

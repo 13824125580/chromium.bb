@@ -38,6 +38,18 @@ options.ExtensionData;
  */
 options.Profile;
 
+/**
+ * Device policy SystemTimezoneAutomaticDetection values.
+ * @enum {number}
+ * @const
+ */
+options.AutomaticTimezoneDetectionType = {
+  USERS_DECIDE: 0,
+  DISABLED: 1,
+  IP_ONLY: 2,
+  SEND_WIFI_ACCESS_POINTS: 3,
+};
+
 cr.define('options', function() {
   var OptionsPage = options.OptionsPage;
   var Page = cr.ui.pageManager.Page;
@@ -116,6 +128,18 @@ cr.define('options', function() {
      * @private {boolean}
      */
     systemTimezoneIsManaged_: false,
+
+    /**
+     * True if system timezone detection is managed by policy.
+     * @private {boolean}
+     */
+    systemTimezoneAutomaticDetectionIsManaged_: false,
+
+    /**
+     * This is the value of SystemTimezoneAutomaticDetection policy.
+     * @private {number}
+     */
+    systemTimezoneAutomaticDetectionValue_: 0,
 
     /**
      * Cached bluetooth adapter state.
@@ -327,6 +351,14 @@ cr.define('options', function() {
           chrome.send('coreOptionsUserMetricsAction',
                       ['Options_ShowTouchpadSettings']);
         };
+        if (loadTimeData.getBoolean('enableStorageManager')) {
+          $('storage-manager-button').hidden = false;
+          $('storage-manager-button').onclick = function(evt) {
+            PageManager.showPageByName('storage');
+            chrome.send('coreOptionsUserMetricsAction',
+                        ['Options_ShowStorageManager']);
+          };
+        }
       }
 
       // Search section.
@@ -728,6 +760,8 @@ cr.define('options', function() {
         Preferences.getInstance().addEventListener(
             $('accessibility-autoclick-check').getAttribute('pref'),
             updateDelayDropdown);
+        $('experimental-accessibility-features').hidden =
+            !loadTimeData.getBoolean('enableExperimentalAccessibilityFeatures');
       }
 
       // Display management section (CrOS only).
@@ -795,6 +829,23 @@ cr.define('options', function() {
         if (button)
           chrome.send('disableExtension', [button.dataset.extensionId]);
       });
+
+      // Setup ARC section.
+      if (cr.isChromeOS) {
+        $('android-apps-settings-label').innerHTML =
+            loadTimeData.getString('androidAppsSettingsLabel');
+        Preferences.getInstance().addEventListener('arc.enabled', function(e) {
+          var settings = $('android-apps-settings');
+          // Only change settings visibility on committed settings changes.
+          if (!settings || e.value.uncommitted)
+            return;
+          settings.hidden = !e.value.value;
+        });
+
+        $('android-apps-settings-link').addEventListener('click', function(e) {
+            chrome.send('showAndroidAppsSettings');
+        });
+      }
     },
 
     /** @override */
@@ -1679,17 +1730,37 @@ cr.define('options', function() {
      * @private
      */
     updateTimezoneSectionState_: function() {
+      var self = this;
+      $('resolve-timezone-by-geolocation')
+          .onclick = function(event) {
+        self.resolveTimezoneByGeolocation_ = event.currentTarget.checked;
+      };
       if (this.systemTimezoneIsManaged_) {
-        $('resolve-timezone-by-geolocation-selection').disabled = true;
-        $('resolve-timezone-by-geolocation').onclick = function(event) {};
+        $('resolve-timezone-by-geolocation').disabled = true;
+        $('resolve-timezone-by-geolocation').checked = false;
+      } else if (this.systemTimezoneAutomaticDetectionIsManaged_) {
+        if (this.systemTimezoneAutomaticDetectionValue_ ==
+            options.AutomaticTimezoneDetectionType.USERS_DECIDE) {
+          $('resolve-timezone-by-geolocation').disabled = false;
+          $('resolve-timezone-by-geolocation')
+              .checked = this.resolveTimezoneByGeolocation_;
+          $('timezone-value-select')
+              .disabled = this.resolveTimezoneByGeolocation_;
+        } else {
+          $('resolve-timezone-by-geolocation').disabled = true;
+          $('resolve-timezone-by-geolocation')
+              .checked =
+              (this.systemTimezoneAutomaticDetectionValue_ !=
+               options.AutomaticTimezoneDetectionType.DISABLED);
+          $('timezone-value-select').disabled = true;
+        }
       } else {
         this.enableElementIfPossible_(
-            getRequiredElement('resolve-timezone-by-geolocation-selection'));
-        $('resolve-timezone-by-geolocation').onclick = function(event) {
-          $('timezone-value-select').disabled = event.currentTarget.checked;
-        };
+            getRequiredElement('resolve-timezone-by-geolocation'));
         $('timezone-value-select').disabled =
             this.resolveTimezoneByGeolocation_;
+        $('resolve-timezone-by-geolocation')
+            .checked = this.resolveTimezoneByGeolocation_;
       }
     },
 
@@ -1701,6 +1772,20 @@ cr.define('options', function() {
      */
     setSystemTimezoneManaged_: function(managed) {
       this.systemTimezoneIsManaged_ = managed;
+      this.updateTimezoneSectionState_();
+    },
+
+    /**
+     * This is called from chromium code when system timezone detection
+     * "managed" state is changed. Enables or disables dependent settings.
+     * @param {boolean} managed Is true when system timezone autodetection is
+     *     managed by enterprise policy. False otherwize.
+     * @param {options.AutomaticTimezoneDetectionType} value Current value of
+     *     SystemTimezoneAutomaticDetection device policy.
+     */
+    setSystemTimezoneAutomaticDetectionManaged_: function(managed, value) {
+      this.systemTimezoneAutomaticDetectionIsManaged_ = managed;
+      this.systemTimezoneAutomaticDetectionValue_ = value;
       this.updateTimezoneSectionState_();
     },
 
@@ -1735,17 +1820,17 @@ cr.define('options', function() {
 
     /**
      * Enables or disables the Chrome OS display settings button and overlay.
-     * @param {boolean} enabled
-     * @param {boolean} showUnifiedDesktop
-     * @param {boolean} multiDisplayLayout
+     * @param {boolean} uiEnabled
+     * @param {boolean} unifiedEnabled
+     * @param {boolean} mirroredEnabled
      * @private
      */
     enableDisplaySettings_: function(
-        enabled, showUnifiedDesktop, multiDisplayLayout) {
+        uiEnabled, unifiedEnabled, mirroredEnabled) {
       if (cr.isChromeOS) {
-        $('display-options').disabled = !enabled;
+        $('display-options').disabled = !uiEnabled;
         DisplayOptions.getInstance().setEnabled(
-            enabled, showUnifiedDesktop, multiDisplayLayout);
+            uiEnabled, unifiedEnabled, mirroredEnabled);
       }
     },
 
@@ -1802,7 +1887,8 @@ cr.define('options', function() {
      */
     setNetworkPredictionValue_: function(pref) {
       var checkbox = $('networkPredictionOptions');
-      checkbox.disabled = pref.disabled;
+      checkbox.disabled = pref.disabled ||
+                          loadTimeData.getBoolean('profileIsGuest');
       checkbox.checked = (pref.value != NetworkPredictionOptions.NEVER);
     },
 
@@ -1819,7 +1905,7 @@ cr.define('options', function() {
      * @private
      */
     setFontSize_: function(pref) {
-      var selectCtl = $('defaultFontSize');
+      var selectCtl = /** @type {HTMLSelectElement} */($('defaultFontSize'));
       selectCtl.disabled = pref.disabled;
       // Create a synthetic pref change event decorated as
       // CoreOptionsHandler::CreateValueForPref() does.
@@ -2066,7 +2152,10 @@ cr.define('options', function() {
      * @private
      */
     onBluetoothAdapterStateChanged_: function(state) {
-      if (!state || !state.available) {
+      var disallowBluetooth = !loadTimeData.getBoolean('allowBluetooth');
+      // If allowBluetooth is false, state.available will always be false, so
+      // assume Bluetooth is available but disabled by policy.
+      if (!state || (!state.available && !disallowBluetooth)) {
         this.bluetoothAdapterState_ = null;
         $('bluetooth-devices').hidden = true;
         return;
@@ -2074,6 +2163,19 @@ cr.define('options', function() {
       $('bluetooth-devices').hidden = false;
       this.bluetoothAdapterState_ = state;
       this.setBluetoothState_(state.powered);
+
+      var enableBluetoothEl = $('enable-bluetooth');
+      if (disallowBluetooth) {
+        enableBluetoothEl.setAttribute('pref', 'cros.device.allow_bluetooth');
+        enableBluetoothEl.setAttribute('controlled-by', 'policy');
+        enableBluetoothEl.disabled = true;
+        $('bluetooth-controlled-setting-indicator').hidden = false;
+        return;
+      }
+      enableBluetoothEl.removeAttribute('pref');
+      enableBluetoothEl.removeAttribute('controlled-by');
+      enableBluetoothEl.disabled = false;
+      $('bluetooth-controlled-setting-indicator').hidden = true;
 
       // Flush the device lists.
       $('bluetooth-paired-devices-list').clear();
@@ -2252,6 +2354,7 @@ cr.define('options', function() {
     'setProfilesInfo',
     'setSpokenFeedbackCheckboxState',
     'setSystemTimezoneManaged',
+    'setSystemTimezoneAutomaticDetectionManaged',
     'setThemesResetButtonEnabled',
     'setVirtualKeyboardCheckboxState',
     'setupPageZoomSelector',
@@ -2327,10 +2430,24 @@ cr.define('options', function() {
      * Shows Android Apps settings when they are available.
      * (Chrome OS only).
      */
-    BrowserOptions.showAndroidAppsSection = function() {
-      var section = $('andorid-apps-section');
-      if (section)
-        section.hidden = false;
+    BrowserOptions.showAndroidAppsSection = function(isArcEnabled) {
+      var section = $('android-apps-section');
+      if (!section)
+        return;
+
+      section.hidden = false;
+    };
+
+    /**
+     * Shows/hides Android Settings app section.
+     * (Chrome OS only).
+     */
+    BrowserOptions.setAndroidAppsSettingsVisibility = function(isVisible) {
+      var settings = $('android-apps-settings');
+      if (!settings)
+        return;
+
+      settings.hidden = !isVisible;
     };
   }
 

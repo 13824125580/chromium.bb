@@ -30,7 +30,6 @@
 #include "core/editing/iterators/TextIterator.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/Settings.h"
-#include "core/html/parser/TextResourceDecoder.h"
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutTextCombine.h"
 #include "core/layout/LayoutView.h"
@@ -39,15 +38,13 @@
 #include "core/layout/line/EllipsisBox.h"
 #include "core/layout/line/GlyphOverflow.h"
 #include "core/layout/line/InlineTextBox.h"
-#include "core/paint/PaintLayer.h"
-#include "platform/LayoutTestSupport.h"
-#include "platform/fonts/Character.h"
-#include "platform/fonts/FontCache.h"
+#include "platform/fonts/CharacterRange.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/text/BidiResolver.h"
+#include "platform/text/Character.h"
+#include "platform/text/Hyphenation.h"
 #include "platform/text/TextBreakIterator.h"
 #include "platform/text/TextRunIterator.h"
-#include "wtf/text/CharacterNames.h"
 #include "wtf/text/StringBuffer.h"
 #include "wtf/text/StringBuilder.h"
 
@@ -201,10 +198,8 @@ void LayoutText::styleDidChange(StyleDifference diff, const ComputedStyle* oldSt
         transformText();
 
     // This is an optimization that kicks off font load before layout.
-    // In order to make it fast, we only check if the first character of the
-    // text is included in the unicode ranges of the fonts.
     if (!text().containsOnlyWhitespace())
-        newStyle.font().willUseFontData(text().characterStartingAt(0));
+        newStyle.font().willUseFontData(text());
 }
 
 void LayoutText::removeAndDestroyTextBoxes()
@@ -347,7 +342,7 @@ static FloatRect localQuadForTextBox(InlineTextBox* box, unsigned start, unsigne
     return FloatRect();
 }
 
-void LayoutText::absoluteRectsForRange(Vector<IntRect>& rects, unsigned start, unsigned end, bool useSelectionHeight, bool* wasFixed)
+void LayoutText::absoluteRectsForRange(Vector<IntRect>& rects, unsigned start, unsigned end, bool useSelectionHeight)
 {
     // Work around signed/unsigned issues. This function takes unsigneds, and is often passed UINT_MAX
     // to mean "all the way to the end". InlineTextBox coordinates are unsigneds, so changing this
@@ -373,12 +368,12 @@ void LayoutText::absoluteRectsForRange(Vector<IntRect>& rects, unsigned start, u
                     r.setX(selectionRect.x().toFloat());
                 }
             }
-            rects.append(localToAbsoluteQuad(r, 0, wasFixed).enclosingBoundingBox());
+            rects.append(localToAbsoluteQuad(r).enclosingBoundingBox());
         } else {
             // FIXME: This code is wrong. It's converting local to absolute twice. http://webkit.org/b/65722
             FloatRect rect = localQuadForTextBox(box, start, end, useSelectionHeight);
             if (!rect.isZero())
-                rects.append(localToAbsoluteQuad(rect, 0, wasFixed).enclosingBoundingBox());
+                rects.append(localToAbsoluteQuad(rect).enclosingBoundingBox());
         }
     }
 }
@@ -407,7 +402,7 @@ static IntRect ellipsisRectForBox(InlineTextBox* box, unsigned startPos, unsigne
     return IntRect();
 }
 
-void LayoutText::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed, ClippingOption option) const
+void LayoutText::absoluteQuads(Vector<FloatQuad>& quads, ClippingOption option) const
 {
     for (InlineTextBox* box = firstTextBox(); box; box = box->nextTextBox()) {
         FloatRect boundaries(box->calculateBoundaries());
@@ -421,16 +416,16 @@ void LayoutText::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed, Clippin
             else
                 boundaries.setHeight(ellipsisRect.maxY() - boundaries.y());
         }
-        quads.append(localToAbsoluteQuad(boundaries, 0, wasFixed));
+        quads.append(localToAbsoluteQuad(boundaries));
     }
 }
 
-void LayoutText::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
+void LayoutText::absoluteQuads(Vector<FloatQuad>& quads) const
 {
-    absoluteQuads(quads, wasFixed, NoClipping);
+    absoluteQuads(quads, NoClipping);
 }
 
-void LayoutText::absoluteQuadsForRange(Vector<FloatQuad>& quads, unsigned start, unsigned end, bool useSelectionHeight, bool* wasFixed)
+void LayoutText::absoluteQuadsForRange(Vector<FloatQuad>& quads, unsigned start, unsigned end, bool useSelectionHeight)
 {
     // Work around signed/unsigned issues. This function takes unsigneds, and is often passed UINT_MAX
     // to mean "all the way to the end". InlineTextBox coordinates are unsigneds, so changing this
@@ -464,11 +459,11 @@ void LayoutText::absoluteQuadsForRange(Vector<FloatQuad>& quads, unsigned start,
                     r.setX(selectionRect.x());
                 }
             }
-            quads.append(localToAbsoluteQuad(FloatRect(r), 0, wasFixed));
+            quads.append(localToAbsoluteQuad(FloatRect(r)));
         } else {
             FloatRect rect = localQuadForTextBox(box, start, end, useSelectionHeight);
             if (!rect.isZero())
-                quads.append(localToAbsoluteQuad(rect, 0, wasFixed));
+                quads.append(localToAbsoluteQuad(rect));
         }
     }
 }
@@ -727,7 +722,7 @@ ALWAYS_INLINE float LayoutText::widthFromFont(const Font& f, int start, int len,
     TextRun run = constructTextRun(f, this, start, len, styleRef(), textDirection);
     run.setCharactersLength(textLength() - start);
     ASSERT(run.charactersLength() >= run.length());
-    run.setTabSize(!style()->collapseWhiteSpace(), style()->tabSize());
+    run.setTabSize(!style()->collapseWhiteSpace(), style()->getTabSize());
     run.setXPos(leadWidth + textWidthSoFar);
 
     FloatRect newGlyphBounds;
@@ -794,7 +789,7 @@ void LayoutText::trimmedPrefWidths(LayoutUnit leadWidthLayoutUnit,
             float spaceWidth = font.width(run);
             floatMaxWidth -= spaceWidth;
         } else {
-            floatMaxWidth += font.fontDescription().wordSpacing();
+            floatMaxWidth += font.getFontDescription().wordSpacing();
         }
     }
 
@@ -863,6 +858,37 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth)
     computePreferredLogicalWidths(leadWidth, fallbackFonts, glyphBounds);
 }
 
+static float maxWordFragmentWidth(LayoutText* layoutText,
+    const ComputedStyle& style, const Font& font, TextDirection textDirection,
+    Hyphenation& hyphenation, unsigned wordOffset, unsigned wordLength,
+    int& suffixStart)
+{
+    suffixStart = 0;
+    if (wordLength <= Hyphenation::minimumSuffixLength)
+        return 0;
+
+    Vector<size_t, 8> hyphenLocations = hyphenation.hyphenLocations(
+        StringView(layoutText->text(), wordOffset, wordLength));
+    if (hyphenLocations.isEmpty())
+        return 0;
+
+    float minimumFragmentWidthToConsider = Hyphenation::minimumPrefixWidth(font);
+    float maxFragmentWidth = 0;
+    TextRun run = constructTextRun(font, layoutText, wordOffset, wordLength, style, textDirection);
+    size_t end = wordLength;
+    for (size_t start : hyphenLocations) {
+        float fragmentWidth = font.getCharacterRange(run, start, end).width();
+
+        if (fragmentWidth <= minimumFragmentWidthToConsider)
+            continue;
+
+        maxFragmentWidth = std::max(maxFragmentWidth, fragmentWidth);
+        end = start;
+    }
+    suffixStart = hyphenLocations.first();
+    return maxFragmentWidth + layoutText->hyphenWidth(font, textDirection);
+}
+
 void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const SimpleFontData*>& fallbackFonts, FloatRect& glyphBounds)
 {
     ASSERT(m_hasTab || preferredLogicalWidthsDirty() || !m_knownToHaveNoOverflowAndNoFallbackFonts);
@@ -911,6 +937,13 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
     } else {
         lineBreakType = LineBreakType::Normal;
     }
+
+    Hyphenation* hyphenation = styleToUse.getHyphens() == HyphensAuto
+        ? Hyphenation::get(f.getFontDescription().locale()) : nullptr;
+    bool disableSoftHyphen = styleToUse.getHyphens() == HyphensNone;
+    float maxWordWidth = 0;
+    if (!hyphenation)
+        maxWordWidth = std::numeric_limits<float>::infinity();
 
     BidiResolver<TextRunIterator, BidiCharacterRun> bidiResolver;
     BidiCharacterRun* run;
@@ -985,7 +1018,7 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
             lastWordBoundary++;
             continue;
         }
-        if (c == softHyphenCharacter) {
+        if (c == softHyphenCharacter && !disableSoftHyphen) {
             currMaxWidth += widthFromFont(f, lastWordBoundary, i - lastWordBoundary, leadWidth, currMaxWidth, textDirection, &fallbackFonts, &glyphBounds);
             lastWordBoundary = i + 1;
             continue;
@@ -994,7 +1027,7 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
         bool hasBreak = breakIterator.isBreakable(i, nextBreakable, lineBreakType);
         bool betweenWords = true;
         int j = i;
-        while (c != newlineCharacter && c != spaceCharacter && c != tabulationCharacter && (c != softHyphenCharacter)) {
+        while (c != newlineCharacter && c != spaceCharacter && c != tabulationCharacter && (c != softHyphenCharacter || disableSoftHyphen)) {
             j++;
             if (j == len)
                 break;
@@ -1017,7 +1050,7 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
             // Non-zero only when kerning is enabled, in which case we measure words with their trailing
             // space, then subtract its width.
             float wordTrailingSpaceWidth = 0;
-            if (isSpace && (f.fontDescription().typesettingFeatures() & Kerning)) {
+            if (isSpace && (f.getFontDescription().getTypesettingFeatures() & Kerning)) {
                 ASSERT(textDirection >=0 && textDirection <= 1);
                 if (!cachedWordTrailingSpaceWidth[textDirection])
                     cachedWordTrailingSpaceWidth[textDirection] = f.width(constructTextRun(f, &spaceCharacter, 1, styleToUse, textDirection)) + wordSpacing;
@@ -1029,8 +1062,26 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
                 w = widthFromFont(f, i, wordLen + 1, leadWidth, currMaxWidth, textDirection, &fallbackFonts, &glyphBounds) - wordTrailingSpaceWidth;
             } else {
                 w = widthFromFont(f, i, wordLen, leadWidth, currMaxWidth, textDirection, &fallbackFonts, &glyphBounds);
-                if (c == softHyphenCharacter)
+                if (c == softHyphenCharacter && !disableSoftHyphen)
                     currMinWidth += hyphenWidth(f, textDirection);
+            }
+
+            if (w > maxWordWidth) {
+                DCHECK(hyphenation);
+                int suffixStart;
+                float maxFragmentWidth = maxWordFragmentWidth(this, styleToUse, f, textDirection, *hyphenation, i, wordLen, suffixStart);
+                if (suffixStart) {
+                    float suffixWidth;
+                    if (wordTrailingSpaceWidth && isSpace)
+                        suffixWidth = widthFromFont(f, i + suffixStart, wordLen - suffixStart + 1, leadWidth, currMaxWidth, textDirection, &fallbackFonts, &glyphBounds) - wordTrailingSpaceWidth;
+                    else
+                        suffixWidth = widthFromFont(f, i + suffixStart, wordLen - suffixStart, leadWidth, currMaxWidth, textDirection, &fallbackFonts, &glyphBounds);
+                    maxFragmentWidth = std::max(maxFragmentWidth, suffixWidth);
+                    currMinWidth += maxFragmentWidth - w;
+                    maxWordWidth = std::max(maxWordWidth, maxFragmentWidth);
+                } else {
+                    maxWordWidth = w;
+                }
             }
 
             currMinWidth += w;
@@ -1092,7 +1143,7 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
                 TextRun run = constructTextRun(f, this, i, 1, styleToUse, textDirection);
                 run.setCharactersLength(len - i);
                 ASSERT(run.charactersLength() >= run.length());
-                run.setTabSize(!style()->collapseWhiteSpace(), style()->tabSize());
+                run.setTabSize(!style()->collapseWhiteSpace(), style()->getTabSize());
                 run.setXPos(leadWidth + currMaxWidth);
 
                 currMaxWidth += f.width(run);
@@ -1121,7 +1172,7 @@ void LayoutText::computePreferredLogicalWidths(float leadWidth, HashSet<const Si
     }
 
     GlyphOverflow glyphOverflow;
-    glyphOverflow.setFromBounds(glyphBounds, f.fontMetrics().floatAscent(), f.fontMetrics().floatDescent(), m_maxWidth);
+    glyphOverflow.setFromBounds(glyphBounds, f.getFontMetrics().floatAscent(), f.getFontMetrics().floatDescent(), m_maxWidth);
     // We shouldn't change our mind once we "know".
     ASSERT(!m_knownToHaveNoOverflowAndNoFallbackFonts || (fallbackFonts.isEmpty() && glyphOverflow.isApproximatelyZero()));
     m_knownToHaveNoOverflowAndNoFallbackFonts = fallbackFonts.isEmpty() && glyphOverflow.isApproximatelyZero();
@@ -1304,7 +1355,7 @@ void LayoutText::setTextWithOffset(PassRefPtr<StringImpl> text, unsigned offset,
         dirtiedLines = true;
     }
     for (RootInlineBox* curr = firstRootBox; curr && curr != lastRootBox; curr = curr->nextRootBox()) {
-        if (curr->lineBreakObj() == this && curr->lineBreakPos() > end)
+        if (curr->lineBreakObj().isEqual(this) && curr->lineBreakPos() > end)
             curr->setLineBreakPos(clampTo<int>(curr->lineBreakPos() + delta));
     }
 
@@ -1467,7 +1518,7 @@ void LayoutText::dirtyLineBoxes()
 
 InlineTextBox* LayoutText::createTextBox(int start, unsigned short length)
 {
-    return new InlineTextBox(*this, start, length);
+    return new InlineTextBox(LineLayoutItem(this), start, length);
 }
 
 InlineTextBox* LayoutText::createInlineTextBox(int start, unsigned short length)
@@ -1531,7 +1582,7 @@ float LayoutText::width(unsigned from, unsigned len, const Font& f, LayoutUnit x
                 if (preferredLogicalWidthsDirty() || !m_knownToHaveNoOverflowAndNoFallbackFonts)
                     const_cast<LayoutText*>(this)->computePreferredLogicalWidths(0, *fallbackFonts, *glyphBounds);
                 else
-                    *glyphBounds = FloatRect(0, -f.fontMetrics().floatAscent(), m_maxWidth, f.fontMetrics().floatHeight());
+                    *glyphBounds = FloatRect(0, -f.getFontMetrics().floatAscent(), m_maxWidth, f.getFontMetrics().floatHeight());
                 w = m_maxWidth;
             } else {
                 w = maxLogicalWidth();
@@ -1544,7 +1595,7 @@ float LayoutText::width(unsigned from, unsigned len, const Font& f, LayoutUnit x
         run.setCharactersLength(textLength() - from);
         ASSERT(run.charactersLength() >= run.length());
 
-        run.setTabSize(!style()->collapseWhiteSpace(), style()->tabSize());
+        run.setTabSize(!style()->collapseWhiteSpace(), style()->getTabSize());
         run.setXPos(xPos.toFloat());
         w = f.width(run, fallbackFonts, glyphBounds);
     }
@@ -1552,9 +1603,9 @@ float LayoutText::width(unsigned from, unsigned len, const Font& f, LayoutUnit x
     return w;
 }
 
-IntRect LayoutText::linesBoundingBox() const
+LayoutRect LayoutText::linesBoundingBox() const
 {
-    IntRect result;
+    LayoutRect result;
 
     ASSERT(!firstTextBox() == !lastTextBox()); // Either both are null or both exist.
     if (firstTextBox() && lastTextBox()) {
@@ -1574,7 +1625,7 @@ IntRect LayoutText::linesBoundingBox() const
         float y = isHorizontal ? firstTextBox()->y().toFloat() : logicalLeftSide;
         float width = isHorizontal ? logicalRightSide - logicalLeftSide : lastTextBox()->logicalBottom() - x;
         float height = isHorizontal ? lastTextBox()->logicalBottom() - y : logicalRightSide - logicalLeftSide;
-        result = enclosingIntRect(FloatRect(x, y, width, height));
+        result = enclosingLayoutRect(FloatRect(x, y, width, height));
     }
 
     return result;
@@ -1604,17 +1655,15 @@ LayoutRect LayoutText::visualOverflowRect() const
     return rect;
 }
 
-LayoutRect LayoutText::clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* paintInvalidationState) const
+LayoutRect LayoutText::localOverflowRectForPaintInvalidation() const
 {
     if (style()->visibility() != VISIBLE)
         return LayoutRect();
 
-    LayoutRect paintInvalidationRect(visualOverflowRect());
-    mapToVisibleRectInAncestorSpace(paintInvalidationContainer, paintInvalidationRect, paintInvalidationState);
-    return paintInvalidationRect;
+    return unionRect(visualOverflowRect(), localSelectionRect());
 }
 
-LayoutRect LayoutText::selectionRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer) const
+LayoutRect LayoutText::localSelectionRect() const
 {
     ASSERT(!needsLayout());
 
@@ -1649,10 +1698,6 @@ LayoutRect LayoutText::selectionRectForPaintInvalidation(const LayoutBoxModelObj
         rect.unite(LayoutRect(ellipsisRectForBox(box, startPos, endPos)));
     }
 
-    mapToVisibleRectInAncestorSpace(paintInvalidationContainer, rect, 0);
-    // FIXME: groupedMapping() leaks the squashing abstraction.
-    if (paintInvalidationContainer->layer()->groupedMapping())
-        PaintLayer::mapRectToPaintBackingCoordinates(paintInvalidationContainer, rect);
     return rect;
 }
 
@@ -1685,52 +1730,6 @@ unsigned LayoutText::resolvedTextLength() const
     for (InlineTextBox* box = firstTextBox(); box; box = box->nextTextBox())
         len += box->len();
     return len;
-}
-
-int LayoutText::previousOffset(int current) const
-{
-    if (m_text.is8Bit())
-        return current - 1;
-
-    StringImpl* textImpl = m_text.impl();
-    TextBreakIterator* iterator = cursorMovementIterator(textImpl->characters16(), textImpl->length());
-    if (!iterator)
-        return current - 1;
-
-    long result = iterator->preceding(current);
-    if (result == TextBreakDone)
-        result = current - 1;
-
-
-    return result;
-}
-
-int LayoutText::previousOffsetForBackwardDeletion(int current) const
-{
-    // Delete by one code point. Ideally we should delete grapheme where that
-    // makes sense. https://crbug.com/587241
-    if (U16_IS_TRAIL(m_text[--current]))
-        --current;
-    if (current < 0)
-        current = 0;
-    return current;
-}
-
-int LayoutText::nextOffset(int current) const
-{
-    if (m_text.is8Bit())
-        return current + 1;
-
-    StringImpl* textImpl = m_text.impl();
-    TextBreakIterator* iterator = cursorMovementIterator(textImpl->characters16(), textImpl->length());
-    if (!iterator)
-        return current + 1;
-
-    long result = iterator->following(current);
-    if (result == TextBreakDone)
-        result = current + 1;
-
-    return result;
 }
 
 bool LayoutText::computeCanUseSimpleFontCodePath() const
@@ -1775,15 +1774,15 @@ PassRefPtr<AbstractInlineTextBox> LayoutText::firstAbstractInlineTextBox()
     return AbstractInlineTextBox::getOrCreate(LineLayoutText(this), m_firstTextBox);
 }
 
-void LayoutText::invalidateDisplayItemClients(const LayoutBoxModelObject& paintInvalidationContainer, PaintInvalidationReason invalidationReason) const
+void LayoutText::invalidateDisplayItemClients(PaintInvalidationReason invalidationReason) const
 {
-    LayoutObject::invalidateDisplayItemClients(paintInvalidationContainer, invalidationReason);
+    LayoutObject::invalidateDisplayItemClients(invalidationReason);
 
     for (InlineTextBox* box = firstTextBox(); box; box = box->nextTextBox()) {
-        paintInvalidationContainer.invalidateDisplayItemClientOnBacking(*box, invalidationReason);
+        invalidateDisplayItemClient(*box, invalidationReason);
         if (box->truncation() != cNoTruncation) {
             if (EllipsisBox* ellipsisBox = box->root().ellipsisBox())
-                paintInvalidationContainer.invalidateDisplayItemClientOnBacking(*ellipsisBox, invalidationReason);
+                invalidateDisplayItemClient(*ellipsisBox, invalidationReason);
         }
     }
 }

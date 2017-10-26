@@ -34,8 +34,8 @@ class BlockCommand : public CompositeEditCommand {
 protected:
     explicit BlockCommand(Document&);
 
-    virtual void formatBlockExtent(PassRefPtrWillBeRawPtr<Node> prpFirstNode, PassRefPtrWillBeRawPtr<Node> prpLastNode, Node* stayWithin, EditingState *editingState);
-    virtual void formatBlockSiblings(PassRefPtrWillBeRawPtr<Node> prpFirstSibling, PassRefPtrWillBeRawPtr<Node> prpLastSibling, Node* stayWithin, Node* lastNode, EditingState *editingState);
+    virtual void formatBlockExtent(Node* prpFirstNode, Node* prpLastNode, Node* stayWithin, EditingState *editingState);
+    virtual void formatBlockSiblings(Node* prpFirstSibling, Node* prpLastSibling, Node* stayWithin, Node* lastNode, EditingState *editingState);
 
 private:
     void doApply(EditingState *editingState) override;

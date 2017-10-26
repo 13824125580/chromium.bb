@@ -33,6 +33,7 @@ namespace content {
 class BrowserAccessibilityManager;
 class RenderWidgetHostImpl;
 class RenderWidgetHostInputEventRouter;
+class TextInputManager;
 struct NativeWebKeyboardEvent;
 
 //
@@ -80,11 +81,10 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // the event itself.
   virtual bool HandleWheelEvent(const blink::WebMouseWheelEvent& event);
 
-  // Notification the user has performed a direct interaction (mouse down, mouse
-  // wheel, raw key down, gesture tap, or browser-initiated navigation) while
+  // Notification the user has performed a direct interaction (mouse down,
+  // scroll, raw key down, gesture tap, or browser-initiated navigation) while
   // focus was on the page. Informs the delegate that a user is interacting with
-  // a site. Only the first mouse wheel event during a scroll will trigger this
-  // method.
+  // a site.
   virtual void OnUserInteraction(RenderWidgetHostImpl* render_widget_host,
                                  const blink::WebInputEvent::Type type) {}
 
@@ -146,9 +146,24 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   virtual RenderWidgetHostImpl* GetFocusedRenderWidgetHost(
       RenderWidgetHostImpl* receiving_widget);
 
+  // Used in histograms to differentiate between the different types of
+  // renderer hang reported by RenderWidgetHostDelegate::RendererUnresponsive.
+  // Only add values at the end, do not delete values.
+  enum RendererUnresponsiveType {
+    RENDERER_UNRESPONSIVE_UNKNOWN = 0,
+    RENDERER_UNRESPONSIVE_IN_FLIGHT_EVENTS = 1,
+    RENDERER_UNRESPONSIVE_DIALOG_CLOSED = 2,
+    RENDERER_UNRESPONSIVE_DIALOG_SUPPRESSED = 3,
+    RENDERER_UNRESPONSIVE_BEFORE_UNLOAD = 4,
+    RENDERER_UNRESPONSIVE_UNLOAD = 5,
+    RENDERER_UNRESPONSIVE_CLOSE_PAGE = 6,
+    RENDERER_UNRESPONSIVE_MAX = RENDERER_UNRESPONSIVE_CLOSE_PAGE,
+  };
+
   // Notification that the renderer has become unresponsive. The
   // delegate can use this notification to show a warning to the user.
-  virtual void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host) {}
+  virtual void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host,
+                                    RendererUnresponsiveType type) {}
 
   // Notification that a previously unresponsive renderer has become
   // responsive again. The delegate can use this notification to end the
@@ -157,10 +172,12 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
 
   // Requests to lock the mouse. Once the request is approved or rejected,
   // GotResponseToLockMouseRequest() will be called on the requesting render
-  // widget host.
+  // widget host. |privileged| means that the request is always granted, used
+  // for Pepper Flash.
   virtual void RequestToLockMouse(RenderWidgetHostImpl* render_widget_host,
                                   bool user_gesture,
-                                  bool last_unlocked_by_target) {}
+                                  bool last_unlocked_by_target,
+                                  bool privileged) {}
 
   // Return the rect where to display the resize corner, if any, otherwise
   // an empty rect.
@@ -168,8 +185,7 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
       RenderWidgetHostImpl* render_widget_host) const;
 
   // Returns whether the associated tab is in fullscreen mode.
-  virtual bool IsFullscreenForCurrentTab(
-      RenderWidgetHostImpl* render_widget_host) const;
+  virtual bool IsFullscreenForCurrentTab() const;
 
   // Returns the display mode for the view.
   virtual blink::WebDisplayMode GetDisplayMode(
@@ -181,9 +197,8 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // Notification that the widget has lost the mouse lock.
   virtual void LostMouseLock(RenderWidgetHostImpl* render_widget_host) {}
 
-#if defined(OS_WIN)
-  virtual gfx::NativeViewAccessible GetParentNativeViewAccessible();
-#endif
+  // Returns true if |render_widget_host| holds the mouse lock.
+  virtual bool HasMouseLock(RenderWidgetHostImpl* render_widget_host);
 
   // Called when the widget has sent a compositor proto.  This is used in Btlimp
   // mode with the RemoteChannel compositor.
@@ -195,6 +210,17 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // will eventually notify all the RenderWidgetHostViews belonging to that
   // WebContents.
   virtual void OnRenderFrameProxyVisibilityChanged(bool visible) {}
+
+  // Update the renderer's cache of the screen rect of the view and window.
+  virtual void SendScreenRects() {}
+
+  // Notifies that the main frame in the renderer has performed the first paint
+  // after a navigation.
+  virtual void OnFirstPaintAfterLoad(RenderWidgetHostImpl* render_widget_host) {
+  }
+
+  // Returns the TextInputManager tracking text input state.
+  virtual TextInputManager* GetTextInputManager();
 
  protected:
   virtual ~RenderWidgetHostDelegate() {}

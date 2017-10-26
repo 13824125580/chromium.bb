@@ -33,8 +33,6 @@ void ImagePainter::paint(const PaintInfo& paintInfo, const LayoutPoint& paintOff
 
 void ImagePainter::paintAreaElementFocusRing(const PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    // TODO(wangxianzhu): In other places, we just paint focus ring if outline style is auto.
-    // We should also do that here to keep consistency.
     Document& document = m_layoutImage.document();
 
     if (paintInfo.isPrinting() || !document.frame()->selection().isFocusedAndActive())
@@ -51,26 +49,31 @@ void ImagePainter::paintAreaElementFocusRing(const PaintInfo& paintInfo, const L
     // Even if the theme handles focus ring drawing for entire elements, it won't do it for
     // an area within an image, so we don't call LayoutTheme::themeDrawsFocusRing here.
 
-    Path path = areaElement.computePath(&m_layoutImage);
-    if (path.isEmpty())
-        return;
-
     const ComputedStyle& areaElementStyle = *areaElement.ensureComputedStyle();
     int outlineWidth = areaElementStyle.outlineWidth();
     if (!outlineWidth)
         return;
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutImage, paintInfo.phase, paintOffset))
+    Path path = areaElement.getPath(&m_layoutImage);
+    if (path.isEmpty())
         return;
 
-    IntRect focusRect = m_layoutImage.absoluteContentBox();
-    LayoutObjectDrawingRecorder drawingRecorder(paintInfo.context, m_layoutImage, paintInfo.phase, focusRect, paintOffset);
+    LayoutPoint adjustedPaintOffset = paintOffset;
+    adjustedPaintOffset.moveBy(m_layoutImage.location());
+    path.translate(FloatSize(adjustedPaintOffset.x(), adjustedPaintOffset.y()));
+
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutImage, DisplayItem::ImageAreaFocusRing))
+        return;
+
+    LayoutRect focusRect = m_layoutImage.contentBoxRect();
+    focusRect.moveBy(adjustedPaintOffset);
+    LayoutObjectDrawingRecorder drawingRecorder(paintInfo.context, m_layoutImage, DisplayItem::ImageAreaFocusRing, focusRect);
 
     // FIXME: Clip path instead of context when Skia pathops is ready.
     // https://crbug.com/251206
 
     paintInfo.context.save();
-    paintInfo.context.clip(focusRect);
+    paintInfo.context.clip(pixelSnappedIntRect(focusRect));
     paintInfo.context.drawFocusRing(path, outlineWidth,
         areaElementStyle.outlineOffset(),
         m_layoutImage.resolveColor(areaElementStyle, CSSPropertyOutlineColor));
@@ -88,11 +91,11 @@ void ImagePainter::paintReplaced(const PaintInfo& paintInfo, const LayoutPoint& 
         if (paintInfo.phase == PaintPhaseSelection)
             return;
         if (cWidth > 2 && cHeight > 2) {
-            if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutImage, paintInfo.phase, paintOffset))
+            if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutImage, paintInfo.phase))
                 return;
             // Draw an outline rect where the image should be.
             IntRect paintRect = pixelSnappedIntRect(LayoutRect(paintOffset.x() + m_layoutImage.borderLeft() + m_layoutImage.paddingLeft(), paintOffset.y() + m_layoutImage.borderTop() + m_layoutImage.paddingTop(), cWidth, cHeight));
-            LayoutObjectDrawingRecorder drawingRecorder(context, m_layoutImage, paintInfo.phase, paintRect, paintOffset);
+            LayoutObjectDrawingRecorder drawingRecorder(context, m_layoutImage, paintInfo.phase, paintRect);
             context.setStrokeStyle(SolidStroke);
             context.setStrokeColor(Color::lightGray);
             context.setFillColor(Color::transparent);
@@ -107,13 +110,13 @@ void ImagePainter::paintReplaced(const PaintInfo& paintInfo, const LayoutPoint& 
         Optional<ClipRecorder> clipRecorder;
         if (!contentRect.contains(paintRect)) {
             // TODO(fmalita): can we get rid of this clip and adjust the image src/dst rect instead?
-            clipRecorder.emplace(context, m_layoutImage, paintInfo.displayItemTypeForClipping(), contentRect);
+            clipRecorder.emplace(context, m_layoutImage, paintInfo.displayItemTypeForClipping(), pixelSnappedIntRect(contentRect));
         }
 
-        if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutImage, paintInfo.phase, paintOffset))
+        if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutImage, paintInfo.phase))
             return;
 
-        LayoutObjectDrawingRecorder drawingRecorder(context, m_layoutImage, paintInfo.phase, contentRect, paintOffset);
+        LayoutObjectDrawingRecorder drawingRecorder(context, m_layoutImage, paintInfo.phase, contentRect);
         paintIntoRect(context, paintRect);
     }
 }
@@ -138,7 +141,8 @@ void ImagePainter::paintIntoRect(GraphicsContext& context, const LayoutRect& rec
 
     InterpolationQuality previousInterpolationQuality = context.imageInterpolationQuality();
     context.setImageInterpolationQuality(interpolationQuality);
-    context.drawImage(image.get(), alignedRect, SkXfermode::kSrcOver_Mode, LayoutObject::shouldRespectImageOrientation(&m_layoutImage));
+    context.drawImage(image.get(), alignedRect, nullptr, SkXfermode::kSrcOver_Mode,
+        LayoutObject::shouldRespectImageOrientation(&m_layoutImage));
     context.setImageInterpolationQuality(previousInterpolationQuality);
 }
 

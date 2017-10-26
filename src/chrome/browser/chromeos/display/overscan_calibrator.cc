@@ -8,11 +8,11 @@
 
 #include <limits>
 
-#include "ash/display/display_info.h"
+#include "ash/common/display/display_info.h"
+#include "ash/common/shell_window_ids.h"
 #include "ash/display/display_manager.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "base/callback.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPaint.h"
@@ -71,8 +71,8 @@ void DrawTriangle(int x_offset,
 
 }  // namespace
 
-OverscanCalibrator::OverscanCalibrator(
-    const gfx::Display& target_display, const gfx::Insets& initial_insets)
+OverscanCalibrator::OverscanCalibrator(const display::Display& target_display,
+                                       const gfx::Insets& initial_insets)
     : display_(target_display),
       insets_(initial_insets),
       initial_insets_(initial_insets),

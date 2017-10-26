@@ -17,11 +17,9 @@
 #include "platform/geometry/IntSize.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "wtf/Compiler.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -42,15 +40,15 @@ protected:
 private:
     void SetUp() override;
 
-    RefPtrWillBePersistent<HTMLDocument> m_document;
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
+    Persistent<HTMLDocument> m_document;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
 };
 
 void FlatTreeTraversalTest::SetUp()
 {
     m_dummyPageHolder = DummyPageHolder::create(IntSize(800, 600));
     m_document = toHTMLDocument(&m_dummyPageHolder->document());
-    ASSERT(m_document);
+    DCHECK(m_document);
 }
 
 HTMLDocument& FlatTreeTraversalTest::document() const
@@ -60,30 +58,30 @@ HTMLDocument& FlatTreeTraversalTest::document() const
 
 void FlatTreeTraversalTest::setupSampleHTML(const char* mainHTML, const char* shadowHTML, unsigned index)
 {
-    RefPtrWillBeRawPtr<Element> body = document().body();
+    Element* body = document().body();
     body->setInnerHTML(String::fromUTF8(mainHTML), ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> shadowHost = toElement(NodeTraversal::childAt(*body, index));
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = shadowHost->createShadowRootInternal(ShadowRootType::V0, ASSERT_NO_EXCEPTION);
+    Element* shadowHost = toElement(NodeTraversal::childAt(*body, index));
+    ShadowRoot* shadowRoot = shadowHost->createShadowRootInternal(ShadowRootType::V0, ASSERT_NO_EXCEPTION);
     shadowRoot->setInnerHTML(String::fromUTF8(shadowHTML), ASSERT_NO_EXCEPTION);
     body->updateDistribution();
 }
 
 void FlatTreeTraversalTest::setupDocumentTree(const char* mainHTML)
 {
-    RefPtrWillBeRawPtr<Element> body = document().body();
+    Element* body = document().body();
     body->setInnerHTML(String::fromUTF8(mainHTML), ASSERT_NO_EXCEPTION);
 }
 
 void FlatTreeTraversalTest::attachV0ShadowRoot(Element& shadowHost, const char* shadowInnerHTML)
 {
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = shadowHost.createShadowRootInternal(ShadowRootType::V0, ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = shadowHost.createShadowRootInternal(ShadowRootType::V0, ASSERT_NO_EXCEPTION);
     shadowRoot->setInnerHTML(String::fromUTF8(shadowInnerHTML), ASSERT_NO_EXCEPTION);
     document().body()->updateDistribution();
 }
 
 void FlatTreeTraversalTest::attachOpenShadowRoot(Element& shadowHost, const char* shadowInnerHTML)
 {
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = shadowHost.createShadowRootInternal(ShadowRootType::Open, ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = shadowHost.createShadowRootInternal(ShadowRootType::Open, ASSERT_NO_EXCEPTION);
     shadowRoot->setInnerHTML(String::fromUTF8(shadowInnerHTML), ASSERT_NO_EXCEPTION);
     document().body()->updateDistribution();
 }
@@ -117,20 +115,20 @@ TEST_F(FlatTreeTraversalTest, childAt)
         "<a id='s04'>s04</a>";
     setupSampleHTML(mainHTML, shadowHTML, 0);
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m00 = m0->querySelector("#m00", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m01 = m0->querySelector("#m01", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
+    Element* m00 = m0->querySelector("#m00", ASSERT_NO_EXCEPTION);
+    Element* m01 = m0->querySelector("#m01", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<Element> shadowHost = m0;
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = shadowHost->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s00 = shadowRoot->querySelector("#s00", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s02 = shadowRoot->querySelector("#s02", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s03 = shadowRoot->querySelector("#s03", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s04 = shadowRoot->querySelector("#s04", ASSERT_NO_EXCEPTION);
+    Element* shadowHost = m0;
+    ShadowRoot* shadowRoot = shadowHost->openShadowRoot();
+    Element* s00 = shadowRoot->querySelector("#s00", ASSERT_NO_EXCEPTION);
+    Element* s02 = shadowRoot->querySelector("#s02", ASSERT_NO_EXCEPTION);
+    Element* s03 = shadowRoot->querySelector("#s03", ASSERT_NO_EXCEPTION);
+    Element* s04 = shadowRoot->querySelector("#s04", ASSERT_NO_EXCEPTION);
 
     const unsigned numberOfChildNodes = 5;
-    Node* expectedChildNodes[5] = { s00.get(), m01.get(), s02.get(), s03.get(), s04.get() };
+    Node* expectedChildNodes[5] = { s00, m01, s02, s03, s04 };
 
     ASSERT_EQ(numberOfChildNodes, FlatTreeTraversal::countChildren(*shadowHost));
     EXPECT_TRUE(FlatTreeTraversal::hasChildren(*shadowHost));
@@ -148,7 +146,7 @@ TEST_F(FlatTreeTraversalTest, childAt)
         << "Out of bounds childAt() returns nullptr.";
 
     // Distribute node |m00| is child of node in shadow tree |s03|.
-    EXPECT_EQ(m00.get(), FlatTreeTraversal::childAt(*s03, 0));
+    EXPECT_EQ(m00, FlatTreeTraversal::childAt(*s03, 0));
 }
 
 // Test case for
@@ -192,52 +190,52 @@ TEST_F(FlatTreeTraversalTest, commonAncestor)
         "</a>"
         "<a id='s14'>s14</a>";
     setupSampleHTML(mainHTML, shadowHTML, 1);
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
+    Element* m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
+    Element* m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<Element> m00 = body->querySelector("#m00", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m01 = body->querySelector("#m01", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m12 = body->querySelector("#m12", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m20 = body->querySelector("#m20", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m21 = body->querySelector("#m21", ASSERT_NO_EXCEPTION);
+    Element* m00 = body->querySelector("#m00", ASSERT_NO_EXCEPTION);
+    Element* m01 = body->querySelector("#m01", ASSERT_NO_EXCEPTION);
+    Element* m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
+    Element* m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
+    Element* m12 = body->querySelector("#m12", ASSERT_NO_EXCEPTION);
+    Element* m20 = body->querySelector("#m20", ASSERT_NO_EXCEPTION);
+    Element* m21 = body->querySelector("#m21", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = m1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s10 = shadowRoot->querySelector("#s10", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s13 = shadowRoot->querySelector("#s13", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s14 = shadowRoot->querySelector("#s14", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = m1->openShadowRoot();
+    Element* s10 = shadowRoot->querySelector("#s10", ASSERT_NO_EXCEPTION);
+    Element* s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
+    Element* s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
+    Element* s13 = shadowRoot->querySelector("#s13", ASSERT_NO_EXCEPTION);
+    Element* s14 = shadowRoot->querySelector("#s14", ASSERT_NO_EXCEPTION);
 
-    testCommonAncestor(body.get(), *m0, *m1);
-    testCommonAncestor(body.get(), *m1, *m2);
-    testCommonAncestor(body.get(), *m1, *m20);
-    testCommonAncestor(body.get(), *s14, *m21);
+    testCommonAncestor(body, *m0, *m1);
+    testCommonAncestor(body, *m1, *m2);
+    testCommonAncestor(body, *m1, *m20);
+    testCommonAncestor(body, *s14, *m21);
 
-    testCommonAncestor(m0.get(), *m0, *m0);
-    testCommonAncestor(m0.get(), *m00, *m01);
+    testCommonAncestor(m0, *m0, *m0);
+    testCommonAncestor(m0, *m00, *m01);
 
-    testCommonAncestor(m1.get(), *m1.get(), *m1);
-    testCommonAncestor(m1.get(), *s10, *s14);
-    testCommonAncestor(m1.get(), *s10, *m12);
-    testCommonAncestor(m1.get(), *s12, *m12);
-    testCommonAncestor(m1.get(), *m10, *m12);
+    testCommonAncestor(m1, *m1, *m1);
+    testCommonAncestor(m1, *s10, *s14);
+    testCommonAncestor(m1, *s10, *m12);
+    testCommonAncestor(m1, *s12, *m12);
+    testCommonAncestor(m1, *m10, *m12);
 
-    testCommonAncestor(m01.get(), *m01, *m01);
-    testCommonAncestor(s11.get(), *s11, *m12);
-    testCommonAncestor(s13.get(), *m10, *m11);
+    testCommonAncestor(m01, *m01, *m01);
+    testCommonAncestor(s11, *s11, *m12);
+    testCommonAncestor(s13, *m10, *m11);
 
     s12->remove(ASSERT_NO_EXCEPTION);
-    testCommonAncestor(s12.get(), *s12, *s12);
+    testCommonAncestor(s12, *s12, *s12);
     testCommonAncestor(nullptr, *s12, *s11);
     testCommonAncestor(nullptr, *s12, *m01);
     testCommonAncestor(nullptr, *s12, *m20);
 
     m20->remove(ASSERT_NO_EXCEPTION);
-    testCommonAncestor(m20.get(), *m20, *m20);
+    testCommonAncestor(m20, *m20, *m20);
     testCommonAncestor(nullptr, *m20, *s12);
     testCommonAncestor(nullptr, *m20, *m1);
 }
@@ -263,18 +261,18 @@ TEST_F(FlatTreeTraversalTest, nextSkippingChildren)
         "</a>";
     setupSampleHTML(mainHTML, shadowHTML, 1);
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
+    Element* m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
+    Element* m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<Element> m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
+    Element* m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
+    Element* m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = m1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s120 = shadowRoot->querySelector("#s120", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = m1->openShadowRoot();
+    Element* s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
+    Element* s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
+    Element* s120 = shadowRoot->querySelector("#s120", ASSERT_NO_EXCEPTION);
 
     // Main tree node to main tree node
     EXPECT_EQ(*m1, FlatTreeTraversal::nextSkippingChildren(*m0));
@@ -321,16 +319,16 @@ TEST_F(FlatTreeTraversalTest, lastWithin)
         "</a>";
     setupSampleHTML(mainHTML, shadowHTML, 1);
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
+    Element* m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
+    Element* m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<Element> m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
+    Element* m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = m1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = m1->openShadowRoot();
+    Element* s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
+    Element* s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
 
     EXPECT_EQ(m0->firstChild(), FlatTreeTraversal::lastWithin(*m0));
     EXPECT_EQ(*m0->firstChild(), FlatTreeTraversal::lastWithinOrSelf(*m0));
@@ -366,34 +364,34 @@ TEST_F(FlatTreeTraversalTest, previousPostOrder)
         "</a>";
     setupSampleHTML(mainHTML, shadowHTML, 1);
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m0 = body->querySelector("#m0", ASSERT_NO_EXCEPTION);
+    Element* m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
+    Element* m2 = body->querySelector("#m2", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<Element> m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
+    Element* m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
+    Element* m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = m1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> s120 = shadowRoot->querySelector("#s120", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = m1->openShadowRoot();
+    Element* s11 = shadowRoot->querySelector("#s11", ASSERT_NO_EXCEPTION);
+    Element* s12 = shadowRoot->querySelector("#s12", ASSERT_NO_EXCEPTION);
+    Element* s120 = shadowRoot->querySelector("#s120", ASSERT_NO_EXCEPTION);
 
     EXPECT_EQ(*m0->firstChild(), FlatTreeTraversal::previousPostOrder(*m0));
     EXPECT_EQ(*s12, FlatTreeTraversal::previousPostOrder(*m1));
     EXPECT_EQ(*m10->firstChild(), FlatTreeTraversal::previousPostOrder(*m10));
     EXPECT_EQ(*s120, FlatTreeTraversal::previousPostOrder(*m10->firstChild()));
-    EXPECT_EQ(*s120, FlatTreeTraversal::previousPostOrder(*m10->firstChild(), s12.get()));
+    EXPECT_EQ(*s120, FlatTreeTraversal::previousPostOrder(*m10->firstChild(), s12));
     EXPECT_EQ(*m11->firstChild(), FlatTreeTraversal::previousPostOrder(*m11));
     EXPECT_EQ(*m0, FlatTreeTraversal::previousPostOrder(*m11->firstChild()));
-    EXPECT_EQ(nullptr, FlatTreeTraversal::previousPostOrder(*m11->firstChild(), m11.get()));
+    EXPECT_EQ(nullptr, FlatTreeTraversal::previousPostOrder(*m11->firstChild(), m11));
     EXPECT_EQ(*m2->firstChild(), FlatTreeTraversal::previousPostOrder(*m2));
 
     EXPECT_EQ(*s11->firstChild(), FlatTreeTraversal::previousPostOrder(*s11));
     EXPECT_EQ(*m10, FlatTreeTraversal::previousPostOrder(*s12));
     EXPECT_EQ(*s120->firstChild(), FlatTreeTraversal::previousPostOrder(*s120));
     EXPECT_EQ(*s11, FlatTreeTraversal::previousPostOrder(*s120->firstChild()));
-    EXPECT_EQ(nullptr, FlatTreeTraversal::previousPostOrder(*s120->firstChild(), s12.get()));
+    EXPECT_EQ(nullptr, FlatTreeTraversal::previousPostOrder(*s120->firstChild(), s12));
 }
 
 TEST_F(FlatTreeTraversalTest, nextSiblingNotInDocumentFlatTree)
@@ -409,8 +407,8 @@ TEST_F(FlatTreeTraversalTest, nextSiblingNotInDocumentFlatTree)
         "<content select='#m11'></content>";
     setupSampleHTML(mainHTML, shadowHTML, 1);
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
 
     EXPECT_EQ(nullptr, FlatTreeTraversal::nextSibling(*m10));
     EXPECT_EQ(nullptr, FlatTreeTraversal::previousSibling(*m10));
@@ -438,24 +436,24 @@ TEST_F(FlatTreeTraversalTest, redistribution)
         "<span id='s21'>s21</span>"
         "</div>";
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* m1 = body->querySelector("#m1", ASSERT_NO_EXCEPTION);
+    Element* m10 = body->querySelector("#m10", ASSERT_NO_EXCEPTION);
 
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot1 = m1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s1 = shadowRoot1->querySelector("#s1", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot1 = m1->openShadowRoot();
+    Element* s1 = shadowRoot1->querySelector("#s1", ASSERT_NO_EXCEPTION);
 
     attachV0ShadowRoot(*s1, shadowHTML2);
 
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot2 = s1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> s21 = shadowRoot2->querySelector("#s21", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot2 = s1->openShadowRoot();
+    Element* s21 = shadowRoot2->querySelector("#s21", ASSERT_NO_EXCEPTION);
 
-    EXPECT_EQ(s21.get(), FlatTreeTraversal::nextSibling(*m10));
-    EXPECT_EQ(m10.get(), FlatTreeTraversal::previousSibling(*s21));
+    EXPECT_EQ(s21, FlatTreeTraversal::nextSibling(*m10));
+    EXPECT_EQ(m10, FlatTreeTraversal::previousSibling(*s21));
 
     // FlatTreeTraversal::traverseSiblings does not work for a node which is not in a document flat tree.
     // e.g. The following test fails. The result of FlatTreeTraversal::previousSibling(*m11)) will be #m10, instead of nullptr.
-    // RefPtrWillBeRawPtr<Element> m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
+    // Element* m11 = body->querySelector("#m11", ASSERT_NO_EXCEPTION);
     // EXPECT_EQ(nullptr, FlatTreeTraversal::previousSibling(*m11));
 }
 
@@ -473,24 +471,24 @@ TEST_F(FlatTreeTraversalTest, v1Simple)
         "<div id='shadow-child2'></div>";
 
     setupDocumentTree(mainHTML);
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> host = body->querySelector("#host", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> child1 = body->querySelector("#child1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> child2 = body->querySelector("#child2", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* host = body->querySelector("#host", ASSERT_NO_EXCEPTION);
+    Element* child1 = body->querySelector("#child1", ASSERT_NO_EXCEPTION);
+    Element* child2 = body->querySelector("#child2", ASSERT_NO_EXCEPTION);
 
     attachOpenShadowRoot(*host, shadowHTML);
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot = host->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> slot1 = shadowRoot->querySelector("[name=slot1]", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> slot2 = shadowRoot->querySelector("[name=slot2]", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> shadowChild1 = shadowRoot->querySelector("#shadow-child1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> shadowChild2 = shadowRoot->querySelector("#shadow-child2", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot = host->openShadowRoot();
+    Element* slot1 = shadowRoot->querySelector("[name=slot1]", ASSERT_NO_EXCEPTION);
+    Element* slot2 = shadowRoot->querySelector("[name=slot2]", ASSERT_NO_EXCEPTION);
+    Element* shadowChild1 = shadowRoot->querySelector("#shadow-child1", ASSERT_NO_EXCEPTION);
+    Element* shadowChild2 = shadowRoot->querySelector("#shadow-child2", ASSERT_NO_EXCEPTION);
 
     EXPECT_TRUE(slot1);
     EXPECT_TRUE(slot2);
-    EXPECT_EQ(shadowChild1.get(), FlatTreeTraversal::firstChild(*host));
-    EXPECT_EQ(child1.get(), FlatTreeTraversal::nextSibling(*shadowChild1));
-    EXPECT_EQ(child2.get(), FlatTreeTraversal::nextSibling(*child1));
-    EXPECT_EQ(shadowChild2.get(), FlatTreeTraversal::nextSibling(*child2));
+    EXPECT_EQ(shadowChild1, FlatTreeTraversal::firstChild(*host));
+    EXPECT_EQ(child1, FlatTreeTraversal::nextSibling(*shadowChild1));
+    EXPECT_EQ(child2, FlatTreeTraversal::nextSibling(*child1));
+    EXPECT_EQ(shadowChild2, FlatTreeTraversal::nextSibling(*child2));
 }
 
 TEST_F(FlatTreeTraversalTest, v1Redistribution)
@@ -520,30 +518,30 @@ TEST_F(FlatTreeTraversalTest, v1Redistribution)
 
     setupDocumentTree(mainHTML);
 
-    RefPtrWillBeRawPtr<Element> body = document().body();
-    RefPtrWillBeRawPtr<Element> d1 = body->querySelector("#d1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d2 = body->querySelector("#d2", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d3 = body->querySelector("#d3", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d4 = body->querySelector("#d4", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d5 = body->querySelector("#d5", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d6 = body->querySelector("#d6", ASSERT_NO_EXCEPTION);
+    Element* body = document().body();
+    Element* d1 = body->querySelector("#d1", ASSERT_NO_EXCEPTION);
+    Element* d2 = body->querySelector("#d2", ASSERT_NO_EXCEPTION);
+    Element* d3 = body->querySelector("#d3", ASSERT_NO_EXCEPTION);
+    Element* d4 = body->querySelector("#d4", ASSERT_NO_EXCEPTION);
+    Element* d5 = body->querySelector("#d5", ASSERT_NO_EXCEPTION);
+    Element* d6 = body->querySelector("#d6", ASSERT_NO_EXCEPTION);
 
     attachOpenShadowRoot(*d1, shadowHTML1);
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot1 = d1->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> d11 = shadowRoot1->querySelector("#d1-1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d12 = shadowRoot1->querySelector("#d1-2", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d13 = shadowRoot1->querySelector("#d1-3", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d14 = shadowRoot1->querySelector("#d1-4", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d1s0 = shadowRoot1->querySelector("#d1-s0", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d1s1 = shadowRoot1->querySelector("[name=d1-s1]", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d1s2 = shadowRoot1->querySelector("[name=d1-s2]", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot1 = d1->openShadowRoot();
+    Element* d11 = shadowRoot1->querySelector("#d1-1", ASSERT_NO_EXCEPTION);
+    Element* d12 = shadowRoot1->querySelector("#d1-2", ASSERT_NO_EXCEPTION);
+    Element* d13 = shadowRoot1->querySelector("#d1-3", ASSERT_NO_EXCEPTION);
+    Element* d14 = shadowRoot1->querySelector("#d1-4", ASSERT_NO_EXCEPTION);
+    Element* d1s0 = shadowRoot1->querySelector("#d1-s0", ASSERT_NO_EXCEPTION);
+    Element* d1s1 = shadowRoot1->querySelector("[name=d1-s1]", ASSERT_NO_EXCEPTION);
+    Element* d1s2 = shadowRoot1->querySelector("[name=d1-s2]", ASSERT_NO_EXCEPTION);
 
     attachOpenShadowRoot(*d11, shadowHTML2);
-    RefPtrWillBeRawPtr<ShadowRoot> shadowRoot2 = d11->openShadowRoot();
-    RefPtrWillBeRawPtr<Element> d111 = shadowRoot2->querySelector("#d1-1-1", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d112 = shadowRoot2->querySelector("#d1-1-2", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d11s1 = shadowRoot2->querySelector("[name=d1-1-s1]", ASSERT_NO_EXCEPTION);
-    RefPtrWillBeRawPtr<Element> d11s2 = shadowRoot2->querySelector("[name=d1-1-s2]", ASSERT_NO_EXCEPTION);
+    ShadowRoot* shadowRoot2 = d11->openShadowRoot();
+    Element* d111 = shadowRoot2->querySelector("#d1-1-1", ASSERT_NO_EXCEPTION);
+    Element* d112 = shadowRoot2->querySelector("#d1-1-2", ASSERT_NO_EXCEPTION);
+    Element* d11s1 = shadowRoot2->querySelector("[name=d1-1-s1]", ASSERT_NO_EXCEPTION);
+    Element* d11s2 = shadowRoot2->querySelector("[name=d1-1-s2]", ASSERT_NO_EXCEPTION);
 
     EXPECT_TRUE(d5);
     EXPECT_TRUE(d12);
@@ -553,19 +551,19 @@ TEST_F(FlatTreeTraversalTest, v1Redistribution)
     EXPECT_TRUE(d1s2);
     EXPECT_TRUE(d11s1);
     EXPECT_TRUE(d11s2);
-    EXPECT_EQ(d11.get(), FlatTreeTraversal::next(*d1));
-    EXPECT_EQ(d111.get(), FlatTreeTraversal::next(*d11));
-    EXPECT_EQ(d2.get(), FlatTreeTraversal::next(*d111));
-    EXPECT_EQ(d14.get(), FlatTreeTraversal::next(*d2));
-    EXPECT_EQ(d112.get(), FlatTreeTraversal::next(*d14));
-    EXPECT_EQ(d6.get(), FlatTreeTraversal::next(*d112));
+    EXPECT_EQ(d11, FlatTreeTraversal::next(*d1));
+    EXPECT_EQ(d111, FlatTreeTraversal::next(*d11));
+    EXPECT_EQ(d2, FlatTreeTraversal::next(*d111));
+    EXPECT_EQ(d14, FlatTreeTraversal::next(*d2));
+    EXPECT_EQ(d112, FlatTreeTraversal::next(*d14));
+    EXPECT_EQ(d6, FlatTreeTraversal::next(*d112));
 
-    EXPECT_EQ(d112.get(), FlatTreeTraversal::previous(*d6));
+    EXPECT_EQ(d112, FlatTreeTraversal::previous(*d6));
 
-    EXPECT_EQ(d11.get(), FlatTreeTraversal::parent(*d111));
-    EXPECT_EQ(d11.get(), FlatTreeTraversal::parent(*d112));
-    EXPECT_EQ(d11.get(), FlatTreeTraversal::parent(*d2));
-    EXPECT_EQ(d11.get(), FlatTreeTraversal::parent(*d14));
+    EXPECT_EQ(d11, FlatTreeTraversal::parent(*d111));
+    EXPECT_EQ(d11, FlatTreeTraversal::parent(*d112));
+    EXPECT_EQ(d11, FlatTreeTraversal::parent(*d2));
+    EXPECT_EQ(d11, FlatTreeTraversal::parent(*d14));
     EXPECT_EQ(nullptr, FlatTreeTraversal::parent(*d3));
     EXPECT_EQ(nullptr, FlatTreeTraversal::parent(*d4));
 }

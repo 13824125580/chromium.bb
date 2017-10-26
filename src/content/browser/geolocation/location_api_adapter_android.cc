@@ -9,7 +9,7 @@
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/geolocation/location_provider_android.h"
 #include "jni/LocationProviderAdapter_jni.h"
 
@@ -151,7 +151,7 @@ bool AndroidLocationApiAdapter::RegisterGeolocationService(JNIEnv* env) {
 }
 
 void AndroidLocationApiAdapter::CreateJavaObject(JNIEnv* env) {
-  // Create the Java AndroidLocationProvider object.
+  // Create the Java LocationProviderAdapter object.
   java_location_provider_android_object_.Reset(
       Java_LocationProviderAdapter_create(env,
           base::android::GetApplicationContext()));

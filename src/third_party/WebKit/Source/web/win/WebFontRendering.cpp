@@ -9,12 +9,6 @@
 namespace blink {
 
 // static
-void WebFontRendering::setUseDirectWrite(bool useDirectWrite)
-{
-    FontCache::setUseDirectWrite(useDirectWrite);
-}
-
-// static
 void WebFontRendering::setSkiaFontManager(SkFontMgr* fontMgr)
 {
     WTF::adopted(fontMgr);
@@ -25,12 +19,6 @@ void WebFontRendering::setSkiaFontManager(SkFontMgr* fontMgr)
 void WebFontRendering::setDeviceScaleFactor(float deviceScaleFactor)
 {
     FontCache::setDeviceScaleFactor(deviceScaleFactor);
-}
-
-// static
-void WebFontRendering::setUseSubpixelPositioning(bool useSubpixelPositioning)
-{
-    FontCache::setUseSubpixelPositioning(useSubpixelPositioning);
 }
 
 // static
@@ -58,15 +46,21 @@ void WebFontRendering::setStatusFontMetrics(const wchar_t* familyName, int32_t f
 }
 
 // static
-void WebFontRendering::setLCDOrder(SkFontHost::LCDOrder order)
+void WebFontRendering::setAntialiasedTextEnabled(bool enabled)
 {
-    SkFontHost::SetSubpixelOrder(order);
+    FontCache::setAntialiasedTextEnabled(enabled);
 }
 
 // static
-void WebFontRendering::setLCDOrientation(SkFontHost::LCDOrientation orientation)
+void WebFontRendering::setLCDTextEnabled(bool enabled)
 {
-    SkFontHost::SetSubpixelOrientation(orientation);
+    FontCache::setLCDTextEnabled(enabled);
+}
+
+// static
+void WebFontRendering::setUseSkiaFontFallback(bool useSkiaFontFallback)
+{
+    FontCache::setUseSkiaFontFallback(useSkiaFontFallback);
 }
 
 } // namespace blink

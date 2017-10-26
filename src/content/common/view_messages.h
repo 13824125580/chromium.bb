@@ -12,6 +12,7 @@
 #include "base/process/process.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
+#include "cc/ipc/cc_param_traits.h"
 #include "cc/output/begin_frame_args.h"
 #include "cc/output/compositor_frame.h"
 #include "cc/output/compositor_frame_ack.h"
@@ -20,17 +21,13 @@
 #include "content/common/content_param_traits.h"
 #include "content/common/date_time_suggestion.h"
 #include "content/common/frame_replication_state.h"
-#include "content/common/media/media_param_traits.h"
 #include "content/common/navigation_gesture.h"
 #include "content/common/resize_params.h"
+#include "content/common/text_input_state.h"
 #include "content/common/view_message_enums.h"
-#include "content/common/webplugin_geometry.h"
 #include "content/public/common/common_param_traits.h"
 #include "content/public/common/favicon_url.h"
-#include "content/public/common/file_chooser_file_info.h"
-#include "content/public/common/file_chooser_params.h"
 #include "content/public/common/menu_item.h"
-#include "content/public/common/message_port_types.h"
 #include "content/public/common/page_state.h"
 #include "content/public/common/page_zoom.h"
 #include "content/public/common/referrer.h"
@@ -39,8 +36,9 @@
 #include "content/public/common/window_container_type.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message_macros.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
+#include "media/base/ipc/media_param_traits.h"
 #include "media/base/media_log_event.h"
 #include "net/base/network_change_notifier.h"
 #include "third_party/WebKit/public/platform/WebDisplayMode.h"
@@ -55,7 +53,6 @@
 #include "third_party/WebKit/public/web/WebSharedWorkerCreationContextType.h"
 #include "third_party/WebKit/public/web/WebSharedWorkerCreationErrors.h"
 #include "third_party/WebKit/public/web/WebTextDirection.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/base/ui_base_types.h"
@@ -65,6 +62,7 @@
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
+#include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 #include "ui/gfx/range/range.h"
 
 #if defined(OS_MACOSX)
@@ -97,7 +95,6 @@ IPC_ENUM_TRAITS_MAX_VALUE(blink::WebDisplayMode,
                           blink::WebDisplayMode::WebDisplayModeLast)
 IPC_ENUM_TRAITS_MAX_VALUE(WindowContainerType, WINDOW_CONTAINER_TYPE_MAX_VALUE)
 IPC_ENUM_TRAITS(content::FaviconURL::IconType)
-IPC_ENUM_TRAITS(content::FileChooserParams::Mode)
 IPC_ENUM_TRAITS(content::MenuItem::Type)
 IPC_ENUM_TRAITS_MAX_VALUE(content::NavigationGesture,
                           content::NavigationGestureLast)
@@ -213,27 +210,6 @@ IPC_STRUCT_TRAITS_BEGIN(content::FaviconURL)
   IPC_STRUCT_TRAITS_MEMBER(icon_sizes)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(content::FileChooserFileInfo)
-  IPC_STRUCT_TRAITS_MEMBER(file_path)
-  IPC_STRUCT_TRAITS_MEMBER(display_name)
-  IPC_STRUCT_TRAITS_MEMBER(file_system_url)
-  IPC_STRUCT_TRAITS_MEMBER(modification_time)
-  IPC_STRUCT_TRAITS_MEMBER(length)
-  IPC_STRUCT_TRAITS_MEMBER(is_directory)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(content::FileChooserParams)
-  IPC_STRUCT_TRAITS_MEMBER(mode)
-  IPC_STRUCT_TRAITS_MEMBER(title)
-  IPC_STRUCT_TRAITS_MEMBER(default_file_name)
-  IPC_STRUCT_TRAITS_MEMBER(accept_types)
-  IPC_STRUCT_TRAITS_MEMBER(need_local_path)
-#if defined(OS_ANDROID)
-  IPC_STRUCT_TRAITS_MEMBER(capture)
-#endif
-  IPC_STRUCT_TRAITS_MEMBER(requestor)
-IPC_STRUCT_TRAITS_END()
-
 IPC_STRUCT_TRAITS_BEGIN(content::RendererPreferences)
   IPC_STRUCT_TRAITS_MEMBER(can_accept_load_drops)
   IPC_STRUCT_TRAITS_MEMBER(should_antialias_text)
@@ -256,7 +232,6 @@ IPC_STRUCT_TRAITS_BEGIN(content::RendererPreferences)
   IPC_STRUCT_TRAITS_MEMBER(enable_referrers)
   IPC_STRUCT_TRAITS_MEMBER(enable_do_not_track)
   IPC_STRUCT_TRAITS_MEMBER(webrtc_ip_handling_policy)
-  IPC_STRUCT_TRAITS_MEMBER(default_zoom_level)
   IPC_STRUCT_TRAITS_MEMBER(user_agent_override)
   IPC_STRUCT_TRAITS_MEMBER(accept_languages)
   IPC_STRUCT_TRAITS_MEMBER(report_frame_name_changes)
@@ -285,20 +260,25 @@ IPC_STRUCT_TRAITS_BEGIN(content::RendererPreferences)
   IPC_STRUCT_TRAITS_MEMBER(default_font_size)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(content::WebPluginGeometry)
-  IPC_STRUCT_TRAITS_MEMBER(window)
-  IPC_STRUCT_TRAITS_MEMBER(window_rect)
-  IPC_STRUCT_TRAITS_MEMBER(clip_rect)
-  IPC_STRUCT_TRAITS_MEMBER(cutout_rects)
-  IPC_STRUCT_TRAITS_MEMBER(rects_valid)
-  IPC_STRUCT_TRAITS_MEMBER(visible)
-IPC_STRUCT_TRAITS_END()
-
 IPC_STRUCT_TRAITS_BEGIN(media::MediaLogEvent)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(type)
   IPC_STRUCT_TRAITS_MEMBER(params)
   IPC_STRUCT_TRAITS_MEMBER(time)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(content::TextInputState)
+  IPC_STRUCT_TRAITS_MEMBER(type)
+  IPC_STRUCT_TRAITS_MEMBER(mode)
+  IPC_STRUCT_TRAITS_MEMBER(flags)
+  IPC_STRUCT_TRAITS_MEMBER(value)
+  IPC_STRUCT_TRAITS_MEMBER(selection_start)
+  IPC_STRUCT_TRAITS_MEMBER(selection_end)
+  IPC_STRUCT_TRAITS_MEMBER(composition_start)
+  IPC_STRUCT_TRAITS_MEMBER(composition_end)
+  IPC_STRUCT_TRAITS_MEMBER(can_compose_inline)
+  IPC_STRUCT_TRAITS_MEMBER(show_ime_if_needed)
+  IPC_STRUCT_TRAITS_MEMBER(is_non_ime_change)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_BEGIN(ViewHostMsg_CreateWindow_Params)
@@ -388,6 +368,9 @@ IPC_STRUCT_BEGIN(ViewHostMsg_CreateWorker_Params)
   // RenderFrame routing id used to send messages back to the parent.
   IPC_STRUCT_MEMBER(int, render_frame_route_id)
 
+  // Address space of the context that created the worker.
+  IPC_STRUCT_MEMBER(blink::WebAddressSpace, creation_address_space)
+
   // The type (secure or nonsecure) of the context that created the worker.
   IPC_STRUCT_MEMBER(blink::WebSharedWorkerCreationContextType,
                     creation_context_type)
@@ -419,45 +402,6 @@ IPC_STRUCT_BEGIN(ViewHostMsg_SelectionBounds_Params)
   IPC_STRUCT_MEMBER(bool, is_anchor_first)
 IPC_STRUCT_END()
 
-IPC_STRUCT_BEGIN(ViewHostMsg_TextInputState_Params)
-  // The type of input field
-  IPC_STRUCT_MEMBER(ui::TextInputType, type)
-
-  // The mode of input field
-  IPC_STRUCT_MEMBER(ui::TextInputMode, mode)
-
-  // The flags of the input field (autocorrect, autocomplete, etc.)
-  IPC_STRUCT_MEMBER(int, flags)
-
-  // The value of the input field
-  IPC_STRUCT_MEMBER(std::string, value)
-
-  // The cursor position of the current selection start, or the caret position
-  // if nothing is selected
-  IPC_STRUCT_MEMBER(int, selection_start)
-
-  // The cursor position of the current selection end, or the caret position
-  // if nothing is selected
-  IPC_STRUCT_MEMBER(int, selection_end)
-
-  // The start position of the current composition, or -1 if there is none
-  IPC_STRUCT_MEMBER(int, composition_start)
-
-  // The end position of the current composition, or -1 if there is none
-  IPC_STRUCT_MEMBER(int, composition_end)
-
-  // Whether or not inline composition can be performed for the current input.
-  IPC_STRUCT_MEMBER(bool, can_compose_inline)
-
-  // Whether or not the IME should be shown as a result of this update. Even if
-  // true, the IME will only be shown if the type is appropriate (e.g. not
-  // TEXT_INPUT_TYPE_NONE).
-  IPC_STRUCT_MEMBER(bool, show_ime_if_needed)
-
-  // Whether this change is originated from non-IME (e.g. Javascript, Autofill).
-  IPC_STRUCT_MEMBER(bool, is_non_ime_change)
-IPC_STRUCT_END()
-
 IPC_STRUCT_BEGIN(ViewHostMsg_UpdateRect_Params)
   // The size of the RenderView when this message was generated.  This is
   // included so the host knows how large the view is from the perspective of
@@ -465,10 +409,6 @@ IPC_STRUCT_BEGIN(ViewHostMsg_UpdateRect_Params)
   // progress. If auto-resize is enabled, this should update the corresponding
   // view size.
   IPC_STRUCT_MEMBER(gfx::Size, view_size)
-
-  // New window locations for plugin child windows.
-  IPC_STRUCT_MEMBER(std::vector<content::WebPluginGeometry>,
-                    plugin_window_moves)
 
   // The following describes the various bits that may be set in flags:
   //
@@ -546,6 +486,12 @@ IPC_STRUCT_BEGIN(ViewMsg_New_Params)
 
   // The maximum size to layout the page if auto-resize is enabled.
   IPC_STRUCT_MEMBER(gfx::Size, max_size)
+
+  // The page zoom level.
+  IPC_STRUCT_MEMBER(double, page_zoom_level)
+
+  // The color profile to use for image decode.
+  IPC_STRUCT_MEMBER(std::vector<char>, image_decode_color_profile)
 IPC_STRUCT_END()
 
 #if defined(OS_MACOSX)
@@ -628,11 +574,6 @@ IPC_MESSAGE_ROUTED1(ViewMsg_EnableDeviceEmulation,
 // Disables device emulation, enabled previously by EnableDeviceEmulation.
 IPC_MESSAGE_ROUTED0(ViewMsg_DisableDeviceEmulation)
 
-// Sent to inform the renderer of its screen device color profile. An empty
-// profile tells the renderer use the default sRGB color profile.
-IPC_MESSAGE_ROUTED1(ViewMsg_ColorProfile,
-                    std::vector<char> /* color profile */)
-
 // Tells the render view that the resize rect has changed.
 IPC_MESSAGE_ROUTED1(ViewMsg_ChangeResizeRect,
                     gfx::Rect /* resizer_rect */)
@@ -659,18 +600,6 @@ IPC_MESSAGE_ROUTED1(ViewMsg_SetInitialFocus,
 IPC_MESSAGE_ROUTED2(ViewMsg_ShowContextMenu,
                     ui::MenuSourceType,
                     gfx::Point /* location where menu should be shown */)
-
-// Copies the image at location x, y to the clipboard (if there indeed is an
-// image at that location).
-IPC_MESSAGE_ROUTED2(ViewMsg_CopyImageAt,
-                    int /* x */,
-                    int /* y */)
-
-// Saves the image at location x, y to the disk (if there indeed is an
-// image at that location).
-IPC_MESSAGE_ROUTED2(ViewMsg_SaveImageAt,
-                    int /* x */,
-                    int /* y */)
 
 // Tells the renderer to perform the given action on the media player
 // located at the given point.
@@ -700,19 +629,6 @@ IPC_MESSAGE_ROUTED2(ViewMsg_SetZoomLevelForLoadingURL,
                     GURL /* url */,
                     double /* zoom_level */)
 
-// Set the zoom level for a particular url, so all render views
-// displaying this url can update their zoom levels to match.
-// If scheme is empty, then only host is used for matching.
-IPC_MESSAGE_CONTROL3(ViewMsg_SetZoomLevelForCurrentURL,
-                     std::string /* scheme */,
-                     std::string /* host */,
-                     double /* zoom_level */)
-
-// Set the zoom level for a particular render view.
-IPC_MESSAGE_ROUTED2(ViewMsg_SetZoomLevelForView,
-                    bool /* uses_temporary_zoom_level */,
-                    double /* zoom_level */)
-
 // Change encoding of page in the renderer.
 IPC_MESSAGE_ROUTED1(ViewMsg_SetPageEncoding,
                     std::string /*new encoding name*/)
@@ -736,18 +652,10 @@ IPC_MESSAGE_ROUTED2(ViewMsg_SetWebUIProperty,
 // to prevent target URLs spamming the browser.
 IPC_MESSAGE_ROUTED0(ViewMsg_UpdateTargetURL_ACK)
 
-IPC_MESSAGE_ROUTED1(ViewMsg_RunFileChooserResponse,
-                    std::vector<content::FileChooserFileInfo>)
-
 // Provides the results of directory enumeration.
 IPC_MESSAGE_ROUTED2(ViewMsg_EnumerateDirectoryResponse,
                     int /* request_id */,
                     std::vector<base::FilePath> /* files_in_directory */)
-
-// Tells the renderer to suppress any further modal dialogs until it receives a
-// corresponding ViewMsg_SwapOut message.  This ensures that no
-// PageGroupLoadDeferrer is on the stack for SwapOut.
-IPC_MESSAGE_ROUTED0(ViewMsg_SuppressDialogsUntilSwapOut)
 
 // Instructs the renderer to close the current page, including running the
 // onunload event handler.
@@ -855,9 +763,6 @@ IPC_MESSAGE_CONTROL1(ViewMsg_PurgePluginListCache,
                      bool /* reload_pages */)
 #endif
 
-// Used to instruct the RenderView to go into "view source" mode.
-IPC_MESSAGE_ROUTED0(ViewMsg_EnableViewSourceMode)
-
 // An acknowledge to ViewHostMsg_MultipleTargetsTouched to notify the renderer
 // process to release the magnified image.
 IPC_MESSAGE_ROUTED1(ViewMsg_ReleaseDisambiguationPopupBitmap,
@@ -903,26 +808,6 @@ IPC_MESSAGE_ROUTED0(ViewMsg_ShowImeIfNeeded)
 // ViewHostMsg_SmartClipDataExtracted IPC.
 IPC_MESSAGE_ROUTED1(ViewMsg_ExtractSmartClipData,
                     gfx::Rect /* rect */)
-
-#elif defined(OS_MACOSX)
-// Let the RenderView know its window has changed visibility.
-IPC_MESSAGE_ROUTED1(ViewMsg_SetWindowVisibility,
-                    bool /* visibile */)
-
-// Let the RenderView know its window's frame has changed.
-IPC_MESSAGE_ROUTED2(ViewMsg_WindowFrameChanged,
-                    gfx::Rect /* window frame */,
-                    gfx::Rect /* content view frame */)
-
-// Message sent from the browser to the renderer when the user starts or stops
-// resizing the view.
-IPC_MESSAGE_ROUTED1(ViewMsg_SetInLiveResize,
-                    bool /* enable */)
-
-// Tell the renderer that plugin IME has completed.
-IPC_MESSAGE_ROUTED2(ViewMsg_PluginImeCompositionCompleted,
-                    base::string16 /* text */,
-                    int /* plugin_id */)
 #endif
 
 // Sent by the browser as a reply to ViewHostMsg_SwapCompositorFrame.
@@ -948,6 +833,9 @@ IPC_MESSAGE_ROUTED0(ViewMsg_SelectWordAroundCaret)
 // as ui::WINDOW_SNAPSHOT_FRAME_NUMBER_COMPONENT.
 IPC_MESSAGE_ROUTED1(ViewMsg_ForceRedraw,
                     int /* request_id */)
+
+// Let renderer know begin frame messages won't be sent even if requested.
+IPC_MESSAGE_ROUTED1(ViewMsg_SetBeginFramePaused, bool /* paused */)
 
 // Sent by the browser when the renderer should generate a new frame.
 IPC_MESSAGE_ROUTED1(ViewMsg_BeginFrame,
@@ -1077,14 +965,6 @@ IPC_MESSAGE_ROUTED2(ViewHostMsg_FocusedNodeChanged,
 
 IPC_MESSAGE_ROUTED1(ViewHostMsg_SetCursor, content::WebCursor)
 
-#if defined(OS_WIN)
-IPC_MESSAGE_ROUTED1(ViewHostMsg_WindowlessPluginDummyWindowCreated,
-                    gfx::NativeViewId /* dummy_activation_window */)
-
-IPC_MESSAGE_ROUTED1(ViewHostMsg_WindowlessPluginDummyWindowDestroyed,
-                    gfx::NativeViewId /* dummy_activation_window */)
-#endif
-
 // Get the list of proxies to use for |url|, as a semicolon delimited list
 // of "<TYPE> <HOST>:<PORT>" | "DIRECT".
 IPC_SYNC_MESSAGE_CONTROL1_2(ViewHostMsg_ResolveProxy,
@@ -1116,14 +996,6 @@ IPC_MESSAGE_CONTROL1(ViewHostMsg_ForwardToWorker,
 IPC_MESSAGE_ROUTED2(ViewHostMsg_AppCacheAccessed,
                     GURL /* manifest url */,
                     bool /* blocked by policy */)
-
-// Initiates a download based on user actions like 'ALT+click'.
-IPC_MESSAGE_CONTROL5(ViewHostMsg_DownloadUrl,
-                     int /* render_view_id */,
-                     int /* render_frame_id */,
-                     GURL /* url */,
-                     content::Referrer /* referrer */,
-                     base::string16 /* suggested_name */)
 
 // Used to go to the session history entry at the given offset (ie, -1 will
 // return the "back" item).
@@ -1178,11 +1050,6 @@ IPC_MESSAGE_ROUTED3(ViewHostMsg_SelectionChanged,
 IPC_MESSAGE_ROUTED1(ViewHostMsg_SelectionBoundsChanged,
                     ViewHostMsg_SelectionBounds_Params)
 
-// Asks the browser to display the file chooser.  The result is returned in a
-// ViewMsg_RunFileChooserResponse message.
-IPC_MESSAGE_ROUTED1(ViewHostMsg_RunFileChooser,
-                    content::FileChooserParams)
-
 // Asks the browser to enumerate a directory.  This is equivalent to running
 // the file chooser in directory-enumeration mode and having the user select
 // the given directory.  The result is returned in a
@@ -1190,14 +1057,6 @@ IPC_MESSAGE_ROUTED1(ViewHostMsg_RunFileChooser,
 IPC_MESSAGE_ROUTED2(ViewHostMsg_EnumerateDirectory,
                     int /* request_id */,
                     base::FilePath /* file_path */)
-
-// Asks the browser to save a image (for <canvas> or <img>) from a data URL.
-// Note: |data_url| is the contents of a data:URL, and that it's represented as
-// a string only to work around size limitations for GURLs in IPC messages.
-IPC_MESSAGE_CONTROL3(ViewHostMsg_SaveImageFromDataURL,
-                     int /* render_view_id */,
-                     int /* render_frame_id */,
-                     std::string /* data_url */)
 
 // Tells the browser to move the focus to the next (previous if reverse is
 // true) focusable element.
@@ -1210,7 +1069,7 @@ IPC_MESSAGE_ROUTED1(ViewHostMsg_OpenDateTimeDialog,
 
 // Required for updating text input state.
 IPC_MESSAGE_ROUTED1(ViewHostMsg_TextInputStateChanged,
-                    ViewHostMsg_TextInputState_Params /* input state params */)
+                    content::TextInputState /* text_input_state */)
 
 // Sent when the renderer changes the zoom level for a particular url, so the
 // browser can update its records.  If the view is a plugin doc, then url is
@@ -1342,14 +1201,6 @@ IPC_MESSAGE_ROUTED2(ViewHostMsg_ShowUnhandledTapUIIfNeeded,
                     int /* y */)
 
 #elif defined(OS_MACOSX)
-// Informs the browser that a plugin has gained or lost focus.
-IPC_MESSAGE_ROUTED2(ViewHostMsg_PluginFocusChanged,
-                    bool, /* focused */
-                    int /* plugin_id */)
-
-// Instructs the browser to start plugin IME.
-IPC_MESSAGE_ROUTED0(ViewHostMsg_StartPluginIme)
-
 // Receives content of a web page as plain text.
 IPC_MESSAGE_ROUTED1(ViewMsg_GetRenderedTextCompleted, std::string)
 #endif

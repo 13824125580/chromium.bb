@@ -31,29 +31,24 @@
    *
    *   <settings-appearance-fonts-page prefs="{{prefs}}">
    *   </settings-appearance-fonts-page>
-   *
-   * @group Chrome Settings Elements
-   * @element settings-appearance-fonts-page
    */
   Polymer({
     is: 'settings-appearance-fonts-page',
 
-    properties: {
-      /**
-       * The font size used by default.
-       * @private
-       */
-      defaultFontSize_: {
-        type: Number,
-      },
+    behaviors: [I18nBehavior, WebUIListenerBehavior],
 
-      /**
-       * The value of the font size slider.
-       * @private
-       */
-      fontSizeIndex_: {
-        type: Number,
-      },
+    properties: {
+      /** @private */
+      advancedExtensionInstalled_: Boolean,
+
+      /** @private */
+      advancedExtensionSublabel_: String,
+
+      /** @private */
+      advancedExtensionUrl_: String,
+
+      /** @private {!settings.FontsBrowserProxy} */
+      browserProxy_: Object,
 
       /**
        * Common font sizes.
@@ -63,32 +58,6 @@
         readOnly: true,
         type: Array,
         value: FONT_SIZE_RANGE_,
-      },
-
-      /**
-       * Upper bound of the font size slider.
-       * @private
-       */
-      fontSizeRangeLimit_: {
-        readOnly: true,
-        type: Number,
-        value: FONT_SIZE_RANGE_.length - 1,
-      },
-
-      /**
-       * The interactive value of the minimum font size slider.
-       * @private
-       */
-      immediateMinimumSizeIndex_: {
-        type: Number,
-      },
-
-      /**
-       * The interactive value of the font size slider.
-       * @private
-       */
-      immediateSizeIndex_: {
-        type: Number,
       },
 
       /**
@@ -102,32 +71,6 @@
       },
 
       /**
-       * Upper bound of the minimum font size slider.
-       * @private
-       */
-      minimumFontSizeRangeLimit_: {
-        readOnly: true,
-        type: Number,
-        value: MINIMUM_FONT_SIZE_RANGE_.length - 1,
-      },
-
-      /**
-       * The font size used at minimum.
-       * @private
-       */
-      minimumFontSize_: {
-        type: Number,
-      },
-
-      /**
-       * The value of the minimum font size slider.
-       * @private
-       */
-      minimumSizeIndex_: {
-        type: Number,
-      },
-
-      /**
        * Preferences state.
        */
       prefs: {
@@ -138,63 +81,69 @@
 
     observers: [
       'fontSizeChanged_(prefs.webkit.webprefs.default_font_size.value)',
-      'minimumFontSizeChanged_(prefs.webkit.webprefs.minimum_font_size.value)',
     ],
 
     /** @override */
+    created: function() {
+      this.browserProxy_ = settings.FontsBrowserProxyImpl.getInstance();
+    },
+
+    /** @override */
     ready: function() {
-      var self = this;
-      cr.define('Settings', function() {
-        return {
-          setFontsData: function() {
-            return self.setFontsData_.apply(self, arguments);
-          },
-        };
-      });
-      chrome.send('fetchFontsData');
+      this.addWebUIListener('advanced-font-settings-installed',
+          this.setAdvancedExtensionInstalled_.bind(this));
+      this.browserProxy_.observeAdvancedFontExtensionAvailable();
+
+      this.browserProxy_.fetchFontsData().then(
+          this.setFontsData_.bind(this));
+    },
+
+    /** @private */
+    openAdvancedExtension_: function() {
+      if (this.advancedExtensionInstalled_)
+        this.browserProxy_.openAdvancedFontSettings();
+      else
+        window.open(this.advancedExtensionUrl_);
     },
 
     /**
-     * @param {number} value The intermediate slider value.
+     * @param {boolean} isInstalled Whether the advanced font settings
+     *     extension is installed.
      * @private
      */
-    immediateSizeIndexChanged_: function(value) {
-      this.set('prefs.webkit.webprefs.default_font_size.value',
-          this.fontSizeRange_[this.immediateSizeIndex_]);
+    setAdvancedExtensionInstalled_: function(isInstalled) {
+      this.advancedExtensionInstalled_ = isInstalled;
+      this.advancedExtensionSublabel_ = this.i18n(isInstalled ?
+          'openAdvancedFontSettings' : 'requiresWebStoreExtension');
     },
 
     /**
-     * @param {number} value The intermediate slider value.
+     * @param {!FontsData} response A list of fonts, encodings and the advanced
+     *     font settings extension URL.
      * @private
      */
-    immediateMinimumSizeIndexChanged_: function(value) {
-      this.set('prefs.webkit.webprefs.minimum_font_size.value',
-          this.minimumFontSizeRange_[this.immediateMinimumSizeIndex_]);
-    },
-
-    /**
-     * @param {!Array<{0: string, 1: (string|undefined),
-     *     2: (string|undefined)}>}
-     *   fontList The font menu options.
-     * @param {!Array<{0: string, 1: string}>} encodingList The encoding menu
-     *   options.
-     * @private
-     */
-    setFontsData_: function(fontList, encodingList) {
+    setFontsData_: function(response) {
       var fontMenuOptions = [];
-      for (var i = 0; i < fontList.length; ++i)
-        fontMenuOptions.push({value: fontList[i][0], name: fontList[i][1]});
+      for (var i = 0; i < response.fontList.length; ++i) {
+        fontMenuOptions.push({
+          value: response.fontList[i][0],
+          name: response.fontList[i][1]
+        });
+      }
       this.$.standardFont.menuOptions = fontMenuOptions;
       this.$.serifFont.menuOptions = fontMenuOptions;
       this.$.sansSerifFont.menuOptions = fontMenuOptions;
       this.$.fixedFont.menuOptions = fontMenuOptions;
 
       var encodingMenuOptions = [];
-      for (var i = 0; i < encodingList.length; ++i) {
+      for (i = 0; i < response.encodingList.length; ++i) {
         encodingMenuOptions.push({
-            value: encodingList[i][0], name: encodingList[i][1]});
+          value: response.encodingList[i][0],
+          name: response.encodingList[i][1]
+        });
       }
       this.$.encoding.menuOptions = encodingMenuOptions;
+      this.advancedExtensionUrl_ = response.extensionUrl;
     },
 
     /**
@@ -202,22 +151,11 @@
      * @private
      */
     fontSizeChanged_: function(value) {
-      this.defaultFontSize_ = value;
-      if (!this.$.sizeSlider.dragging) {
-        this.fontSizeIndex_ = this.fontSizeRange_.indexOf(value);
-        this.set('prefs.webkit.webprefs.default_fixed_font_size.value',
+      // TODO(michaelpg): Whitelist this pref in prefs_utils.cc so it is
+      // included in the <settings-prefs> getAllPrefs call, otherwise this path
+      // is invalid and nothing happens. See crbug.com/612535.
+      this.set('prefs.webkit.webprefs.default_fixed_font_size.value',
           value - SIZE_DIFFERENCE_FIXED_STANDARD_);
-      }
-    },
-
-    /**
-     * @param {number} value The changed font size slider value.
-     * @private
-     */
-    minimumFontSizeChanged_: function(value) {
-      this.minimumFontSize_ = value;
-      if (!this.$.minimumSizeSlider.dragging)
-        this.minimumSizeIndex_ = this.minimumFontSizeRange_.indexOf(value);
     },
 
     /**

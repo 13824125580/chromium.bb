@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/signin_view_controller_delegate.h"
 
+#include "base/bind.h"
+#include "base/values.h"
 #include "chrome/browser/ui/signin_view_controller.h"
 #include "chrome/browser/ui/webui/signin/get_auth_frame.h"
 #include "content/public/browser/web_contents.h"
@@ -20,8 +22,9 @@ content::WebContents* GetAuthFrameWebContents(
 SigninViewControllerDelegate::SigninViewControllerDelegate(
     SigninViewController* signin_view_controller,
     content::WebContents* web_contents)
-    : signin_view_controller_(signin_view_controller) {
-  web_contents->SetDelegate(this);
+    : signin_view_controller_(signin_view_controller),
+      web_contents_(web_contents) {
+  web_contents_->SetDelegate(this);
 }
 
 SigninViewControllerDelegate::~SigninViewControllerDelegate() {}
@@ -31,6 +34,21 @@ void SigninViewControllerDelegate::CloseModalSignin() {
   PerformClose();
 }
 
+void SigninViewControllerDelegate::PerformNavigation() {
+  if (CanGoBack(web_contents_)) {
+    auto auth_web_contents = GetAuthFrameWebContents(web_contents_);
+    auth_web_contents->GetController().GoBack();
+  } else {
+    CloseModalSignin();
+  }
+}
+
+bool SigninViewControllerDelegate::HandleContextMenu(
+    const content::ContextMenuParams& params) {
+  // Discard the context menu
+  return true;
+}
+
 void SigninViewControllerDelegate::ResetSigninViewControllerDelegate() {
   if (signin_view_controller_) {
     signin_view_controller_->ResetModalSigninDelegate();
@@ -38,28 +56,20 @@ void SigninViewControllerDelegate::ResetSigninViewControllerDelegate() {
   }
 }
 
-void SigninViewControllerDelegate::NavigationButtonClicked(
-    content::WebContents* web_contents) {
-  if (CanGoBack(web_contents)) {
-    auto auth_web_contents = GetAuthFrameWebContents(web_contents);
-    auth_web_contents->GetController().GoBack();
-  } else {
-    CloseModalSignin();
-  }
+// content::WebContentsDelegate
+void SigninViewControllerDelegate::LoadingStateChanged(
+    content::WebContents* source,
+    bool to_different_document) {
+  if (CanGoBack(source))
+    source->GetWebUI()->CallJavascriptFunctionUnsafe(
+        "inline.login.showBackButton");
+  else
+    source->GetWebUI()->CallJavascriptFunctionUnsafe(
+        "inline.login.showCloseButton");
 }
 
 bool SigninViewControllerDelegate::CanGoBack(
     content::WebContents* web_ui_web_contents) const {
   auto auth_web_contents = GetAuthFrameWebContents(web_ui_web_contents);
   return auth_web_contents && auth_web_contents->GetController().CanGoBack();
-}
-
-// content::WebContentsDelegate
-void SigninViewControllerDelegate::LoadingStateChanged(
-    content::WebContents* source,
-    bool to_different_document) {
-  if (CanGoBack(source))
-    ShowBackArrow();
-  else
-    ShowCloseButton();
 }

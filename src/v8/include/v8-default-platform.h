@@ -5,7 +5,7 @@
 #ifndef V8_LIBPLATFORM_LIBPLATFORM_H_
 #define V8_LIBPLATFORM_LIBPLATFORM_H_
 
-#include "v8-platform.h"
+#include "v8-platform.h"  // NOLINT(build/include)
 
 #ifdef BUILDING_V8_SHARED
 # define V8_LIBPLATFORM_EXPORT __declspec(dllexport)

@@ -11,15 +11,7 @@ import datetime
 import glob
 import os
 import re
-try:
-  import sqlalchemy
-  import sqlalchemy.exc
-  import sqlalchemy.interfaces
-  from sqlalchemy import MetaData
-except ImportError:
-  raise AssertionError(
-      'Unable to import sqlalchemy. Please install this package by running '
-      '`sudo apt-get install python-sqlalchemy` or similar.')
+
 
 from chromite.cbuildbot import constants
 from chromite.lib import clactions
@@ -29,12 +21,29 @@ from chromite.lib import graphite
 from chromite.lib import osutils
 from chromite.lib import retry_stats
 
+try:
+  from infra_libs.ts_mon.common import metrics
+  from infra_libs.ts_mon.common import interface
+except (ImportError, RuntimeError):
+  metrics = None
+  interface = None
+
+sqlalchemy_imported = False
+try:
+  import sqlalchemy
+  import sqlalchemy.exc
+  import sqlalchemy.interfaces
+  from sqlalchemy import MetaData
+  sqlalchemy_imported = True
+except ImportError:
+  pass
 
 CIDB_MIGRATIONS_DIR = os.path.join(constants.CHROMITE_DIR, 'cidb',
                                    'migrations')
 
-_RETRYABLE_OPERATIONAL_ERROR_CODES = (
+_RETRYABLE_OPERATIONAL_ERROR_CODES = frozenset([
     1053,   # 'Server shutdown in progress'
+    1205,   # 'Lock wait timeout exceeded; try restarting transaction'
     2003,   # 'Can't connect to MySQL server'
     2006,   # Error code 2006 'MySQL server has gone away' indicates that
             # the connection used was closed or dropped
@@ -44,7 +53,7 @@ _RETRYABLE_OPERATIONAL_ERROR_CODES = (
             # whether the query completed before or after the connection
             # lost.
     2026,   # 'SSL connection error: unknown error number'
-)
+])
 
 
 def _IsRetryableException(e):
@@ -63,12 +72,32 @@ def _IsRetryableException(e):
   # exception types inherit from one another, so we fall back to string matching
   # on the exception name. See crbug.com/483654
   if 'OperationalError' in str(type(e)):
-    error_code = e.orig.args[0]
-    if error_code in _RETRYABLE_OPERATIONAL_ERROR_CODES:
-      logging.info('Encountered retryable cidb exception %s, retrying....', e)
+    # Unwrap the error till we get to the error raised by the DB backend.
+    # Record each error_code that we encounter along the way.
+    e_orig = e
+    encountered_error_codes = set()
+    while e_orig:
+      if len(e_orig.args) and isinstance(e_orig.args[0], int):
+        encountered_error_codes.add(e_orig.args[0])
+      e_orig = getattr(e_orig, 'orig', None)
+
+    if encountered_error_codes & _RETRYABLE_OPERATIONAL_ERROR_CODES:
+      # Suppress logging of error code 2006 retries. They are routine and
+      # expected, and logging them confuses people.
+      if not 2006 in encountered_error_codes:
+        logging.info('RETRYING cidb query due to %s.', e)
       return True
+    else:
+      logging.info('None of error codes encountered %s are-retryable.',
+                   encountered_error_codes)
 
   return False
+
+
+def _RetrySuccessHandler(attempt):
+  """If a query succeeded after retry, log it."""
+  if attempt > 1:
+    logging.info('cidb query succeeded after %s retries', attempt - 1)
 
 
 class DBException(Exception):
@@ -95,13 +124,6 @@ def minimum_schema(min_version):
   return decorator
 
 
-class StrictModeListener(sqlalchemy.interfaces.PoolListener):
-  """This listener ensures that STRICT_ALL_TABLES for all connections."""
-  # pylint: disable=W0613
-  def connect(self, dbapi_con, *args, **kwargs):
-    cur = dbapi_con.cursor()
-    cur.execute("SET SESSION sql_mode='STRICT_ALL_TABLES'")
-    cur.close()
 
 
 # Tuple to keep arguments that modify SQL query retry behaviour of
@@ -176,6 +198,25 @@ class SchemaVersionedMySQLConnection(object):
       query_retry_args: An optional SqlConnectionRetryArgs tuple to tweak the
                         retry behaviour of SQL queries.
     """
+    if not sqlalchemy_imported:
+      raise AssertionError('Unable to open cidb connections, as sqlalchemy '
+                           'module could not be imported. If you need cidb, '
+                           'please install the missing package by running '
+                           '`sudo apt-get install python-sqlalchemy` or '
+                           'similar.')
+
+    # Note: This is a inner class because it needs to inherit from sqlalchemy,
+    # but we do not know for sure that sqlalchemy has been successfully imported
+    # until we enter this method (i.e. this class cannot be module-level).
+    class StrictModeListener(sqlalchemy.interfaces.PoolListener):
+      """This listener ensures that STRICT_ALL_TABLES for all connections."""
+      def connect(self, dbapi_con, *_args, **_kwargs):
+        cur = dbapi_con.cursor()
+        cur.execute("SET SESSION sql_mode='STRICT_ALL_TABLES'")
+        cur.close()
+
+    self._listener_class = StrictModeListener
+
     # None, or a sqlalchemy.MetaData instance
     self._meta = None
 
@@ -203,7 +244,7 @@ class SchemaVersionedMySQLConnection(object):
     # database name given by |db_name|.
     temp_engine = sqlalchemy.create_engine(connect_url,
                                            connect_args=self._ssl_args,
-                                           listeners=[StrictModeListener()])
+                                           listeners=[self._listener_class()])
     databases = self._ExecuteWithEngine('SHOW DATABASES',
                                         temp_engine).fetchall()
     if (db_name,) not in databases:
@@ -313,7 +354,8 @@ class SchemaVersionedMySQLConnection(object):
     if self._meta is not None:
       return
     self._meta = MetaData()
-    self._meta.reflect(bind=self._GetEngine())
+    fn = lambda: self._meta.reflect(bind=self._GetEngine())
+    self._RunFunctorWithRetries(fn)
 
   def _Insert(self, table, values):
     """Create and execute a one-row INSERT query.
@@ -505,13 +547,19 @@ class SchemaVersionedMySQLConnection(object):
     f = lambda: engine.execute(query, *args, **kwargs)
     logging.info('Running cidb query on pid %s, repr(query) starts with %s',
                  os.getpid(), repr(query)[:100])
+    return self._RunFunctorWithRetries(f)
+
+  def _RunFunctorWithRetries(self, functor):
+    """Run the given |functor| with correct retry parameters."""
     return retry_stats.RetryWithStats(
         retry_stats.CIDB,
         handler=_IsRetryableException,
         max_retry=self.query_retry_args.max_retry,
         sleep=self.query_retry_args.sleep,
         backoff_factor=self.query_retry_args.backoff_factor,
-        functor=f)
+        success_functor=_RetrySuccessHandler,
+        raise_first_exception_on_failure=False,
+        functor=functor)
 
   def _GetEngine(self):
     """Get the sqlalchemy engine for this process.
@@ -528,7 +576,7 @@ class SchemaVersionedMySQLConnection(object):
     else:
       e = sqlalchemy.create_engine(self._connect_url,
                                    connect_args=self._ssl_args,
-                                   listeners=[StrictModeListener()])
+                                   listeners=[self._listener_class()])
       self._engine = e
       self._engine_pid = pid
       logging.info('Created cidb engine %s@%s for pid %s', e.url.username,
@@ -553,9 +601,18 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
       'SELECT c.id, b.id, action, c.reason, build_config, '
       'change_number, patch_number, change_source, timestamp FROM '
       'clActionTable c JOIN buildTable b ON build_id = b.id ')
+  _SQL_FETCH_MESSAGES = (
+      'SELECT build_id, build_config, waterfall, builder_name, build_number, '
+      'message_type, message_subtype, message_value, timestamp, board FROM '
+      'buildMessageTable c JOIN buildTable b ON build_id = b.id ')
   _DATE_FORMAT = '%Y-%m-%d'
 
   NUM_RESULTS_NO_LIMIT = -1
+
+  BUILD_STATUS_KEYS = (
+      'id', 'build_config', 'start_time', 'finish_time', 'status', 'waterfall',
+      'build_number', 'builder_name', 'platform_version', 'full_version',
+      'milestone_version', 'important')
 
   def __init__(self, db_credentials_dir, *args, **kwargs):
     super(CIDBConnection, self).__init__('cidb', CIDB_MIGRATIONS_DIR,
@@ -569,10 +626,10 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
     """
     return self._Execute('SELECT NOW()').fetchall()[0][0]
 
-  @minimum_schema(32)
+  @minimum_schema(43)
   def InsertBuild(self, builder_name, waterfall, build_number,
                   build_config, bot_hostname, master_build_id=None,
-                  timeout_seconds=None):
+                  timeout_seconds=None, important=None):
     """Insert a build row.
 
     Args:
@@ -584,6 +641,7 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
       master_build_id: (Optional) primary key of master build to this build.
       timeout_seconds: (Optional) If provided, total time allocated for this
           build. A deadline is recorded in cidb for the current build to end.
+      important: (Optional) If provided, the |important| value for this build.
     """
     values = {
         'builder_name': builder_name,
@@ -593,7 +651,9 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
         'build_config': build_config,
         'bot_hostname': bot_hostname,
         'start_time': sqlalchemy.func.current_timestamp(),
-        'master_build_id': master_build_id}
+        'master_build_id': master_build_id,
+        'important': important,
+    }
     if timeout_seconds is not None:
       now = self.GetTime()
       duration = datetime.timedelta(seconds=timeout_seconds)
@@ -637,11 +697,21 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
     stats = graphite.StatsFactory.GetInstance()
     for cl_action in cl_actions:
       r = cl_action.reason or 'no_reason'
+
       # TODO(akeshet) This is a slightly hacky workaround for the fact that our
       # strategy reasons contain a ':', but statsd considers that character to
       # be a name terminator.
-      r = r.replace(':', '_')
-      stats.Counter('.'.join(['cl_actions', cl_action.action])).increment(r)
+      statsd_name = 'cl_actions.%s' % cl_action.action
+      stats.Counter(statsd_name).increment(r.replace(':', '_'))
+
+      if metrics:
+        monarch_name = 'chromeos/cbuildbot/cl_action/' + cl_action.action
+        # This is necessary because ts_mon does not allow constructing a metrics
+        # object with the same name twice.
+        counter = (
+            interface.state.metrics.get(monarch_name) or
+            metrics.CounterMetric(monarch_name, fields={'reason': r}))
+        counter.increment()
 
     return retval
 
@@ -718,6 +788,34 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
               'extra_info': extra_info}
     return self._Insert('failureTable', values)
 
+  @minimum_schema(42)
+  def InsertBuildMessage(self, build_id, message_type=None,
+                         message_subtype=None, message_value=None, board=None):
+    """Insert a build message into database.
+
+    Args:
+      build_id: primary key of build recording this message.
+      message_type: Optional str name of message type.
+      message_subtype: Optional str name of message subtype.
+      message_value: Optional value of message.
+      board: Optional str name of the board.
+    """
+    if message_type:
+      message_type = message_type[:240]
+    if message_subtype:
+      message_subtype = message_subtype[:240]
+    if message_value:
+      message_value = message_value[:480]
+    if board:
+      board = board[:240]
+
+    values = {'build_id': build_id,
+              'message_type': message_type,
+              'message_subtype': message_subtype,
+              'message_value': message_value,
+              'board': board}
+    return self._Insert('buildMessageTable', values)
+
   @minimum_schema(2)
   def UpdateMetadata(self, build_id, metadata):
     """Update the given metadata row in database.
@@ -738,7 +836,8 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
                          'full_version': versions.get('full'),
                          'sdk_version': d.get('sdk-versions'),
                          'toolchain_url': d.get('toolchain-url'),
-                         'build_type': d.get('build_type')})
+                         'build_type': d.get('build_type'),
+                         'important': d.get('important')})
 
   @minimum_schema(32)
   def ExtendDeadline(self, build_id, timeout_seconds):
@@ -794,6 +893,18 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
         build_stage_id,
         {'status': constants.BUILDER_STATUS_INFLIGHT,
          'start_time': current_timestamp})
+
+  @minimum_schema(46)
+  def WaitBuildStage(self, build_stage_id):
+    """Marks a build stage as waiting, in the database.
+
+    Args:
+      build_stage_id: primary key of the build stage in buildStageTable.
+    """
+    return self._Update(
+        'buildStageTable',
+        build_stage_id,
+        {'status': constants.BUILDER_STATUS_WAITING})
 
   @minimum_schema(28)
   def FinishBuildStage(self, build_stage_id, status):
@@ -860,7 +971,7 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
         (status, build_id, child_config))
 
 
-  @minimum_schema(2)
+  @minimum_schema(43)
   def GetBuildStatus(self, build_id):
     """Gets the status of the build.
 
@@ -874,7 +985,7 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
     statuses = self.GetBuildStatuses([build_id])
     return statuses[0] if statuses else None
 
-  @minimum_schema(2)
+  @minimum_schema(43)
   def GetBuildStatuses(self, build_ids):
     """Gets the statuses of the builds.
 
@@ -884,17 +995,49 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
     Returns:
       A list of dictionary with keys (id, build_config, start_time,
       finish_time, status, waterfall, build_number, builder_name,
-      platform_version, full_version), or None if no build with this
-      id was found.
+      platform_version, full_version, milestone_version, important)
+      (see BUILD_STATUS_KEYS) or None if no build with this id was found.
     """
     return self._SelectWhere(
         'buildTable',
         'id IN (%s)' % ','.join(str(int(x)) for x in build_ids),
-        ['id', 'build_config', 'start_time', 'finish_time', 'status',
-         'waterfall', 'build_number', 'builder_name', 'platform_version',
-         'full_version'])
+        self.BUILD_STATUS_KEYS)
 
-  @minimum_schema(2)
+  @minimum_schema(30)
+  def GetBuildStages(self, build_id):
+    """Gets all the stages of a given build.
+
+    Args:
+      build_id: build id of the build to fetch the stages for.
+
+    Returns:
+      A list containing, for each stage of the build found, a dictionary with
+      keys (id, build_id, name, board, status, last_updated, start_time,
+      finish_time, final).
+    """
+    return self.GetBuildsStages([build_id])
+
+  @minimum_schema(30)
+  def GetBuildsStages(self, build_ids):
+    """Gets all the stages for all listed build_ids.
+
+    Args:
+      build_ids: list of build ids of the builds to fetch the stages for.
+
+    Returns:
+      A list containing, for each stage of the builds found, a dictionary with
+      keys (id, build_id, name, board, status, last_updated, start_time,
+      finish_time, final).
+    """
+    if not build_ids:
+      return []
+    return self._SelectWhere(
+        'buildStageTable',
+        'build_id IN (%s)' % ','.join(str(int(x)) for x in build_ids),
+        ['id', 'build_id', 'name', 'board', 'status',
+         'last_updated', 'start_time', 'finish_time', 'final'])
+
+  @minimum_schema(43)
   def GetSlaveStatuses(self, master_build_id):
     """Gets the statuses of slave builders to given build.
 
@@ -904,12 +1047,11 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
 
     Returns:
       A list containing, for each slave build (row) found, a dictionary
-      with keys (id, build_config, start_time, finish_time, status).
+      with keys BUILD_STATUS_KEYS.
     """
     return self._SelectWhere('buildTable',
                              'master_build_id = %d' % master_build_id,
-                             ['id', 'build_config', 'start_time',
-                              'finish_time', 'status'])
+                             self.BUILD_STATUS_KEYS)
 
   @minimum_schema(30)
   def GetSlaveStages(self, master_build_id):
@@ -932,6 +1074,32 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
         'ON build_id = b.id where b.master_build_id = %d' %
         (', '.join(bs_prepended_columns), master_build_id)).fetchall()
     columns = bs_table_columns + ['build_config']
+    return [dict(zip(columns, values)) for values in results]
+
+  @minimum_schema(44)
+  def GetSlaveFailures(self, master_build_id):
+    """Gets the failure entries for slave builds to given build.
+
+    Args:
+      master_build_id: build id of the master build to fetch failures
+                       for.
+
+    Returns:
+      A list containing, for each failure entry, a dictionary with keys
+      (id, build_stage_id, outer_failure_id, exception_type, exception_message,
+       exception_category, extra_info, timestamp, stage_name, board,
+       stage_status, build_id, master_build_id, builder_name, waterfall,
+       build_number, build_config, build_status, important).
+    """
+    columns = ['id', 'build_stage_id', 'outer_failure_id', 'exception_type',
+               'exception_message', 'exception_category', 'extra_info',
+               'timestamp', 'stage_name', 'board', 'stage_status', 'build_id',
+               'master_build_id', 'builder_name', 'waterfall', 'build_number',
+               'build_config', 'build_status', 'important']
+    columns_string = ', '.join(columns)
+    results = self._Execute('SELECT %s FROM failureView '
+                            'WHERE master_build_id = %s ' %
+                            (columns_string, master_build_id)).fetchall()
     return [dict(zip(columns, values)) for values in results]
 
   @minimum_schema(32)
@@ -966,10 +1134,10 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
     deadline_past = (r[0][0] == 0)
     return 0 if deadline_past else abs(time_remaining.total_seconds())
 
-  @minimum_schema(2)
+  @minimum_schema(43)
   def GetBuildHistory(self, build_config, num_results,
                       ignore_build_id=None, start_date=None, end_date=None,
-                      starting_build_number=None):
+                      starting_build_number=None, milestone_version=None):
     """Returns basic information about most recent builds.
 
     By default this function returns the most recent builds. Some arguments can
@@ -989,16 +1157,20 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
           before this date.
       starting_build_number: (Optional) The minimum build_number on the CQ
           master for which data should be retrieved.
+      milestone_version: (Optional) Return only results for this
+          milestone_version.
 
     Returns:
       A sorted list of dicts containing up to |number| dictionaries for
       build statuses in descending order. Valid keys in the dictionary are
       [id, build_config, buildbot_generation, waterfall, build_number,
-      start_time, finish_time, platform_version, full_version, status].
+      start_time, finish_time, platform_version, full_version, status,
+      important].
     """
+    # TODO(akeshet): Unify this with BUILD_STATUS_KEYS
     columns = ['id', 'build_config', 'buildbot_generation', 'waterfall',
                'build_number', 'start_time', 'finish_time', 'platform_version',
-               'full_version', 'status']
+               'full_version', 'status', 'important']
 
     where_clauses = ['build_config = "%s"' % build_config]
     if start_date is not None:
@@ -1011,6 +1183,8 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
       where_clauses.append('build_number >= %d' % starting_build_number)
     if ignore_build_id is not None:
       where_clauses.append('id != %d' % ignore_build_id)
+    if milestone_version is not None:
+      where_clauses.append('milestone_version = "%s"' % milestone_version)
     query = (
         'SELECT %s'
         ' FROM buildTable'
@@ -1137,6 +1311,43 @@ class CIDBConnection(SchemaVersionedMySQLConnection):
     results = self._Execute('SELECT k, v FROM keyvalTable').fetchall()
     return dict(results)
 
+  @minimum_schema(42)
+  def GetBuildMessages(self, build_id):
+    """Gets build messages from buildMessageTable.
+
+    Args:
+      build_id: The build to get messages for.
+
+    Returns:
+      A list of build message dictionaries, where each dictionary contains
+      keys build_id, build_config, builder_name, build_number, message_type,
+      message_subtype, message_value, timestamp, board.
+    """
+    return self._GetBuildMessagesWithClause('build_id = %s' % build_id)
+
+  @minimum_schema(42)
+  def GetSlaveBuildMessages(self, master_build_id):
+    """Gets build messages from buildMessageTable.
+
+    Args:
+      master_build_id: The build to get all slave messages for.
+
+    Returns:
+      A list of build message dictionaries, where each dictionary contains
+      keys build_id, build_config, waterfall, builder_name, build_number,
+      message_type, message_subtype, message_value, timestamp, board.
+    """
+    return self._GetBuildMessagesWithClause(
+        'master_build_id = %s' % master_build_id)
+
+  def _GetBuildMessagesWithClause(self, clause):
+    """Private helper method for fetching build messages."""
+    columns = ['build_id', 'build_config', 'waterfall', 'builder_name',
+               'build_number', 'message_type', 'message_subtype',
+               'message_value', 'timestamp', 'board']
+    results = self._Execute('%s WHERE %s' % (self._SQL_FETCH_MESSAGES,
+                                             clause)).fetchall()
+    return [dict(zip(columns, values)) for values in results]
 
 def _INV():
   raise AssertionError('CIDB connection factory has been invalidated.')

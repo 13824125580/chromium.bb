@@ -4,10 +4,26 @@
 
 #include "content/shell/renderer/shell_content_renderer_client.h"
 
+#include <string>
+
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "components/web_cache/renderer/web_cache_render_process_observer.h"
-#include "content/public/renderer/render_thread.h"
+#include "base/logging.h"
+#include "base/macros.h"
+#include "components/web_cache/renderer/web_cache_impl.h"
+
+// blpwtk2: Remove test code
+//#include "content/public/test/test_mojo_service.mojom.h"
+
+#include "content/shell/common/shell_switches.h"
 #include "content/shell/renderer/shell_render_view_observer.h"
+#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/system/message_pipe.h"
+#include "services/shell/public/cpp/interface_registry.h"
+
+// blpwtk2: Remove test code
+//#include "third_party/WebKit/public/web/WebTestingSupport.h"
+
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
 
@@ -23,38 +39,78 @@ namespace content {
 
 namespace {
 
-// This is the public key which the content shell will use to enable origin
-// trial features.
-// TODO(iclelland): Update this comment with the location of the public and
-// private key files when the command-line tool CL lands
-static const uint8_t kOriginTrialPublicKey[] = {
-    0x75, 0x10, 0xac, 0xf9, 0x3a, 0x1c, 0xb8, 0xa9, 0x28, 0x70, 0xd2,
-    0x9a, 0xd0, 0x0b, 0x59, 0xe1, 0xac, 0x2b, 0xb7, 0xd5, 0xca, 0x1f,
-    0x64, 0x90, 0x08, 0x8e, 0xa8, 0xe0, 0x56, 0x3a, 0x04, 0xd0,
+// blpwtk2: Remove test code.
+#if 0
+// A test Mojo service which can be driven by browser tests for various reasons.
+class TestMojoServiceImpl : public mojom::TestMojoService {
+ public:
+  explicit TestMojoServiceImpl(mojom::TestMojoServiceRequest request)
+      : binding_(this, std::move(request)) {
+    binding_.set_connection_error_handler(
+        base::Bind(&TestMojoServiceImpl::OnConnectionError,
+                   base::Unretained(this)));
+  }
+
+  ~TestMojoServiceImpl() override {}
+
+ private:
+  void OnConnectionError() { delete this; }
+
+  // mojom::TestMojoService:
+  void DoSomething(const DoSomethingCallback& callback) override {
+    // Instead of responding normally, unbind the pipe, write some garbage,
+    // and go away.
+    const std::string kBadMessage = "This is definitely not a valid response!";
+    mojo::ScopedMessagePipeHandle pipe = binding_.Unbind().PassMessagePipe();
+    MojoResult rv = mojo::WriteMessageRaw(
+        pipe.get(), kBadMessage.data(), kBadMessage.size(), nullptr, 0,
+        MOJO_WRITE_MESSAGE_FLAG_NONE);
+    DCHECK_EQ(rv, MOJO_RESULT_OK);
+
+    // Deletes this.
+    OnConnectionError();
+  }
+
+  void DoTerminateProcess(const DoTerminateProcessCallback& callback) override {
+    NOTREACHED();
+  }
+
+  void CreateFolder(const CreateFolderCallback& callback) override {
+    NOTREACHED();
+  }
+
+  void GetRequestorName(const GetRequestorNameCallback& callback) override {
+    callback.Run("Not implemented.");
+  }
+
+  mojo::Binding<mojom::TestMojoService> binding_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestMojoServiceImpl);
 };
+
+void CreateTestMojoService(mojom::TestMojoServiceRequest request) {
+  // Owns itself.
+  new TestMojoServiceImpl(std::move(request));
+}
+#endif
+
 }  // namespace
 
-ShellContentRendererClient::ShellContentRendererClient()
-    : origin_trial_public_key_(base::StringPiece(
-          reinterpret_cast<const char*>(kOriginTrialPublicKey),
-          arraysize(kOriginTrialPublicKey))) {}
+ShellContentRendererClient::ShellContentRendererClient() {}
 
 ShellContentRendererClient::~ShellContentRendererClient() {
 }
 
 void ShellContentRendererClient::RenderThreadStarted() {
-  RenderThread* thread = RenderThread::Get();
+  web_cache_impl_.reset(new web_cache::WebCacheImpl());
   spellcheck_.reset(new SpellCheck());
-  thread->AddObserver(spellcheck_.get());
-  web_cache_observer_.reset(new web_cache::WebCacheRenderProcessObserver());
-  thread->AddObserver(web_cache_observer_.get());
 }
 
 void ShellContentRendererClient::RenderViewCreated(RenderView* render_view) {
   new ShellRenderViewObserver(render_view);
   new SpellCheckProvider(render_view, spellcheck_.get());
   new printing::PrintWebViewHelper(render_view,
-                                   scoped_ptr<printing::PrintWebViewHelper::Delegate>(printing::PrintWebViewHelper::CreateEmptyDelegate()));
+                                   std::unique_ptr<printing::PrintWebViewHelper::Delegate>(printing::PrintWebViewHelper::CreateEmptyDelegate()));
 }
 
 bool ShellContentRendererClient::IsPluginAllowedToUseCompositorAPI(
@@ -84,8 +140,24 @@ bool ShellContentRendererClient::IsPluginAllowedToUseDevChannelAPIs() {
   return false;
 }
 
-base::StringPiece ShellContentRendererClient::GetOriginTrialPublicKey() {
-  return origin_trial_public_key_;
+void ShellContentRendererClient::DidInitializeWorkerContextOnWorkerThread(
+    v8::Local<v8::Context> context) {
+  // blpwtk2: Remove test code.
+#if 0
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kExposeInternalsForTesting)) {
+    blink::WebTestingSupport::injectInternalsObject(context);
+  }
+#endif
+}
+
+void ShellContentRendererClient::ExposeInterfacesToBrowser(
+    shell::InterfaceRegistry* interface_registry) {
+  // blpwtk2: Remove test code.
+#if 0
+  interface_registry->AddInterface<mojom::TestMojoService>(
+      base::Bind(&CreateTestMojoService));
+#endif
 }
 
 }  // namespace content

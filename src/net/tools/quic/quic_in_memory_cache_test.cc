@@ -20,6 +20,7 @@
 using base::IntToString;
 using base::StringPiece;
 using net::SpdyHeaderBlock;
+using std::list;
 using std::string;
 
 namespace net {
@@ -89,8 +90,8 @@ TEST_F(QuicInMemoryCacheTest, AddResponse) {
   response_trailers["key-3"] = "value-3";
 
   QuicInMemoryCache* cache = QuicInMemoryCache::GetInstance();
-  cache->AddResponse(kRequestHost, "/", response_headers, kResponseBody,
-                     response_trailers);
+  cache->AddResponse(kRequestHost, "/", response_headers.Clone(), kResponseBody,
+                     response_trailers.Clone());
 
   const QuicInMemoryCache::Response* response =
       cache->GetResponse(kRequestHost, kRequestPath);
@@ -110,6 +111,24 @@ TEST_F(QuicInMemoryCacheTest, ReadsCacheDir) {
   ASSERT_TRUE(ContainsKey(response->headers(), "connection"));
   EXPECT_EQ("close", response->headers().find("connection")->second);
   EXPECT_LT(0U, response->body().length());
+}
+
+TEST_F(QuicInMemoryCacheTest, ReadsCacheDirWithServerPushResource) {
+  QuicInMemoryCache::GetInstance()->InitializeFromDirectory(CacheDirectory() +
+                                                            "_with_push");
+  QuicInMemoryCache* cache = QuicInMemoryCache::GetInstance();
+  list<ServerPushInfo> resources =
+      cache->GetServerPushResources("quic.test.url/");
+  ASSERT_EQ(1UL, resources.size());
+}
+
+TEST_F(QuicInMemoryCacheTest, ReadsCacheDirWithServerPushResources) {
+  QuicInMemoryCache::GetInstance()->InitializeFromDirectory(CacheDirectory() +
+                                                            "_with_push");
+  QuicInMemoryCache* cache = QuicInMemoryCache::GetInstance();
+  list<ServerPushInfo> resources =
+      cache->GetServerPushResources("quic.test.url/index2.html");
+  ASSERT_EQ(2UL, resources.size());
 }
 
 TEST_F(QuicInMemoryCacheTest, UsesOriginalUrl) {
@@ -139,7 +158,7 @@ TEST_F(QuicInMemoryCacheTest, DefaultResponse) {
   response_headers["content-length"] = "0";
   QuicInMemoryCache::Response* default_response =
       new QuicInMemoryCache::Response;
-  default_response->set_headers(response_headers);
+  default_response->set_headers(std::move(response_headers));
   cache->AddDefaultResponse(default_response);
 
   // Now we should get the default response for the original request.
@@ -179,15 +198,14 @@ TEST_F(QuicInMemoryCacheTest, AddSimpleResponseWithServerPushResources) {
     response_headers[":status"] = "200";
     response_headers["content-length"] = base::UintToString(body.size());
     push_resources.push_back(
-        ServerPushInfo(resource_url, response_headers, i, body));
+        ServerPushInfo(resource_url, response_headers.Clone(), i, body));
   }
 
   QuicInMemoryCache* cache = QuicInMemoryCache::GetInstance();
   cache->AddSimpleResponseWithServerPushResources(
       request_host, "/", 200, response_body, push_resources);
   string request_url = request_host + "/";
-  std::list<ServerPushInfo> resources =
-      cache->GetServerPushResources(request_url);
+  list<ServerPushInfo> resources = cache->GetServerPushResources(request_url);
   ASSERT_EQ(kNumResources, resources.size());
   for (const auto& push_resource : push_resources) {
     ServerPushInfo resource = resources.front();
@@ -215,14 +233,13 @@ TEST_F(QuicInMemoryCacheTest, GetServerPushResourcesAndPushResponses) {
     response_headers[":status"] = push_response_status[i];
     response_headers["content-length"] = base::UintToString(body.size());
     push_resources.push_back(
-        ServerPushInfo(resource_url, response_headers, i, body));
+        ServerPushInfo(resource_url, response_headers.Clone(), i, body));
   }
   QuicInMemoryCache* cache = QuicInMemoryCache::GetInstance();
   cache->AddSimpleResponseWithServerPushResources(
       request_host, "/", 200, response_body, push_resources);
   string request_url = request_host + "/";
-  std::list<ServerPushInfo> resources =
-      cache->GetServerPushResources(request_url);
+  list<ServerPushInfo> resources = cache->GetServerPushResources(request_url);
   ASSERT_EQ(kNumResources, resources.size());
   int i = 0;
   for (const auto& push_resource : push_resources) {

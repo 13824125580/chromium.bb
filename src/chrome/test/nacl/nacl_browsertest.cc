@@ -192,7 +192,8 @@ base::FilePath::StringType NumberOfCoresAsFilePathString() {
   long nprocessors = sysconf(_SC_NPROCESSORS_ONLN);
 #if TELEMETRY
   fprintf(stderr, "browser says nprocessors = %ld\n", nprocessors);
-  fflush(NULL);
+  // crbug.com/597899
+  fflush(stderr);
 #endif
   snprintf(string_rep, sizeof string_rep, "%ld", nprocessors);
   return string_rep;
@@ -205,7 +206,8 @@ base::FilePath::StringType NumberOfCoresAsFilePathString() {
 #if TELEMETRY
   fprintf(stderr, "browser says nprocessors = %lu\n",
           system_info.dwNumberOfProcessors);
-  fflush(NULL);
+  // crbug.com/597899
+  fflush(stderr);
 #endif
   _snwprintf_s(string_rep, sizeof string_rep / sizeof string_rep[0], _TRUNCATE,
                L"%u", system_info.dwNumberOfProcessors);
@@ -216,11 +218,12 @@ base::FilePath::StringType NumberOfCoresAsFilePathString() {
 #if TELEMETRY
 static void PathTelemetry(base::FilePath::StringType const &path) {
 # if defined(OS_WIN)
-    fwprintf(stderr, L"path = %s\n", path.c_str());
+  fwprintf(stderr, L"path = %s\n", path.c_str());
 # else
-    fprintf(stderr, "path = %s\n", path.c_str());
+  fprintf(stderr, "path = %s\n", path.c_str());
 # endif
-    fflush(NULL);
+  // crbug.com/597899
+  fflush(stderr);
 }
 #else
 static void PathTelemetry(base::FilePath::StringType const &path) {
@@ -303,7 +306,7 @@ class NaClBrowserTestPnaclDebug : public NaClBrowserTestPnacl {
 
   void RunWithTestDebugger(const base::FilePath::StringType& test_url) {
     base::Process test_script;
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     nacl::NaClBrowser::GetInstance()->SetGdbDebugStubPortListener(
         base::Bind(&NaClBrowserTestPnaclDebug::StartTestScript,
                    base::Unretained(this), &test_script));

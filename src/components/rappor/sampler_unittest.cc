@@ -4,8 +4,10 @@
 
 #include "components/rappor/sampler.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/metrics/metrics_hashes.h"
 #include "components/rappor/byte_vector_utils.h"
 #include "components/rappor/proto/rappor_metric.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,8 +23,8 @@ const RapporParameters kTestRapporParameters = {
 
 class TestSamplerFactory {
  public:
-  static scoped_ptr<Sample> CreateSample() {
-    return scoped_ptr<Sample>(new Sample(0, kTestRapporParameters));
+  static std::unique_ptr<Sample> CreateSample() {
+    return std::unique_ptr<Sample>(new Sample(0, kTestRapporParameters));
   }
 };
 
@@ -32,11 +34,11 @@ namespace internal {
 TEST(RapporSamplerTest, TestExport) {
   Sampler sampler;
 
-  scoped_ptr<Sample> sample1 = TestSamplerFactory::CreateSample();
+  std::unique_ptr<Sample> sample1 = TestSamplerFactory::CreateSample();
   sample1->SetStringField("Foo", "Junk");
   sampler.AddSample("Metric1", std::move(sample1));
 
-  scoped_ptr<Sample> sample2 = TestSamplerFactory::CreateSample();
+  std::unique_ptr<Sample> sample2 = TestSamplerFactory::CreateSample();
   sample2->SetStringField("Foo", "Junk2");
   sampler.AddSample("Metric1", std::move(sample2));
 
@@ -52,6 +54,28 @@ TEST(RapporSamplerTest, TestExport) {
   RapporReports reports2;
   sampler.ExportMetrics(secret, &reports2);
   EXPECT_EQ(0, reports2.report_size());
+}
+
+// Test exporting fields with NO_NOISE.
+TEST(RapporSamplerTest, TestNoNoise) {
+  Sampler sampler;
+
+  std::unique_ptr<Sample> sample1 = TestSamplerFactory::CreateSample();
+  sample1->SetFlagsField("Foo", 0xde, 8, NO_NOISE);
+  sample1->SetUInt64Field("Bar", 0x0011223344aabbccdd, NO_NOISE);
+  sampler.AddSample("Metric1", std::move(sample1));
+
+  RapporReports reports;
+  std::string secret = HmacByteVectorGenerator::GenerateEntropyInput();
+  sampler.ExportMetrics(secret, &reports);
+  EXPECT_EQ(2, reports.report_size());
+
+  uint64_t hash1 = base::HashMetricName("Metric1.Foo");
+  bool order = reports.report(0).name_hash() == hash1;
+  const RapporReports::Report& report1 = reports.report(order ? 0 : 1);
+  EXPECT_EQ("\xde", report1.bits());
+  const RapporReports::Report& report2 = reports.report(order ? 1 : 0);
+  EXPECT_EQ("\xdd\xcc\xbb\xaa\x44\x33\x22\x11\x00", report2.bits());
 }
 
 }  // namespace internal

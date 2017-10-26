@@ -8,12 +8,14 @@
 #include <io.h>
 #include <stdint.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/process/process_iterator.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/win/object_watcher.h"
 
 namespace base {
@@ -44,7 +46,7 @@ class TimerExpiredTask : public win::ObjectWatcher::Delegate {
 
   void TimedOut();
 
-  // MessageLoop::Watcher -----------------------------------------------------
+  // win::ObjectWatcher::Delegate implementation.
   void OnObjectSignaled(HANDLE object) override;
 
  private:
@@ -58,7 +60,8 @@ class TimerExpiredTask : public win::ObjectWatcher::Delegate {
   DISALLOW_COPY_AND_ASSIGN(TimerExpiredTask);
 };
 
-TimerExpiredTask::TimerExpiredTask(Process process) : process_(process.Pass()) {
+TimerExpiredTask::TimerExpiredTask(Process process)
+    : process_(std::move(process)) {
   watcher_.StartWatchingOnce(process_.Handle(), this);
 }
 
@@ -190,10 +193,9 @@ void EnsureProcessTerminated(Process process) {
     return;
   }
 
-  MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      Bind(&TimerExpiredTask::TimedOut,
-           Owned(new TimerExpiredTask(process.Pass()))),
+  ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, Bind(&TimerExpiredTask::TimedOut,
+                      Owned(new TimerExpiredTask(std::move(process)))),
       TimeDelta::FromMilliseconds(kWaitInterval));
 }
 

@@ -12,13 +12,12 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
+#include "device/usb/mojo/permission_provider.h"
 #include "device/usb/public/interfaces/device.mojom.h"
-#include "device/usb/public/interfaces/permission_provider.mojom.h"
 #include "device/usb/usb_device.h"
 #include "device/usb/usb_device_handle.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "mojo/public/cpp/bindings/callback.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace net {
 class IOBuffer;
@@ -27,13 +26,16 @@ class IOBuffer;
 namespace device {
 namespace usb {
 
+class PermissionProvider;
+
 // Implementation of the public Device interface. Instances of this class are
 // constructed by DeviceManagerImpl and are strongly bound to their MessagePipe
 // lifetime.
 class DeviceImpl : public Device, public device::UsbDevice::Observer {
  public:
   DeviceImpl(scoped_refptr<UsbDevice> device,
-             PermissionProviderPtr permission_provider,
+             DeviceInfoPtr device_info,
+             base::WeakPtr<PermissionProvider> permission_provider,
              mojo::InterfaceRequest<Device> request);
   ~DeviceImpl() override;
 
@@ -43,17 +45,16 @@ class DeviceImpl : public Device, public device::UsbDevice::Observer {
   void CloseHandle();
 
   // Checks interface permissions for control transfers.
-  void HasControlTransferPermission(ControlTransferRecipient recipient,
-                                    uint16_t index,
-                                    const base::Callback<void(bool)>& callback);
+  bool HasControlTransferPermission(ControlTransferRecipient recipient,
+                                    uint16_t index);
 
   // Handles completion of an open request.
   void OnOpen(const OpenCallback& callback,
               scoped_refptr<device::UsbDeviceHandle> handle);
+  void OnPermissionGrantedForOpen(const OpenCallback& callback, bool granted);
 
   // Device implementation:
   void GetDeviceInfo(const GetDeviceInfoCallback& callback) override;
-  void GetConfiguration(const GetConfigurationCallback& callback) override;
   void Open(const OpenCallback& callback) override;
   void Close(const CloseCallback& callback) override;
   void SetConfiguration(uint8_t value,
@@ -97,17 +98,18 @@ class DeviceImpl : public Device, public device::UsbDevice::Observer {
       const IsochronousTransferOutCallback& callback) override;
 
   // device::UsbDevice::Observer implementation:
-  void OnDeviceRemoved(scoped_refptr<device::UsbDevice>) override;
+  void OnDeviceRemoved(scoped_refptr<device::UsbDevice> device) override;
 
-  scoped_refptr<UsbDevice> device_;
+  const scoped_refptr<UsbDevice> device_;
+  const DeviceInfoPtr device_info_;
+  base::WeakPtr<PermissionProvider> permission_provider_;
   ScopedObserver<device::UsbDevice, device::UsbDevice::Observer> observer_;
 
   // The device handle. Will be null before the device is opened and after it
   // has been closed.
   scoped_refptr<UsbDeviceHandle> device_handle_;
-  PermissionProviderPtr permission_provider_;
 
-  mojo::Binding<Device> binding_;
+  mojo::StrongBinding<Device> binding_;
   base::WeakPtrFactory<DeviceImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceImpl);

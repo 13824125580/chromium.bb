@@ -9,12 +9,13 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/spdy/buffered_spdy_framer.h"
+#include "net/spdy/spdy_alt_svc_wire_format.h"
 #include "net/spdy/spdy_protocol.h"
 #include "net/tools/balsa/balsa_headers.h"
 #include "net/tools/balsa/balsa_visitor_interface.h"
@@ -85,7 +86,7 @@ class SpdySM : public BufferedSpdyFramerVisitorInterface, public SMInterface {
   // Called after all the header data for HEADERS control frame is received.
   void OnHeaders(SpdyStreamId stream_id,
                  bool has_priority,
-                 SpdyPriority priority,
+                 int weight,
                  SpdyStreamId parent_stream_id,
                  bool exclusive,
                  bool fin,
@@ -100,31 +101,18 @@ class SpdySM : public BufferedSpdyFramerVisitorInterface, public SMInterface {
   // |stream_id| The stream receiving data.
   // |data| A buffer containing the data received.
   // |len| The length of the data buffer.
-  // When the other side has finished sending data on this stream,
-  // this method will be called with a zero-length buffer.
   void OnStreamFrameData(SpdyStreamId stream_id,
                          const char* data,
-                         size_t len,
-                         bool fin) override;
+                         size_t len) override;
+
+  // Called when the other side has finished sending data on this stream.
+  // |stream_id| The stream that was receivin data.
+  void OnStreamEnd(SpdyStreamId stream_id) override;
 
   // Called when padding is received (padding length field or padding octets).
   // |stream_id| The stream receiving data.
   // |len| The number of padding octets.
   void OnStreamPadding(SpdyStreamId stream_id, size_t len) override;
-
-  // Called just before processing the payload of a frame containing header
-  // data. Should return an implementation of SpdyHeadersHandlerInterface that
-  // will receive headers for stream |stream_id|. The caller will not take
-  // ownership of the headers handler. The same instance should be returned
-  // for all header frames comprising a logical header block (i.e. until
-  // OnHeaderFrameEnd() is called with end_headers == true).
-  SpdyHeadersHandlerInterface* OnHeaderFrameStart(
-      SpdyStreamId stream_id) override;
-
-  // Called after processing the payload of a frame containing header data.
-  // |end_headers| is true if there will not be any subsequent CONTINUATION
-  // frames.
-  void OnHeaderFrameEnd(SpdyStreamId stream_id, bool end_headers) override;
 
   // Called when a SETTINGS frame is received.
   // |clear_persisted| True if the respective flag is set on the SETTINGS frame.
@@ -152,6 +140,12 @@ class SpdySM : public BufferedSpdyFramerVisitorInterface, public SMInterface {
   void OnPushPromise(SpdyStreamId stream_id,
                      SpdyStreamId promised_stream_id,
                      const SpdyHeaderBlock& headers) override {}
+
+  // Called when an ALTSVC frame has been parsed.
+  void OnAltSvc(SpdyStreamId stream_id,
+                base::StringPiece origin,
+                const SpdyAltSvcWireFormat::AlternativeServiceVector&
+                    altsvc_vector) override {}
 
   bool OnUnknownFrame(SpdyStreamId stream_id, int frame_type) override;
 
@@ -218,7 +212,7 @@ class SpdySM : public BufferedSpdyFramerVisitorInterface, public SMInterface {
   void GetOutput() override;
 
  private:
-  scoped_ptr<BufferedSpdyFramer> buffered_spdy_framer_;
+  std::unique_ptr<BufferedSpdyFramer> buffered_spdy_framer_;
   bool valid_spdy_session_;  // True if we have seen valid data on this session.
                              // Use this to fail fast when junk is sent to our
                              // port.

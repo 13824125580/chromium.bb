@@ -32,8 +32,8 @@
 
 #include "platform/text/DateTimeFormat.h"
 #include "public/platform/Platform.h"
-#include "wtf/MainThread.h"
 #include "wtf/text/StringBuilder.h"
+#include <memory>
 
 namespace blink {
 
@@ -177,7 +177,7 @@ String DateTimeStringBuilder::toString()
 
 Locale& Locale::defaultLocale()
 {
-    static Locale* locale = Locale::create(defaultLanguage()).leakPtr();
+    static Locale* locale = Locale::create(defaultLanguage()).release();
     ASSERT(isMainThread());
     return *locale;
 }
@@ -225,13 +225,13 @@ String Locale::weekFormatInLDML()
     for (unsigned i = 0; i + 1 < length; ++i) {
         if (templ[i] == '$' && (templ[i + 1] == '1' || templ[i + 1] == '2')) {
             if (literalStart < i)
-                DateTimeFormat::quoteAndAppendLiteral(templ.substring(literalStart, i - literalStart), builder);
+                DateTimeFormat::quoteAndappend(templ.substring(literalStart, i - literalStart), builder);
             builder.append(templ[++i] == '1' ? "yyyy" : "ww");
             literalStart = i + 1;
         }
     }
     if (literalStart < length)
-        DateTimeFormat::quoteAndAppendLiteral(templ.substring(literalStart, length - literalStart), builder);
+        DateTimeFormat::quoteAndappend(templ.substring(literalStart, length - literalStart), builder);
     return builder.toString();
 }
 
@@ -414,21 +414,19 @@ String Locale::stripInvalidNumberCharacters(const String& input, const String& s
     return builder.toString();
 }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 String Locale::localizedDecimalSeparator()
 {
     initializeLocaleData();
     return m_decimalSymbols[DecimalSeparatorIndex];
 }
-#endif
 
 String Locale::formatDateTime(const DateComponents& date, FormatType formatType)
 {
-    if (date.type() == DateComponents::Invalid)
+    if (date.getType() == DateComponents::Invalid)
         return String();
 
     DateTimeStringBuilder builder(*this, date);
-    switch (date.type()) {
+    switch (date.getType()) {
     case DateComponents::Time:
         builder.build(formatType == FormatTypeShort ? shortTimeFormat() : timeFormat());
         break;

@@ -150,7 +150,7 @@ void RendererUtil::drawContentsToBlob(content::RenderView        *rv,
     if (params.rendererType == WebView::DrawParams::RendererTypePDF) {
         SkDynamicMemoryWStream& pdf_stream = blob->makeSkStream();
         {
-            skia::RefPtr<SkDocument> document = skia::AdoptRef(SkDocument::CreatePDF(&pdf_stream, params.dpi));
+            sk_sp<SkDocument> document(SkDocument::CreatePDF(&pdf_stream, params.dpi));
             SkCanvas *canvas = document->beginPage(params.destWidth, params.destHeight);
             canvas->scale(params.destWidth / srcWidth, params.destHeight / srcHeight);
 

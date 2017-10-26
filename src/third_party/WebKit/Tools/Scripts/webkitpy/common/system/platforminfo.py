@@ -75,7 +75,8 @@ class PlatformInfo(object):
 
     def is_highdpi(self):
         if self.is_mac():
-            output = self._executive.run_command(['system_profiler', 'SPDisplaysDataType'], error_handler=self._executive.ignore_error)
+            output = self._executive.run_command(['system_profiler', 'SPDisplaysDataType'],
+                                                 error_handler=self._executive.ignore_error)
             if output and 'Retina: Yes' in output:
                 return True
         return False
@@ -109,7 +110,7 @@ class PlatformInfo(object):
                     # Note that we return 1 less than the width since writing into the rightmost column
                     # automatically performs a line feed.
                     return right - left
-                return sys.maxint
+                return sys.maxsize
             else:
                 import fcntl
                 import struct
@@ -118,7 +119,7 @@ class PlatformInfo(object):
                 _, columns, _, _ = struct.unpack('HHHH', packed)
                 return columns
         except:
-            return sys.maxint
+            return sys.maxsize
 
     def linux_distribution(self):
         if not self.is_linux():

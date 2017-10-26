@@ -106,7 +106,14 @@
     font-weight: bold;
 }
 
-.toolbar-button:not(.toolbar-has-glyph):not(.toolbar-has-dropdown):not(.menu-toolbar-item).hover {
+.toolbar-render-as-links * {
+    font-weight: initial;
+    color: rgb(17, 85, 204);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+:not(.toolbar-render-as-links) .toolbar-button:not(.toolbar-has-glyph):not(.toolbar-has-dropdown):not(.menu-toolbar-item).hover {
     background-color: #f3f3f3;
 }
 
@@ -132,11 +139,11 @@
     opacity: 0.5;
 }
 
-.toolbar-button:enabled.hover:not(:active) .toolbar-glyph {
+:not(.toolbar-render-as-links) .toolbar-button:enabled.hover:not(:active) .toolbar-glyph {
     background-color: #333;
 }
 
-.toolbar-button:enabled.hover:not(:active) .toolbar-text {
+:not(.toolbar-render-as-links) .toolbar-button:enabled.hover:not(:active) .toolbar-text {
     color: #333;
 }
 
@@ -225,6 +232,10 @@ input.toolbar-item.hover {
     width: 1px;
     margin: 5px 4px;
     height: 16px;
+}
+
+.toolbar-spacer {
+    flex: auto;
 }
 
 /* Long click */
@@ -336,6 +347,10 @@ input.toolbar-item.hover {
     transform: scaleX(-1);
 }
 
+.stop-toolbar-item.toolbar-glyph {
+    -webkit-mask-position: -96px -48px;
+}
+
 .pause-on-exceptions-toolbar-item.toolbar-glyph {
     -webkit-mask-position: -256px 0;
 }
@@ -354,6 +369,10 @@ input.toolbar-item.hover {
 
 .breakpoint-toolbar-item.toolbar-glyph {
     -webkit-mask-position: 0 -24px;
+}
+
+.notification-toolbar-item.toolbar-glyph {
+    -webkit-mask-position: -32px -120px;
 }
 
 .format-toolbar-item.toolbar-glyph {

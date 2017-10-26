@@ -17,8 +17,6 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/utility/chrome_content_utility_client.h"
 #include "components/component_updater/component_updater_paths.h"
-#include "components/translate/content/browser/browser_cld_data_provider_factory.h"
-#include "components/translate/content/common/cld_data_source.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/common/content_paths.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -61,14 +59,28 @@ class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
     content_client_.reset();
     content::SetContentClient(NULL);
 
+    // AsyncPolicyProvider is a lazily created KeyedService that may need to be
+    // shut down here. However, AsyncPolicyProvider::Shutdown() will want to
+    // post tasks to delete its policy loaders. This goes through
+    // BrowserThreadTaskRunner::PostNonNestableDelayedTask(), which can invoke
+    // LazyInstance<BrowserThreadGlobals>::Get() and try to create it for the
+    // first time. It might be created during the test, but it might not (see
+    // comments in TestingBrowserProcess::browser_policy_connector()). Since
+    // creating BrowserThreadGlobals requires creating a SequencedWorkerPool,
+    // and that needs a MessageLoop, make sure there is one here so that tests
+    // don't get obscure errors. Tests can also invoke TestingBrowserProcess::
+    // DeleteInstance() themselves (after ensuring any TestingProfile instances
+    // are deleted). But they shouldn't have to worry about that.
+    DCHECK(!base::MessageLoop::current());
+    base::MessageLoopForUI message_loop;
     TestingBrowserProcess::DeleteInstance();
   }
 
  private:
   // Client implementations for the content module.
-  scoped_ptr<ChromeContentClient> content_client_;
-  scoped_ptr<ChromeContentBrowserClient> browser_content_client_;
-  scoped_ptr<ChromeContentUtilityClient> utility_content_client_;
+  std::unique_ptr<ChromeContentClient> content_client_;
+  std::unique_ptr<ChromeContentBrowserClient> browser_content_client_;
+  std::unique_ptr<ChromeContentUtilityClient> utility_content_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeUnitTestSuiteInitializer);
 };
@@ -114,11 +126,9 @@ void ChromeUnitTestSuite::InitializeProviders() {
   chrome::RegisterPathProvider();
   content::RegisterPathProvider();
   ui::RegisterPathProvider();
-  translate::BrowserCldDataProviderFactory::SetDefault(
-      new translate::BrowserCldDataProviderFactory());
-  translate::CldDataSource::SetDefault(
-      translate::CldDataSource::GetStaticDataSource());
-  component_updater::RegisterPathProvider(chrome::DIR_USER_DATA);
+  component_updater::RegisterPathProvider(chrome::DIR_COMPONENTS,
+                                          chrome::DIR_INTERNAL_PLUGINS,
+                                          chrome::DIR_USER_DATA);
 
 #if defined(OS_CHROMEOS)
   chromeos::RegisterPathProvider();
@@ -134,7 +144,7 @@ void ChromeUnitTestSuite::InitializeProviders() {
   content::WebUIControllerFactory::RegisterFactory(
       ChromeWebUIControllerFactory::GetInstance());
 
-  gfx::GLSurfaceTestSupport::InitializeOneOff();
+  gl::GLSurfaceTestSupport::InitializeOneOff();
 
   update_client::UpdateQueryParams::SetDelegate(
       ChromeUpdateQueryParamsDelegate::GetInstance());
@@ -146,13 +156,7 @@ void ChromeUnitTestSuite::InitializeResourceBundle() {
   ui::ResourceBundle::InitSharedInstanceWithLocale(
       "en-US", NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
   base::FilePath resources_pack_path;
-#if defined(OS_MACOSX)
-  PathService::Get(base::DIR_MODULE, &resources_pack_path);
-  resources_pack_path =
-      resources_pack_path.Append(FILE_PATH_LITERAL("resources.pak"));
-#else
   PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
-#endif
   ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       resources_pack_path, ui::SCALE_FACTOR_NONE);
 }

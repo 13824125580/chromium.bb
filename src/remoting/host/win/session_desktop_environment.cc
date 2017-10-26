@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "remoting/host/audio_capturer.h"
 #include "remoting/host/input_injector.h"
@@ -18,13 +19,14 @@ namespace remoting {
 
 SessionDesktopEnvironment::~SessionDesktopEnvironment() {}
 
-scoped_ptr<InputInjector> SessionDesktopEnvironment::CreateInputInjector() {
+std::unique_ptr<InputInjector>
+SessionDesktopEnvironment::CreateInputInjector() {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new SessionInputInjectorWin(
+  return base::WrapUnique(new SessionInputInjectorWin(
       input_task_runner(),
       InputInjector::Create(input_task_runner(), ui_task_runner()),
-      ui_task_runner(), inject_sas_));
+      ui_task_runner(), inject_sas_, lock_workstation_));
 }
 
 SessionDesktopEnvironment::SessionDesktopEnvironment(
@@ -33,39 +35,43 @@ SessionDesktopEnvironment::SessionDesktopEnvironment(
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     const base::Closure& inject_sas,
+    const base::Closure& lock_workstation,
     bool supports_touch_events)
     : Me2MeDesktopEnvironment(caller_task_runner,
                               video_capture_task_runner,
                               input_task_runner,
                               ui_task_runner,
                               supports_touch_events),
-      inject_sas_(inject_sas) {}
+      inject_sas_(inject_sas),
+      lock_workstation_(lock_workstation) {}
 
 SessionDesktopEnvironmentFactory::SessionDesktopEnvironmentFactory(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    const base::Closure& inject_sas)
+    const base::Closure& inject_sas,
+    const base::Closure& lock_workstation)
     : Me2MeDesktopEnvironmentFactory(caller_task_runner,
                                      video_capture_task_runner,
                                      input_task_runner,
                                      ui_task_runner),
-      inject_sas_(inject_sas) {
+      inject_sas_(inject_sas),
+      lock_workstation_(lock_workstation) {
   DCHECK(caller_task_runner->BelongsToCurrentThread());
 }
 
 SessionDesktopEnvironmentFactory::~SessionDesktopEnvironmentFactory() {}
 
-scoped_ptr<DesktopEnvironment> SessionDesktopEnvironmentFactory::Create(
+std::unique_ptr<DesktopEnvironment> SessionDesktopEnvironmentFactory::Create(
     base::WeakPtr<ClientSessionControl> client_session_control) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  scoped_ptr<SessionDesktopEnvironment> desktop_environment(
-      new SessionDesktopEnvironment(caller_task_runner(),
-                                    video_capture_task_runner(),
-                                    input_task_runner(), ui_task_runner(),
-                                    inject_sas_, supports_touch_events()));
+  std::unique_ptr<SessionDesktopEnvironment> desktop_environment(
+      new SessionDesktopEnvironment(
+          caller_task_runner(), video_capture_task_runner(),
+          input_task_runner(), ui_task_runner(), inject_sas_, lock_workstation_,
+          supports_touch_events()));
   if (!desktop_environment->InitializeSecurity(client_session_control,
                                                curtain_enabled())) {
     return nullptr;

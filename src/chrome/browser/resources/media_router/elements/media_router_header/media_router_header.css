@@ -6,27 +6,28 @@
   flex-grow: 1;
 }
 
-#arrow-drop-icon::shadow #icon {
-  height: var(--navigation-icon-size);
-  width: var(--navigation-icon-size);
+#arrow-drop-icon {
+  height: var(--navigation-icon-button-size);
+  width: var(--navigation-icon-button-size);
 }
 
-#back-button::shadow #icon {
-  height: var(--navigation-icon-size);
-  width: var(--navigation-icon-size);
+#back-button {
+  height: var(--navigation-icon-button-size);
+  width: var(--navigation-icon-button-size);
 }
 
 #back-button-container {
   -webkit-padding-end: 4px;
 }
 
-#close-button {
-  -webkit-margin-start: auto;
+.cast-mode-list {
+  background-color: var(--paper-teal-700);
 }
 
-#close-button::shadow #icon {
-  height: 15px;
-  width: 15px;
+#close-button {
+  -webkit-margin-start: auto;
+  height: 31px;
+  width: 31px;
 }
 
 #close-button-container {
@@ -35,49 +36,53 @@
   -webkit-padding-start: 24px;
 }
 
+.filter {
+  background-color: var(--paper-deep-purple-500);
+}
+
+#header {
+  -webkit-padding-start: 8px;
+  align-items: center;
+  color: white;
+}
+
 #header-and-arrow-container {
   display: flex;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 #header-text {
   -webkit-padding-end: 4px;
-  color: white;
   font-size: 1.175em;
-  margin: 0;
+  margin: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.issue {
+  background-color: var(--paper-red-700);
 }
 
 paper-icon-button {
-  display: inline;
+  display: inline-block;
 }
 
-paper-toolbar {
-  -webkit-padding-start: 8px;
-  height: var(--container-header-height);
+#main-container {
+  display: flex;
+  padding-top: 10px;
 }
 
-paper-toolbar::shadow .toolbar-tools {
-  padding: 0;
-}
-
-paper-toolbar.cast-mode-list {
-  background-color: var(--paper-teal-500);
-}
-
-paper-toolbar.filter {
-  background-color: var(--paper-deep-purple-500);
-}
-
-paper-toolbar.issue {
-  background-color: var(--google-red-500);
-}
-
-paper-toolbar.route-details,
-paper-toolbar.sink-list {
-  background-color: var(--paper-blue-500);
+.route-details,
+.sink-list {
+  background-color: var(--paper-blue-700);
 }
 
 #user-email-container {
-  -webkit-padding-start: 12px;
+  -webkit-padding-start: 8px;
+  bottom: 0;
   font-size: 0.917em;
+  left: auto;
   padding-bottom: 12px;
+  position: absolute;
 }

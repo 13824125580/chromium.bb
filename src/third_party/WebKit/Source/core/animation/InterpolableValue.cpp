@@ -4,6 +4,8 @@
 
 #include "core/animation/InterpolableValue.h"
 
+#include <memory>
+
 namespace blink {
 
 bool InterpolableNumber::equals(const InterpolableValue& other) const
@@ -62,12 +64,12 @@ void InterpolableList::interpolate(const InterpolableValue& to, const double pro
     }
 }
 
-PassOwnPtr<InterpolableValue> InterpolableList::cloneAndZero() const
+std::unique_ptr<InterpolableValue> InterpolableList::cloneAndZero() const
 {
-    OwnPtr<InterpolableList> result = InterpolableList::create(m_size);
+    std::unique_ptr<InterpolableList> result = InterpolableList::create(m_size);
     for (size_t i = 0; i < m_size; i++)
         result->set(i, m_values[i]->cloneAndZero());
-    return result.release();
+    return std::move(result);
 }
 
 void InterpolableNumber::scale(double scale)

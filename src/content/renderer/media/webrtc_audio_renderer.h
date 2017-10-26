@@ -13,6 +13,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/thread_checker.h"
@@ -22,7 +23,6 @@
 #include "media/base/audio_pull_fifo.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/channel_layout.h"
-#include "media/base/output_device.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 
 namespace webrtc {
@@ -37,8 +37,7 @@ class WebRtcAudioRendererSource;
 // for connecting WebRtc MediaStream with the audio pipeline.
 class CONTENT_EXPORT WebRtcAudioRenderer
     : NON_EXPORTED_BASE(public media::AudioRendererSink::RenderCallback),
-      NON_EXPORTED_BASE(public MediaStreamAudioRenderer),
-      NON_EXPORTED_BASE(public media::OutputDevice) {
+      NON_EXPORTED_BASE(public MediaStreamAudioRenderer) {
  public:
   // This is a little utility class that holds the configured state of an audio
   // stream.
@@ -74,10 +73,6 @@ class CONTENT_EXPORT WebRtcAudioRenderer
     float volume_;
   };
 
-
-  // Returns platform specific optimal buffer size for rendering audio.
-  static int GetOptimalBufferSize(int sample_rate, int hardware_buffer_size);
-
   WebRtcAudioRenderer(
       const scoped_refptr<base::SingleThreadTaskRunner>& signaling_thread,
       const blink::WebMediaStream& media_stream,
@@ -110,6 +105,9 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   int sample_rate() const { return sink_params_.sample_rate(); }
   int frames_per_buffer() const { return sink_params_.frames_per_buffer(); }
 
+  // Returns true if called on rendering thread, otherwise false.
+  bool CurrentThreadIsRenderingThread();
+
  private:
   // MediaStreamAudioRenderer implementation.  This is private since we want
   // callers to use proxy objects.
@@ -119,16 +117,12 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   void Pause() override;
   void Stop() override;
   void SetVolume(float volume) override;
-  media::OutputDevice* GetOutputDevice() override;
+  media::OutputDeviceInfo GetOutputDeviceInfo() override;
   base::TimeDelta GetCurrentRenderTime() const override;
   bool IsLocalRenderer() const override;
-
-  // media::OutputDevice implementation
   void SwitchOutputDevice(const std::string& device_id,
                           const url::Origin& security_origin,
-                          const media::SwitchOutputDeviceCB& callback) override;
-  media::AudioParameters GetOutputParameters() override;
-  media::OutputDeviceStatus GetDeviceStatus() override;
+                          const media::OutputDeviceStatusCB& callback) override;
 
   // Called when an audio renderer, either the main or a proxy, starts playing.
   // Here we maintain a reference count of how many renderers are currently
@@ -160,7 +154,6 @@ class CONTENT_EXPORT WebRtcAudioRenderer
 
   // Used to DCHECK that we are called on the correct thread.
   base::ThreadChecker thread_checker_;
-  base::ThreadChecker audio_renderer_thread_checker_;
 
   // Flag to keep track the state of the renderer.
   State state_;
@@ -231,7 +224,7 @@ class CONTENT_EXPORT WebRtcAudioRenderer
 
   // Used to buffer data between the client and the output device in cases where
   // the client buffer size is not the same as the output device buffer size.
-  scoped_ptr<media::AudioPullFifo> audio_fifo_;
+  std::unique_ptr<media::AudioPullFifo> audio_fifo_;
 
   // Contains the accumulated delay estimate which is provided to the WebRTC
   // AEC.

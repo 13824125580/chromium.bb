@@ -4,8 +4,8 @@
 
 #include "base/macros.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
+#include "chrome/browser/task_management/mock_web_contents_task_manager.h"
 #include "chrome/browser/task_management/providers/web_contents/web_contents_tags_manager.h"
-#include "chrome/browser/task_management/task_management_browsertest_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -100,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsTagTest, DevToolsTaskIsProvided) {
 
   OpenDevToolsWindow(true);
   EXPECT_EQ(2U, tags_manager()->tracked_tags().size());
-  EXPECT_EQ(2U, task_manager.tasks().size());
+  ASSERT_EQ(2U, task_manager.tasks().size());
 
   const Task* task = task_manager.tasks().back();
   EXPECT_EQ(Task::RENDERER, task->GetType());

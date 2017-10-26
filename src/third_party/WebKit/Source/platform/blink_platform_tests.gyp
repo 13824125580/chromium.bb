@@ -40,7 +40,6 @@
       'dependencies': [
         '../config.gyp:unittest_config',
         '../wtf/wtf.gyp:wtf',
-        '../wtf/wtf_tests.gyp:wtf_unittest_helpers',
         '<(DEPTH)/base/base.gyp:test_support_base',
         '<(DEPTH)/content/content_shell_and_tests.gyp:test_support_content',
         'blink_platform.gyp:blink_platform',
@@ -70,17 +69,21 @@
         'blink_platform_test_support',
         '../config.gyp:unittest_config',
         '../wtf/wtf.gyp:wtf',
-        '../wtf/wtf_tests.gyp:wtf_unittest_helpers',
         '<(DEPTH)/base/base.gyp:test_support_base',
         '<(DEPTH)/cc/cc.gyp:cc',
         '<(DEPTH)/cc/cc_tests.gyp:cc_test_support',
         '<(DEPTH)/cc/blink/cc_blink.gyp:cc_blink',
         '<(DEPTH)/mojo/mojo_edk.gyp:mojo_common_test_support',
+        '<(DEPTH)/mojo/mojo_edk_tests.gyp:mojo_public_bindings_for_blink_tests',
+        '<(DEPTH)/net/net.gyp:net',
         '<(DEPTH)/skia/skia.gyp:skia',
         '<(DEPTH)/third_party/harfbuzz-ng/harfbuzz.gyp:harfbuzz-ng',
+        '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
         '<(DEPTH)/url/url.gyp:url_lib',
+        '<(DEPTH)/url/url.gyp:url_interfaces_mojom_for_blink',
+        '<(DEPTH)/url/url.gyp:url_test_interfaces_mojom_for_blink',
         'blink_platform.gyp:blink_platform',
       ],
       'defines': [
@@ -104,6 +107,21 @@
       ],
     },
     {
+      'target_name': 'image_decode_bench',
+      'type': 'executable',
+      'dependencies': [
+        '../config.gyp:config',
+        '../wtf/wtf.gyp:wtf',
+        'blink_platform.gyp:blink_platform',
+      ],
+      'defines': [
+        'INSIDE_BLINK',
+      ],
+      'sources': [
+        'testing/ImageDecodeBench.cpp',
+      ],
+    },
+    {
       'target_name': 'blink_platform_test_support',
       'type': 'static_library',
       'dependencies': [
@@ -111,9 +129,11 @@
         '../wtf/wtf.gyp:wtf',
         'blink_platform.gyp:blink_common',
         'blink_platform.gyp:blink_platform',
-        '<(DEPTH)/device/battery/battery.gyp:device_battery_mojo_bindings',
-        '<(DEPTH)/mojo/mojo_base.gyp:mojo_environment_chromium',
+        '<(DEPTH)/cc/cc.gyp:cc',
+        '<(DEPTH)/cc/cc_tests.gyp:cc_test_support',
+        '<(DEPTH)/cc/blink/cc_blink.gyp:cc_blink',
         '<(DEPTH)/mojo/mojo_edk.gyp:mojo_system_impl',
+        '<(DEPTH)/mojo/mojo_public.gyp:mojo_cpp_bindings',
         '<(DEPTH)/testing/gmock.gyp:gmock',
       ],
       'defines': [
@@ -127,17 +147,6 @@
       ],
       # Disable c4267 warnings until we fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267 ],
-      'conditions': [
-        ['OS == "android"', {
-          'dependencies': [
-            '<(DEPTH)/device/battery/battery.gyp:device_battery_java',
-          ],
-        }, {  # OS != "android"
-          'dependencies': [
-            '<(DEPTH)/device/battery/battery.gyp:device_battery',
-          ],
-        }],
-      ],
     },
   ],
   'conditions': [
@@ -153,7 +162,7 @@
         'conditions': [
           ['v8_use_external_startup_data==1', {
             'dependencies': [
-              '<(DEPTH)/v8/tools/gyp/v8.gyp:v8_external_snapshot',
+              '<(DEPTH)/v8/src/v8.gyp:v8_external_snapshot',
             ],
             'variables': {
               'dest_path': '<(asset_location)',

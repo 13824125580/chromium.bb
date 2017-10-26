@@ -54,6 +54,11 @@
       <include name="IDR_FILE_MANAGER_ELEMENTS_ELEMENTS_BUNDLE_HTML" file="file_manager/foreground/elements/elements_bundle.html" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_ICON_BUTTON_HTML" file="file_manager/foreground/elements/files_icon_button.html" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_ICON_BUTTON_JS" file="file_manager/foreground/elements/files_icon_button.js" type="BINDATA" />
+      <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_METADATA_BOX_HTML" file="file_manager/foreground/elements/files_metadata_box.html" type="BINDATA" />
+      <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_METADATA_BOX_JS" file="file_manager/foreground/elements/files_metadata_box.js" type="BINDATA" />
+      <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_QUICK_PREVIEW_CSS" file="file_manager/foreground/elements/files_quick_view.css" flattenhtml="true" type="BINDATA" />
+      <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_QUICK_PREVIEW_HTML" file="file_manager/foreground/elements/files_quick_view.html" type="BINDATA" />
+      <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_QUICK_PREVIEW_JS" file="file_manager/foreground/elements/files_quick_view.js" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_RIPPLE_HTML" file="file_manager/foreground/elements/files_ripple.html" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_RIPPLE_JS" file="file_manager/foreground/elements/files_ripple.js" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_TOAST_HTML" file="file_manager/foreground/elements/files_toast.html" type="BINDATA" />
@@ -62,6 +67,7 @@
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_TOGGLE_RIPPLE_JS" file="file_manager/foreground/elements/files_toggle_ripple.js" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_TOOLTIP_HTML" file="file_manager/foreground/elements/files_tooltip.html" type="BINDATA" />
       <include name="IDR_FILE_MANAGER_ELEMENTS_FILES_TOOLTIP_JS" file="file_manager/foreground/elements/files_tooltip.js" type="BINDATA" />
+      <include name="IDR_FILE_MANAGER_ELEMENTS_ICONS_HTML" file="file_manager/foreground/elements/icons.html" type="BINDATA" />
 
       <!-- Scripts referred by the gallery app. -->
       <include name="IDR_FILE_MANAGER_FILE_TYPE_JS" file="file_manager/common/js/file_type.js" flattenhtml="false" type="BINDATA" />

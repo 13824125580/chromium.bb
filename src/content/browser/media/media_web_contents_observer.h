@@ -8,15 +8,23 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "content/browser/media/session/media_session_controllers_manager.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/web_contents_observer.h"
 
-namespace content {
+#if defined(OS_ANDROID)
+#include "ui/android/view_android.h"
+#endif  // OS_ANDROID
+
+namespace device {
 class PowerSaveBlocker;
+}  // namespace device
+
+namespace content {
 
 // This class manages all RenderFrame based media related managers at the
 // browser side. It receives IPC messages from media RenderFrameObservers and
@@ -44,6 +52,11 @@ class CONTENT_EXPORT MediaWebContentsObserver : public WebContentsObserver {
 
   bool has_video_power_save_blocker_for_testing() const {
     return !!video_power_save_blocker_;
+  }
+
+ protected:
+  MediaSessionControllersManager* session_controllers_manager() {
+    return &session_controllers_manager_;
   }
 
  private:
@@ -87,8 +100,13 @@ class CONTENT_EXPORT MediaWebContentsObserver : public WebContentsObserver {
   // Tracking variables and associated power save blockers for media playback.
   ActiveMediaPlayerMap active_audio_players_;
   ActiveMediaPlayerMap active_video_players_;
-  scoped_ptr<PowerSaveBlocker> audio_power_save_blocker_;
-  scoped_ptr<PowerSaveBlocker> video_power_save_blocker_;
+  std::unique_ptr<device::PowerSaveBlocker> audio_power_save_blocker_;
+  std::unique_ptr<device::PowerSaveBlocker> video_power_save_blocker_;
+#if defined(OS_ANDROID)
+  std::unique_ptr<base::WeakPtrFactory<ui::ViewAndroid>> view_weak_factory_;
+#endif
+
+  MediaSessionControllersManager session_controllers_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaWebContentsObserver);
 };

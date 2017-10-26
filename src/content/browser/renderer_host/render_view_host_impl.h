@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,6 @@
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/kill.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -79,7 +79,7 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   static RenderViewHostImpl* From(RenderWidgetHost* rwh);
 
   RenderViewHostImpl(SiteInstance* instance,
-                     scoped_ptr<RenderWidgetHostImpl> widget,
+                     std::unique_ptr<RenderWidgetHostImpl> widget,
                      RenderViewHostDelegate* delegate,
                      int32_t main_frame_routing_id,
                      bool swapped_out,
@@ -98,8 +98,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   void AllowBindings(int binding_flags) override;
   void ClearFocusedElement() override;
   bool IsFocusedElementEditable() override;
-  void CopyImageAt(int x, int y) override;
-  void SaveImageAt(int x, int y) override;
   void DirectoryEnumerationFinished(
       int request_id,
       const std::vector<base::FilePath>& files) override;
@@ -110,19 +108,31 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
                          int screen_y,
                          blink::WebDragOperation operation) override;
   void DragSourceSystemDragEnded() override;
+  // |drop_data| must have been filtered. The embedder should call
+  // FilterDropData before passing the drop data to RVHI.
   void DragTargetDragEnter(const DropData& drop_data,
                            const gfx::Point& client_pt,
                            const gfx::Point& screen_pt,
                            blink::WebDragOperationsMask operations_allowed,
                            int key_modifiers) override;
+  void DragTargetDragEnterWithMetaData(
+      const std::vector<DropData::Metadata>& metadata,
+      const gfx::Point& client_pt,
+      const gfx::Point& screen_pt,
+      blink::WebDragOperationsMask operations_allowed,
+      int key_modifiers) override;
   void DragTargetDragOver(const gfx::Point& client_pt,
                           const gfx::Point& screen_pt,
                           blink::WebDragOperationsMask operations_allowed,
                           int key_modifiers) override;
   void DragTargetDragLeave() override;
-  void DragTargetDrop(const gfx::Point& client_pt,
+  // |drop_data| must have been filtered. The embedder should call
+  // FilterDropData before passing the drop data to RVHI.
+  void DragTargetDrop(const DropData& drop_data,
+                      const gfx::Point& client_pt,
                       const gfx::Point& screen_pt,
                       int key_modifiers) override;
+  void FilterDropData(DropData* drop_data) override;
   void EnableAutoResize(const gfx::Size& min_size,
                         const gfx::Size& max_size) override;
   void DisableAutoResize(const gfx::Size& new_size) override;
@@ -133,9 +143,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   void ExecutePluginActionAtLocation(
       const gfx::Point& location,
       const blink::WebPluginAction& action) override;
-  void FilesSelectedInChooser(
-      const std::vector<FileChooserFileInfo>& files,
-      FileChooserParams::Mode permissions) override;
   RenderViewHostDelegate* GetDelegate() const override;
   int GetEnabledBindings() const override;
   SiteInstanceImpl* GetSiteInstance() const override;
@@ -184,20 +191,10 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   }
 
   // Tracks whether this RenderViewHost is in an active state (rather than
-  // pending swap out, pending deletion, or swapped out), according to its main
-  // frame RenderFrameHost.
+  // pending swap out or swapped out), according to its main frame
+  // RenderFrameHost.
   bool is_active() const { return is_active_; }
   void set_is_active(bool is_active) { is_active_ = is_active; }
-
-  // Tracks whether this RenderViewHost is pending deletion.  This is tracked
-  // separately from the main frame pending deletion state, because the
-  // RenderViewHost's main frame is cleared when the main frame's
-  // RenderFrameHost is marked for deletion.
-  //
-  // TODO(nasko,alexmos): This should not be necessary once swapped-out is
-  // removed.
-  bool is_pending_deletion() const { return is_pending_deletion_; }
-  void set_pending_deletion() { is_pending_deletion_ = true; }
 
   // Tracks whether this RenderViewHost is swapped out, according to its main
   // frame RenderFrameHost.
@@ -207,12 +204,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
 
   // TODO(creis): Remove as part of http://crbug.com/418265.
   bool is_waiting_for_close_ack() const { return is_waiting_for_close_ack_; }
-
-  // Tells the renderer that this RenderView will soon be swapped out, and thus
-  // not to create any new modal dialogs until it happens.  This must be done
-  // separately so that the PageGroupLoadDeferrers of any current dialogs are no
-  // longer on the stack when we attempt to swap it out.
-  void SuppressDialogsUntilSwapOut();
 
   // Tells the renderer process to run the page's unload handler.
   // A ClosePage_ACK ack is sent back when the handler execution completes.
@@ -265,15 +256,15 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
                                           size_t end_offset);
 
   // Increases the refcounting on this RVH. This is done by the FrameTree on
-  // creation of a RenderFrameHost.
+  // creation of a RenderFrameHost or RenderFrameProxyHost.
   void increment_ref_count() { ++frames_ref_count_; }
 
   // Decreases the refcounting on this RVH. This is done by the FrameTree on
-  // destruction of a RenderFrameHost.
+  // destruction of a RenderFrameHost or RenderFrameProxyHost.
   void decrement_ref_count() { --frames_ref_count_; }
 
   // Returns the refcount on this RVH, that is the number of RenderFrameHosts
-  // currently using it.
+  // and RenderFrameProxyHosts currently using it.
   int ref_count() { return frames_ref_count_; }
 
   // NOTE: Do not add functions that just send an IPC message that are called in
@@ -320,7 +311,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
                             const gfx::Rect& node_bounds_in_viewport);
   void OnClosePageACK();
   void OnDidZoomURL(double zoom_level, const GURL& url);
-  void OnRunFileChooser(const FileChooserParams& params);
   void OnFocusedNodeTouched(bool editable);
   void OnFocus();
 
@@ -334,6 +324,9 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   FRIEND_TEST_ALL_PREFIXES(RenderViewHostTest, RoutingIdSane);
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostManagerTest,
                            CleanUpSwappedOutRVHOnProcessCrash);
+  FRIEND_TEST_ALL_PREFIXES(SitePerProcessBrowserTest,
+                           NavigateMainFrameToChildSite);
+
   // Send RenderViewReady to observers once the process is launched, but not
   // re-entrantly.
   void PostRenderViewReady();
@@ -350,18 +343,14 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // See https://crbug.com/304341.
   WebPreferences ComputeWebkitPrefs();
 
-  // Returns whether the current RenderProcessHost has read access to the files
-  // reported in |state|.
-  bool CanAccessFilesOfPageState(const PageState& state) const;
-
-  // Grants the current RenderProcessHost read access to any file listed in
-  // |validated_state|.  It is important that the PageState has been validated
-  // upon receipt from the renderer process to prevent it from forging access to
-  // files without the user's consent.
-  void GrantFileAccessFromPageState(const PageState& validated_state);
+  // 1. Grants permissions to URL (if any)
+  // 2. Grants permissions to filenames
+  // 3. Grants permissions to file system files.
+  // 4. Register the files with the IsolatedContext.
+  void GrantFileAccessFromDropData(DropData* drop_data);
 
   // The RenderWidgetHost.
-  scoped_ptr<RenderWidgetHostImpl> render_widget_host_;
+  std::unique_ptr<RenderWidgetHostImpl> render_widget_host_;
 
   // The number of RenderFrameHosts which have a reference to this RVH.
   int frames_ref_count_;
@@ -373,10 +362,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // in this RenderViewHost are part of this SiteInstance.  Cannot change
   // over time.
   scoped_refptr<SiteInstanceImpl> instance_;
-
-  // true if we are currently waiting for a response for drag context
-  // information.
-  bool waiting_for_drag_context_response_;
 
   // A bitwise OR of bindings types that have been enabled for this RenderView.
   // See BindingsPolicy for details.
@@ -391,9 +376,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // main frame is pending swap out, pending deletion, or swapped out, because
   // it is not visible to the user in any of these cases.
   bool is_active_;
-
-  // True if this RenderViewHost is pending deletion.
-  bool is_pending_deletion_;
 
   // Tracks whether the main frame RenderFrameHost is swapped out.  Unlike
   // is_active_, this is false when the frame is pending swap out or deletion.
@@ -415,16 +397,13 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // The termination status of the last render view that terminated.
   base::TerminationStatus render_view_termination_status_;
 
-  // Set to true if we requested the on screen keyboard to be displayed.
-  bool virtual_keyboard_requested_;
-
   // True if the current focused element is editable.
   bool is_focused_element_editable_;
 
   // This is updated every time UpdateWebkitPreferences is called. That method
   // is in turn called when any of the settings change that the WebPreferences
   // values depend on.
-  scoped_ptr<WebPreferences> web_preferences_;
+  std::unique_ptr<WebPreferences> web_preferences_;
 
   bool updating_web_preferences_;
 

@@ -11,11 +11,12 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
@@ -28,6 +29,7 @@
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/browser/renderer_host/text_input_manager.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
@@ -41,6 +43,7 @@
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
+#include "content/public/browser/notification_types.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -60,7 +63,7 @@ class InterstitialPageImpl::InterstitialPageRVHDelegateView
   explicit InterstitialPageRVHDelegateView(InterstitialPageImpl* page);
 
   // RenderViewHostDelegateView implementation:
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+#if defined(USE_EXTERNAL_POPUP_MENU)
   void ShowPopupMenu(RenderFrameHost* render_frame_host,
                      const gfx::Rect& bounds,
                      int item_height,
@@ -221,8 +224,8 @@ void InterstitialPageImpl::Show() {
   (*g_web_contents_to_interstitial_page)[web_contents_] = this;
 
   if (new_navigation_) {
-    scoped_ptr<NavigationEntryImpl> entry =
-        make_scoped_ptr(new NavigationEntryImpl);
+    std::unique_ptr<NavigationEntryImpl> entry =
+        base::WrapUnique(new NavigationEntryImpl);
     entry->SetURL(url_);
     entry->SetVirtualURL(url_);
     entry->set_page_type(PAGE_TYPE_INTERSTITIAL);
@@ -552,17 +555,6 @@ void InterstitialPageImpl::HandleKeyboardEvent(
     render_widget_host_delegate_->HandleKeyboardEvent(event);
 }
 
-#if defined(OS_WIN)
-gfx::NativeViewAccessible
-InterstitialPageImpl::GetParentNativeViewAccessible() {
-  if (web_contents_) {
-    WebContentsImpl* wci = static_cast<WebContentsImpl*>(web_contents_);
-    return wci->GetParentNativeViewAccessible();
-  }
-  return NULL;
-}
-#endif
-
 WebContents* InterstitialPageImpl::web_contents() const {
   return web_contents_;
 }
@@ -771,19 +763,22 @@ void InterstitialPageImpl::CreateNewFullscreenWidget(int32_t render_process_id,
       << "InterstitialPage does not support showing full screen popups.";
 }
 
-void InterstitialPageImpl::ShowCreatedWindow(int route_id,
+void InterstitialPageImpl::ShowCreatedWindow(int process_id,
+                                             int route_id,
                                              WindowOpenDisposition disposition,
                                              const gfx::Rect& initial_rect,
                                              bool user_gesture) {
   NOTREACHED() << "InterstitialPage does not support showing popups yet.";
 }
 
-void InterstitialPageImpl::ShowCreatedWidget(int route_id,
+void InterstitialPageImpl::ShowCreatedWidget(int process_id,
+                                             int route_id,
                                              const gfx::Rect& initial_rect) {
   NOTREACHED() << "InterstitialPage does not support showing drop-downs yet.";
 }
 
-void InterstitialPageImpl::ShowCreatedFullscreenWidget(int route_id) {
+void InterstitialPageImpl::ShowCreatedFullscreenWidget(int process_id,
+                                                       int route_id) {
   NOTREACHED()
       << "InterstitialPage does not support showing full screen popups.";
 }
@@ -839,6 +834,12 @@ void InterstitialPageImpl::TakeActionOnResourceDispatcher(
 
   RenderFrameHostImpl* rfh =
       static_cast<RenderFrameHostImpl*>(rvh->GetMainFrame());
+  // Note, the RenderViewHost can lose its main frame if a new RenderFrameHost
+  // commits with a new RenderViewHost. Additionally, RenderViewHosts for OOPIF
+  // don't have main frames.
+  if (!rfh)
+    return;
+
   switch (action) {
     case BLOCK:
       ResourceDispatcherHost::BlockRequestsForFrameFromUI(rfh);
@@ -872,7 +873,7 @@ InterstitialPageImpl::InterstitialPageRVHDelegateView::
     : interstitial_page_(page) {
 }
 
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+#if defined(USE_EXTERNAL_POPUP_MENU)
 void InterstitialPageImpl::InterstitialPageRVHDelegateView::ShowPopupMenu(
     RenderFrameHost* render_frame_host,
     const gfx::Rect& bounds,
@@ -941,6 +942,11 @@ void InterstitialPageImpl::UnderlyingContentObserver::NavigationEntryCommitted(
 
 void InterstitialPageImpl::UnderlyingContentObserver::WebContentsDestroyed() {
   interstitial_->OnNavigatingAwayOrTabClosing();
+}
+
+TextInputManager* InterstitialPageImpl::GetTextInputManager() {
+  return !web_contents_ ? nullptr : static_cast<WebContentsImpl*>(web_contents_)
+                                        ->GetTextInputManager();
 }
 
 }  // namespace content

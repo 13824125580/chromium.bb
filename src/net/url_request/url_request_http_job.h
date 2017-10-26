@@ -8,12 +8,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/auth.h"
@@ -98,14 +98,18 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // Processes the Public-Key-Pins header, if one exists.
   void ProcessPublicKeyPinsHeader();
 
+  // Processes the Expect-CT header, if one exists. This header
+  // indicates that the server wants the user agent to send a report
+  // when a connection violates the Expect CT policy.
+  void ProcessExpectCTHeader();
+
   // |result| should be OK, or the request is canceled.
   void OnHeadersReceivedCallback(int result);
   void OnStartCompleted(int result);
   void OnReadCompleted(int result);
-  void NotifyBeforeSendHeadersCallback(int result);
-  void NotifyBeforeSendProxyHeadersCallback(
-      const ProxyInfo& proxy_info,
-      HttpRequestHeaders* request_headers);
+  void NotifyBeforeStartTransactionCallback(int result);
+  void NotifyBeforeSendHeadersCallback(const ProxyInfo& proxy_info,
+                                       HttpRequestHeaders* request_headers);
 
   void RestartTransactionWithAuth(const AuthCredentials& credentials);
 
@@ -119,10 +123,9 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   void GetResponseInfo(HttpResponseInfo* info) override;
   void GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const override;
   bool GetRemoteEndpoint(IPEndPoint* endpoint) const override;
-  bool GetResponseCookies(std::vector<std::string>* cookies) override;
   int GetResponseCode() const override;
   void PopulateNetErrorDetails(NetErrorDetails* details) const override;
-  Filter* SetupFilter() const override;
+  std::unique_ptr<Filter> SetupFilter() const override;
   bool CopyFragmentOnRedirect(const GURL& location) const override;
   bool IsSafeRedirect(const GURL& location) override;
   bool NeedsAuth() override;
@@ -191,7 +194,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
 
   bool read_in_progress_;
 
-  scoped_ptr<HttpTransaction> transaction_;
+  std::unique_ptr<HttpTransaction> transaction_;
 
   // This is used to supervise traffic and enforce exponential
   // back-off. May be NULL.
@@ -199,7 +202,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
 
   // A handle to the SDCH dictionaries that were advertised in this request.
   // May be null.
-  scoped_ptr<SdchManager::DictionarySet> dictionaries_advertised_;
+  std::unique_ptr<SdchManager::DictionarySet> dictionaries_advertised_;
 
   // For SDCH latency experiments, when we are able to do SDCH, we may enable
   // either an SDCH latency test xor a pass through test. The following bools
@@ -243,7 +246,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // When the transaction finished reading the request headers.
   base::TimeTicks receive_headers_end_;
 
-  scoped_ptr<HttpFilterContext> filter_context_;
+  std::unique_ptr<HttpFilterContext> filter_context_;
 
   CompletionCallback on_headers_received_callback_;
 

@@ -34,9 +34,11 @@
 #include "platform/network/ResourceLoadInfo.h"
 #include "platform/network/ResourceLoadTiming.h"
 #include "platform/weborigin/KURL.h"
+#include "public/platform/WebURLResponse.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/RefCounted.h"
 #include "wtf/RefPtr.h"
+#include "wtf/Vector.h"
 #include "wtf/text/CString.h"
 
 namespace blink {
@@ -59,6 +61,43 @@ public:
         SecurityStyleAuthenticated
     };
 
+    class PLATFORM_EXPORT SignedCertificateTimestamp final {
+    public:
+        SignedCertificateTimestamp(
+            String status,
+            String origin,
+            String logDescription,
+            String logId,
+            int64_t timestamp,
+            String hashAlgorithm,
+            String signatureAlgorithm,
+            String signatureData)
+            : m_status(status)
+            , m_origin(origin)
+            , m_logDescription(logDescription)
+            , m_logId(logId)
+            , m_timestamp(timestamp)
+            , m_hashAlgorithm(hashAlgorithm)
+            , m_signatureAlgorithm(signatureAlgorithm)
+            , m_signatureData(signatureData)
+        {
+        }
+        explicit SignedCertificateTimestamp(
+            const struct blink::WebURLResponse::SignedCertificateTimestamp&);
+        SignedCertificateTimestamp isolatedCopy() const;
+
+        String m_status;
+        String m_origin;
+        String m_logDescription;
+        String m_logId;
+        int64_t m_timestamp;
+        String m_hashAlgorithm;
+        String m_signatureAlgorithm;
+        String m_signatureData;
+    };
+
+    using SignedCertificateTimestampList = WTF::Vector<SignedCertificateTimestamp>;
+
     struct SecurityDetails {
         DISALLOW_NEW();
         SecurityDetails()
@@ -79,6 +118,7 @@ public:
         size_t numUnknownSCTs;
         size_t numInvalidSCTs;
         size_t numValidSCTs;
+        SignedCertificateTimestampList sctList;
     };
 
     class ExtraData : public RefCounted<ExtraData> {
@@ -89,7 +129,7 @@ public:
     explicit ResourceResponse(CrossThreadResourceResponseData*);
 
     // Gets a copy of the data suitable for passing to another thread.
-    PassOwnPtr<CrossThreadResourceResponseData> copyData() const;
+    std::unique_ptr<CrossThreadResourceResponseData> copyData() const;
 
     ResourceResponse();
     ResourceResponse(const KURL&, const AtomicString& mimeType, long long expectedLength, const AtomicString& textEncodingName, const String& filename);
@@ -137,12 +177,12 @@ public:
 
     // These functions return parsed values of the corresponding response headers.
     // NaN means that the header was not present or had invalid value.
-    bool cacheControlContainsNoCache();
-    bool cacheControlContainsNoStore();
-    bool cacheControlContainsMustRevalidate();
+    bool cacheControlContainsNoCache() const;
+    bool cacheControlContainsNoStore() const;
+    bool cacheControlContainsMustRevalidate() const;
     bool hasCacheValidatorFields() const;
-    double cacheControlMaxAge();
-    double cacheControlStaleWhileRevalidate();
+    double cacheControlMaxAge() const;
+    double cacheControlStaleWhileRevalidate() const;
     double date() const;
     double age() const;
     double expires() const;
@@ -172,11 +212,11 @@ public:
     bool hasMajorCertificateErrors() const { return m_hasMajorCertificateErrors; }
     void setHasMajorCertificateErrors(bool hasMajorCertificateErrors) { m_hasMajorCertificateErrors = hasMajorCertificateErrors; }
 
-    SecurityStyle securityStyle() const { return m_securityStyle; }
+    SecurityStyle getSecurityStyle() const { return m_securityStyle; }
     void setSecurityStyle(SecurityStyle securityStyle) { m_securityStyle = securityStyle; }
 
-    const SecurityDetails* securityDetails() const { return &m_securityDetails; }
-    void setSecurityDetails(const String& protocol, const String& keyExchange, const String& cipher, const String& mac, int certId, size_t numUnknownScts, size_t numInvalidScts, size_t numValidScts);
+    const SecurityDetails* getSecurityDetails() const { return &m_securityDetails; }
+    void setSecurityDetails(const String& protocol, const String& keyExchange, const String& cipher, const String& mac, int certId, size_t numUnknownScts, size_t numInvalidScts, size_t numValidScts, const SignedCertificateTimestampList& sctList);
 
     long long appCacheID() const { return m_appCacheID; }
     void setAppCacheID(long long id) { m_appCacheID = id; }
@@ -214,8 +254,21 @@ public:
     const KURL& originalURLViaServiceWorker() const { return m_originalURLViaServiceWorker; }
     void setOriginalURLViaServiceWorker(const KURL& url) { m_originalURLViaServiceWorker = url; }
 
-    bool isMultipartPayload() const { return m_isMultipartPayload; }
-    void setIsMultipartPayload(bool value) { m_isMultipartPayload = value; }
+    const Vector<char>& multipartBoundary() const { return m_multipartBoundary; }
+    void setMultipartBoundary(const char* bytes, size_t size)
+    {
+        m_multipartBoundary.clear();
+        m_multipartBoundary.append(bytes, size);
+    }
+
+    const String& cacheStorageCacheName() const { return m_cacheStorageCacheName; }
+    void setCacheStorageCacheName(const String& cacheStorageCacheName) { m_cacheStorageCacheName = cacheStorageCacheName; }
+
+    const Vector<String>& corsExposedHeaderNames() const { return m_corsExposedHeaderNames; }
+    void setCorsExposedHeaderNames(const Vector<String>& headerNames)
+    {
+        m_corsExposedHeaderNames = headerNames;
+    }
 
     int64_t responseTime() const { return m_responseTime; }
     void setResponseTime(int64_t responseTime) { m_responseTime = responseTime; }
@@ -230,7 +283,7 @@ public:
     void setDownloadedFilePath(const String&);
 
     // Extra data associated with this response.
-    ExtraData* extraData() const { return m_extraData.get(); }
+    ExtraData* getExtraData() const { return m_extraData.get(); }
     void setExtraData(PassRefPtr<ExtraData> extraData) { m_extraData = extraData; }
 
     // The ResourceResponse subclass may "shadow" this method to provide platform-specific memory usage information
@@ -263,7 +316,7 @@ private:
 
     bool m_isNull : 1;
 
-    CacheControlHeader m_cacheControlHeader;
+    mutable CacheControlHeader m_cacheControlHeader;
 
     mutable bool m_haveParsedAgeHeader : 1;
     mutable bool m_haveParsedDateHeader : 1;
@@ -305,8 +358,8 @@ private:
     // Note: only valid for main resource responses.
     KURL m_appCacheManifestURL;
 
-    // Set to true if this is part of a multipart response.
-    bool m_isMultipartPayload;
+    // The multipart boundary of this response.
+    Vector<char> m_multipartBoundary;
 
     // Was the resource fetched over SPDY.  See http://dev.chromium.org/spdy
     bool m_wasFetchedViaSPDY;
@@ -333,6 +386,14 @@ private:
     // The original URL of the response which was fetched by the ServiceWorker.
     // This may be empty if the response was created inside the ServiceWorker.
     KURL m_originalURLViaServiceWorker;
+
+    // The cache name of the CacheStorage from where the response is served via
+    // the ServiceWorker. Null if the response isn't from the CacheStorage.
+    String m_cacheStorageCacheName;
+
+    // The headers that should be exposed according to CORS. Only guaranteed
+    // to be set if the response was fetched by a ServiceWorker.
+    Vector<String> m_corsExposedHeaderNames;
 
     // The time at which the response headers were received.  For cached
     // responses, this time could be "far" in the past.
@@ -369,7 +430,7 @@ public:
     String m_suggestedFilename;
     int m_httpStatusCode;
     String m_httpStatusText;
-    OwnPtr<CrossThreadHTTPHeaderMapData> m_httpHeaders;
+    std::unique_ptr<CrossThreadHTTPHeaderMapData> m_httpHeaders;
     time_t m_lastModifiedDate;
     RefPtr<ResourceLoadTiming> m_resourceLoadTiming;
     CString m_securityInfo;
@@ -379,7 +440,7 @@ public:
     ResourceResponse::HTTPVersion m_httpVersion;
     long long m_appCacheID;
     KURL m_appCacheManifestURL;
-    bool m_isMultipartPayload;
+    Vector<char> m_multipartBoundary;
     bool m_wasFetchedViaSPDY;
     bool m_wasNpnNegotiated;
     bool m_wasAlternateProtocolAvailable;
@@ -388,6 +449,7 @@ public:
     bool m_wasFallbackRequiredByServiceWorker;
     WebServiceWorkerResponseType m_serviceWorkerResponseType;
     KURL m_originalURLViaServiceWorker;
+    String m_cacheStorageCacheName;
     int64_t m_responseTime;
     String m_remoteIPAddress;
     unsigned short m_remotePort;

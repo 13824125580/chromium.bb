@@ -10,17 +10,18 @@
 
 namespace blink {
 
+class ExecutionContext;
 class Navigator;
 class MediaDevices;
 
-class NavigatorUserMedia final : public GarbageCollected<NavigatorUserMedia>, public HeapSupplement<Navigator> {
+class NavigatorUserMedia final : public GarbageCollected<NavigatorUserMedia>, public Supplement<Navigator> {
     USING_GARBAGE_COLLECTED_MIXIN(NavigatorUserMedia)
 public:
     static MediaDevices* mediaDevices(Navigator&);
     DECLARE_VIRTUAL_TRACE();
 
 private:
-    NavigatorUserMedia();
+    explicit NavigatorUserMedia(ExecutionContext*);
     MediaDevices* getMediaDevices();
     static const char* supplementName();
     static NavigatorUserMedia& from(Navigator&);

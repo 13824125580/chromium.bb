@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/buildflag_header.gni")
 import("//build/config/features.gni")
 import("//build/config/locales.gni")
 import("//build/config/ui.gni")
@@ -16,8 +17,8 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
-if (use_playready) {
-  config("playready_config") {
+config("playready_config") {
+  if (use_playready) {
     defines = [ "PLAYREADY_CDM_AVAILABLE" ]
   }
 }
@@ -94,8 +95,21 @@ cast_test_group("cast_tests") {
       # DoAppendUTF8Invalid fails because of dcheck_always_on flag in Eng builds
       "url_unittests --gtest_filter=-URLCanonTest.DoAppendUTF8Invalid",
     ]
+
+    if (disable_display) {
+      filters += [ "base_unittests --gtest_filter=-TimeFormattingTest.*" ]
+    }
   } else if (is_cast_desktop_build || target_os == "android") {
     filters += [
+      # URLRequestTestHTTP.GetTest_ManyCookies takes roughly 55s to run. Increase
+      # timeout to 90s from 45s to allow it to pass (b/19821476) (b/29415636).
+      # CTLogVerifierTest.VerifiesValidConsistencyProofsFromReferenceGenerator
+      # times out occasionally, paricularly on the CQ bots; disable to reduce
+      # CQ flakiness (crbug/598406) (b/29415636).
+      # Running a batch of net_unittests has high overhead, so
+      # run tests in batches of 25 to reduce number of batches (b/23156294).
+      "net_unittests --gtest_filter=-CTLogVerifierTest.VerifiesValidConsistencyProofsFromReferenceGenerator --test-launcher-timeout=90000 --test-launcher-batch-limit=25",
+
       # Disable PipelineIntegrationTest.BasicPlayback_MediaSource_VP9_WebM (not supported)
       "media_unittests --gtest_filter=-PipelineIntegrationTest.BasicPlayback_MediaSource_VP9_WebM",
     ]
@@ -113,11 +127,14 @@ cast_test_group("cast_tests") {
 
     # --enable-local-file-accesses => to load sample media files
     # --test-launcher-jobs=1 => so internal code can bind to port
-    filters += [ "cast_shell_browser_test --no-sandbox --enable-local-file-accesses --enable-cma-media-pipeline --ozone-platform=cast --test-launcher-jobs=1" ]
+    filters += [
+      "cast_shell_browser_test --no-sandbox --enable-local-file-accesses --enable-cma-media-pipeline --ozone-platform=cast --test-launcher-jobs=1",
+      "cast_media_unittests --test-launcher-jobs=1",
+      "ipc_tests --test-launcher-jobs=1",
+    ]
 
     if (use_alsa) {
-      tests +=
-          [ "//chromecast/media/cma/backend/alsa:alsa_cma_backend_unittests" ]
+      tests += [ "//chromecast/media/cma/backend/alsa:cast_alsa_cma_backend_unittests" ]
     }
   }
 
@@ -132,7 +149,7 @@ cast_test_group_list("cast_test_lists") {
 
   run_list_path = "$root_out_dir/tests/run_test_list.txt"
 
-  additional_options = [ "--ozone-platform=headless" ]
+  additional_options = [ "--ozone-platform=headless --test-launcher-bot-mode" ]
 
   build_tests = true
 
@@ -140,6 +157,27 @@ cast_test_group_list("cast_test_lists") {
 
   if (chromecast_branding != "public") {
     test_groups += [ "//chromecast/internal:internal_cast_tests" ]
+  }
+}
+
+if (is_android) {
+  cast_test_group("cast_junit_tests") {
+    test_type = "junit"
+    tests = [
+      "//base:base_junit_tests",
+      "//content/public/android:content_junit_tests",
+      "//net/android:net_junit_tests",
+      "//testing/android/junit:junit_unit_tests",
+      "//ui/android:ui_junit_tests",
+    ]
+  }
+
+  cast_test_group_list("cast_junit_test_lists") {
+    test_type = "junit"
+    build_list_path = "$root_out_dir/junit/build_junit_test_list.txt"
+    run_list_path = "$root_out_dir/junit/run_junit_test_list.txt"
+    build_tests = true
+    test_groups = [ ":cast_junit_tests" ]
   }
 }
 
@@ -178,10 +216,6 @@ executable("cast_shell") {
 
   if (chromecast_branding != "public") {
     deps += [ "//chromecast/internal:cast_shell_internal" ]
-  }
-
-  if (ozone_platform_egltest) {
-    deps += [ "//ui/ozone/platform/egltest:eglplatform_shim_x11" ]
   }
 }
 
@@ -264,6 +298,11 @@ action("chromecast_locales_pak") {
          ] + locales
 }
 
+buildflag_header("chromecast_features") {
+  header = "chromecast_features.h"
+  flags = [ "DISABLE_DISPLAY=$disable_display" ]
+}
+
 if (is_android) {
   # GYP target: chromecast.gyp:cast_shell_icudata
   android_assets("cast_shell_apk_assets") {
@@ -278,6 +317,7 @@ if (is_android) {
       "//third_party/icu:icu_assets",
       "//v8:v8_external_startup_data_assets",
     ]
+    disable_compression = true
   }
 
   # GYP target: chromecast.gyp:cast_shell_apk

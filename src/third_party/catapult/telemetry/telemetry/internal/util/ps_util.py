@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import atexit
+from telemetry.internal.util import atexit_with_log
 import inspect
 import logging
 import os
@@ -57,7 +57,7 @@ def EnableListingStrayProcessesUponExitHook():
     try:
       import psutil
     except ImportError:
-      logging.error(
+      logging.warning(
           'psutil is not installed on the system. Not listing possible '
           'leaked processes. To install psutil, see: '
           'https://pypi.python.org/pypi/psutil')
@@ -85,7 +85,7 @@ def EnableListingStrayProcessesUponExitHook():
         except Exception as e:
           logging.warning(str(e))
         leak_processes_info.append(process_info)
-      logging.error('Telemetry leaks these processes: %s',
-                    ', '.join(leak_processes_info))
+      logging.warning('Telemetry leaks these processes: %s',
+                      ', '.join(leak_processes_info))
 
-  atexit.register(_ListAllSubprocesses)
+  atexit_with_log.Register(_ListAllSubprocesses)

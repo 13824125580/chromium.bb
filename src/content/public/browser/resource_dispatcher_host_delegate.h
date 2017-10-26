@@ -5,10 +5,10 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RESOURCE_DISPATCHER_HOST_DELEGATE_H_
 #define CONTENT_PUBLIC_BROWSER_RESOURCE_DISPATCHER_HOST_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/common/resource_type.h"
@@ -23,12 +23,14 @@ class Sender;
 
 namespace net {
 class AuthChallengeInfo;
+class ClientCertStore;
 class URLRequest;
 }
 
 namespace content {
 
 class AppCacheService;
+class NavigationData;
 class ResourceContext;
 class ResourceDispatcherHostLoginDelegate;
 class ResourceThrottle;
@@ -60,7 +62,6 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
                                 ResourceContext* resource_context,
                                 int child_id,
                                 int route_id,
-                                int request_id,
                                 bool is_content_initiated,
                                 bool must_download,
                                 ScopedVector<ResourceThrottle>* throttles);
@@ -80,7 +81,8 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
       const ResourceRequestInfo::WebContentsGetter& web_contents_getter,
       bool is_main_frame,
       ui::PageTransition page_transition,
-      bool has_user_gesture);
+      bool has_user_gesture,
+      ResourceContext* resource_context);
 
   // Returns true if we should force the given resource to be downloaded.
   // Otherwise, the content layer decides.
@@ -108,7 +110,7 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
   // Informs the delegate that a Stream was created. The Stream can be read from
   // the blob URL of the Stream, but can only be read once.
   virtual void OnStreamCreated(net::URLRequest* request,
-                               scoped_ptr<content::StreamInfo> stream);
+                               std::unique_ptr<content::StreamInfo> stream);
 
   // Informs the delegate that a response has started.
   virtual void OnResponseStarted(net::URLRequest* request,
@@ -130,8 +132,15 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
   virtual bool ShouldEnableLoFiMode(const net::URLRequest& url_request,
                                     content::ResourceContext* resource_context);
 
+  // Asks the embedder for NavigationData related to this request. It is only
+  // called for navigation requests.
+  virtual NavigationData* GetNavigationData(net::URLRequest* request) const;
+
+  // Get platform ClientCertStore. May return nullptr.
+  virtual std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
+      ResourceContext* resource_context);
+
  protected:
-  ResourceDispatcherHostDelegate();
   virtual ~ResourceDispatcherHostDelegate();
 };
 

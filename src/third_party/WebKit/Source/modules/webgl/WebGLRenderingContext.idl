@@ -28,6 +28,6 @@
 [
     DoNotCheckConstants,
     SetWrapperReferenceFrom=canvas,
-    WillBeGarbageCollected,
+    Exposed(Worker ExperimentalCanvasFeatures, Window StableBlinkFeatures),
 ] interface WebGLRenderingContext { };
 WebGLRenderingContext implements WebGLRenderingContextBase;

@@ -10,6 +10,7 @@
 #include "base/message_loop/message_loop.h"
 #include "net/android/network_change_notifier_android.h"
 #include "net/android/network_change_notifier_delegate_android.h"
+#include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
 #include "net/dns/dns_config_service.h"
 #include "net/dns/dns_protocol.h"
@@ -251,9 +252,8 @@ class BaseNetworkChangeNotifierAndroidTest : public testing::Test {
     base::MessageLoop::current()->RunUntilIdle();
   }
 
-  void FakeUpdateActiveNetworkList(
-      NetworkChangeNotifier::NetworkList networks) {
-    delegate_.FakeUpdateActiveNetworkList(networks);
+  void FakePurgeActiveNetworkList(NetworkChangeNotifier::NetworkList networks) {
+    delegate_.FakePurgeActiveNetworkList(networks);
     // See comment above.
     base::MessageLoop::current()->RunUntilIdle();
   }
@@ -274,7 +274,7 @@ TEST_F(BaseNetworkChangeNotifierAndroidTest,
             delegate_.GetCurrentConnectionType());
   // Instantiate another delegate to validate that it uses the actual
   // connection type at construction.
-  scoped_ptr<NetworkChangeNotifierDelegateAndroid> other_delegate(
+  std::unique_ptr<NetworkChangeNotifierDelegateAndroid> other_delegate(
       new NetworkChangeNotifierDelegateAndroid());
   EXPECT_EQ(NetworkChangeNotifier::CONNECTION_NONE,
             other_delegate->GetCurrentConnectionType());
@@ -293,10 +293,8 @@ class NetworkChangeNotifierAndroidTest
     : public BaseNetworkChangeNotifierAndroidTest {
  protected:
   void SetUp() override {
-    IPAddressNumber dns_number;
-    ASSERT_TRUE(ParseIPLiteralToNumber("8.8.8.8", &dns_number));
     dns_config_.nameservers.push_back(
-        IPEndPoint(dns_number, dns_protocol::kDefaultPort));
+        IPEndPoint(IPAddress(8, 8, 8, 8), dns_protocol::kDefaultPort));
     notifier_.reset(new NetworkChangeNotifierAndroid(&delegate_, &dns_config_));
     NetworkChangeNotifier::AddConnectionTypeObserver(
         &connection_type_observer_);
@@ -314,7 +312,7 @@ class NetworkChangeNotifierAndroidTest
   NetworkChangeNotifierObserver other_connection_type_observer_;
   NetworkChangeNotifier::DisableForTest disable_for_test_;
   DnsConfig dns_config_;
-  scoped_ptr<NetworkChangeNotifierAndroid> notifier_;
+  std::unique_ptr<NetworkChangeNotifierAndroid> notifier_;
 };
 
 class NetworkChangeNotifierDelegateAndroidTest
@@ -516,7 +514,7 @@ TEST_F(NetworkChangeNotifierAndroidTest, NetworkCallbacks) {
   EXPECT_EQ(100, network_list[0]);
   EXPECT_EQ(101, network_list[1]);
   network_list.erase(network_list.begin() + 1);  // Remove network 101
-  FakeUpdateActiveNetworkList(network_list);
+  FakePurgeActiveNetworkList(network_list);
   network_observer.ExpectChange(DISCONNECTED, 101);
   NetworkChangeNotifier::GetConnectedNetworks(&network_list);
   EXPECT_EQ(1u, network_list.size());

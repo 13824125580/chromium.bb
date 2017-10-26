@@ -6,6 +6,8 @@
 #define CONTENT_BROWSER_NOTIFICATIONS_NOTIFICATION_DATABASE_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -59,9 +61,12 @@ class CONTENT_EXPORT NotificationDatabase {
     // leveldb operation not supported
     STATUS_NOT_SUPPORTED = 5,
 
+    // Invalid database ID or snapshot ID provided.
+    STATUS_INVALID_ARGUMENT = 6,
+
     // Number of entries in the status enumeration. Used by UMA. Must always be
     // one higher than the otherwise highest value in this enumeration.
-    STATUS_COUNT = 6
+    STATUS_COUNT = 7
   };
 
   explicit NotificationDatabase(const base::FilePath& path);
@@ -183,12 +188,12 @@ class CONTENT_EXPORT NotificationDatabase {
 
   int64_t next_notification_id_ = 0;
 
-  scoped_ptr<const leveldb::FilterPolicy> filter_policy_;
+  std::unique_ptr<const leveldb::FilterPolicy> filter_policy_;
 
   // The declaration order for these members matters, as |db_| depends on |env_|
   // and thus has to be destructed first.
-  scoped_ptr<leveldb::Env> env_;
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::Env> env_;
+  std::unique_ptr<leveldb::DB> db_;
 
   State state_ = STATE_UNINITIALIZED;
 

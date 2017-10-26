@@ -54,10 +54,9 @@ source_set("app_shell_lib") {
     "//extensions/shell/common/api",
     "//extensions/shell/common/api:api_registration",
     "//extensions/utility",
-    "//mojo/edk/system",
-    "//mojo/environment:chromium",
     "//skia",
     "//third_party/WebKit/public:blink",
+    "//third_party/cld_2",
     "//ui/base",
     "//ui/base/ime",
     "//v8",
@@ -110,41 +109,38 @@ source_set("app_shell_lib") {
       ]
     }
   }
+}
 
-  if (cld_version == 2) {
-    deps += [ "//third_party/cld_2:cld2_platform_impl" ]
+executable("app_shell") {
+  # testonly because :app_shell_lib is testonly. See :app_shell_lib comment.
+  testonly = true
+  sources = rebase_path(app_shell_gypi_values.app_shell_sources,
+                        ".",
+                        "//extensions/shell")
+  deps = [
+    ":app_shell_lib",
+    "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
+    "//extensions:shell_and_test_pak",
+  ]
+
+  if (is_win) {
+    configs += [ "//build/config/win:windowed" ]
+    configs -= [ "//build/config/win:console" ]
+  }
+
+  if (is_mac) {
+    output_name = "App Shell"
+
+    # TODO(GYP): Mac bundling. See also content_shell which this is basically
+    # a copy-paste of.
+    deps += [ ":app_shell_framework" ]
+
+    # TODO(GYP): Mac app_shell_helper stuff.
   }
 }
 
-if (!(is_chromeos && !use_ozone)) {
-  executable("app_shell") {
-    # testonly because :app_shell_lib is testonly. See :app_shell_lib comment.
-    testonly = true
-    sources = rebase_path(app_shell_gypi_values.app_shell_sources,
-                          ".",
-                          "//extensions/shell")
-    deps = [
-      ":app_shell_lib",
-      "//build/config/sanitizers:deps",
-      "//extensions:shell_and_test_pak",
-    ]
-
-    if (is_win) {
-      configs += [ "//build/config/win:windowed" ]
-      configs -= [ "//build/config/win:console" ]
-    }
-
-    if (is_mac) {
-      # TODO(GYP) bug 546894: Fix GN and toolchains to handle spaces here.
-      #output_name = "App Shell"
-      # TODO(GYP): Mac bundling. See also content_shell which this is basically
-      # a copy-paste of.
-      deps += [ ":app_shell_framework" ]
-      # TODO(GYP): Mac app_shell_helper stuff.
-    }
-  }
-}
-
+if (false) {
 test("app_shell_unittests") {
   sources = rebase_path(app_shell_gypi_values.app_shell_unittests_sources,
                         ".",
@@ -193,16 +189,14 @@ test("app_shell_unittests") {
     sources += chromeos_sources
   }
 
-  # TODO(GYP): Enable this when //components/nacl GN is done.
-  if (false) {
-    if (use_nacl) {
-      nacl_sources =
-          rebase_path(app_shell_gypi_values.app_shell_unittests_sources_nacl,
-                      ".",
-                      "//extensions/shell")
-      sources += nacl_sources
-    }
+  if (enable_nacl) {
+    sources +=
+        rebase_path(app_shell_gypi_values.app_shell_unittests_sources_nacl,
+                    ".",
+                    "//extensions/shell")
   }
+}
+
 }
 
 process_version("version_header") {

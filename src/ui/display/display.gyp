@@ -46,6 +46,7 @@
       ],
       'sources': [
         # Note: file list duplicated in GN build.
+        'android/screen_android.cc',
         'chromeos/apply_content_protection_task.cc',
         'chromeos/apply_content_protection_task.h',
         'chromeos/configure_displays_task.cc',
@@ -57,12 +58,10 @@
         'chromeos/display_snapshot_virtual.h',
         'chromeos/display_util.cc',
         'chromeos/display_util.h',
-        'chromeos/ozone/display_configurator_ozone.cc',
         'chromeos/query_content_protection_task.cc',
         'chromeos/query_content_protection_task.h',
         'chromeos/update_display_configuration_task.cc',
         'chromeos/update_display_configuration_task.h',
-        'chromeos/x11/display_configurator_x11.cc',
         'chromeos/x11/display_mode_x11.cc',
         'chromeos/x11/display_mode_x11.h',
         'chromeos/x11/display_snapshot_x11.cc',
@@ -73,9 +72,36 @@
         'chromeos/x11/native_display_delegate_x11.h',
         'chromeos/x11/native_display_event_dispatcher_x11.cc',
         'chromeos/x11/native_display_event_dispatcher_x11.h',
+        'display.cc',
+        'display.h',
+        'display_change_notifier.cc',
+        'display_change_notifier.h',
         'display_export.h',
+        'display_finder.cc',
+        'display_finder.h',
+        'display_observer.cc',
+        'display_observer.h',
         'display_switches.cc',
         'display_switches.h',
+        'ios/screen_ios.mm',
+        'mac/screen_mac.mm',
+        'manager/display_layout.cc',
+        'manager/display_layout.h',
+        'manager/display_layout_builder.cc',
+        'manager/display_layout_builder.h',
+        'screen.cc',
+        'screen.h',
+        'screen_aura.cc',
+        'win/display_info.cc',
+        'win/display_info.h',
+        'win/dpi.cc',
+        'win/dpi.h',
+        'win/scaling_util.cc',
+        'win/scaling_util.h',
+        'win/screen_win.cc',
+        'win/screen_win.h',
+        'win/screen_win_display.cc',
+        'win/screen_win_display.h',
       ],
       'conditions': [
         ['use_x11 == 1', {
@@ -97,9 +123,9 @@
             '../gfx/x/gfx_x11.gyp:gfx_x11',
           ],
         }],
-        ['use_ozone == 1', {
-          'dependencies': [
-            '../../ui/ozone/ozone.gyp:ozone',
+        ['OS=="android" and use_aura==1', {
+          'sources!': [
+            'android/screen_android.cc',
           ],
         }],
       ],
@@ -185,6 +211,11 @@
         'chromeos/test/test_display_layout_manager.h',
         'chromeos/test/test_native_display_delegate.cc',
         'chromeos/test/test_native_display_delegate.h',
+        'test/display_test_util.h',
+        'test/test_screen.cc',
+        'test/test_screen.h',
+        'win/test/screen_util_win.h',
+        'win/test/screen_util_win.cc',
       ],
     },
     {
@@ -196,6 +227,7 @@
         '../../testing/gtest.gyp:gtest',
         '../../ui/gfx/gfx.gyp:gfx_geometry',
         '../../ui/gfx/gfx.gyp:gfx_test_support',
+        'display',
         'display_util',
       ],
       'include_dirs': [
@@ -209,17 +241,33 @@
         'chromeos/update_display_configuration_task_unittest.cc',
         'chromeos/x11/display_util_x11_unittest.cc',
         'chromeos/x11/native_display_event_dispatcher_x11_unittest.cc',
+        'display_change_notifier_unittest.cc',
+        'display_unittest.cc',
+        'manager/display_layout_builder_unittest.cc',
+        'manager/display_layout_unittest.cc',
+        'screen_unittest.cc',
         'util/display_util_unittest.cc',
         'util/edid_parser_unittest.cc',
+        'win/scaling_util_unittest.cc',
+        'win/screen_win_unittest.cc',
       ],
       'conditions': [
         ['chromeos == 1', {
           'dependencies': [
-            'display',
             'display_test_support',
             'display_test_util',
             'display_types',
           ],
+        }],
+        ['use_aura==1', {
+          'sources!': [
+            'screen_unittest.cc',
+          ],
+        }],
+        ['OS=="win"', {
+          'dependencies': [
+            'display_test_support',
+          ]
         }],
       ],
     },

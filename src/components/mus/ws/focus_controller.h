@@ -5,8 +5,9 @@
 #ifndef COMPONENTS_MUS_WS_FOCUS_CONTROLLER_H_
 #define COMPONENTS_MUS_WS_FOCUS_CONTROLLER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "components/mus/ws/server_window_drawn_tracker_observer.h"
 #include "components/mus/ws/server_window_tracker.h"
@@ -35,8 +36,9 @@ class FocusController : public ServerWindowDrawnTrackerObserver {
   ~FocusController() override;
 
   // Sets the focused window. Does nothing if |window| is currently focused.
-  // This does not notify the delegate.
-  void SetFocusedWindow(ServerWindow* window);
+  // This does not notify the delegate. See ServerWindow::SetFocusedWindow()
+  // for details on return value.
+  bool SetFocusedWindow(ServerWindow* window);
   ServerWindow* GetFocusedWindow();
 
   // Moves activation to the next activatable window.
@@ -63,7 +65,7 @@ class FocusController : public ServerWindowDrawnTrackerObserver {
   ServerWindow* GetActivatableAncestorOf(ServerWindow* window) const;
 
   // Implementation of SetFocusedWindow().
-  void SetFocusedWindowImpl(FocusControllerChangeSource change_source,
+  bool SetFocusedWindowImpl(FocusControllerChangeSource change_source,
                             ServerWindow* window);
 
   // ServerWindowDrawnTrackerObserver:
@@ -85,12 +87,12 @@ class FocusController : public ServerWindowDrawnTrackerObserver {
   // Keeps track of the list of windows that have already been visited during a
   // window cycle. This is only active when |activation_reason_| is set to
   // CYCLE.
-  scoped_ptr<ServerWindowTracker> cycle_windows_;
+  std::unique_ptr<ServerWindowTracker> cycle_windows_;
 
   base::ObserverList<FocusControllerObserver> observers_;
 
   // Keeps track of the visibility of the focused and active window.
-  scoped_ptr<ServerWindowDrawnTracker> drawn_tracker_;
+  std::unique_ptr<ServerWindowDrawnTracker> drawn_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(FocusController);
 };

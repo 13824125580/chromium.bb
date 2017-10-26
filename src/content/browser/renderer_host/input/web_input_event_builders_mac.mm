@@ -39,6 +39,7 @@
 #include "base/strings/string_util.h"
 #include "content/browser/renderer_host/input/web_input_event_util.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 
@@ -516,9 +517,8 @@ int ModifiersFromEvent(NSEvent* event) {
 void SetWebEventLocationFromEventInView(blink::WebMouseEvent* result,
                                         NSEvent* event,
                                         NSView* view) {
-  NSPoint window_local = [event locationInWindow];
-
-  NSPoint screen_local = [[view window] convertBaseToScreen:window_local];
+  NSPoint screen_local = ui::ConvertPointFromWindowToScreen(
+      [view window], [event locationInWindow]);
   result->globalX = screen_local.x;
   // Flip y.
   NSScreen* primary_screen = ([[NSScreen screens] count] > 0)
@@ -529,7 +529,8 @@ void SetWebEventLocationFromEventInView(blink::WebMouseEvent* result,
   else
     result->globalY = screen_local.y;
 
-  NSPoint content_local = [view convertPoint:window_local fromView:nil];
+  NSPoint content_local =
+      [view convertPoint:[event locationInWindow] fromView:nil];
   result->x = content_local.x;
   result->y = [view frame].size.height - content_local.y;  // Flip y.
 
@@ -667,7 +668,8 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(NSEvent* event, NSView* view) {
 
   result.clickCount = 0;
 
-  switch ([event type]) {
+  NSEventType type = [event type];
+  switch (type) {
     case NSMouseExited:
       result.type = blink::WebInputEvent::MouseLeave;
       result.button = blink::WebMouseEvent::ButtonNone;
@@ -728,6 +730,25 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(NSEvent* event, NSView* view) {
 
   result.timeStampSeconds = [event timestamp];
 
+  // For NSMouseExited and NSMouseEntered, they do not have a subtype. Styluses
+  // and mouses share the same cursor, so we will set their pointerType as
+  // Unknown for now.
+  if (type == NSMouseExited || type == NSMouseEntered) {
+    result.pointerType = blink::WebPointerProperties::PointerType::Unknown;
+    return result;
+  }
+
+  // For other mouse events and touchpad events, the pointer type is mouse.
+  // For all other tablet events, the pointer type will be just pen.
+  NSEventSubtype subtype = [event subtype];
+  if (subtype == NSTabletPointEventSubtype ||
+      subtype == NSTabletProximityEventSubtype) {
+    result.pointerType = blink::WebPointerProperties::PointerType::Pen;
+  } else {
+    result.pointerType = blink::WebPointerProperties::PointerType::Mouse;
+  }
+  result.id = [event deviceID];
+  result.force = [event pressure];
   return result;
 }
 

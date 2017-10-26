@@ -6,9 +6,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/statvfs.h>
+
+#include <algorithm>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <sstream>
 
 #include "base/bind.h"
@@ -19,7 +21,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -110,19 +112,19 @@ std::vector<em::VolumeInfo> GetVolumeInfo(
     const std::vector<std::string>& mount_points) {
   std::vector<em::VolumeInfo> result;
   for (const std::string& mount_point : mount_points) {
-    struct statvfs stat = {};  // Zero-clear
-    if (HANDLE_EINTR(statvfs(mount_point.c_str(), &stat)) == 0) {
-      em::VolumeInfo info;
-      info.set_volume_id(mount_point);
-      info.set_storage_total(static_cast<int64_t>(stat.f_blocks) *
-                             stat.f_frsize);
-      info.set_storage_free(static_cast<uint64_t>(stat.f_bavail) *
-                            stat.f_frsize);
-      result.push_back(info);
-    } else {
+    base::FilePath mount_path(mount_point);
+    int64_t free_size = base::SysInfo::AmountOfFreeDiskSpace(mount_path);
+    int64_t total_size = base::SysInfo::AmountOfTotalDiskSpace(mount_path);
+    if (free_size < 0 || total_size < 0) {
       LOG_IF(ERROR, !mount_point.empty()) << "Unable to get volume status for "
                                           << mount_point;
+      continue;
     }
+    em::VolumeInfo info;
+    info.set_volume_id(mount_point);
+    info.set_storage_total(total_size);
+    info.set_storage_free(free_size);
+    result.push_back(info);
   }
   return result;
 }
@@ -213,10 +215,10 @@ std::vector<em::CPUTempInfo> ReadCPUTempInfo() {
 // Returns null if there is no active kiosk session, or if that kiosk
 // session has been removed from policy since the session started, in which
 // case we won't report its status).
-scoped_ptr<policy::DeviceLocalAccount>
-GetCurrentKioskDeviceLocalAccount(chromeos::CrosSettings* settings) {
+std::unique_ptr<policy::DeviceLocalAccount> GetCurrentKioskDeviceLocalAccount(
+    chromeos::CrosSettings* settings) {
   if (!user_manager::UserManager::Get()->IsLoggedInAsKioskApp())
-    return scoped_ptr<policy::DeviceLocalAccount>();
+    return std::unique_ptr<policy::DeviceLocalAccount>();
   const user_manager::User* const user =
       user_manager::UserManager::Get()->GetActiveUser();
   const std::vector<policy::DeviceLocalAccount> accounts =
@@ -225,12 +227,12 @@ GetCurrentKioskDeviceLocalAccount(chromeos::CrosSettings* settings) {
   for (const auto& device_local_account : accounts) {
     if (AccountId::FromUserEmail(device_local_account.user_id) ==
         user->GetAccountId()) {
-      return make_scoped_ptr(
+      return base::WrapUnique(
           new policy::DeviceLocalAccount(device_local_account));
     }
   }
   LOG(WARNING) << "Kiosk app not found in list of device-local accounts";
-  return scoped_ptr<policy::DeviceLocalAccount>();
+  return std::unique_ptr<policy::DeviceLocalAccount>();
 }
 
 }  // namespace
@@ -455,7 +457,7 @@ void DeviceStatusCollector::TrimStoredActivityPeriods(int64_t min_day_key,
   const base::DictionaryValue* activity_times =
       local_state_->GetDictionary(prefs::kDeviceActivityTimes);
 
-  scoped_ptr<base::DictionaryValue> copy(activity_times->DeepCopy());
+  std::unique_ptr<base::DictionaryValue> copy(activity_times->DeepCopy());
   for (base::DictionaryValue::Iterator it(*activity_times); !it.IsAtEnd();
        it.Advance()) {
     int64_t timestamp;
@@ -531,9 +533,9 @@ void DeviceStatusCollector::IdleStateCallback(ui::IdleState state) {
   last_idle_check_ = now;
 }
 
-scoped_ptr<DeviceLocalAccount>
+std::unique_ptr<DeviceLocalAccount>
 DeviceStatusCollector::GetAutoLaunchedKioskSessionInfo() {
-  scoped_ptr<DeviceLocalAccount> account =
+  std::unique_ptr<DeviceLocalAccount> account =
       GetCurrentKioskDeviceLocalAccount(cros_settings_);
   if (account) {
     chromeos::KioskAppManager::App current_app;
@@ -544,7 +546,7 @@ DeviceStatusCollector::GetAutoLaunchedKioskSessionInfo() {
     }
   }
   // No auto-launched kiosk session active.
-  return scoped_ptr<DeviceLocalAccount>();
+  return std::unique_ptr<DeviceLocalAccount>();
 }
 
 void DeviceStatusCollector::SampleHardwareStatus() {
@@ -820,7 +822,7 @@ void DeviceStatusCollector::GetNetworkInterfaces(
       0,      // no limit to number of results
       &state_list);
 
-  for (const chromeos::NetworkState* state: state_list) {
+  for (const chromeos::NetworkState* state : state_list) {
     // Determine the connection state and signal strength for |state|.
     em::NetworkState::ConnectionState connection_state_enum =
         em::NetworkState::UNKNOWN;
@@ -941,7 +943,7 @@ bool DeviceStatusCollector::GetDeviceSessionStatus(
   if (!report_session_status_)
     return false;
 
-  scoped_ptr<const DeviceLocalAccount> account =
+  std::unique_ptr<const DeviceLocalAccount> account =
       GetAutoLaunchedKioskSessionInfo();
   // Only generate session status reports if we are in an auto-launched kiosk
   // session.

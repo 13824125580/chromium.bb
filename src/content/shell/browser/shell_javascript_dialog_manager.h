@@ -5,10 +5,11 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_JAVASCRIPT_DIALOG_MANAGER_H_
 #define CONTENT_SHELL_BROWSER_SHELL_JAVASCRIPT_DIALOG_MANAGER_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 
@@ -24,7 +25,6 @@ class ShellJavaScriptDialogManager : public JavaScriptDialogManager {
   // JavaScriptDialogManager:
   void RunJavaScriptDialog(WebContents* web_contents,
                            const GURL& origin_url,
-                           const std::string& accept_lang,
                            JavaScriptMessageType javascript_message_type,
                            const base::string16& message_text,
                            const base::string16& default_prompt_text,
@@ -32,7 +32,6 @@ class ShellJavaScriptDialogManager : public JavaScriptDialogManager {
                            bool* did_suppress_message) override;
 
   void RunBeforeUnloadDialog(WebContents* web_contents,
-                             const base::string16& message_text,
                              bool is_reload,
                              const DialogClosedCallback& callback) override;
 
@@ -54,7 +53,7 @@ class ShellJavaScriptDialogManager : public JavaScriptDialogManager {
  private:
 #if defined(OS_MACOSX) || defined(OS_WIN)
   // The dialog being shown. No queueing.
-  scoped_ptr<ShellJavaScriptDialog> dialog_;
+  std::unique_ptr<ShellJavaScriptDialog> dialog_;
 #else
   // TODO: implement ShellJavaScriptDialog for other platforms, drop this #if
 #endif

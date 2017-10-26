@@ -20,6 +20,21 @@
       ],
     },
     {
+      # GN version: //device/battery:mojo_bindings_blink
+      'target_name': 'device_battery_mojo_bindings_for_blink',
+      'type': 'static_library',
+      'variables': {
+        'for_blink': 'true',
+      },
+      'includes': [
+        '../../mojo/mojom_bindings_generator.gypi',
+      ],
+      'sources': [
+        'battery_monitor.mojom',
+        'battery_status.mojom',
+      ],
+    },
+    {
       # This is needed only for a build within Android tree. TODO(ppi): remove
       # when Android tree build is deprecated.
       'target_name': 'device_battery_mojo_bindings_for_webview',
@@ -89,7 +104,6 @@
           'dependencies': [
             '../../base/base.gyp:base',
             '../../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
-            '../../mojo/mojo_base.gyp:mojo_environment_chromium',
             '../../mojo/mojo_edk.gyp:mojo_system_impl',
             '../../mojo/mojo_public.gyp:mojo_cpp_bindings',
             'device_battery_mojo_bindings',

@@ -13,14 +13,17 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "base/sys_byteorder.h"
 #include "net/base/net_export.h"
 #include "net/spdy/hpack/hpack_decoder.h"
+#include "net/spdy/hpack/hpack_decoder_interface.h"
 #include "net/spdy/hpack/hpack_encoder.h"
 #include "net/spdy/spdy_alt_svc_wire_format.h"
+#include "net/spdy/spdy_flags.h"
 #include "net/spdy/spdy_header_block.h"
+#include "net/spdy/spdy_headers_block_parser.h"
+#include "net/spdy/spdy_headers_handler_interface.h"
 #include "net/spdy/spdy_protocol.h"
 
 typedef struct z_stream_s z_stream;  // Forward declaration for zlib.
@@ -38,6 +41,7 @@ class SpdyStreamTest;
 
 class SpdyFramer;
 class SpdyFrameBuilder;
+class SpdyFramerDecoderAdapter;
 
 namespace test {
 
@@ -98,7 +102,7 @@ class NET_EXPORT_PRIVATE SpdyFramerVisitorInterface {
  public:
   virtual ~SpdyFramerVisitorInterface() {}
 
-  // Called if an error is detected in the SpdyFrame protocol.
+  // Called if an error is detected in the SpdySerializedFrame protocol.
   virtual void OnError(SpdyFramer* framer) = 0;
 
   // Called when a data frame header is received. The frame's data
@@ -112,12 +116,13 @@ class NET_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   // |stream_id| The stream receiving data.
   // |data| A buffer containing the data received.
   // |len| The length of the data buffer.
-  // When the other side has finished sending data on this stream,
-  // this method will be called with a zero-length buffer.
   virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
-                                 size_t len,
-                                 bool fin) = 0;
+                                 size_t len) = 0;
+
+  // Called when the other side has finished sending data on this stream.
+  // |stream_id| The stream that was receivin data.
+  virtual void OnStreamEnd(SpdyStreamId stream_id) = 0;
 
   // Called when padding is received (padding length field or padding octets).
   // |stream_id| The stream receiving data.
@@ -127,9 +132,9 @@ class NET_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   // Called just before processing the payload of a frame containing header
   // data. Should return an implementation of SpdyHeadersHandlerInterface that
   // will receive headers for stream |stream_id|. The caller will not take
-  // ownership of the headers handler. The same instance should be returned
-  // for all header frames comprising a logical header block (i.e. until
-  // OnHeaderFrameEnd() is called with end_headers == true).
+  // ownership of the headers handler. The same instance should remain live
+  // and be returned for all header frames comprising a logical header block
+  // (i.e. until OnHeaderFrameEnd() is called with end_headers == true).
   virtual SpdyHeadersHandlerInterface* OnHeaderFrameStart(
       SpdyStreamId stream_id) = 0;
 
@@ -196,8 +201,8 @@ class NET_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   // |stream_id| The stream receiving the header.
   // |has_priority| Whether or not the headers frame included a priority value,
   //     and, if protocol version == HTTP2, stream dependency info.
-  // |priority| If |has_priority| is true, then priority value for the receiving
-  //     stream, otherwise 0.
+  // |weight| If |has_priority| is true, then weight (in the range [1, 256])
+  //     for the receiving stream, otherwise 0.
   // |parent_stream_id| If |has_priority| is true and protocol
   //     version == HTTP2, the parent stream of the receiving stream, else 0.
   // |exclusive| If |has_priority| is true and protocol
@@ -208,7 +213,7 @@ class NET_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   //     or true if not.
   virtual void OnHeaders(SpdyStreamId stream_id,
                          bool has_priority,
-                         SpdyPriority priority,
+                         int weight,
                          SpdyStreamId parent_stream_id,
                          bool exclusive,
                          bool fin,
@@ -259,9 +264,14 @@ class NET_EXPORT_PRIVATE SpdyFramerVisitorInterface {
       const SpdyAltSvcWireFormat::AlternativeServiceVector& altsvc_vector) {}
 
   // Called when a PRIORITY frame is received.
+  // |stream_id| The stream to update the priority of.
+  // |parent_stream_id| The parent stream of |stream_id|.
+  // |weight| Stream weight, in the range [1, 256].
+  // |exclusive| Whether |stream_id| should be an only child of
+  //     |parent_stream_id|.
   virtual void OnPriority(SpdyStreamId stream_id,
                           SpdyStreamId parent_stream_id,
-                          uint8_t weight,
+                          int weight,
                           bool exclusive) {}
 
   // Called when a frame type we don't recognize is received.
@@ -325,6 +335,7 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // SPDY error codes.
   enum SpdyError {
     SPDY_NO_ERROR,
+    SPDY_INVALID_STREAM_ID,            // Stream ID is invalid
     SPDY_INVALID_CONTROL_FRAME,        // Control frame is mal-formatted.
     SPDY_CONTROL_PAYLOAD_TOO_LARGE,    // Control frame payload was too large.
     SPDY_ZLIB_INIT_FAILURE,            // The Zlib library could not initialize.
@@ -333,9 +344,13 @@ class NET_EXPORT_PRIVATE SpdyFramer {
     SPDY_COMPRESS_FAILURE,             // There was an error compressing.
     SPDY_GOAWAY_FRAME_CORRUPT,         // GOAWAY frame could not be parsed.
     SPDY_RST_STREAM_FRAME_CORRUPT,     // RST_STREAM frame could not be parsed.
+    SPDY_INVALID_PADDING,              // HEADERS or DATA frame padding invalid
     SPDY_INVALID_DATA_FRAME_FLAGS,     // Data frame has invalid flags.
     SPDY_INVALID_CONTROL_FRAME_FLAGS,  // Control frame has invalid flags.
     SPDY_UNEXPECTED_FRAME,             // Frame received out of order.
+    SPDY_INTERNAL_FRAMER_ERROR,        // SpdyFramer was used incorrectly.
+    SPDY_INVALID_CONTROL_FRAME_SIZE,   // Control frame not sized to spec
+    SPDY_OVERSIZED_PAYLOAD,            // Payload size was too large
 
     LAST_ERROR,  // Must be the last entry in the enum.
   };
@@ -348,10 +363,9 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // purposes.)
   static const size_t kHeaderDataChunkMaxSize;
 
-  // Serializes a SpdyHeaderBlock.
-  static void WriteHeaderBlock(SpdyFrameBuilder* frame,
-                               const SpdyMajorVersion spdy_version,
-                               const SpdyHeaderBlock* headers);
+  void SerializeHeaderBlockWithoutCompression(
+      SpdyFrameBuilder* builder,
+      const SpdyHeaderBlock& header_block) const;
 
   // Retrieve serialized length of SpdyHeaderBlock.
   // TODO(hkhalil): Remove, or move to quic code.
@@ -361,31 +375,30 @@ class NET_EXPORT_PRIVATE SpdyFramer {
 
   // Create a new Framer, provided a SPDY version.
   explicit SpdyFramer(SpdyMajorVersion version);
+
+  // Used recursively from the above constructor in order to support
+  // instantiating a SpdyFramerDecoderAdapter selected via flags.
+  SpdyFramer(SpdyMajorVersion version, bool choose_decoder);
+
   virtual ~SpdyFramer();
 
   // Set callbacks to be called from the framer.  A visitor must be set, or
   // else the framer will likely crash.  It is acceptable for the visitor
   // to do nothing.  If this is called multiple times, only the last visitor
   // will be used.
-  void set_visitor(SpdyFramerVisitorInterface* visitor) {
-    visitor_ = visitor;
-  }
+  void set_visitor(SpdyFramerVisitorInterface* visitor);
 
   // Set debug callbacks to be called from the framer. The debug visitor is
   // completely optional and need not be set in order for normal operation.
   // If this is called multiple times, only the last visitor will be used.
-  void set_debug_visitor(SpdyFramerDebugVisitorInterface* debug_visitor) {
-    debug_visitor_ = debug_visitor;
-  }
+  void set_debug_visitor(SpdyFramerDebugVisitorInterface* debug_visitor);
 
   // Sets whether or not ProcessInput returns after finishing a frame, or
   // continues processing additional frames. Normally ProcessInput processes
   // all input, but this method enables the caller (and visitor) to work with
   // a single frame at a time (or that portion of the frame which is provided
   // as input). Reset() does not change the value of this flag.
-  void set_process_single_input_frame(bool v) {
-    process_single_input_frame_ = v;
-  }
+  void set_process_single_input_frame(bool v);
 
   // Pass data into the framer for parsing.
   // Returns the number of bytes consumed. It is safe to pass more bytes in
@@ -397,9 +410,9 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   void Reset();
 
   // Check the state of the framer.
-  SpdyError error_code() const { return error_code_; }
-  SpdyState state() const { return state_; }
-  bool HasError() const { return state_ == SPDY_ERROR; }
+  SpdyError error_code() const;
+  SpdyState state() const;
+  bool HasError() const { return state() == SPDY_ERROR; }
 
   // Given a buffer containing a decompressed header block in SPDY
   // serialized format, parse out a SpdyHeaderBlock, putting the results
@@ -410,55 +423,55 @@ class NET_EXPORT_PRIVATE SpdyFramer {
                                 SpdyHeaderBlock* block) const;
 
   // Serialize a data frame.
-  SpdySerializedFrame* SerializeData(const SpdyDataIR& data) const;
+  SpdySerializedFrame SerializeData(const SpdyDataIR& data) const;
   // Serializes the data frame header and optionally padding length fields,
   // excluding actual data payload and padding.
-  SpdySerializedFrame* SerializeDataFrameHeaderWithPaddingLengthField(
+  SpdySerializedFrame SerializeDataFrameHeaderWithPaddingLengthField(
       const SpdyDataIR& data) const;
 
   // Serializes a SYN_STREAM frame.
-  SpdySerializedFrame* SerializeSynStream(const SpdySynStreamIR& syn_stream);
+  SpdySerializedFrame SerializeSynStream(const SpdySynStreamIR& syn_stream);
 
-  // Serialize a SYN_REPLY SpdyFrame.
-  SpdySerializedFrame* SerializeSynReply(const SpdySynReplyIR& syn_reply);
+  // Serialize a SYN_REPLY frame.
+  SpdySerializedFrame SerializeSynReply(const SpdySynReplyIR& syn_reply);
 
-  SpdySerializedFrame* SerializeRstStream(
+  SpdySerializedFrame SerializeRstStream(
       const SpdyRstStreamIR& rst_stream) const;
 
   // Serializes a SETTINGS frame. The SETTINGS frame is
   // used to communicate name/value pairs relevant to the communication channel.
-  SpdySerializedFrame* SerializeSettings(const SpdySettingsIR& settings) const;
+  SpdySerializedFrame SerializeSettings(const SpdySettingsIR& settings) const;
 
   // Serializes a PING frame. The unique_id is used to
   // identify the ping request/response.
-  SpdySerializedFrame* SerializePing(const SpdyPingIR& ping) const;
+  SpdySerializedFrame SerializePing(const SpdyPingIR& ping) const;
 
   // Serializes a GOAWAY frame. The GOAWAY frame is used
   // prior to the shutting down of the TCP connection, and includes the
   // stream_id of the last stream the sender of the frame is willing to process
   // to completion.
-  SpdySerializedFrame* SerializeGoAway(const SpdyGoAwayIR& goaway) const;
+  SpdySerializedFrame SerializeGoAway(const SpdyGoAwayIR& goaway) const;
 
   // Serializes a HEADERS frame. The HEADERS frame is used
   // for sending additional headers outside of a SYN_STREAM/SYN_REPLY.
-  SpdySerializedFrame* SerializeHeaders(const SpdyHeadersIR& headers);
+  SpdySerializedFrame SerializeHeaders(const SpdyHeadersIR& headers);
 
   // Serializes a WINDOW_UPDATE frame. The WINDOW_UPDATE
   // frame is used to implement per stream flow control in SPDY.
-  SpdySerializedFrame* SerializeWindowUpdate(
+  SpdySerializedFrame SerializeWindowUpdate(
       const SpdyWindowUpdateIR& window_update) const;
 
   // Serializes a BLOCKED frame. The BLOCKED frame is used to
   // indicate to the remote endpoint that this endpoint believes itself to be
   // flow-control blocked but otherwise ready to send data. The BLOCKED frame
   // is purely advisory and optional.
-  SpdySerializedFrame* SerializeBlocked(const SpdyBlockedIR& blocked) const;
+  SpdySerializedFrame SerializeBlocked(const SpdyBlockedIR& blocked) const;
 
   // Serializes a PUSH_PROMISE frame. The PUSH_PROMISE frame is used
   // to inform the client that it will be receiving an additional stream
   // in response to the original request. The frame includes synthesized
   // headers to explain the upcoming data.
-  SpdySerializedFrame* SerializePushPromise(
+  SpdySerializedFrame SerializePushPromise(
       const SpdyPushPromiseIR& push_promise);
 
   // Serializes a CONTINUATION frame. The CONTINUATION frame is used
@@ -466,19 +479,19 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // TODO(jgraettinger): This implementation is incorrect. The continuation
   // frame continues a previously-begun HPACK encoding; it doesn't begin a
   // new one. Figure out whether it makes sense to keep SerializeContinuation().
-  SpdySerializedFrame* SerializeContinuation(
+  SpdySerializedFrame SerializeContinuation(
       const SpdyContinuationIR& continuation);
 
   // Serializes an ALTSVC frame. The ALTSVC frame advertises the
   // availability of an alternative service to the client.
-  SpdySerializedFrame* SerializeAltSvc(const SpdyAltSvcIR& altsvc);
+  SpdySerializedFrame SerializeAltSvc(const SpdyAltSvcIR& altsvc);
 
   // Serializes a PRIORITY frame. The PRIORITY frame advises a change in
   // the relative priority of the given stream.
-  SpdySerializedFrame* SerializePriority(const SpdyPriorityIR& priority) const;
+  SpdySerializedFrame SerializePriority(const SpdyPriorityIR& priority) const;
 
   // Serialize a frame of unknown type.
-  SpdySerializedFrame* SerializeFrame(const SpdyFrameIR& frame);
+  SpdySerializedFrame SerializeFrame(const SpdyFrameIR& frame);
 
   // NOTES about frame compression.
   // We want spdy to compress headers across the entire session.  As long as
@@ -491,13 +504,6 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // not build its state in a serial (stream based) manner....  For now, we're
   // using zlib anyway.
 
-  // Compresses a SpdyFrame.
-  // On success, returns a new SpdyFrame with the payload compressed.
-  // Compression state is maintained as part of the SpdyFramer.
-  // Returned frame must be freed with "delete".
-  // On failure, returns NULL.
-  SpdyFrame* CompressFrame(const SpdyFrame& frame);
-
   // For ease of testing and experimentation we can tweak compression on/off.
   void set_enable_compression(bool value) {
     enable_compression_ = value;
@@ -507,6 +513,21 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   void set_display_protocol(const std::string& protocol) {
     display_protocol_ = protocol;
   }
+
+  void set_max_decode_buffer_size_bytes(size_t max_decode_buffer_size_bytes) {
+    GetHpackDecoder()->set_max_decode_buffer_size_bytes(
+        max_decode_buffer_size_bytes);
+  }
+
+  void set_recv_frame_size_limit(size_t recv_frame_size_limit) {
+    recv_frame_size_limit_ = recv_frame_size_limit;
+  }
+
+  void SetDecoderHeaderTableDebugVisitor(
+      std::unique_ptr<HpackHeaderTable::DebugVisitorInterface> visitor);
+
+  void SetEncoderHeaderTableDebugVisitor(
+      std::unique_ptr<HpackHeaderTable::DebugVisitorInterface> visitor);
 
   // Returns the (minimum) size of frames (sans variable-length portions).
   size_t GetDataFrameMinimumSize() const;
@@ -545,16 +566,13 @@ class NET_EXPORT_PRIVATE SpdyFramer {
 
   SpdyMajorVersion protocol_version() const { return protocol_version_; }
 
-  bool probable_http_response() const { return probable_http_response_; }
+  // Did the most recent frame header appear to be an HTTP/1.x (or earlier)
+  // response (i.e. start with "HTTP/")?
+  bool probable_http_response() const;
 
-  SpdyPriority GetLowestPriority() const { return 7; }
+  SpdyPriority GetLowestPriority() const { return kV3LowestPriority; }
 
-  SpdyPriority GetHighestPriority() const { return 0; }
-
-  // Interpolates SpdyPriority values into SPDY4/HTTP2 priority weights,
-  // and vice versa.
-  static uint8_t MapPriorityToWeight(SpdyPriority priority);
-  static SpdyPriority MapWeightToPriority(uint8_t weight);
+  SpdyPriority GetHighestPriority() const { return kV3HighestPriority; }
 
   // Deliver the given control frame's compressed headers block to the visitor
   // in decompressed form, in chunks. Returns true if the visitor has
@@ -571,6 +589,7 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   size_t header_encoder_table_size() const;
 
  protected:
+  friend class BufferedSpdyFramer;
   friend class HttpNetworkLayer;  // This is temporary for the server.
   friend class HttpNetworkTransactionTest;
   friend class HttpProxyClientSocketPoolTest;
@@ -595,7 +614,7 @@ class NET_EXPORT_PRIVATE SpdyFramer {
     size_t len() const { return len_; }
 
    private:
-    scoped_ptr<char[]> buffer_;
+    std::unique_ptr<char[]> buffer_;
     size_t capacity_;
     size_t len_;
   };
@@ -635,6 +654,20 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   size_t ProcessAltSvcFramePayload(const char* data, size_t len);
   size_t ProcessIgnoredControlFramePayload(/*const char* data,*/ size_t len);
 
+  // Validates the frame header against the current protocol, e.g.
+  // Frame type must be known, must specify a non-zero stream id.
+  //
+  // is_control_frame    : the control bit for SPDY3
+  // frame_type_field    : the unparsed frame type octet(s)
+  // payload_length_field: the stated length in octets of the frame payload
+  //
+  // For valid frames, returns the correct SpdyFrameType.
+  // Otherwise returns a best guess at invalid frame type,
+  // after setting the appropriate SpdyError.
+  SpdyFrameType ValidateFrameHeader(bool is_control_frame,
+                                    int frame_type_field,
+                                    size_t payload_length_field);
+
   // TODO(jgraettinger): To be removed with migration to
   // SpdyHeadersHandlerInterface.  Serializes the last-processed
   // header block of |hpack_decoder_| as a SPDY3 format block, and
@@ -658,7 +691,7 @@ class NET_EXPORT_PRIVATE SpdyFramer {
 
   // Get (and lazily initialize) the HPACK state.
   HpackEncoder* GetHpackEncoder();
-  HpackDecoder* GetHpackDecoder();
+  HpackDecoderInterface* GetHpackDecoder();
 
   size_t GetNumberRequiredContinuationFrames(size_t size);
 
@@ -687,10 +720,6 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   void WriteHeaderBlockToZ(const SpdyHeaderBlock* headers,
                            z_stream* out) const;
 
-  void SerializeHeaderBlockWithoutCompression(
-      SpdyFrameBuilder* builder,
-      const SpdyHeaderBlock& header_block) const;
-
   // Compresses automatically according to enable_compression_.
   void SerializeHeaderBlock(SpdyFrameBuilder* builder,
                             const SpdyFrameWithHeaderBlockIR& frame);
@@ -704,10 +733,11 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // frame data is streamed to the visitor.
   static const size_t kControlFrameBufferSize;
 
-  // The maximum size of the control frames that we support.
-  // This limit is arbitrary. We can enforce it here or at the application
-  // layer. We chose the framing layer, but this can be changed (or removed)
-  // if necessary later down the line.
+  // The maximum size of the control frames that we send, including the size of
+  // the header. This limit is arbitrary. We can enforce it here or at the
+  // application layer. We chose the framing layer, but this can be changed (or
+  // removed) if necessary later down the line.
+  // TODO(diannahu): Rename to make it clear that this limit is for sending.
   static const size_t kMaxControlFrameSize;
 
   SpdyState state_;
@@ -726,6 +756,10 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // headers. Note that header data blocks (for control types that have them)
   // are part of the frame's payload, and not the frame's headers.
   size_t remaining_control_header_;
+
+  // The limit on HTTP/2 payload size as specified in the
+  // SETTINGS_MAX_FRAME_SIZE advertised to peer
+  size_t recv_frame_size_limit_ = kSpdyInitialFrameSizeLimit;
 
   CharBuffer current_frame_buffer_;
 
@@ -749,19 +783,25 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // current_frame_buffer_.
   SpdySettingsScratch settings_scratch_;
 
-  scoped_ptr<CharBuffer> altsvc_scratch_;
+  std::unique_ptr<CharBuffer> altsvc_scratch_;
 
   // SPDY header compressors.
-  scoped_ptr<z_stream> header_compressor_;
-  scoped_ptr<z_stream> header_decompressor_;
+  std::unique_ptr<z_stream> header_compressor_;
+  std::unique_ptr<z_stream> header_decompressor_;
 
-  scoped_ptr<HpackEncoder> hpack_encoder_;
-  scoped_ptr<HpackDecoder> hpack_decoder_;
+  std::unique_ptr<HpackEncoder> hpack_encoder_;
+  std::unique_ptr<HpackDecoderInterface> hpack_decoder_;
 
   SpdyFramerVisitorInterface* visitor_;
   SpdyFramerDebugVisitorInterface* debug_visitor_;
 
+  std::unique_ptr<SpdyHeadersBlockParser> header_parser_;
+  SpdyHeadersHandlerInterface* header_handler_;
+
   std::string display_protocol_;
+
+  // Optional decoder to use instead of this instance.
+  std::unique_ptr<SpdyFramerDecoderAdapter> decoder_adapter_;
 
   // The protocol version to be spoken/understood by this framer.
   const SpdyMajorVersion protocol_version_;
@@ -796,6 +836,9 @@ class NET_EXPORT_PRIVATE SpdyFramer {
   // If true, then ProcessInput returns after processing a full frame,
   // rather than reading all available input.
   bool process_single_input_frame_ = false;
+
+  bool enforce_max_frame_size_ =
+      FLAGS_chromium_http2_flag_enforce_max_frame_size;
 };
 
 }  // namespace net

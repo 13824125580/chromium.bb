@@ -63,6 +63,7 @@ component("shared_impl") {
     "ppb_crypto_shared.cc",
     "ppb_device_ref_shared.cc",
     "ppb_device_ref_shared.h",
+    "ppb_flash_font_file_shared.h",
     "ppb_gamepad_shared.cc",
     "ppb_gamepad_shared.h",
     "ppb_graphics_3d_shared.cc",
@@ -117,6 +118,8 @@ component("shared_impl") {
     "var.h",
     "var_tracker.cc",
     "var_tracker.h",
+    "vpn_provider_util.cc",
+    "vpn_provider_util.h",
 
     # TODO(viettrungluu): Split these out; it won"t be used in NaCl.
     "private/net_address_private_impl.cc",
@@ -196,6 +199,7 @@ component("shared_impl") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
 
@@ -206,13 +210,17 @@ source_set("test_support") {
     "test_utils.h",
   ]
 
+  public_deps = [
+    "//ppapi/shared_impl",
+  ]
   deps = [
     "//base/test:test_support",
     "//ipc",
     "//ipc:test_support",
     "//ppapi/proxy",
-    "//ppapi/shared_impl",
     "//testing/gmock",
     "//testing/gtest",
   ]
 }
+}
+

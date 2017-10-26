@@ -45,27 +45,27 @@ public:
         DOM_DELTA_PAGE
     };
 
-    static PassRefPtrWillBeRawPtr<WheelEvent> create()
+    static WheelEvent* create()
     {
-        return adoptRefWillBeNoop(new WheelEvent);
+        return new WheelEvent;
     }
 
-    static PassRefPtrWillBeRawPtr<WheelEvent> create(const PlatformWheelEvent& platformEvent, PassRefPtrWillBeRawPtr<AbstractView>);
+    static WheelEvent* create(const PlatformWheelEvent& platformEvent, AbstractView*);
 
-    static PassRefPtrWillBeRawPtr<WheelEvent> create(const AtomicString& type, const WheelEventInit& initializer)
+    static WheelEvent* create(const AtomicString& type, const WheelEventInit& initializer)
     {
-        return adoptRefWillBeNoop(new WheelEvent(type, initializer));
+        return new WheelEvent(type, initializer);
     }
 
-    static PassRefPtrWillBeRawPtr<WheelEvent> create(const FloatPoint& wheelTicks,
-        const FloatPoint& rawDelta, unsigned deltaMode, PassRefPtrWillBeRawPtr<AbstractView> view,
+    static WheelEvent* create(const FloatPoint& wheelTicks,
+        const FloatPoint& rawDelta, unsigned deltaMode, AbstractView* view,
         const IntPoint& screenLocation, const IntPoint& windowLocation,
         PlatformEvent::Modifiers modifiers, unsigned short buttons, double platformTimeStamp,
-        bool canScroll, int resendingPluginId, bool hasPreciseScrollingDeltas, RailsMode railsMode)
+        int resendingPluginId, bool hasPreciseScrollingDeltas, RailsMode railsMode, bool cancelable)
     {
-        return adoptRefWillBeNoop(new WheelEvent(wheelTicks, rawDelta, deltaMode, view,
+        return new WheelEvent(wheelTicks, rawDelta, deltaMode, view,
             screenLocation, windowLocation, modifiers, buttons, platformTimeStamp,
-            canScroll, resendingPluginId,  hasPreciseScrollingDeltas, railsMode));
+            resendingPluginId, hasPreciseScrollingDeltas, railsMode, cancelable);
     }
 
     double deltaX() const { return m_deltaX; } // Positive when scrolling right.
@@ -77,7 +77,6 @@ public:
     unsigned deltaMode() const { return m_deltaMode; }
     float ticksX() const { return static_cast<float>(m_wheelDelta.x()) / TickMultiplier; }
     float ticksY() const { return static_cast<float>(m_wheelDelta.y()) / TickMultiplier; }
-    bool canScroll() const { return m_canScroll; }
     int resendingPluginId() const { return m_resendingPluginId; }
     bool hasPreciseScrollingDeltas() const { return m_hasPreciseScrollingDeltas; }
     RailsMode getRailsMode() const { return m_railsMode; }
@@ -86,7 +85,7 @@ public:
     bool isMouseEvent() const override;
     bool isWheelEvent() const override;
 
-    PassRefPtrWillBeRawPtr<EventDispatchMediator> createMediator() override;
+    EventDispatchMediator* createMediator() override;
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -94,16 +93,15 @@ private:
     WheelEvent();
     WheelEvent(const AtomicString&, const WheelEventInit&);
     WheelEvent(const FloatPoint& wheelTicks, const FloatPoint& rawDelta,
-        unsigned, PassRefPtrWillBeRawPtr<AbstractView>, const IntPoint& screenLocation, const IntPoint& windowLocation,
+        unsigned, AbstractView*, const IntPoint& screenLocation, const IntPoint& windowLocation,
         PlatformEvent::Modifiers, unsigned short buttons, double platformTimeStamp,
-        bool canScroll, int resendingPluginId, bool hasPreciseScrollingDeltas, RailsMode);
+        int resendingPluginId, bool hasPreciseScrollingDeltas, RailsMode, bool cancelable);
 
     IntPoint m_wheelDelta;
     double m_deltaX;
     double m_deltaY;
     double m_deltaZ;
     unsigned m_deltaMode;
-    bool m_canScroll;
     int m_resendingPluginId;
     bool m_hasPreciseScrollingDeltas;
     RailsMode m_railsMode;

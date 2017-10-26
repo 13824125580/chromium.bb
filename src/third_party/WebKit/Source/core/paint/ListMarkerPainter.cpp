@@ -7,15 +7,13 @@
 #include "core/layout/LayoutListItem.h"
 #include "core/layout/LayoutListMarker.h"
 #include "core/layout/ListMarkerText.h"
-#include "core/layout/TextRunConstructor.h"
 #include "core/layout/api/SelectionState.h"
-#include "core/paint/BlockPainter.h"
+#include "core/paint/BoxPainter.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
 #include "core/paint/PaintInfo.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "core/paint/TextPainter.h"
 #include "platform/geometry/LayoutPoint.h"
 #include "platform/graphics/GraphicsContextStateSaver.h"
-#include "wtf/text/CharacterNames.h"
 
 namespace blink {
 
@@ -49,7 +47,7 @@ void ListMarkerPainter::paint(const PaintInfo& paintInfo, const LayoutPoint& pai
     if (m_layoutListMarker.style()->visibility() != VISIBLE)
         return;
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutListMarker, paintInfo.phase, paintOffset))
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutListMarker, paintInfo.phase))
         return;
 
     LayoutPoint boxOrigin(paintOffset + m_layoutListMarker.location());
@@ -60,7 +58,7 @@ void ListMarkerPainter::paint(const PaintInfo& paintInfo, const LayoutPoint& pai
     if (!paintInfo.cullRect().intersectsCullRect(overflowRect))
         return;
 
-    LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutListMarker, paintInfo.phase, pixelSnappedOverflowRect, paintOffset);
+    LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutListMarker, paintInfo.phase, pixelSnappedOverflowRect);
 
     LayoutRect box(boxOrigin, m_layoutListMarker.size());
 
@@ -71,15 +69,19 @@ void ListMarkerPainter::paint(const PaintInfo& paintInfo, const LayoutPoint& pai
 
     if (m_layoutListMarker.isImage()) {
         context.drawImage(m_layoutListMarker.image()->image(
-            &m_layoutListMarker, marker.size(), m_layoutListMarker.styleRef().effectiveZoom()).get(), marker);
+            m_layoutListMarker, marker.size(), m_layoutListMarker.styleRef().effectiveZoom()).get(), marker);
         return;
     }
 
-    LayoutListMarker::ListStyleCategory styleCategory = m_layoutListMarker.listStyleCategory();
+    LayoutListMarker::ListStyleCategory styleCategory = m_layoutListMarker.getListStyleCategory();
     if (styleCategory == LayoutListMarker::ListStyleCategory::None)
         return;
 
-    const Color color(m_layoutListMarker.resolveColor(CSSPropertyColor));
+    Color color(m_layoutListMarker.resolveColor(CSSPropertyColor));
+
+    if (BoxPainter::shouldForceWhiteBackgroundForPrintEconomy(m_layoutListMarker.styleRef(), m_layoutListMarker.listItem()->document()))
+        color = TextPainter::textColorForWhiteBackground(color);
+
     // Apply the color to the list marker text.
     context.setFillColor(color);
 
@@ -108,7 +110,7 @@ void ListMarkerPainter::paint(const PaintInfo& paintInfo, const LayoutPoint& pai
 
     TextRunPaintInfo textRunPaintInfo(textRun);
     textRunPaintInfo.bounds = marker;
-    IntPoint textOrigin = IntPoint(marker.x(), marker.y() + m_layoutListMarker.style()->fontMetrics().ascent());
+    IntPoint textOrigin = IntPoint(marker.x(), marker.y() + m_layoutListMarker.style()->getFontMetrics().ascent());
 
     // Text is not arbitrary. We can judge whether it's RTL from the first character,
     // and we only need to handle the direction RightToLeft for now.

@@ -20,7 +20,6 @@
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/prefs/pref_service.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/user_prefs/user_prefs.h"
 #include "grit/components_strings.h"
@@ -28,7 +27,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/event.h"
 #include "ui/views/background.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -332,9 +331,9 @@ void BookmarkEditorView::Init() {
     tree_view_->SetRootShown(false);
     tree_view_->set_context_menu_controller(this);
 
-    new_folder_button_.reset(new views::LabelButton(this,
+    new_folder_button_.reset(views::MdTextButton::CreateSecondaryUiButton(
+        this,
         l10n_util::GetStringUTF16(IDS_BOOKMARK_EDITOR_NEW_FOLDER_BUTTON)));
-    new_folder_button_->SetStyle(views::Button::STYLE_BUTTON);
     new_folder_button_->set_owned_by_client();
     new_folder_button_->SetEnabled(false);
   }
@@ -377,9 +376,7 @@ void BookmarkEditorView::Init() {
         l10n_util::GetStringUTF16(IDS_BOOKMARK_EDITOR_URL_LABEL));
 
     url_tf_ = new views::Textfield;
-    PrefService* prefs =
-        profile_ ? user_prefs::UserPrefs::Get(profile_) : NULL;
-    url_tf_->SetText(chrome::FormatBookmarkURLForDisplay(url, prefs));
+    url_tf_->SetText(chrome::FormatBookmarkURLForDisplay(url));
     url_tf_->set_controller(this);
     url_tf_->SetAccessibleName(
         l10n_util::GetStringUTF16(IDS_BOOKMARK_AX_EDITOR_URL_LABEL));

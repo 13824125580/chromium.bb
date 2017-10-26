@@ -31,9 +31,33 @@ final class ChromeUsbDevice {
         Log.v(TAG, "ChromeUsbDevice created.");
     }
 
+    public UsbDevice getDevice() {
+        return mDevice;
+    }
+
     @CalledByNative
     private static ChromeUsbDevice create(UsbDevice device) {
         return new ChromeUsbDevice(device);
+    }
+
+    @CalledByNative
+    private int getDeviceId() {
+        return mDevice.getDeviceId();
+    }
+
+    @CalledByNative
+    private int getDeviceClass() {
+        return mDevice.getDeviceClass();
+    }
+
+    @CalledByNative
+    private int getDeviceSubclass() {
+        return mDevice.getDeviceSubclass();
+    }
+
+    @CalledByNative
+    private int getDeviceProtocol() {
+        return mDevice.getDeviceProtocol();
     }
 
     @CalledByNative
@@ -46,16 +70,32 @@ final class ChromeUsbDevice {
         return mDevice.getProductId();
     }
 
+    @TargetApi(Build.VERSION_CODES.M)
+    @CalledByNative
+    private int getDeviceVersion() {
+        // The Android framework generates this string with:
+        // Integer.toString(version >> 8) + "." + (version & 0xFF)
+        //
+        // This is not technically correct because the low nibble is actually
+        // two separate version components (per spec). This undoes it at least.
+        String[] parts = mDevice.getVersion().split("\\.");
+        assert parts.length == 2;
+        return Integer.parseInt(parts[0]) << 8 | Integer.parseInt(parts[1]);
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     @CalledByNative
     private String getManufacturerName() {
         return mDevice.getManufacturerName();
     }
 
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     @CalledByNative
     private String getProductName() {
         return mDevice.getProductName();
     }
 
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     @CalledByNative
     private String getSerialNumber() {
         return mDevice.getSerialNumber();

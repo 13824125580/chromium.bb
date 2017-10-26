@@ -46,11 +46,11 @@ class SVGLengthContext;
 class StrokeData;
 class TransformState;
 
-class SVGLayoutSupport {
+class CORE_EXPORT SVGLayoutSupport {
     STATIC_ONLY(SVGLayoutSupport);
 public:
     // Shares child layouting code between LayoutSVGRoot/LayoutSVG(Hidden)Container
-    static void layoutChildren(LayoutObject*, bool selfNeedsLayout);
+    static void layoutChildren(LayoutObject*, bool forceLayout, bool screenScalingFactorChanged, bool layoutSizeChanged);
 
     // Layout resources used by this node.
     static void layoutResourcesIfNeeded(const LayoutObject*);
@@ -61,8 +61,8 @@ public:
     // Calculates the paintInvalidationRect in combination with filter, clipper and masker in local coordinates.
     static void intersectPaintInvalidationRectWithResources(const LayoutObject*, FloatRect&);
 
-    // Determines whether a container needs to be laid out because it's filtered and a child is being laid out.
-    static bool filtersForceContainerLayout(LayoutObject*);
+    // Determine if the LayoutObject references a filter resource object.
+    static bool hasFilterResource(const LayoutObject&);
 
     // Determines whether the passed point lies in a clipping area
     static bool pointInClippingArea(const LayoutObject*, const FloatPoint&);
@@ -75,12 +75,12 @@ public:
     static void computeContainerBoundingBoxes(const LayoutObject* container, FloatRect& objectBoundingBox, bool& objectBoundingBoxValid, FloatRect& strokeBoundingBox, FloatRect& paintInvalidationBoundingBox);
 
     // Important functions used by nearly all SVG layoutObjects centralizing coordinate transformations / paint invalidation rect calculations
-    static LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutObject&,
-        const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState*,
-        float strokeWidthForHairlinePadding = 0);
-    static const LayoutSVGRoot& mapRectToSVGRootForPaintInvalidation(const LayoutObject&,
-        const FloatRect& localPaintInvalidationRect, LayoutRect&, float strokeWidthForHairlinePadding = 0);
-    static void mapLocalToAncestor(const LayoutObject*, const LayoutBoxModelObject* ancestor, TransformState&, bool* wasFixed = nullptr, const PaintInvalidationState* = nullptr);
+    static FloatRect localOverflowRectForPaintInvalidation(const LayoutObject&);
+    static LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutObject&, const LayoutBoxModelObject& paintInvalidationContainer);
+    static LayoutRect transformPaintInvalidationRect(const LayoutObject&, const AffineTransform&, const FloatRect&);
+    static bool mapToVisualRectInAncestorSpace(const LayoutObject&, const LayoutBoxModelObject* ancestor, const FloatRect& localPaintInvalidationRect, LayoutRect& resultRect, VisualRectFlags = DefaultVisualRectFlags);
+    static void mapLocalToAncestor(const LayoutObject*, const LayoutBoxModelObject* ancestor, TransformState&);
+    static void mapAncestorToLocal(const LayoutObject&, const LayoutBoxModelObject* ancestor, TransformState&);
     static const LayoutObject* pushMappingToContainer(const LayoutObject*, const LayoutBoxModelObject* ancestorToStopAt, LayoutGeometryMap&);
 
     // Shared between SVG layoutObjects and resources.
@@ -88,8 +88,11 @@ public:
 
     static DashArray resolveSVGDashArray(const SVGDashArray&, const ComputedStyle&, const SVGLengthContext&);
 
-    // Determines if any ancestor's transform has changed.
-    static bool transformToRootChanged(LayoutObject*);
+    // Determines if any ancestor has adjusted the scale factor.
+    static bool screenScaleFactorChanged(const LayoutObject*);
+
+    // Determines if any ancestor's layout size has changed.
+    static bool layoutSizeOfNearestViewportChanged(const LayoutObject*);
 
     // FIXME: These methods do not belong here.
     static const LayoutSVGRoot* findTreeRootObject(const LayoutObject*);
@@ -112,7 +115,6 @@ public:
 
 private:
     static void updateObjectBoundingBox(FloatRect& objectBoundingBox, bool& objectBoundingBoxValid, LayoutObject* other, FloatRect otherBoundingBox);
-    static bool layoutSizeOfNearestViewportChanged(const LayoutObject* start);
 };
 
 class SubtreeContentTransformScope {
@@ -126,6 +128,43 @@ public:
 private:
     static AffineTransform::Transform s_currentContentTransformation;
     AffineTransform m_savedContentTransformation;
+};
+
+// The following enumeration is used to optimize cases where the scale is known
+// to be invariant (see: LayoutSVGContainer::layout and LayoutSVGroot). The
+// value 'Full' can be used in the general case when the scale change is
+// unknown, or known to change.
+enum class SVGTransformChange {
+    None,
+    ScaleInvariant,
+    Full,
+};
+
+// Helper for computing ("classifying") a change to a transform using the
+// categoies defined above.
+class SVGTransformChangeDetector {
+    STACK_ALLOCATED();
+public:
+    explicit SVGTransformChangeDetector(const AffineTransform& previous)
+        : m_previousTransform(previous)
+    {
+    }
+
+    SVGTransformChange computeChange(const AffineTransform& current)
+    {
+        if (m_previousTransform == current)
+            return SVGTransformChange::None;
+        if (scaleReference(m_previousTransform) == scaleReference(current))
+            return SVGTransformChange::ScaleInvariant;
+        return SVGTransformChange::Full;
+    }
+
+private:
+    static std::pair<double, double> scaleReference(const AffineTransform& transform)
+    {
+        return std::make_pair(transform.xScaleSquared(), transform.yScaleSquared());
+    }
+    AffineTransform m_previousTransform;
 };
 
 template <typename LayoutObjectType>

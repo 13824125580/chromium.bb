@@ -111,13 +111,11 @@ class LCodeGen: public LCodeGenBase {
 #undef DECLARE_DO
 
  private:
-  LanguageMode language_mode() const { return info()->language_mode(); }
-
   LPlatformChunk* chunk() const { return chunk_; }
   Scope* scope() const { return scope_; }
   HGraph* graph() const { return chunk()->graph(); }
 
-  XMMRegister double_scratch0() const { return xmm0; }
+  XMMRegister double_scratch0() const { return kScratchDoubleReg; }
 
   void EmitClassOfTest(Label* if_true,
                        Label* if_false,
@@ -192,11 +190,14 @@ class LCodeGen: public LCodeGenBase {
 
   void LoadContextFromDeferred(LOperand* context);
 
+  void PrepareForTailCall(const ParameterCount& actual, Register scratch1,
+                          Register scratch2, Register scratch3);
+
   // Generate a direct call to a known function.  Expects the function
   // to be in rdi.
   void CallKnownFunction(Handle<JSFunction> function,
                          int formal_parameter_count, int arity,
-                         LInstruction* instr);
+                         bool is_tail_call, LInstruction* instr);
 
   void RecordSafepointWithLazyDeopt(LInstruction* instr,
                                     SafepointMode safepoint_mode,

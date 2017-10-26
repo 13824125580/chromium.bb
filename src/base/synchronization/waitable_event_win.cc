@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -14,20 +16,23 @@
 
 namespace base {
 
-WaitableEvent::WaitableEvent(bool manual_reset, bool signaled)
-    : handle_(CreateEvent(NULL, manual_reset, signaled, NULL)) {
+WaitableEvent::WaitableEvent(ResetPolicy reset_policy,
+                             InitialState initial_state)
+    : handle_(CreateEvent(nullptr,
+                          reset_policy == ResetPolicy::MANUAL,
+                          initial_state == InitialState::SIGNALED,
+                          nullptr)) {
   // We're probably going to crash anyways if this is ever NULL, so we might as
   // well make our stack reports more informative by crashing here.
   CHECK(handle_.IsValid());
 }
 
 WaitableEvent::WaitableEvent(win::ScopedHandle handle)
-    : handle_(handle.Pass()) {
+    : handle_(std::move(handle)) {
   CHECK(handle_.IsValid()) << "Tried to create WaitableEvent from NULL handle";
 }
 
-WaitableEvent::~WaitableEvent() {
-}
+WaitableEvent::~WaitableEvent() = default;
 
 void WaitableEvent::Reset() {
   ResetEvent(handle_.Get());

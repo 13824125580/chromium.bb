@@ -41,12 +41,10 @@ Value::Value(const ParseNode* origin, int64_t int_val)
 
 Value::Value(const ParseNode* origin, std::string str_val)
     : type_(STRING),
-      string_value_(),
+      string_value_(std::move(str_val)),
       boolean_value_(false),
       int_value_(0),
-      origin_(origin) {
-  string_value_.swap(str_val);
-}
+      origin_(origin) {}
 
 Value::Value(const ParseNode* origin, const char* str_val)
     : type_(STRING),
@@ -56,7 +54,7 @@ Value::Value(const ParseNode* origin, const char* str_val)
       origin_(origin) {
 }
 
-Value::Value(const ParseNode* origin, scoped_ptr<Scope> scope)
+Value::Value(const ParseNode* origin, std::unique_ptr<Scope> scope)
     : type_(SCOPE),
       string_value_(),
       boolean_value_(false),
@@ -111,7 +109,7 @@ const char* Value::DescribeType(Type t) {
   }
 }
 
-void Value::SetScopeValue(scoped_ptr<Scope> scope) {
+void Value::SetScopeValue(std::unique_ptr<Scope> scope) {
   DCHECK(type_ == SCOPE);
   scope_value_ = std::move(scope);
 }

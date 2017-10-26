@@ -4,6 +4,7 @@
 
 #include "content/browser/service_worker/service_worker_info.h"
 
+#include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/child_process_host.h"
 #include "ipc/ipc_message.h"
@@ -25,7 +26,7 @@ ServiceWorkerVersionInfo::ClientInfo::~ClientInfo() {
 }
 
 ServiceWorkerVersionInfo::ServiceWorkerVersionInfo()
-    : running_status(ServiceWorkerVersion::STOPPED),
+    : running_status(EmbeddedWorkerStatus::STOPPED),
       status(ServiceWorkerVersion::NEW),
       registration_id(kInvalidServiceWorkerRegistrationId),
       version_id(kInvalidServiceWorkerVersionId),
@@ -34,7 +35,7 @@ ServiceWorkerVersionInfo::ServiceWorkerVersionInfo()
       devtools_agent_route_id(MSG_ROUTING_NONE) {}
 
 ServiceWorkerVersionInfo::ServiceWorkerVersionInfo(
-    ServiceWorkerVersion::RunningStatus running_status,
+    EmbeddedWorkerStatus running_status,
     ServiceWorkerVersion::Status status,
     const GURL& script_url,
     int64_t registration_id,
@@ -59,7 +60,6 @@ ServiceWorkerVersionInfo::~ServiceWorkerVersionInfo() {}
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo()
     : registration_id(kInvalidServiceWorkerRegistrationId),
       delete_flag(IS_NOT_DELETED),
-      force_update_on_page_load(IS_NOT_FORCED),
       stored_version_size_bytes(0) {}
 
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
@@ -69,14 +69,12 @@ ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
     : pattern(pattern),
       registration_id(registration_id),
       delete_flag(delete_flag),
-      force_update_on_page_load(IS_NOT_FORCED),
       stored_version_size_bytes(0) {}
 
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
     const GURL& pattern,
     int64_t registration_id,
     DeleteFlag delete_flag,
-    ForceUpdateOnPageLoad force_update_on_page_load,
     const ServiceWorkerVersionInfo& active_version,
     const ServiceWorkerVersionInfo& waiting_version,
     const ServiceWorkerVersionInfo& installing_version,
@@ -84,7 +82,6 @@ ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
     : pattern(pattern),
       registration_id(registration_id),
       delete_flag(delete_flag),
-      force_update_on_page_load(force_update_on_page_load),
       active_version(active_version),
       waiting_version(waiting_version),
       installing_version(installing_version),

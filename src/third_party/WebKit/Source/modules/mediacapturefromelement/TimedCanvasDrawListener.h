@@ -6,8 +6,10 @@
 #define TimedCanvasDrawListener_h
 
 #include "core/html/canvas/CanvasDrawListener.h"
+#include "platform/Timer.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/WebCanvasCaptureHandler.h"
+#include <memory>
 
 namespace blink {
 
@@ -15,15 +17,17 @@ class TimedCanvasDrawListener final : public GarbageCollectedFinalized<TimedCanv
     USING_GARBAGE_COLLECTED_MIXIN(TimedCanvasDrawListener);
 public:
     ~TimedCanvasDrawListener();
-    static TimedCanvasDrawListener* create(const PassOwnPtr<WebCanvasCaptureHandler>&, double frameRate);
+    static TimedCanvasDrawListener* create(std::unique_ptr<WebCanvasCaptureHandler>, double frameRate);
     void sendNewFrame(const WTF::PassRefPtr<SkImage>&) override;
 
     DEFINE_INLINE_TRACE() {}
 private:
-    TimedCanvasDrawListener(const PassOwnPtr<WebCanvasCaptureHandler>&, double frameRate);
-    void postRequestFrameCaptureTask();
+    TimedCanvasDrawListener(std::unique_ptr<WebCanvasCaptureHandler>, double frameRate);
+    // Implementation of TimerFiredFunction.
+    void requestFrameTimerFired(Timer<TimedCanvasDrawListener>*);
 
     double m_frameInterval;
+    UnthrottledTimer<TimedCanvasDrawListener> m_requestFrameTimer;
 };
 
 } // namespace blink

@@ -10,7 +10,7 @@
 #include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/mediasession/WebMediaSession.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -24,7 +24,7 @@ class MODULES_EXPORT MediaSession final
 public:
     static MediaSession* create(ExecutionContext*, ExceptionState&);
 
-    WebMediaSession* webMediaSession() { return m_webMediaSession.get(); }
+    WebMediaSession* getWebMediaSession() { return m_webMediaSession.get(); }
 
     ScriptPromise activate(ScriptState*);
     ScriptPromise deactivate(ScriptState*);
@@ -37,9 +37,9 @@ public:
 private:
     friend class MediaSessionTest;
 
-    explicit MediaSession(PassOwnPtr<WebMediaSession>);
+    explicit MediaSession(std::unique_ptr<WebMediaSession>);
 
-    OwnPtr<WebMediaSession> m_webMediaSession;
+    std::unique_ptr<WebMediaSession> m_webMediaSession;
     Member<MediaMetadata> m_metadata;
 };
 

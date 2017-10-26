@@ -33,9 +33,9 @@ class HTMLFormElement;
 
 class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement, public FormAssociatedElement {
     DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(HTMLObjectElement);
+    USING_GARBAGE_COLLECTED_MIXIN(HTMLObjectElement);
 public:
-    static PassRefPtrWillBeRawPtr<HTMLObjectElement> create(Document&, HTMLFormElement*, bool createdByParser);
+    static HTMLObjectElement* create(Document&, HTMLFormElement*, bool createdByParser);
     ~HTMLObjectElement() override;
     DECLARE_VIRTUAL_TRACE();
 
@@ -53,7 +53,6 @@ public:
 
     bool isEnumeratable() const override { return true; }
     bool isInteractiveContent() const override;
-    void appendToFormData(FormData&) override;
 
     // Implementations of constraint validation API.
     // Note that the object elements are always barred from constraint validation.
@@ -61,11 +60,6 @@ public:
     bool checkValidity() { return true; }
     bool reportValidity() { return true; }
     void setCustomValidity(const String&) override { }
-
-#if !ENABLE(OILPAN)
-    using Node::ref;
-    using Node::deref;
-#endif
 
     bool canContainRangeEndPoint() const override { return useFallbackContent(); }
 
@@ -105,11 +99,6 @@ private:
 
     void reloadPluginOnAttributeChange(const QualifiedName&);
 
-#if !ENABLE(OILPAN)
-    void refFormAssociatedElement() override { ref(); }
-    void derefFormAssociatedElement() override { deref(); }
-#endif
-
     bool shouldRegisterAsNamedItem() const override { return true; }
     bool shouldRegisterAsExtraNamedItem() const override { return true; }
 
@@ -126,7 +115,6 @@ template<typename T> inline const T* toElement(const FormAssociatedElement*);
 template<> inline const HTMLObjectElement* toElement<HTMLObjectElement>(const FormAssociatedElement* element)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!element || !element->isFormControlElement());
-    ASSERT_WITH_SECURITY_IMPLICATION(!element || !element->isLabelElement());
     const HTMLObjectElement* objectElement = static_cast<const HTMLObjectElement*>(element);
     // We need to assert after the cast because FormAssociatedElement doesn't
     // have hasTagName.
@@ -137,7 +125,6 @@ template<> inline const HTMLObjectElement* toElement<HTMLObjectElement>(const Fo
 template<> inline const HTMLObjectElement& toElement<HTMLObjectElement>(const FormAssociatedElement& element)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!element.isFormControlElement());
-    ASSERT_WITH_SECURITY_IMPLICATION(!element.isLabelElement());
     const HTMLObjectElement& objectElement = static_cast<const HTMLObjectElement&>(element);
     // We need to assert after the cast because FormAssociatedElement doesn't
     // have hasTagName.

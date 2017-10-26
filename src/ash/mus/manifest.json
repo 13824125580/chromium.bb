@@ -1,5 +1,14 @@
 {
-  "url": "mojo://ash_sysui/",
-  "name": "System UI",
-  "capabilities": { "*": [ "*" ] }
+  "manifest_version":  1,
+  "name": "mojo:ash",
+  "display_name": "Ash Window Manager and Shell",
+  "capabilities": {
+    "provided": {
+      "mus:window_manager" : [ "mus::mojom::AcceleratorRegistrar" ]
+    },
+    "required": {
+      "*": { "classes": [ "app" ] },
+      "mojo:mus": { "interfaces": [ "mus::mojom::WindowManagerWindowTreeFactory" ] }
+    }
+  }
 }

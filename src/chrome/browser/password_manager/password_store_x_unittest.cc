@@ -5,6 +5,7 @@
 #include "chrome/browser/password_manager/password_store_x.h"
 
 #include <stddef.h>
+
 #include <string>
 #include <utility>
 
@@ -12,12 +13,13 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
@@ -329,7 +331,7 @@ PasswordStoreXTestDelegate::PasswordStoreXTestDelegate(BackendType backend_type)
   SetupTempDir();
   store_ = new PasswordStoreX(
       base::ThreadTaskRunnerHandle::Get(), base::ThreadTaskRunnerHandle::Get(),
-      make_scoped_ptr(
+      base::WrapUnique(
           new password_manager::LoginDatabase(test_login_db_file_path())),
       GetBackend(backend_type_));
   store_->Init(syncer::SyncableService::StartSyncFlare());
@@ -341,7 +343,7 @@ PasswordStoreXTestDelegate::~PasswordStoreXTestDelegate() {
 }
 
 void PasswordStoreXTestDelegate::FinishAsyncProcessing() {
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 void PasswordStoreXTestDelegate::SetupTempDir() {
@@ -400,7 +402,7 @@ ACTION(STLDeleteElements0) {
 }
 
 TEST_P(PasswordStoreXTest, Notifications) {
-  scoped_ptr<password_manager::LoginDatabase> login_db(
+  std::unique_ptr<password_manager::LoginDatabase> login_db(
       new password_manager::LoginDatabase(test_login_db_file_path()));
   scoped_refptr<PasswordStoreX> store(new PasswordStoreX(
       base::ThreadTaskRunnerHandle::Get(), base::ThreadTaskRunnerHandle::Get(),
@@ -414,7 +416,7 @@ TEST_P(PasswordStoreXTest, Notifications) {
       L"password_element",             L"username_value",
       L"password_value",               true,
       false,                           1};
-  scoped_ptr<PasswordForm> form =
+  std::unique_ptr<PasswordForm> form =
       CreatePasswordFormFromDataForTesting(form_data);
 
   password_manager::MockPasswordStoreObserver observer;
@@ -479,7 +481,7 @@ TEST_P(PasswordStoreXTest, NativeMigration) {
   InitExpectedForms(false, 50, &expected_blacklisted);
 
   const base::FilePath login_db_file = test_login_db_file_path();
-  scoped_ptr<password_manager::LoginDatabase> login_db(
+  std::unique_ptr<password_manager::LoginDatabase> login_db(
       new password_manager::LoginDatabase(login_db_file));
   ASSERT_TRUE(login_db->Init());
 

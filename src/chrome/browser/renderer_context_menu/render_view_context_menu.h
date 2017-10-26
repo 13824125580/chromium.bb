@@ -6,9 +6,11 @@
 #define CHROME_BROWSER_RENDERER_CONTEXT_MENU_RENDER_VIEW_CONTEXT_MENU_H_
 
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/files/file_path.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
@@ -26,6 +28,7 @@
 #include "chrome/browser/extensions/menu_manager.h"
 #endif
 
+class OpenWithMenuObserver;
 class PrintPreviewContextMenuObserver;
 class Profile;
 class SpellingMenuObserver;
@@ -64,10 +67,15 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   // WebContents and the frame's WebContents.
   static gfx::Vector2d GetOffset(content::RenderFrameHost* render_frame_host);
 
-  // SimpleMenuModel::Delegate:
+  // Adds the spell check service item to the context menu.
+  static void AddSpellCheckServiceItem(ui::SimpleMenuModel* menu,
+                                       bool is_checked);
+
+  // RenderViewContextMenuBase:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
+  void AddSpellCheckServiceItem(bool is_checked) override;
 
  protected:
   Profile* GetProfile();
@@ -115,6 +123,7 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   void AppendDeveloperItems();
   void AppendDevtoolsForUnpackedExtensions();
   void AppendLinkItems();
+  void AppendOpenWithLinkItems();
   void AppendImageItems();
   void AppendAudioItems();
   void AppendCanvasItems();
@@ -139,17 +148,44 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   void AppendProtocolHandlerSubMenu();
   void AppendPasswordItems();
 
-  // Copy to the clipboard an image located at a point in the RenderView
-  void CopyImageAt(int x, int y);
+  // Command enabled query functions.
+  bool IsReloadEnabled() const;
+  bool IsViewSourceEnabled() const;
+  bool IsDevCommandEnabled(int id) const;
+  bool IsTranslateEnabled() const;
+  bool IsSaveLinkAsEnabled() const;
+  bool IsSaveImageAsEnabled() const;
+  bool IsSaveAsEnabled() const;
+  bool IsSavePageEnabled() const;
+  bool IsPasteEnabled() const;
+  bool IsPasteAndMatchStyleEnabled() const;
+  bool IsRouteMediaEnabled() const;
 
-  // Load the original image located at a point in the RenderView.
-  void LoadOriginalImage();
-
-  // Get an image located at a point in the RenderView for search.
-  void GetImageThumbnailForSearch();
-
-  // Launch the inspector targeting a point in the RenderView
-  void Inspect(int x, int y);
+  // Command execution functions.
+  void ExecOpenLinkNewTab();
+  void ExecProtocolHandler(int event_flags, int handler_index);
+  void ExecOpenLinkInProfile(int profile_index);
+  void ExecInspectElement();
+  void ExecInspectBackgroundPage();
+  void ExecSaveLinkAs();
+  void ExecSaveAs();
+  void ExecCopyLinkText();
+  void ExecCopyImageAt();
+  void ExecSearchWebForImage();
+  void ExecLoadOriginalImage();
+  void ExecPlayPause();
+  void ExecMute();
+  void ExecLoop();
+  void ExecControls();
+  void ExecRotateCW();
+  void ExecRotateCCW();
+  void ExecReloadPackagedApp();
+  void ExecRestartPackagedApp();
+  void ExecPrint();
+  void ExecRouteMedia();
+  void ExecTranslate();
+  void ExecLanguageSettings(int event_flags);
+  void ExecProtocolHandlerSettings(int event_flags);
 
   // Writes the specified text/url to the system clipboard
   void WriteURLToClipboard(const GURL& url);
@@ -158,8 +194,6 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
                            const blink::WebMediaPlayerAction& action);
   void PluginActionAt(const gfx::Point& location,
                       const blink::WebPluginAction& action);
-
-  bool IsDevCommandEnabled(int id) const;
 
   // Returns a list of registered ProtocolHandlers that can handle the clicked
   // on URL.
@@ -170,23 +204,28 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   GURL selection_navigation_url_;
 
   ui::SimpleMenuModel profile_link_submenu_model_;
+  std::vector<base::FilePath> profile_link_paths_;
   bool multiple_profiles_open_;
   ui::SimpleMenuModel protocol_handler_submenu_model_;
   ProtocolHandlerRegistry* protocol_handler_registry_;
 
   // An observer that handles spelling suggestions, "Add to dictionary", and
   // "Ask Google for suggestions" items.
-  scoped_ptr<SpellingMenuObserver> spelling_suggestions_menu_observer_;
+  std::unique_ptr<SpellingMenuObserver> spelling_suggestions_menu_observer_;
 
 #if !defined(OS_MACOSX)
   // An observer that handles the submenu for showing spelling options. This
   // submenu lets users select the spelling language, for example.
-  scoped_ptr<SpellingOptionsSubMenuObserver> spelling_options_submenu_observer_;
+  std::unique_ptr<SpellingOptionsSubMenuObserver>
+      spelling_options_submenu_observer_;
 #endif
+
+  // An observer that handles "Open with <app>" items.
+  std::unique_ptr<RenderViewContextMenuObserver> open_with_menu_observer_;
 
 #if defined(ENABLE_PRINT_PREVIEW)
   // An observer that disables menu items when print preview is active.
-  scoped_ptr<PrintPreviewContextMenuObserver> print_preview_menu_observer_;
+  std::unique_ptr<PrintPreviewContextMenuObserver> print_preview_menu_observer_;
 #endif
 
   // In the case of a MimeHandlerView this will point to the WebContents that

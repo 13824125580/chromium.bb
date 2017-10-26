@@ -9,8 +9,9 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace syncer_v2 {
 
@@ -25,8 +26,8 @@ void MockModelTypeStore::ReadData(const IdList& id_list,
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, Result::SUCCESS,
-                              base::Passed(scoped_ptr<RecordList>()),
-                              base::Passed(scoped_ptr<IdList>())));
+                              base::Passed(std::unique_ptr<RecordList>()),
+                              base::Passed(std::unique_ptr<IdList>())));
   }
 }
 
@@ -36,7 +37,7 @@ void MockModelTypeStore::ReadAllData(const ReadAllDataCallback& callback) {
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, Result::SUCCESS,
-                              base::Passed(scoped_ptr<RecordList>())));
+                              base::Passed(std::unique_ptr<RecordList>())));
   }
 }
 
@@ -47,17 +48,18 @@ void MockModelTypeStore::ReadAllMetadata(const ReadMetadataCallback& callback) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(callback, Result::SUCCESS,
-                   base::Passed(scoped_ptr<RecordList>()), std::string()));
+                   base::Passed(std::unique_ptr<RecordList>()), std::string()));
   }
 }
 
-scoped_ptr<MockModelTypeStore::WriteBatch>
+std::unique_ptr<MockModelTypeStore::WriteBatch>
 MockModelTypeStore::CreateWriteBatch() {
-  return make_scoped_ptr(new MockModelTypeStore::WriteBatch());
+  return base::WrapUnique(new MockModelTypeStore::WriteBatch());
 }
 
-void MockModelTypeStore::CommitWriteBatch(scoped_ptr<WriteBatch> write_batch,
-                                          const CallbackWithResult& callback) {
+void MockModelTypeStore::CommitWriteBatch(
+    std::unique_ptr<WriteBatch> write_batch,
+    const CallbackWithResult& callback) {
   if (!commit_write_batch_handler_.is_null()) {
     commit_write_batch_handler_.Run(std::move(write_batch), callback);
   } else {
@@ -139,6 +141,11 @@ void MockModelTypeStore::RegisterWriteMetadataHandler(
   write_metadata_handler_ = handler;
 }
 
+void MockModelTypeStore::RegisterWriteGlobalMetadataHandler(
+    const WriteGlobalMetadataSignature& handler) {
+  write_global_metadata_handler_ = handler;
+}
+
 void MockModelTypeStore::RegisterDeleteDataHandler(
     const DeleteRecordSignature& handler) {
   delete_data_handler_ = handler;
@@ -147,6 +154,11 @@ void MockModelTypeStore::RegisterDeleteDataHandler(
 void MockModelTypeStore::RegisterDeleteMetadataHandler(
     const DeleteRecordSignature& handler) {
   delete_metadata_handler_ = handler;
+}
+
+void MockModelTypeStore::RegisterDeleteGlobalMetadataHandler(
+    const DeleteGlobalMetadataSignature& handler) {
+  delete_global_metadata_handler_ = handler;
 }
 
 }  // namespace syncer_v2

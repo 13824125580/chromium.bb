@@ -26,19 +26,19 @@
 #include "core/editing/DragCaretController.h"
 
 #include "core/editing/EditingUtilities.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/paint/PaintLayer.h"
 
 namespace blink {
 
 DragCaretController::DragCaretController()
-    : CaretBase(Visible)
+    : m_caretBase(new CaretBase(CaretVisibility::Visible))
 {
 }
 
-PassOwnPtrWillBeRawPtr<DragCaretController> DragCaretController::create()
+DragCaretController* DragCaretController::create()
 {
-    return adoptPtrWillBeNoop(new DragCaretController);
+    return new DragCaretController;
 }
 
 bool DragCaretController::isContentRichlyEditable() const
@@ -54,18 +54,18 @@ void DragCaretController::setCaretPosition(const PositionWithAffinity& position)
     DisableCompositingQueryAsserts disabler;
 
     if (Node* node = m_position.deepEquivalent().anchorNode())
-        invalidateCaretRect(node);
+        m_caretBase->invalidateCaretRect(node);
     m_position = createVisiblePosition(position);
     Document* document = nullptr;
     if (Node* node = m_position.deepEquivalent().anchorNode()) {
-        invalidateCaretRect(node);
+        m_caretBase->invalidateCaretRect(node);
         document = &node->document();
     }
     if (m_position.isNull() || m_position.isOrphan()) {
-        clearCaretRect();
+        m_caretBase->clearCaretRect();
     } else {
-        document->updateLayoutTree();
-        updateCaretRect(m_position);
+        document->updateStyleAndLayoutTree();
+        m_caretBase->updateCaretRect(m_position);
     }
 }
 
@@ -81,7 +81,7 @@ static bool removingNodeRemovesPosition(Node& node, const Position& position)
         return false;
 
     Element& element = toElement(node);
-    return element.containsIncludingShadowDOM(position.anchorNode());
+    return element.isShadowIncludingInclusiveAncestorOf(position.anchorNode());
 }
 
 void DragCaretController::nodeWillBeRemoved(Node& node)
@@ -92,13 +92,14 @@ void DragCaretController::nodeWillBeRemoved(Node& node)
     if (!removingNodeRemovesPosition(node, m_position.deepEquivalent()))
         return;
 
-    m_position.deepEquivalent().document()->layoutView()->clearSelection();
+    m_position.deepEquivalent().document()->layoutViewItem().clearSelection();
     clear();
 }
 
 DEFINE_TRACE(DragCaretController)
 {
     visitor->trace(m_position);
+    visitor->trace(m_caretBase);
 }
 
 LayoutBlock* DragCaretController::caretLayoutObject() const
@@ -114,7 +115,7 @@ bool DragCaretController::isContentEditable() const
 void DragCaretController::paintDragCaret(LocalFrame* frame, GraphicsContext& context, const LayoutPoint& paintOffset) const
 {
     if (m_position.deepEquivalent().anchorNode()->document().frame() == frame)
-        paintCaret(m_position.deepEquivalent().anchorNode(), context, paintOffset);
+        m_caretBase->paintCaret(m_position.deepEquivalent().anchorNode(), context, paintOffset, DisplayItem::DragCaret);
 }
 
 } // namespace blink

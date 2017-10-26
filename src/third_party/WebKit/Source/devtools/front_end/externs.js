@@ -42,8 +42,16 @@ Event.prototype.isMetaOrCtrlForTest;
 /** @type {string} */
 Event.prototype.code;
 
-/** @type {function():!Array<!EventTarget>|undefined} */
-Event.prototype.deepPath;
+/**
+ * TODO(luoe): MouseEvent properties movementX and movementY from the
+ * PointerLock API are not yet standard. Once they are included in
+ * Closure Compiler, these custom externs can be removed.
+ */
+/** @type {number} */
+MouseEvent.prototype.movementX;
+
+/** @type {number} */
+MouseEvent.prototype.movementY;
 
 /**
  * @type {number}
@@ -81,27 +89,27 @@ Array.prototype.rotate = function(index) {}
  */
 Array.prototype.sortNumbers = function() {}
 /**
- * @param {!T} object
- * @param {function(!T,!S):number=} comparator
+ * @param {!S} object
+ * @param {function(!S,!T):number=} comparator
  * @return {number}
- * @this {Array.<S>}
- * @template T,S
+ * @this {Array.<T>}
+ * @template S
  */
 Array.prototype.lowerBound = function(object, comparator) {}
 /**
- * @param {!T} object
- * @param {function(!T,!S):number=} comparator
+ * @param {!S} object
+ * @param {function(!S,!T):number=} comparator
  * @return {number}
- * @this {Array.<S>}
- * @template T,S
+ * @this {Array.<T>}
+ * @template S
  */
 Array.prototype.upperBound = function(object, comparator) {}
 /**
- * @param {!T} value
- * @param {function(!T,!S):number} comparator
+ * @param {!S} value
+ * @param {function(!S,!T):number} comparator
  * @return {number}
- * @this {Array.<S>}
- * @template T,S
+ * @this {Array.<T>}
+ * @template S
  */
 Array.prototype.binaryIndexOf = function(value, comparator) {}
 /**
@@ -680,6 +688,18 @@ ESTree.Node = function()
     this.properties;
     /** @type {(!ESTree.Node|undefined)} */
     this.init;
+    /** @type {(!Array.<!ESTree.Node>|undefined)} */
+    this.params;
+    /** @type {(string|undefined)} */
+    this.name;
+    /** @type {(?ESTree.Node|undefined)} */
+    this.id;
+    /** @type {(number|undefined)} */
+    this.length;
+    /** @type {(?ESTree.Node|undefined)} */
+    this.argument;
+    /** @type {(string|undefined)} */
+    this.operator;
 }
 
 /**
@@ -692,4 +712,42 @@ ESTree.TemplateLiteralNode = function()
     this.quasis;
     /** @type {!Array.<!ESTree.Node>} */
     this.expressions;
+}
+
+var Gonzales = {}
+var gonzales = {
+    /**
+     * @param {string} text
+     * @param {!Object=} options
+     * @return {!Gonzales.Node}
+     */
+    parse: function(text, options) { },
+}
+
+/**
+ * @constructor
+ */
+Gonzales.Location = function()
+{
+    /** @type {number} */
+    this.line;
+    /** @type {number} */
+    this.column;
+}
+
+/**
+ * @constructor
+ */
+Gonzales.Node = function()
+{
+    /** @type {string} */
+    this.type;
+    /** @type {string} */
+    this.syntax;
+    /** @type {!Gonzales.Location} */
+    this.start;
+    /** @type {!Gonzales.Location} */
+    this.end;
+    /** @type {(string|!Array<!Gonzales.Node>)} */
+    this.content;
 }

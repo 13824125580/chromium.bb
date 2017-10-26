@@ -9,7 +9,7 @@
 
 #include "base/logging.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gcm/base/mcs_util.h"
 #include "google_apis/gcm/protocol/mcs.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,9 +43,9 @@ TEST_F(MCSMessageTest, Invalid) {
 }
 
 TEST_F(MCSMessageTest, InitInferTag) {
-  scoped_ptr<mcs_proto::LoginRequest> login_request(
+  std::unique_ptr<mcs_proto::LoginRequest> login_request(
       BuildLoginRequest(kAndroidId, kSecret, ""));
-  scoped_ptr<google::protobuf::MessageLite> login_copy(
+  std::unique_ptr<google::protobuf::MessageLite> login_copy(
       new mcs_proto::LoginRequest(*login_request));
   MCSMessage message(*login_copy);
   login_copy.reset();
@@ -61,9 +61,9 @@ TEST_F(MCSMessageTest, InitInferTag) {
 }
 
 TEST_F(MCSMessageTest, InitWithTag) {
-  scoped_ptr<mcs_proto::LoginRequest> login_request(
+  std::unique_ptr<mcs_proto::LoginRequest> login_request(
       BuildLoginRequest(kAndroidId, kSecret, ""));
-  scoped_ptr<google::protobuf::MessageLite> login_copy(
+  std::unique_ptr<google::protobuf::MessageLite> login_copy(
       new mcs_proto::LoginRequest(*login_request));
   MCSMessage message(kLoginRequestTag, *login_copy);
   login_copy.reset();
@@ -79,9 +79,9 @@ TEST_F(MCSMessageTest, InitWithTag) {
 }
 
 TEST_F(MCSMessageTest, InitPassOwnership) {
-  scoped_ptr<mcs_proto::LoginRequest> login_request(
+  std::unique_ptr<mcs_proto::LoginRequest> login_request(
       BuildLoginRequest(kAndroidId, kSecret, ""));
-  scoped_ptr<google::protobuf::MessageLite> login_copy(
+  std::unique_ptr<google::protobuf::MessageLite> login_copy(
       new mcs_proto::LoginRequest(*login_request));
   MCSMessage message(kLoginRequestTag, std::move(login_copy));
   EXPECT_FALSE(login_copy.get());

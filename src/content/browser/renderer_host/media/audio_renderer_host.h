@@ -40,17 +40,17 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_RENDERER_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_RENDERER_HOST_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
-
-#include <stddef.h>
 
 #include "base/atomic_ref_count.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/process.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/browser/renderer_host/media/audio_output_device_enumerator.h"
@@ -86,7 +86,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
                     AudioMirroringManager* mirroring_manager,
                     MediaInternals* media_internals,
                     MediaStreamManager* media_stream_manager,
-                    const ResourceContext::SaltCallback& salt_callback);
+                    const std::string& salt);
 
   // Calls |callback| with the list of AudioOutputControllers for this object.
   void GetOutputControllers(
@@ -147,7 +147,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
                                     int render_frame_id,
                                     int session_id,
                                     const std::string& device_id,
-                                    const url::Origin& gurl_security_origin);
+                                    const url::Origin& security_origin);
 
   // Creates an audio output stream with the specified format.
   // Upon success/failure, the peer is notified via the NotifyStreamCreated
@@ -173,11 +173,13 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
   // Proceed with device authorization after checking permissions.
   void OnDeviceAuthorized(int stream_id,
                           const std::string& device_id,
-                          const GURL& security_origin,
+                          const url::Origin& security_origin,
+                          base::TimeTicks auth_start_time,
                           bool have_access);
 
   // Proceed with device authorization after translating device ID.
   void OnDeviceIDTranslated(int stream_id,
+                            base::TimeTicks auth_start_time,
                             bool device_found,
                             const AudioOutputDeviceInfo& device_info);
 
@@ -203,7 +205,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
 
   // Delete an audio entry, notifying observers first.  This is called by
   // AudioOutputController after it has closed.
-  void DeleteEntry(scoped_ptr<AudioEntry> entry);
+  void DeleteEntry(std::unique_ptr<AudioEntry> entry);
 
   // Send an error message to the renderer, then close the stream.
   void ReportErrorAndClose(int stream_id);
@@ -219,17 +221,17 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
   // Check if the renderer process has access to the requested output device.
   void CheckOutputDeviceAccess(int render_frame_id,
                                const std::string& device_id,
-                               const GURL& gurl_security_origin,
+                               const url::Origin& security_origin,
                                const OutputDeviceAccessCB& callback);
 
   // Invoke |callback| after permission to use a device has been checked.
-  void AccessChecked(scoped_ptr<MediaStreamUIProxy> ui_proxy,
+  void AccessChecked(std::unique_ptr<MediaStreamUIProxy> ui_proxy,
                      const OutputDeviceAccessCB& callback,
                      bool have_access);
 
   // Translate the hashed |device_id| to a unique device ID.
   void TranslateDeviceID(const std::string& device_id,
-                         const GURL& gurl_security_origin,
+                         const url::Origin& security_origin,
                          const OutputDeviceInfoCB& callback,
                          const AudioOutputDeviceEnumeration& enumeration);
 
@@ -242,7 +244,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
 
   media::AudioManager* const audio_manager_;
   AudioMirroringManager* const mirroring_manager_;
-  scoped_ptr<media::AudioLog> audio_log_;
+  std::unique_ptr<media::AudioLog> audio_log_;
 
   // Used to access to AudioInputDeviceManager.
   MediaStreamManager* media_stream_manager_;
@@ -255,7 +257,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
   base::AtomicRefCount num_playing_streams_;
 
   // Salt required to translate renderer device IDs to raw device unique IDs
-  ResourceContext::SaltCallback salt_callback_;
+  std::string salt_;
 
   // Map of device authorizations for streams that are not yet created
   // The key is the stream ID, and the value is a pair. The pair's first element

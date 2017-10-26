@@ -4,11 +4,10 @@
 
 #include "ash/wm/system_gesture_event_filter.h"
 
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
 #include "ash/metrics/user_metrics_recorder.h"
 #include "ash/shell.h"
 #include "ash/touch/touch_uma.h"
-#include "ash/wm/gestures/long_press_affordance_handler.h"
 #include "ash/wm/gestures/overview_gesture_handler.h"
 #include "ash/wm/gestures/shelf_gesture_handler.h"
 #include "ui/base/touch/touch_device.h"
@@ -18,13 +17,10 @@
 namespace ash {
 
 SystemGestureEventFilter::SystemGestureEventFilter()
-    : long_press_affordance_(new LongPressAffordanceHandler),
-      overview_gesture_handler_(new OverviewGestureHandler),
-      shelf_gesture_handler_(new ShelfGestureHandler()) {
-}
+    : overview_gesture_handler_(new OverviewGestureHandler),
+      shelf_gesture_handler_(new ShelfGestureHandler()) {}
 
-SystemGestureEventFilter::~SystemGestureEventFilter() {
-}
+SystemGestureEventFilter::~SystemGestureEventFilter() {}
 
 void SystemGestureEventFilter::OnMouseEvent(ui::MouseEvent* event) {
 #if defined(OS_CHROMEOS)
@@ -51,7 +47,6 @@ void SystemGestureEventFilter::OnTouchEvent(ui::TouchEvent* event) {
 void SystemGestureEventFilter::OnGestureEvent(ui::GestureEvent* event) {
   aura::Window* target = static_cast<aura::Window*>(event->target());
   ash::TouchUMA::GetInstance()->RecordGestureEvent(target, *event);
-  long_press_affordance_->ProcessEvent(target, event);
 
   if (event->type() == ui::ET_GESTURE_WIN8_EDGE_SWIPE &&
       shelf_gesture_handler_->ProcessGestureEvent(*event, target)) {

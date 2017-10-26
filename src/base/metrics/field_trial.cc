@@ -9,6 +9,7 @@
 #include "base/build_time.h"
 #include "base/logging.h"
 #include "base/rand_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -43,8 +44,14 @@ Time CreateTimeFromParams(int year, int month, int day_of_month) {
   exploded.minute = 0;
   exploded.second = 0;
   exploded.millisecond = 0;
+  Time out_time;
+  if (!Time::FromLocalExploded(exploded, &out_time)) {
+    // TODO(maksims): implement failure handling.
+    // We might just return |out_time|, which is Time(0).
+    NOTIMPLEMENTED();
+  }
 
-  return Time::FromLocalExploded(exploded);
+  return out_time;
 }
 
 // Returns the boundary value for comparing against the FieldTrial's added
@@ -103,16 +110,6 @@ bool ParseFieldTrialsString(const std::string& trials_string,
     entries->push_back(entry);
   }
   return true;
-}
-
-void CheckTrialGroup(const std::string& trial_name,
-                     const std::string& trial_group,
-                     std::map<std::string, std::string>* seen_states) {
-  if (ContainsKey(*seen_states, trial_name)) {
-    CHECK_EQ((*seen_states)[trial_name], trial_group) << trial_name;
-  } else {
-    (*seen_states)[trial_name] = trial_group;
-  }
 }
 
 }  // namespace
@@ -347,8 +344,8 @@ FieldTrial* FieldTrialList::FactoryGetFieldTrial(
     FieldTrial::RandomizationType randomization_type,
     int* default_group_number) {
   return FactoryGetFieldTrialWithRandomizationSeed(
-      trial_name, total_probability, default_group_name,
-      year, month, day_of_month, randomization_type, 0, default_group_number);
+      trial_name, total_probability, default_group_name, year, month,
+      day_of_month, randomization_type, 0, default_group_number, NULL);
 }
 
 // static
@@ -361,7 +358,8 @@ FieldTrial* FieldTrialList::FactoryGetFieldTrialWithRandomizationSeed(
     const int day_of_month,
     FieldTrial::RandomizationType randomization_type,
     uint32_t randomization_seed,
-    int* default_group_number) {
+    int* default_group_number,
+    const FieldTrial::EntropyProvider* override_entropy_provider) {
   if (default_group_number)
     *default_group_number = FieldTrial::kDefaultGroupNumber;
   // Check if the field trial has already been created in some other way.
@@ -395,8 +393,10 @@ FieldTrial* FieldTrialList::FactoryGetFieldTrialWithRandomizationSeed(
 
   double entropy_value;
   if (randomization_type == FieldTrial::ONE_TIME_RANDOMIZED) {
+    // If an override entropy provider is given, use it.
     const FieldTrial::EntropyProvider* entropy_provider =
-        GetEntropyProviderForOneTimeRandomization();
+        override_entropy_provider ? override_entropy_provider
+                                  : GetEntropyProviderForOneTimeRandomization();
     CHECK(entropy_provider);
     entropy_value = entropy_provider->GetEntropyForTrial(trial_name,
                                                          randomization_seed);
@@ -487,9 +487,6 @@ void FieldTrialList::AllStatesToString(std::string* output) {
     output->append(1, kPersistentStringSeparator);
     trial.group_name.AppendToString(output);
     output->append(1, kPersistentStringSeparator);
-
-    CheckTrialGroup(trial.trial_name.as_string(), trial.group_name.as_string(),
-                    &global_->seen_states_);
   }
 }
 
@@ -614,11 +611,6 @@ void FieldTrialList::NotifyFieldTrialGroupSelection(FieldTrial* field_trial) {
   if (!field_trial->enable_field_trial_)
     return;
 
-  {
-    AutoLock auto_lock(global_->lock_);
-    CheckTrialGroup(field_trial->trial_name(),
-                    field_trial->group_name_internal(), &global_->seen_states_);
-  }
   global_->observer_list_->Notify(
       FROM_HERE, &FieldTrialList::Observer::OnFieldTrialGroupFinalized,
       field_trial->trial_name(), field_trial->group_name_internal());

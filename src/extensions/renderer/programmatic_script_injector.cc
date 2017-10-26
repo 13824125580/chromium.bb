@@ -34,7 +34,7 @@ ProgrammaticScriptInjector::ProgrammaticScriptInjector(
       finished_(false) {
   if (url_.SchemeIs(url::kAboutScheme)) {
     origin_for_about_error_ =
-        render_frame->GetWebFrame()->securityOrigin().toString().utf8();
+        render_frame->GetWebFrame()->getSecurityOrigin().toString().utf8();
   }
 }
 
@@ -118,7 +118,7 @@ void ProgrammaticScriptInjector::GetRunInfo(
 }
 
 void ProgrammaticScriptInjector::OnInjectionComplete(
-    scoped_ptr<base::Value> execution_result,
+    std::unique_ptr<base::Value> execution_result,
     UserScript::RunLocation run_location,
     content::RenderFrame* render_frame) {
   DCHECK(results_.empty());

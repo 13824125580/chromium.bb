@@ -19,8 +19,7 @@ instanceTemplate: function (template) {
 var dom = document.importNode(template._content || template.content, true);
 return dom;
 }
-});
-(function () {
+});(function () {
 var baseAttachedCallback = Polymer.Base.attachedCallback;
 Polymer.Base._addFeature({
 _hostStack: [],
@@ -96,8 +95,7 @@ this._attachedPending = true;
 }
 }
 });
-}());
-Polymer.ArraySplice = function () {
+}());Polymer.ArraySplice = function () {
 function newSplice(index, removed, addedCount) {
 return {
 index: index,
@@ -122,8 +120,8 @@ distances[i][0] = i;
 }
 for (var j = 0; j < columnCount; j++)
 distances[0][j] = j;
-for (var i = 1; i < rowCount; i++) {
-for (var j = 1; j < columnCount; j++) {
+for (i = 1; i < rowCount; i++) {
+for (j = 1; j < columnCount; j++) {
 if (this.equals(current[currentStart + j - 1], old[oldStart + i - 1]))
 distances[i][j] = distances[i - 1][j - 1];
 else {
@@ -203,7 +201,7 @@ return [splice];
 } else if (oldStart == oldEnd)
 return [newSplice(currentStart, [], currentEnd - currentStart)];
 var ops = this.spliceOperationsFromEditDistances(this.calcEditDistances(current, currentStart, currentEnd, old, oldStart, oldEnd));
-var splice = undefined;
+splice = undefined;
 var splices = [];
 var index = currentStart;
 var oldIndex = oldStart;
@@ -266,8 +264,7 @@ return currentValue === previousValue;
 }
 };
 return new ArraySplice();
-}();
-Polymer.domInnerHTML = function () {
+}();Polymer.domInnerHTML = function () {
 var escapeAttrRegExp = /[&\u00A0"]/g;
 var escapeDataRegExp = /[&\u00A0<>]/g;
 function escapeReplace(c) {
@@ -363,13 +360,12 @@ s += getOuterHTML(child, node, composed);
 return s;
 }
 return { getInnerHTML: getInnerHTML };
-}();
-(function () {
+}();(function () {
 'use strict';
 var nativeInsertBefore = Element.prototype.insertBefore;
 var nativeAppendChild = Element.prototype.appendChild;
 var nativeRemoveChild = Element.prototype.removeChild;
-var TreeApi = Polymer.TreeApi = {
+Polymer.TreeApi = {
 arrayCopyChildNodes: function (parent) {
 var copy = [], i = 0;
 for (var n = parent.firstChild; n; n = n.nextSibling) {
@@ -560,8 +556,7 @@ removeChild: function (parentNode, node) {
 return nativeRemoveChild.call(parentNode, node);
 }
 };
-}());
-Polymer.DomApi = function () {
+}());Polymer.DomApi = function () {
 'use strict';
 var Settings = Polymer.Settings;
 var TreeApi = Polymer.TreeApi;
@@ -678,8 +673,7 @@ return DomApi.factory(obj, patch);
 var p = Element.prototype;
 DomApi.matchesSelector = p.matches || p.matchesSelector || p.mozMatchesSelector || p.msMatchesSelector || p.oMatchesSelector || p.webkitMatchesSelector;
 return DomApi;
-}();
-(function () {
+}();(function () {
 'use strict';
 var Settings = Polymer.Settings;
 var DomApi = Polymer.DomApi;
@@ -1148,8 +1142,7 @@ configurable: true
 DomApi.hasInsertionPoint = function (root) {
 return Boolean(root && root._insertionPoints.length);
 };
-}());
-(function () {
+}());(function () {
 'use strict';
 var Settings = Polymer.Settings;
 var TreeApi = Polymer.TreeApi;
@@ -1267,8 +1260,7 @@ forwardProperties([
 'nextElementSibling',
 'previousElementSibling'
 ]);
-}());
-Polymer.Base.extend(Polymer.dom, {
+}());Polymer.Base.extend(Polymer.dom, {
 _flushGuard: 0,
 _FLUSH_MAX: 100,
 _needsTakeRecords: !Polymer.Settings.useNativeCustomElements,
@@ -1316,8 +1308,7 @@ this._finishDebouncer = Polymer.Debounce(this._finishDebouncer, this._finishFlus
 _finishFlush: function () {
 Polymer.dom._debouncers = [];
 }
-});
-Polymer.EventApi = function () {
+});Polymer.EventApi = function () {
 'use strict';
 var DomApi = Polymer.DomApi.ctor;
 var Settings = Polymer.Settings;
@@ -1333,7 +1324,11 @@ get localTarget() {
 return this.event.target;
 },
 get path() {
-return this.event.path;
+var path = this.event.path;
+if (!Array.isArray(path)) {
+path = Array.prototype.slice.call(path);
+}
+return path;
 }
 };
 } else {
@@ -1381,8 +1376,7 @@ event.__eventApi = new DomApi.Event(event);
 return event.__eventApi;
 };
 return { factory: factory };
-}();
-(function () {
+}();(function () {
 'use strict';
 var DomApi = Polymer.DomApi.ctor;
 var useShadow = Polymer.Settings.useShadow;
@@ -1421,12 +1415,10 @@ contains: function () {
 return this.node.classList.contains.apply(this.node.classList, arguments);
 }
 };
-}());
-(function () {
+}());(function () {
 'use strict';
 var DomApi = Polymer.DomApi.ctor;
 var Settings = Polymer.Settings;
-var hasDomApi = Polymer.DomApi.hasDomApi;
 DomApi.EffectiveNodesObserver = function (domApi) {
 this.domApi = domApi;
 this.node = this.domApi.node;
@@ -1479,7 +1471,7 @@ if (this._hasListeners()) {
 this._scheduleNotify();
 }
 },
-_notify: function (mxns) {
+_notify: function () {
 this._beforeCallListeners();
 this._callListeners();
 },
@@ -1550,8 +1542,8 @@ for (var j = 0, n; j < s.removed.length && (n = s.removed[j]); j++) {
 info.removedNodes.push(n);
 }
 }
-for (var i = 0, s; i < splices.length && (s = splices[i]); i++) {
-for (var j = s.index; j < s.index + s.addedCount; j++) {
+for (i = 0, s; i < splices.length && (s = splices[i]); i++) {
+for (j = s.index; j < s.index + s.addedCount; j++) {
 info.addedNodes.push(newNodes[j]);
 }
 }
@@ -1569,7 +1561,6 @@ enableShadowAttributeTracking: function () {
 if (Settings.useShadow) {
 var baseSetup = DomApi.EffectiveNodesObserver.prototype._setup;
 var baseCleanup = DomApi.EffectiveNodesObserver.prototype._cleanup;
-var beforeCallListeners = DomApi.EffectiveNodesObserver.prototype._beforeCallListeners;
 Polymer.Base.extend(DomApi.EffectiveNodesObserver.prototype, {
 _setup: function () {
 if (!this._observer) {
@@ -1624,8 +1615,7 @@ h._alwaysNotify = h._isContentListener;
 }
 });
 }
-}());
-(function () {
+}());(function () {
 'use strict';
 var DomApi = Polymer.DomApi.ctor;
 var Settings = Polymer.Settings;
@@ -1676,8 +1666,7 @@ this._observer = null;
 }
 });
 }
-}());
-(function () {
+}());(function () {
 var DomApi = Polymer.DomApi;
 var TreeApi = Polymer.TreeApi;
 Polymer.Base._addFeature({
@@ -1884,7 +1873,7 @@ d -= s.addedCount;
 }
 for (var i = 0, s, next; i < splices.length && (s = splices[i]); i++) {
 next = composed[s.index];
-for (var j = s.index, n; j < s.index + s.addedCount; j++) {
+for (j = s.index, n; j < s.index + s.addedCount; j++) {
 n = children[j];
 TreeApi.Composed.insertBefore(container, n, next);
 composed.splice(j, 0, n);
@@ -1984,8 +1973,7 @@ CustomElements.upgrade(children[i]);
 }
 }
 }
-}());
-if (Polymer.Settings.useShadow) {
+}());if (Polymer.Settings.useShadow) {
 Polymer.Base._addFeature({
 _poolContent: function () {
 },
@@ -2003,8 +1991,7 @@ this.shadowRoot.appendChild(this.root);
 this.root = this.shadowRoot;
 }
 });
-}
-Polymer.Async = {
+}Polymer.Async = {
 _currVal: 0,
 _lastVal: 0,
 _callbacks: [],
@@ -2054,8 +2041,7 @@ this._lastVal += len;
 };
 new window.MutationObserver(function () {
 Polymer.Async._atEndOfMicrotask();
-}).observe(Polymer.Async._twiddle, { characterData: true });
-Polymer.Debounce = function () {
+}).observe(Polymer.Async._twiddle, { characterData: true });Polymer.Debounce = function () {
 var Async = Polymer.Async;
 var Debouncer = function (context) {
 this.context = context;
@@ -2077,12 +2063,14 @@ stop: function () {
 if (this.finish) {
 this.finish();
 this.finish = null;
+this.callback = null;
 }
 },
 complete: function () {
 if (this.finish) {
+var callback = this.callback;
 this.stop();
-this.callback.call(this.context);
+callback.call(this.context);
 }
 }
 };
@@ -2096,8 +2084,7 @@ debouncer.go(callback, wait);
 return debouncer;
 }
 return debounce;
-}();
-Polymer.Base._addFeature({
+}();Polymer.Base._addFeature({
 _setupDebouncers: function () {
 this._debouncers = {};
 },
@@ -2120,8 +2107,7 @@ if (debouncer) {
 debouncer.stop();
 }
 }
-});
-Polymer.DomModule = document.createElement('dom-module');
+});Polymer.DomModule = document.createElement('dom-module');
 Polymer.Base._addFeature({
 _registerFeatures: function () {
 this._prepIs();

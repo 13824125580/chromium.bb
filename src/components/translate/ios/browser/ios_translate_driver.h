@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_TRANSLATE_IOS_BROWSER_IOS_TRANSLATE_DRIVER_H_
 #define COMPONENTS_TRANSLATE_IOS_BROWSER_IOS_TRANSLATE_DRIVER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -98,9 +99,9 @@ class IOSTranslateDriver : public TranslateDriver,
   web::NavigationManager* navigation_manager_;
 
   base::WeakPtr<TranslateManager> translate_manager_;
-  scoped_ptr<TranslateController> translate_controller_;
-  scoped_ptr<LanguageDetectionController> language_detection_controller_;
-  scoped_ptr<LanguageDetectionController::CallbackList::Subscription>
+  std::unique_ptr<TranslateController> translate_controller_;
+  std::unique_ptr<LanguageDetectionController> language_detection_controller_;
+  std::unique_ptr<LanguageDetectionController::CallbackList::Subscription>
       language_detection_callback_subscription_;
 
   // An ever-increasing sequence number of the current page, used to match up

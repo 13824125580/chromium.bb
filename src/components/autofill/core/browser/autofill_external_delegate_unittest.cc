@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <vector>
 
 #include "base/command_line.h"
@@ -97,11 +98,12 @@ class MockAutofillManager : public AutofillManager {
                     const FormFieldData& field,
                     int unique_id));
 
-  MOCK_METHOD4(FillCreditCardForm,
+  MOCK_METHOD5(FillCreditCardForm,
                void(int query_id,
                     const FormData& form,
                     const FormFieldData& field,
-                    const CreditCard& credit_card));
+                    const CreditCard& credit_card,
+                    const base::string16& cvc));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAutofillManager);
@@ -134,9 +136,8 @@ class AutofillExternalDelegateUnitTest : public testing::Test {
     FormFieldData field;
     field.is_focusable = true;
     field.should_autocomplete = true;
-    const gfx::RectF element_bounds;
 
-    external_delegate_->OnQuery(query_id, form, field, element_bounds);
+    external_delegate_->OnQuery(query_id, form, field, gfx::RectF());
   }
 
   void IssueOnSuggestionsReturned() {
@@ -147,9 +148,9 @@ class AutofillExternalDelegateUnitTest : public testing::Test {
   }
 
   testing::NiceMock<MockAutofillClient> autofill_client_;
-  scoped_ptr<testing::NiceMock<MockAutofillDriver>> autofill_driver_;
-  scoped_ptr<MockAutofillManager> autofill_manager_;
-  scoped_ptr<AutofillExternalDelegate> external_delegate_;
+  std::unique_ptr<testing::NiceMock<MockAutofillDriver>> autofill_driver_;
+  std::unique_ptr<MockAutofillManager> autofill_manager_;
+  std::unique_ptr<AutofillExternalDelegate> external_delegate_;
 
   base::MessageLoop message_loop_;
 };
@@ -572,7 +573,8 @@ TEST_F(AutofillExternalDelegateUnitTest, FillCreditCardForm) {
   EXPECT_CALL(*autofill_manager_,
               FillCreditCardForm(
                   _, _, _, CreditCardMatches(card_number, expiration_month,
-                                             expiration_year)));
+                                             expiration_year),
+                  base::string16()));
   external_delegate_->OnCreditCardScanned(card_number, expiration_month,
                                           expiration_year);
 }
@@ -582,9 +584,8 @@ TEST_F(AutofillExternalDelegateUnitTest, IgnoreAutocompleteOffForAutofill) {
   FormFieldData field;
   field.is_focusable = true;
   field.should_autocomplete = false;
-  const gfx::RectF element_bounds;
 
-  external_delegate_->OnQuery(kQueryId, form, field, element_bounds);
+  external_delegate_->OnQuery(kQueryId, form, field, gfx::RectF());
 
   std::vector<Suggestion> autofill_items;
   autofill_items.push_back(Suggestion());

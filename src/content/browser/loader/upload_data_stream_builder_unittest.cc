@@ -13,9 +13,9 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "content/common/resource_request_body.h"
+#include "content/common/resource_request_body_impl.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -38,7 +38,8 @@ namespace content {
 TEST(UploadDataStreamBuilderTest, CreateUploadDataStream) {
   base::MessageLoop message_loop;
   {
-    scoped_refptr<ResourceRequestBody> request_body = new ResourceRequestBody;
+    scoped_refptr<ResourceRequestBodyImpl> request_body =
+        new ResourceRequestBodyImpl;
 
     const std::string kBlob = "blobuuid";
     const std::string kBlobData = "blobdata";
@@ -52,7 +53,7 @@ TEST(UploadDataStreamBuilderTest, CreateUploadDataStream) {
     BlobStorageContext context;
     BlobDataBuilder builder(kBlob);
     builder.AppendData(kBlobData);
-    scoped_ptr<BlobDataHandle> handle = context.AddFinishedBlob(&builder);
+    std::unique_ptr<BlobDataHandle> handle = context.AddFinishedBlob(&builder);
 
     request_body->AppendBytes(kData, arraysize(kData) - 1);
     request_body->AppendFileRange(base::FilePath(kFilePath), kFileOffset,
@@ -60,9 +61,10 @@ TEST(UploadDataStreamBuilderTest, CreateUploadDataStream) {
     request_body->AppendBlob(kBlob);
     request_body->set_identifier(kIdentifier);
 
-    scoped_ptr<net::UploadDataStream> upload(UploadDataStreamBuilder::Build(
-        request_body.get(), &context, NULL,
-        base::ThreadTaskRunnerHandle::Get().get()));
+    std::unique_ptr<net::UploadDataStream> upload(
+        UploadDataStreamBuilder::Build(
+            request_body.get(), &context, NULL,
+            base::ThreadTaskRunnerHandle::Get().get()));
 
     EXPECT_EQ(kIdentifier, upload->identifier());
     ASSERT_TRUE(upload->GetElementReaders());
@@ -108,17 +110,20 @@ TEST(UploadDataStreamBuilderTest,
 
     // A blob created from an empty file added several times.
     const std::string blob_id("id-0");
-    scoped_ptr<BlobDataBuilder> blob_data_builder(new BlobDataBuilder(blob_id));
+    std::unique_ptr<BlobDataBuilder> blob_data_builder(
+        new BlobDataBuilder(blob_id));
     blob_data_builder->AppendFile(test_blob_path, 0, kZeroLength, blob_time);
-    scoped_ptr<BlobDataHandle> handle =
+    std::unique_ptr<BlobDataHandle> handle =
         blob_storage_context.AddFinishedBlob(blob_data_builder.get());
 
-    scoped_refptr<ResourceRequestBody> request_body(new ResourceRequestBody());
-    scoped_ptr<net::UploadDataStream> upload(UploadDataStreamBuilder::Build(
-        request_body.get(), &blob_storage_context, NULL,
-        base::ThreadTaskRunnerHandle::Get().get()));
+    scoped_refptr<ResourceRequestBodyImpl> request_body(
+        new ResourceRequestBodyImpl());
+    std::unique_ptr<net::UploadDataStream> upload(
+        UploadDataStreamBuilder::Build(
+            request_body.get(), &blob_storage_context, NULL,
+            base::ThreadTaskRunnerHandle::Get().get()));
 
-    request_body = new ResourceRequestBody();
+    request_body = new ResourceRequestBodyImpl();
     request_body->AppendBlob(blob_id);
     request_body->AppendBlob(blob_id);
     request_body->AppendBlob(blob_id);
@@ -139,7 +144,7 @@ TEST(UploadDataStreamBuilderTest,
     // Purposely (try to) read more than what is in the stream. If we try to
     // read zero bytes then UploadDataStream::Read will fail a DCHECK.
     int kBufferLength = kZeroLength + 1;
-    scoped_ptr<char[]> buffer(new char[kBufferLength]);
+    std::unique_ptr<char[]> buffer(new char[kBufferLength]);
     scoped_refptr<net::IOBuffer> io_buffer =
         new net::WrappedIOBuffer(buffer.get());
     net::TestCompletionCallback read_callback;
@@ -156,7 +161,8 @@ TEST(UploadDataStreamBuilderTest,
 TEST(UploadDataStreamBuilderTest, ResetUploadStreamWithBlob) {
   base::MessageLoopForIO message_loop;
   {
-    scoped_refptr<ResourceRequestBody> request_body = new ResourceRequestBody;
+    scoped_refptr<ResourceRequestBodyImpl> request_body =
+        new ResourceRequestBodyImpl;
 
     const std::string kBlob = "blobuuid";
     const std::string kBlobData = "blobdata";
@@ -166,14 +172,15 @@ TEST(UploadDataStreamBuilderTest, ResetUploadStreamWithBlob) {
     BlobStorageContext blob_storage_context;
     BlobDataBuilder builder(kBlob);
     builder.AppendData(kBlobData);
-    scoped_ptr<BlobDataHandle> handle =
+    std::unique_ptr<BlobDataHandle> handle =
         blob_storage_context.AddFinishedBlob(&builder);
     request_body->AppendBlob(kBlob);
     request_body->set_identifier(kIdentifier);
 
-    scoped_ptr<net::UploadDataStream> upload(UploadDataStreamBuilder::Build(
-        request_body.get(), &blob_storage_context, nullptr,
-        base::ThreadTaskRunnerHandle::Get().get()));
+    std::unique_ptr<net::UploadDataStream> upload(
+        UploadDataStreamBuilder::Build(
+            request_body.get(), &blob_storage_context, nullptr,
+            base::ThreadTaskRunnerHandle::Get().get()));
 
     net::TestCompletionCallback init_callback;
     ASSERT_EQ(net::OK, upload->Init(init_callback.callback()));

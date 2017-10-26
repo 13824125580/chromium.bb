@@ -22,18 +22,17 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "modules/webaudio/MediaElementAudioSourceNode.h"
 #include "core/dom/CrossThreadTask.h"
-#include "core/frame/ConsoleTypes.h"
 #include "core/html/HTMLMediaElement.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/webaudio/AbstractAudioContext.h"
 #include "modules/webaudio/AudioNodeOutput.h"
+#include "modules/webaudio/MediaElementAudioSourceNode.h"
 #include "platform/Logging.h"
 #include "platform/audio/AudioUtilities.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "wtf/Locker.h"
-#include "wtf/MainThread.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
@@ -44,7 +43,7 @@ MediaElementAudioSourceHandler::MediaElementAudioSourceHandler(AudioNode& node, 
     , m_sourceSampleRate(0)
     , m_passesCurrentSrcCORSAccessCheck(passesCurrentSrcCORSAccessCheck(mediaElement.currentSrc()))
     , m_maybePrintCORSMessage(!m_passesCurrentSrcCORSAccessCheck)
-    , m_currentSrcString(mediaElement.currentSrc().string())
+    , m_currentSrcString(mediaElement.currentSrc().getString())
 {
     ASSERT(isMainThread());
     // Default to stereo. This could change depending on what the media element
@@ -75,7 +74,7 @@ void MediaElementAudioSourceHandler::setFormat(size_t numberOfChannels, float so
     if (numberOfChannels != m_sourceNumberOfChannels || sourceSampleRate != m_sourceSampleRate) {
         if (!numberOfChannels || numberOfChannels > AbstractAudioContext::maxNumberOfChannels() || !AudioUtilities::isValidAudioBufferSampleRate(sourceSampleRate)) {
             // process() will generate silence for these uninitialized values.
-            WTF_LOG(Media, "MediaElementAudioSourceNode::setFormat(%u, %f) - unhandled format change", static_cast<unsigned>(numberOfChannels), sourceSampleRate);
+            DLOG(ERROR) << "setFormat(" << numberOfChannels << ", " << sourceSampleRate << ") - unhandled format change";
             // Synchronize with process().
             Locker<MediaElementAudioSourceHandler> locker(*this);
             m_sourceNumberOfChannels = 0;
@@ -92,10 +91,10 @@ void MediaElementAudioSourceHandler::setFormat(size_t numberOfChannels, float so
 
         if (sourceSampleRate != sampleRate()) {
             double scaleFactor = sourceSampleRate / sampleRate();
-            m_multiChannelResampler = adoptPtr(new MultiChannelResampler(scaleFactor, numberOfChannels));
+            m_multiChannelResampler = wrapUnique(new MultiChannelResampler(scaleFactor, numberOfChannels));
         } else {
             // Bypass resampling.
-            m_multiChannelResampler.clear();
+            m_multiChannelResampler.reset();
         }
 
         {
@@ -129,19 +128,19 @@ void MediaElementAudioSourceHandler::onCurrentSrcChanged(const KURL& currentSrc)
     // message.  Need to wait until later to print the message in case HTMLMediaElement allows
     // access.
     m_maybePrintCORSMessage = !m_passesCurrentSrcCORSAccessCheck;
-    m_currentSrcString = currentSrc.string();
+    m_currentSrcString = currentSrc.getString();
 }
 
 bool MediaElementAudioSourceHandler::passesCurrentSrcCORSAccessCheck(const KURL& currentSrc)
 {
     ASSERT(isMainThread());
-    return context()->securityOrigin() && context()->securityOrigin()->canRequest(currentSrc);
+    return context()->getSecurityOrigin() && context()->getSecurityOrigin()->canRequest(currentSrc);
 }
 
 void MediaElementAudioSourceHandler::printCORSMessage(const String& message)
 {
-    if (context()->executionContext()) {
-        context()->executionContext()->addConsoleMessage(
+    if (context()->getExecutionContext()) {
+        context()->getExecutionContext()->addConsoleMessage(
             ConsoleMessage::create(SecurityMessageSource, InfoMessageLevel,
                 "MediaElementAudioSource outputs zeroes due to CORS access restrictions for " + message));
     }
@@ -160,7 +159,7 @@ void MediaElementAudioSourceHandler::process(size_t numberOfFrames)
             outputBus->zero();
             return;
         }
-        AudioSourceProvider& provider = mediaElement()->audioSourceProvider();
+        AudioSourceProvider& provider = mediaElement()->getAudioSourceProvider();
         // Grab data from the provider so that the element continues to make progress, even if
         // we're going to output silence anyway.
         if (m_multiChannelResampler.get()) {
@@ -177,11 +176,9 @@ void MediaElementAudioSourceHandler::process(size_t numberOfFrames)
                 // Print a CORS message, but just once for each change in the current media
                 // element source, and only if we have a document to print to.
                 m_maybePrintCORSMessage = false;
-                if (context()->executionContext()) {
-                    context()->executionContext()->postTask(BLINK_FROM_HERE,
-                        createCrossThreadTask(&MediaElementAudioSourceHandler::printCORSMessage,
-                            this,
-                            m_currentSrcString));
+                if (context()->getExecutionContext()) {
+                    context()->getExecutionContext()->postTask(BLINK_FROM_HERE,
+                        createCrossThreadTask(&MediaElementAudioSourceHandler::printCORSMessage, PassRefPtr<MediaElementAudioSourceHandler>(this), m_currentSrcString));
                 }
             }
             outputBus->zero();
@@ -210,9 +207,32 @@ MediaElementAudioSourceNode::MediaElementAudioSourceNode(AbstractAudioContext& c
     setHandler(MediaElementAudioSourceHandler::create(*this, mediaElement));
 }
 
-MediaElementAudioSourceNode* MediaElementAudioSourceNode::create(AbstractAudioContext& context, HTMLMediaElement& mediaElement)
+MediaElementAudioSourceNode* MediaElementAudioSourceNode::create(AbstractAudioContext& context, HTMLMediaElement& mediaElement, ExceptionState& exceptionState)
 {
-    return new MediaElementAudioSourceNode(context, mediaElement);
+    DCHECK(isMainThread());
+
+    if (context.isContextClosed()) {
+        context.throwExceptionForClosedState(exceptionState);
+        return nullptr;
+    }
+
+    // First check if this media element already has a source node.
+    if (mediaElement.audioSourceNode()) {
+        exceptionState.throwDOMException(
+            InvalidStateError,
+            "HTMLMediaElement already connected previously to a different MediaElementSourceNode.");
+        return nullptr;
+    }
+
+    MediaElementAudioSourceNode* node = new MediaElementAudioSourceNode(context, mediaElement);
+
+    if (node) {
+        mediaElement.setAudioSourceNode(node);
+        // context keeps reference until node is disconnected
+        context.notifySourceNodeStartedProcessing(node);
+    }
+
+    return node;
 }
 
 DEFINE_TRACE(MediaElementAudioSourceNode)

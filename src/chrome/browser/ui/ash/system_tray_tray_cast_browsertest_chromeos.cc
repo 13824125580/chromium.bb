@@ -2,25 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/common/system/cast/tray_cast.h"
+#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/system/tray/system_tray_item.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/system/cast/tray_cast.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
-#include "ash/system/tray/system_tray_item.h"
 #include "ash/test/tray_cast_test_api.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/process_manager.h"
+#include "extensions/common/feature_switch.h"
 
 namespace {
 
 // Execute JavaScript within the context of the extension. Returns the result
 // of the execution.
-scoped_ptr<base::Value> ExecuteJavaScript(
+std::unique_ptr<base::Value> ExecuteJavaScript(
     const extensions::Extension* extension,
     const std::string& javascript) {
   extensions::ProcessManager* pm =
@@ -31,7 +34,7 @@ scoped_ptr<base::Value> ExecuteJavaScript(
 }
 
 // Returns the current value within a global JavaScript variable.
-scoped_ptr<base::Value> GetJavaScriptVariable(
+std::unique_ptr<base::Value> GetJavaScriptVariable(
     const extensions::Extension* extension,
     const std::string& variable) {
   return ExecuteJavaScript(extension,
@@ -41,14 +44,16 @@ scoped_ptr<base::Value> GetJavaScriptVariable(
 bool GetJavaScriptStringVariable(const extensions::Extension* extension,
                                  const std::string& variable,
                                  std::string* result) {
-  scoped_ptr<base::Value> value = GetJavaScriptVariable(extension, variable);
+  std::unique_ptr<base::Value> value =
+      GetJavaScriptVariable(extension, variable);
   return value->GetAsString(result);
 }
 
 bool GetJavaScriptBooleanVariable(const extensions::Extension* extension,
                                   const std::string& variable,
                                   bool* result) {
-  scoped_ptr<base::Value> value = GetJavaScriptVariable(extension, variable);
+  std::unique_ptr<base::Value> value =
+      GetJavaScriptVariable(extension, variable);
   return value->GetAsBoolean(result);
 }
 
@@ -68,9 +73,8 @@ bool StartCastWithVerification(const extensions::Extension* extension,
 
   // We will simulate a button click in the detail view to begin the cast, so we
   // need to make a detail view available.
-  scoped_ptr<views::View> detailed_view =
-      make_scoped_ptr(system_tray_item->CreateDetailedView(
-          ash::user::LoginStatus::LOGGED_IN_USER));
+  std::unique_ptr<views::View> detailed_view = base::WrapUnique(
+      system_tray_item->CreateDetailedView(ash::LoginStatus::USER));
 
   // Clear out any old state and execute any pending JS calls created from the
   // CreateDetailedView call.
@@ -129,11 +133,21 @@ class SystemTrayTrayCastChromeOSTest : public ExtensionBrowserTest {
   SystemTrayTrayCastChromeOSTest() : ExtensionBrowserTest() {}
   ~SystemTrayTrayCastChromeOSTest() override {}
 
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // SystemTrayTrayCastChromeOSTest tests the behavior of the system tray
+    // without Media Router, so we explicitly disable it.
+    ExtensionBrowserTest::SetUpCommandLine(command_line);
+    override_media_router_.reset(new extensions::FeatureSwitch::ScopedOverride(
+        extensions::FeatureSwitch::media_router(), false));
+  }
+
   const extensions::Extension* LoadCastTestExtension() {
     return LoadExtension(test_data_dir_.AppendASCII("tray_cast"));
   }
 
  private:
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride>
+      override_media_router_;
   DISALLOW_COPY_AND_ASSIGN(SystemTrayTrayCastChromeOSTest);
 };
 
@@ -145,9 +159,8 @@ namespace chromeos {
 // recognizes the cast extension.
 IN_PROC_BROWSER_TEST_F(SystemTrayTrayCastChromeOSTest,
                        CastTraySanityCheckTestExtensionGetsRecognized) {
-  ash::CastConfigDelegate* cast_config_delegate = ash::Shell::GetInstance()
-                                                      ->system_tray_delegate()
-                                                      ->GetCastConfigDelegate();
+  ash::CastConfigDelegate* cast_config_delegate =
+      ash::WmShell::Get()->system_tray_delegate()->GetCastConfigDelegate();
 
   EXPECT_FALSE(cast_config_delegate->HasCastExtension());
   const extensions::Extension* extension = LoadCastTestExtension();
@@ -270,9 +283,8 @@ IN_PROC_BROWSER_TEST_F(SystemTrayTrayCastChromeOSTest,
 IN_PROC_BROWSER_TEST_F(SystemTrayTrayCastChromeOSTest, CastTrayOpenOptions) {
   const extensions::Extension* extension = LoadCastTestExtension();
 
-  ash::CastConfigDelegate* cast_config_delegate = ash::Shell::GetInstance()
-                                                      ->system_tray_delegate()
-                                                      ->GetCastConfigDelegate();
+  ash::CastConfigDelegate* cast_config_delegate =
+      ash::WmShell::Get()->system_tray_delegate()->GetCastConfigDelegate();
   cast_config_delegate->LaunchCastOptions();
 
   const GURL url =

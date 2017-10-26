@@ -38,12 +38,12 @@ namespace blink {
 
 using namespace HTMLNames;
 
-PassRefPtrWillBeRawPtr<HTMLContentElement> HTMLContentElement::create(Document& document, PassOwnPtrWillBeRawPtr<HTMLContentSelectFilter> filter)
+HTMLContentElement* HTMLContentElement::create(Document& document, HTMLContentSelectFilter* filter)
 {
-    return adoptRefWillBeNoop(new HTMLContentElement(document, filter));
+    return new HTMLContentElement(document, filter);
 }
 
-inline HTMLContentElement::HTMLContentElement(Document& document, PassOwnPtrWillBeRawPtr<HTMLContentSelectFilter> filter)
+inline HTMLContentElement::HTMLContentElement(Document& document, HTMLContentSelectFilter* filter)
     : InsertionPoint(contentTag, document)
     , m_shouldParseSelect(false)
     , m_isValidSelector(true)
@@ -65,7 +65,7 @@ void HTMLContentElement::parseSelect()
 {
     ASSERT(m_shouldParseSelect);
 
-    m_selectorList = CSSParser::parseSelector(CSSParserContext(document(), 0), nullptr, m_select);
+    m_selectorList = CSSParser::parseSelector(CSSParserContext(document(), nullptr), nullptr, m_select);
     m_shouldParseSelect = false;
     m_isValidSelector = validateSelect();
     if (!m_isValidSelector)

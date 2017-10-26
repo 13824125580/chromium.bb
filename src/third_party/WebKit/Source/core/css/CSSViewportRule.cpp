@@ -45,10 +45,6 @@ CSSViewportRule::CSSViewportRule(StyleRuleViewport* viewportRule, CSSStyleSheet*
 
 CSSViewportRule::~CSSViewportRule()
 {
-#if !ENABLE(OILPAN)
-    if (m_propertiesCSSOMWrapper)
-        m_propertiesCSSOMWrapper->clearParentRule();
-#endif
 }
 
 CSSStyleDeclaration* CSSViewportRule::style() const
@@ -62,7 +58,7 @@ CSSStyleDeclaration* CSSViewportRule::style() const
 String CSSViewportRule::cssText() const
 {
     StringBuilder result;
-    result.appendLiteral("@viewport { ");
+    result.append("@viewport { ");
 
     String decls = m_viewportRule->properties().asText();
     result.append(decls);

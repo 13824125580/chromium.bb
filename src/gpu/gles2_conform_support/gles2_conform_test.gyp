@@ -15,15 +15,24 @@
      ],
      'variables': {
        'clang_warning_flags': [
-         # Many struct initializers in the GTF_ES code are missing braces.
-         '-Wno-missing-braces',
-         # A few variables are unitialized if GLVersion != 2.0.
-         '-Wno-sometimes-uninitialized',
-         # GTFVecBase.h contains static no-inline functions in a header :-/
-         '-Wno-unused-function',
+         '-Wno-array-bounds',
          # There are some implicit conversions from "int" to "char" in
          # GTFExtensionTestSurfacelessContext.c.
          '-Wno-constant-conversion',
+         '-Wno-implicit-function-declaration',
+         '-Wno-incompatible-pointer-types',
+         '-Wno-logical-op-parentheses',
+         # Many struct initializers in the GTF_ES code are missing braces.
+         '-Wno-missing-braces',
+         '-Wno-parentheses-equality',
+         '-Wno-pointer-sign',
+         '-Wno-return-type',
+         '-Wno-sizeof-pointer-memaccess',
+         # A few variables are unitialized if GLVersion != 2.0.
+         '-Wno-sometimes-uninitialized',
+         '-Wno-tautological-compare',
+         # GTFVecBase.h contains static no-inline functions in a header :-/
+         '-Wno-unused-function',
        ],
      },
   },
@@ -124,18 +133,6 @@
                 [ 'chromeos==0', {
                   'dependencies': ['../../build/linux/system.gyp:gtk2']
                 }],
-                [ 'clang==1', {
-                  'cflags': [
-                    '-Wno-array-bounds',
-                    '-Wno-implicit-function-declaration',
-                    '-Wno-incompatible-pointer-types',
-                    '-Wno-parentheses-equality',
-                    '-Wno-pointer-sign',
-                    '-Wno-return-type',
-                    '-Wno-sizeof-pointer-memaccess',
-                    '-Wno-tautological-compare'
-                  ]
-                }]
               ],
             }],
             ['OS=="win"', {
@@ -162,16 +159,6 @@
               ],
               'conditions': [
                 [ 'clang==1', {
-                  'cflags': [
-                    '-Wno-pointer-sign',
-                    '-Wno-array-bounds',
-                    '-Wno-sizeof-pointer-memaccess',
-                    '-Wno-implicit-function-declaration',
-                    '-Wno-logical-op-parentheses',
-                    '-Wno-tautological-compare',
-                    '-Wno-parentheses-equality',
-                    '-Wno-return-type',
-                  ],
                   'xcode_settings': {
                     'LD': 'clang++',
                     'WARNING_CFLAGS': [
@@ -195,6 +182,9 @@
           ],
           'sources': [
             '<@(gtf_es_sources)',
+            '<@(gl2_extension_test_sources)',
+            '<@(gl2_fixed_test_sources)',
+            '<@(gl2_test_sources)',
             # Include a dummy c++ file to force linking of libstdc++.
             '<(DEPTH)/gpu/gles2_conform_support/dummy.cc',
           ],
@@ -233,6 +223,9 @@
           ],
           'sources': [
             '<@(gtf_es_sources)',
+            '<@(gl2_extension_test_sources)',
+            '<@(gl2_fixed_test_sources)',
+            '<@(gl2_test_sources)',
           ],
         },
       ],
@@ -259,6 +252,9 @@
           ],
           'sources': [
             '<@(gtf_es_sources)',
+            '<@(gl2_extension_test_sources)',
+            '<@(gl2_fixed_test_sources)',
+            '<@(gl2_test_sources)',
           ],
         },
       ],

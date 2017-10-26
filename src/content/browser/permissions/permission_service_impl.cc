@@ -12,6 +12,9 @@
 #include "content/public/browser/permission_manager.h"
 #include "content/public/browser/permission_type.h"
 
+using blink::mojom::PermissionName;
+using blink::mojom::PermissionStatus;
+
 namespace content {
 
 namespace {
@@ -36,6 +39,8 @@ PermissionType PermissionNameToPermissionType(PermissionName name) {
       return PermissionType::AUDIO_CAPTURE;
     case PermissionName::VIDEO_CAPTURE:
       return PermissionType::VIDEO_CAPTURE;
+    case PermissionName::BACKGROUND_SYNC:
+      return PermissionType::BACKGROUND_SYNC;
   }
 
   NOTREACHED();
@@ -45,8 +50,8 @@ PermissionType PermissionNameToPermissionType(PermissionName name) {
 // This function allows the usage of the the multiple request map
 // with single requests.
 void PermissionRequestResponseCallbackWrapper(
-    const mojo::Callback<void(PermissionStatus)>& callback,
-    const mojo::Array<PermissionStatus>& vector) {
+    const base::Callback<void(PermissionStatus)>& callback,
+    mojo::Array<PermissionStatus> vector) {
   DCHECK_EQ(vector.size(), 1ul);
   callback.Run(vector[0]);
 }
@@ -54,7 +59,7 @@ void PermissionRequestResponseCallbackWrapper(
 } // anonymous namespace
 
 PermissionServiceImpl::PendingRequest::PendingRequest(
-    const PermissionsStatusCallback& callback,
+    const RequestPermissionsCallback& callback,
     int request_count)
     : callback(callback),
       request_count(request_count) {
@@ -88,7 +93,7 @@ PermissionServiceImpl::PendingSubscription::~PendingSubscription() {
 
 PermissionServiceImpl::PermissionServiceImpl(
     PermissionServiceContext* context,
-    mojo::InterfaceRequest<PermissionService> request)
+    mojo::InterfaceRequest<blink::mojom::PermissionService> request)
     : context_(context),
       binding_(this, std::move(request)),
       weak_factory_(this) {
@@ -102,6 +107,7 @@ PermissionServiceImpl::~PermissionServiceImpl() {
 }
 
 void PermissionServiceImpl::OnConnectionError() {
+  CancelPendingOperations();
   context_->ServiceHadConnectionError(this);
   // After that call, |this| will be deleted.
 }
@@ -109,6 +115,7 @@ void PermissionServiceImpl::OnConnectionError() {
 void PermissionServiceImpl::RequestPermission(
     PermissionName permission,
     const mojo::String& origin,
+    bool user_gesture,
     const PermissionStatusCallback& callback) {
   // This condition is valid if the call is coming from a ChildThread instead of
   // a RenderFrame. Some consumers of the service run in Workers and some in
@@ -148,13 +155,14 @@ void PermissionServiceImpl::OnRequestPermissionResponse(
     int pending_request_id,
     PermissionStatus status) {
   OnRequestPermissionsResponse(pending_request_id,
-      std::vector<PermissionStatus>(1, status));
+                               std::vector<PermissionStatus>(1, status));
 }
 
 void PermissionServiceImpl::RequestPermissions(
     mojo::Array<PermissionName> permissions,
     const mojo::String& origin,
-    const PermissionsStatusCallback& callback) {
+    bool user_gesture,
+    const RequestPermissionsCallback& callback) {
   if (permissions.is_null()) {
     callback.Run(mojo::Array<PermissionStatus>());
     return;
@@ -207,8 +215,8 @@ void PermissionServiceImpl::OnRequestPermissionsResponse(
     int pending_request_id,
     const std::vector<PermissionStatus>& result) {
   PendingRequest* request = pending_requests_.Lookup(pending_request_id);
-  PermissionsStatusCallback callback(request->callback);
-  request->callback.reset();
+  RequestPermissionsCallback callback(request->callback);
+  request->callback.Reset();
   pending_requests_.Remove(pending_request_id);
   callback.Run(mojo::Array<PermissionStatus>::From(result));
 }
@@ -234,7 +242,7 @@ void PermissionServiceImpl::CancelPendingOperations() {
           it(&pending_subscriptions_); !it.IsAtEnd(); it.Advance()) {
     it.GetCurrentValue()->callback.Run(GetPermissionStatusFromType(
         it.GetCurrentValue()->permission, it.GetCurrentValue()->origin));
-    it.GetCurrentValue()->callback.reset();
+    it.GetCurrentValue()->callback.Reset();
     permission_manager->UnsubscribePermissionStatusChange(
         it.GetCurrentValue()->id);
   }
@@ -254,8 +262,8 @@ void PermissionServiceImpl::RevokePermission(
     const PermissionStatusCallback& callback) {
   GURL origin_url(origin.get());
   PermissionType permission_type = PermissionNameToPermissionType(permission);
-  PermissionStatus status = GetPermissionStatusFromType(permission_type,
-                                                        origin_url);
+  PermissionStatus status =
+      GetPermissionStatusFromType(permission_type, origin_url);
 
   // Resetting the permission should only be possible if the permission is
   // already granted.
@@ -311,13 +319,15 @@ void PermissionServiceImpl::GetNextPermissionChange(
 }
 
 PermissionStatus PermissionServiceImpl::GetPermissionStatusFromName(
-    PermissionName permission, const GURL& origin) {
+    PermissionName permission,
+    const GURL& origin) {
   return GetPermissionStatusFromType(PermissionNameToPermissionType(permission),
                                      origin);
 }
 
 PermissionStatus PermissionServiceImpl::GetPermissionStatusFromType(
-    PermissionType type, const GURL& origin) {
+    PermissionType type,
+    const GURL& origin) {
   BrowserContext* browser_context = context_->GetBrowserContext();
   DCHECK(browser_context);
   if (!browser_context->GetPermissionManager())
@@ -357,7 +367,7 @@ void PermissionServiceImpl::OnPermissionStatusChanged(
 
   PermissionStatusCallback callback = subscription->callback;
 
-  subscription->callback.reset();
+  subscription->callback.Reset();
   pending_subscriptions_.Remove(pending_subscription_id);
 
   callback.Run(status);

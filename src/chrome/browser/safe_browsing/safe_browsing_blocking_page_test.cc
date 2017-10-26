@@ -22,8 +22,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/local_database_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_blocking_page.h"
-#include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/safe_browsing/safe_browsing_util.h"
+#include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/browser/safe_browsing/threat_details.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -32,11 +31,11 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing_db/database_manager.h"
 #include "components/safe_browsing_db/test_database_manager.h"
+#include "components/safe_browsing_db/util.h"
 #include "components/security_interstitials/core/controller_client.h"
 #include "components/security_interstitials/core/metrics_helper.h"
 #include "content/public/browser/interstitial_page.h"
@@ -137,10 +136,12 @@ class FakeSafeBrowsingDatabaseManager : public TestSafeBrowsingDatabaseManager {
 };
 
 // A SafeBrowingUIManager class that allows intercepting malware details.
-class FakeSafeBrowsingUIManager :  public SafeBrowsingUIManager {
+class FakeSafeBrowsingUIManager : public TestSafeBrowsingUIManager {
  public:
+  FakeSafeBrowsingUIManager()
+      : TestSafeBrowsingUIManager(), threat_details_done_(false) {}
   explicit FakeSafeBrowsingUIManager(SafeBrowsingService* service)
-      : SafeBrowsingUIManager(service), threat_details_done_(false) {}
+      : TestSafeBrowsingUIManager(service), threat_details_done_(false) {}
 
   // Overrides SafeBrowsingUIManager
   void SendSerializedThreatDetails(const std::string& serialized) override {
@@ -186,68 +187,6 @@ class FakeSafeBrowsingUIManager :  public SafeBrowsingUIManager {
   bool threat_details_done_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeSafeBrowsingUIManager);
-};
-
-class FakeSafeBrowsingService : public SafeBrowsingService {
- public:
-  FakeSafeBrowsingService()
-      : fake_database_manager_(),
-        fake_ui_manager_() { }
-
-  // Returned pointer has the same lifespan as the database_manager_ refcounted
-  // object.
-  FakeSafeBrowsingDatabaseManager* fake_database_manager() {
-    return fake_database_manager_;
-  }
-  // Returned pointer has the same lifespan as the ui_manager_ refcounted
-  // object.
-  FakeSafeBrowsingUIManager* fake_ui_manager() {
-    return fake_ui_manager_;
-  }
-
- protected:
-  ~FakeSafeBrowsingService() override {}
-
-  SafeBrowsingDatabaseManager* CreateDatabaseManager() override {
-    fake_database_manager_ = new FakeSafeBrowsingDatabaseManager();
-    return fake_database_manager_;
-  }
-
-  SafeBrowsingUIManager* CreateUIManager() override {
-    fake_ui_manager_ = new FakeSafeBrowsingUIManager(this);
-    return fake_ui_manager_;
-  }
-
-  SafeBrowsingProtocolManagerDelegate* GetProtocolManagerDelegate() override {
-    // Our SafeBrowsingDatabaseManager doesn't implement this delegate.
-    return NULL;
-  }
-
- private:
-  FakeSafeBrowsingDatabaseManager* fake_database_manager_;
-  FakeSafeBrowsingUIManager* fake_ui_manager_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeSafeBrowsingService);
-};
-
-// Factory that creates FakeSafeBrowsingService instances.
-class TestSafeBrowsingServiceFactory : public SafeBrowsingServiceFactory {
- public:
-  TestSafeBrowsingServiceFactory() :
-      most_recent_service_(NULL) { }
-  ~TestSafeBrowsingServiceFactory() override {}
-
-  SafeBrowsingService* CreateSafeBrowsingService() override {
-    most_recent_service_ =  new FakeSafeBrowsingService();
-    return most_recent_service_;
-  }
-
-  FakeSafeBrowsingService* most_recent_service() const {
-    return most_recent_service_;
-  }
-
- private:
-  FakeSafeBrowsingService* most_recent_service_;
 };
 
 }  // namespace
@@ -343,6 +282,10 @@ class SafeBrowsingBlockingPageBrowserTest
   SafeBrowsingBlockingPageBrowserTest() {}
 
   void SetUp() override {
+    // Test UI manager and test database manager should be set before
+    // InProcessBrowserTest::SetUp().
+    factory_.SetTestUIManager(new FakeSafeBrowsingUIManager());
+    factory_.SetTestDatabaseManager(new FakeSafeBrowsingDatabaseManager());
     SafeBrowsingService::RegisterFactory(&factory_);
     SafeBrowsingBlockingPage::RegisterFactory(&blocking_page_factory_);
     ThreatDetails::RegisterFactory(&details_factory_);
@@ -368,12 +311,12 @@ class SafeBrowsingBlockingPageBrowserTest
   }
 
   void SetURLThreatType(const GURL& url, SBThreatType threat_type) {
-    FakeSafeBrowsingService* service =
-        static_cast<FakeSafeBrowsingService*>(
-            g_browser_process->safe_browsing_service());
-
+    TestSafeBrowsingService* service = factory_.test_safe_browsing_service();
     ASSERT_TRUE(service);
-    service->fake_database_manager()->SetURLThreatType(url, threat_type);
+
+    static_cast<FakeSafeBrowsingDatabaseManager*>(
+        service->database_manager().get())
+        ->SetURLThreatType(url, threat_type);
   }
 
   // Adds a safebrowsing result of the current test threat to the fake
@@ -450,13 +393,15 @@ class SafeBrowsingBlockingPageBrowserTest
   }
 
   void SetReportSentCallback(const base::Closure& callback) {
-    factory_.most_recent_service()
-        ->fake_ui_manager()
+    static_cast<FakeSafeBrowsingUIManager*>(
+        factory_.test_safe_browsing_service()->ui_manager().get())
         ->set_threat_details_done_callback(callback);
   }
 
   std::string GetReportSent() {
-    return factory_.most_recent_service()->fake_ui_manager()->GetReport();
+    return static_cast<FakeSafeBrowsingUIManager*>(
+               factory_.test_safe_browsing_service()->ui_manager().get())
+        ->GetReport();
   }
 
   void MalwareRedirectCancelAndProceed(const std::string& open_function) {
@@ -510,7 +455,7 @@ class SafeBrowsingBlockingPageBrowserTest
     if (!rfh)
       return VISIBILITY_ERROR;
 
-    scoped_ptr<base::Value> value = content::ExecuteScriptAndGetValue(
+    std::unique_ptr<base::Value> value = content::ExecuteScriptAndGetValue(
         rfh, "var node = document.getElementById('" + node_id +
                  "');\n"
                  "if (node)\n"
@@ -622,14 +567,6 @@ IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, RedirectCanceled) {
 }
 
 IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, DontProceed) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (https://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    return;
-  }
-#endif
-
   SetupWarningAndNavigate();
 
   EXPECT_EQ(VISIBLE, GetVisibility("primary-button"));
@@ -657,14 +594,6 @@ IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, Proceed) {
 }
 
 IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, IframeDontProceed) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (https://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    return;
-  }
-#endif
-
   SetupThreatIframeWarningAndNavigate();
 
   EXPECT_EQ(VISIBLE, GetVisibility("primary-button"));
@@ -868,14 +797,6 @@ IN_PROC_BROWSER_TEST_P(
 // by the corresponding policy. Also verifies that sending the "proceed"
 // command anyway doesn't advance to the unsafe site.
 IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, ProceedDisabled) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (https://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    return;
-  }
-#endif
-
   // Simulate a policy disabling the "proceed anyway" link.
   browser()->profile()->GetPrefs()->SetBoolean(
       prefs::kSafeBrowsingProceedAnywayDisabled, true);
@@ -901,14 +822,6 @@ IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, ProceedDisabled) {
 // TODO(mattm): Should also verify that no report is sent, but there isn't a
 // good way to do that in the current design.
 IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, ReportingDisabled) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (https://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    return;
-  }
-#endif
-
   browser()->profile()->GetPrefs()->SetBoolean(
       prefs::kSafeBrowsingExtendedReportingEnabled, true);
 
@@ -920,14 +833,6 @@ IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, ReportingDisabled) {
 // disabled by policy.
 IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest,
                        ReportingDisabledByPolicy) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (https://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    return;
-  }
-#endif
-
   browser()->profile()->GetPrefs()->SetBoolean(
       prefs::kSafeBrowsingExtendedReportingEnabled, true);
   browser()->profile()->GetPrefs()->SetBoolean(
@@ -952,14 +857,6 @@ IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest, LearnMore) {
 
 IN_PROC_BROWSER_TEST_P(SafeBrowsingBlockingPageBrowserTest,
                        Histograms_DontProceed) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (https://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    return;
-  }
-#endif
-
   base::HistogramTester histograms;
   std::string prefix;
   SBThreatType threat_type = testing::get<0>(GetParam());

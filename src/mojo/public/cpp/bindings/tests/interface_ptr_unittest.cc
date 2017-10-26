@@ -6,9 +6,9 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "mojo/message_pump/message_pump_mojo.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "mojo/public/interfaces/bindings/tests/math_calculator.mojom.h"
@@ -21,27 +21,7 @@ namespace mojo {
 namespace test {
 namespace {
 
-template <typename Method, typename Class>
-class RunnableImpl {
- public:
-  RunnableImpl(Method method, Class instance)
-      : method_(method), instance_(instance) {}
-  template <typename... Args>
-  void Run(Args... args) const {
-    (instance_->*method_)(args...);
-  }
-
- private:
-  Method method_;
-  Class instance_;
-};
-
-template <typename Method, typename Class>
-RunnableImpl<Method, Class> MakeRunnable(Method method, Class object) {
-  return RunnableImpl<Method, Class>(method, object);
-}
-
-typedef mojo::Callback<void(double)> CalcCallback;
+typedef base::Callback<void(double)> CalcCallback;
 
 class MathCalculatorImpl : public math::Calculator {
  public:
@@ -214,7 +194,7 @@ class IntegerAccessorImpl : public sample::IntegerAccessor {
 
 class InterfacePtrTest : public testing::Test {
  public:
-  InterfacePtrTest() : loop_(common::MessagePumpMojo::Create()) {}
+  InterfacePtrTest() {}
   ~InterfacePtrTest() override { loop_.RunUntilIdle(); }
 
   void PumpMessages() { loop_.RunUntilIdle(); }
@@ -222,6 +202,22 @@ class InterfacePtrTest : public testing::Test {
  private:
   base::MessageLoop loop_;
 };
+
+void SetFlagAndRunClosure(bool* flag, const base::Closure& closure) {
+  *flag = true;
+  closure.Run();
+}
+
+void IgnoreValueAndRunClosure(const base::Closure& closure, int32_t value) {
+  closure.Run();
+}
+
+void ExpectValueAndRunClosure(uint32_t expected_value,
+                              const base::Closure& closure,
+                              uint32_t value) {
+  EXPECT_EQ(expected_value, value);
+  closure.Run();
+}
 
 TEST_F(InterfacePtrTest, IsBound) {
   math::CalculatorPtr calc;
@@ -352,10 +348,8 @@ TEST_F(InterfacePtrTest, EncounteredErrorCallback) {
   bool encountered_error = false;
   base::RunLoop run_loop;
   proxy.set_connection_error_handler(
-      [&encountered_error, &run_loop]() {
-        encountered_error = true;
-        run_loop.Quit();
-      });
+      base::Bind(&SetFlagAndRunClosure, &encountered_error,
+                 run_loop.QuitClosure()));
 
   MathCalculatorUI calculator_ui(std::move(proxy));
 
@@ -419,12 +413,12 @@ TEST_F(InterfacePtrTest, ReentrantWaitForIncomingMethodCall) {
   ReentrantServiceImpl impl(GetProxy(&proxy));
 
   base::RunLoop run_loop, run_loop2;
-  auto called_cb = [&run_loop](int32_t result) { run_loop.Quit(); };
-  auto called_cb2 = [&run_loop2](int32_t result) { run_loop2.Quit(); };
   proxy->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                   called_cb);
+                   base::Bind(&IgnoreValueAndRunClosure,
+                              run_loop.QuitClosure()));
   proxy->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                   called_cb2);
+                   base::Bind(&IgnoreValueAndRunClosure,
+                              run_loop2.QuitClosure()));
 
   run_loop.Run();
   run_loop2.Run();
@@ -440,12 +434,8 @@ TEST_F(InterfacePtrTest, QueryVersion) {
   EXPECT_EQ(0u, ptr.version());
 
   base::RunLoop run_loop;
-  auto callback = [&run_loop](uint32_t version) {
-    EXPECT_EQ(3u, version);
-    run_loop.Quit();
-  };
-  ptr.QueryVersion(callback);
-
+  ptr.QueryVersion(base::Bind(&ExpectValueAndRunClosure, 3u,
+                              run_loop.QuitClosure()));
   run_loop.Run();
 
   EXPECT_EQ(3u, ptr.version());
@@ -500,7 +490,7 @@ class StrongMathCalculatorImpl : public math::Calculator {
         closure_(closure),
         binding_(this, std::move(handle)) {
     binding_.set_connection_error_handler(
-        [this]() { *error_received_ = true; closure_.Run(); });
+        base::Bind(&SetFlagAndRunClosure, error_received_, closure_));
   }
   ~StrongMathCalculatorImpl() override { *destroyed_ = true; }
 
@@ -527,7 +517,7 @@ class StrongMathCalculatorImpl : public math::Calculator {
 };
 
 TEST(StrongConnectorTest, Math) {
-  base::MessageLoop loop(common::MessagePumpMojo::Create());
+  base::MessageLoop loop;
 
   bool error_received = false;
   bool destroyed = false;
@@ -574,7 +564,7 @@ class WeakMathCalculatorImpl : public math::Calculator {
         closure_(closure),
         binding_(this, std::move(handle)) {
     binding_.set_connection_error_handler(
-        [this]() { *error_received_ = true; closure_.Run(); });
+        base::Bind(&SetFlagAndRunClosure, error_received_, closure_));
   }
   ~WeakMathCalculatorImpl() override { *destroyed_ = true; }
 
@@ -600,7 +590,7 @@ class WeakMathCalculatorImpl : public math::Calculator {
 };
 
 TEST(WeakConnectorTest, Math) {
-  base::MessageLoop loop(common::MessagePumpMojo::Create());
+  base::MessageLoop loop;
 
   bool error_received = false;
   bool destroyed = false;
@@ -712,6 +702,39 @@ TEST_F(InterfacePtrTest, Scoping) {
   EXPECT_FALSE(a_impl.d_called());
   run_loop.Run();
   EXPECT_TRUE(a_impl.d_called());
+}
+
+class PingTestImpl : public sample::PingTest {
+ public:
+  explicit PingTestImpl(InterfaceRequest<sample::PingTest> request)
+      : binding_(this, std::move(request)) {}
+  ~PingTestImpl() override {}
+
+ private:
+  // sample::PingTest:
+  void Ping(const PingCallback& callback) override { callback.Run(); }
+
+  Binding<sample::PingTest> binding_;
+};
+
+// Tests that FuseProxy does what it's supposed to do.
+TEST_F(InterfacePtrTest, Fusion) {
+  sample::PingTestPtr proxy;
+  PingTestImpl impl(GetProxy(&proxy));
+
+  // Create another PingTest pipe.
+  sample::PingTestPtr ptr;
+  sample::PingTestRequest request = GetProxy(&ptr);
+
+  // Fuse the new pipe to the one hanging off |impl|.
+  EXPECT_TRUE(FuseInterface(std::move(request), proxy.PassInterface()));
+
+  // Ping!
+  bool called = false;
+  base::RunLoop loop;
+  ptr->Ping(base::Bind(&SetFlagAndRunClosure, &called, loop.QuitClosure()));
+  loop.Run();
+  EXPECT_TRUE(called);
 }
 
 }  // namespace

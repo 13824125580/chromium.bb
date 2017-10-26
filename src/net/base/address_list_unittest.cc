@@ -6,6 +6,7 @@
 
 #include "base/strings/string_util.h"
 #include "base/sys_byteorder.h"
+#include "net/base/ip_address.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/sys_addrinfo.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -51,7 +52,7 @@ TEST(AddressListTest, CreateFromAddrinfo) {
         reinterpret_cast<struct sockaddr_in*>(storage[i].addr);
     storage[i].addr_len = sizeof(struct sockaddr_in);
     // Populating the address with { i, i, i, i }.
-    memset(&addr->sin_addr, i, kIPv4AddressSize);
+    memset(&addr->sin_addr, i, IPAddress::kIPv4AddressSize);
     addr->sin_family = AF_INET;
     // Set port to i << 2;
     addr->sin_port = base::HostToNet16(static_cast<uint16_t>(i << 2));
@@ -122,9 +123,9 @@ TEST(AddressListTest, CreateFromIPAddressList) {
   // Construct a list of ip addresses.
   IPAddressList ip_list;
   for (size_t i = 0; i < arraysize(tests); ++i) {
-    IPAddressNumber ip_number;
-    ASSERT_TRUE(ParseIPLiteralToNumber(tests[i].ip_address, &ip_number));
-    ip_list.push_back(ip_number);
+    IPAddress ip_address;
+    ASSERT_TRUE(ip_address.AssignFromIPLiteral(tests[i].ip_address));
+    ip_list.push_back(ip_address);
   }
 
   AddressList test_list = AddressList::CreateFromIPAddressList(ip_list,

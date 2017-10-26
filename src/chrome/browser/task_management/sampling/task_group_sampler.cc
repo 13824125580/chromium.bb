@@ -26,11 +26,6 @@ base::ProcessMetrics* CreateProcessMetrics(base::ProcessHandle handle) {
 #endif
 }
 
-inline bool IsResourceRefreshEnabled(RefreshType refresh_type,
-                                     int refresh_flags) {
-  return (refresh_flags & refresh_type) != 0;
-}
-
 }  // namespace
 
 TaskGroupSampler::TaskGroupSampler(
@@ -65,7 +60,8 @@ TaskGroupSampler::TaskGroupSampler(
 void TaskGroupSampler::Refresh(int64_t refresh_flags) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  if (IsResourceRefreshEnabled(REFRESH_TYPE_CPU, refresh_flags)) {
+  if (TaskManagerObserver::IsResourceRefreshEnabled(REFRESH_TYPE_CPU,
+                                                    refresh_flags)) {
     base::PostTaskAndReplyWithResult(
         blocking_pool_runner_.get(),
         FROM_HERE,
@@ -73,7 +69,8 @@ void TaskGroupSampler::Refresh(int64_t refresh_flags) {
         on_cpu_refresh_callback_);
   }
 
-  if (IsResourceRefreshEnabled(REFRESH_TYPE_MEMORY, refresh_flags)) {
+  if (TaskManagerObserver::IsResourceRefreshEnabled(REFRESH_TYPE_MEMORY,
+                                                    refresh_flags)) {
     base::PostTaskAndReplyWithResult(
         blocking_pool_runner_.get(),
         FROM_HERE,
@@ -82,7 +79,8 @@ void TaskGroupSampler::Refresh(int64_t refresh_flags) {
   }
 
 #if defined(OS_MACOSX) || defined(OS_LINUX)
-  if (IsResourceRefreshEnabled(REFRESH_TYPE_IDLE_WAKEUPS, refresh_flags)) {
+  if (TaskManagerObserver::IsResourceRefreshEnabled(REFRESH_TYPE_IDLE_WAKEUPS,
+                                                    refresh_flags)) {
     base::PostTaskAndReplyWithResult(
         blocking_pool_runner_.get(),
         FROM_HERE,
@@ -92,7 +90,8 @@ void TaskGroupSampler::Refresh(int64_t refresh_flags) {
 #endif  // defined(OS_MACOSX) || defined(OS_LINUX)
 
 #if defined(OS_LINUX)
-  if (IsResourceRefreshEnabled(REFRESH_TYPE_FD_COUNT, refresh_flags)) {
+  if (TaskManagerObserver::IsResourceRefreshEnabled(REFRESH_TYPE_FD_COUNT,
+                                                    refresh_flags)) {
     base::PostTaskAndReplyWithResult(
         blocking_pool_runner_.get(),
         FROM_HERE,
@@ -101,7 +100,8 @@ void TaskGroupSampler::Refresh(int64_t refresh_flags) {
   }
 #endif  // defined(OS_LINUX)
 
-  if (IsResourceRefreshEnabled(REFRESH_TYPE_PRIORITY, refresh_flags)) {
+  if (TaskManagerObserver::IsResourceRefreshEnabled(REFRESH_TYPE_PRIORITY,
+                                                    refresh_flags)) {
     base::PostTaskAndReplyWithResult(
         blocking_pool_runner_.get(),
         FROM_HERE,
@@ -122,10 +122,18 @@ double TaskGroupSampler::RefreshCpuUsage() {
 MemoryUsageStats TaskGroupSampler::RefreshMemoryUsage() {
   DCHECK(worker_pool_sequenced_checker_.CalledOnValidSequencedThread());
 
-  // TODO(afakhry): Integrate Bruce's CL for faster retrieval of physical memory
-  // on Windows here.
-
   MemoryUsageStats memory_usage;
+#if defined(OS_MACOSX)
+  memory_usage.physical_bytes =
+      static_cast<int64_t>(process_metrics_->GetWorkingSetSize());
+
+  size_t private_bytes = 0;
+  size_t shared_bytes = 0;
+  if (process_metrics_->GetMemoryBytes(&private_bytes, &shared_bytes)) {
+    memory_usage.private_bytes = static_cast<int64_t>(private_bytes);
+    memory_usage.shared_bytes = static_cast<int64_t>(shared_bytes);
+  }
+#else
   // Refreshing the physical/private/shared memory at one shot.
   base::WorkingSetKBytes ws_usage;
   if (process_metrics_->GetWorkingSetKBytes(&ws_usage)) {
@@ -144,8 +152,13 @@ MemoryUsageStats TaskGroupSampler::RefreshMemoryUsage() {
         static_cast<int64_t>(process_metrics_->GetWorkingSetSize());
     memory_usage.physical_bytes -=
         static_cast<int64_t>(ws_usage.shareable * 1024);
-#endif
+#endif  // defined(OS_LINUX)
+
+#if defined(OS_CHROMEOS)
+    memory_usage.swapped_bytes = ws_usage.swapped * 1024;
+#endif  // defined(OS_CHROMEOS)
   }
+#endif  // defined(OS_MACOSX)
 
   return memory_usage;
 }

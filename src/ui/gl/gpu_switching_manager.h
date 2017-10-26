@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -32,7 +33,7 @@ class GL_EXPORT GpuSwitchingManager {
 
   // If no GPU is forced, return the original GpuPreference; otherwise, return
   // the forced GPU.
-  gfx::GpuPreference AdjustGpuPreference(gfx::GpuPreference gpu_preference);
+  gl::GpuPreference AdjustGpuPreference(gl::GpuPreference gpu_preference);
 
   // In the browser process, the value for this flag is computed the first time
   // this function is called.
@@ -64,7 +65,7 @@ class GL_EXPORT GpuSwitchingManager {
   void SwitchToDiscreteGpuMac();
 #endif  // OS_MACOSX
 
-  gfx::GpuPreference gpu_switching_option_;
+  gl::GpuPreference gpu_switching_option_;
   bool gpu_switching_option_set_;
 
   std::vector<uint32_t> vendor_ids_;
@@ -73,7 +74,7 @@ class GL_EXPORT GpuSwitchingManager {
   bool supports_dual_gpus_set_;
 
   struct PlatformSpecific;
-  scoped_ptr<PlatformSpecific> platform_specific_;
+  std::unique_ptr<PlatformSpecific> platform_specific_;
 
   base::ObserverList<GpuSwitchingObserver> observer_list_;
 

@@ -10,11 +10,10 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "mojo/message_pump/message_pump_mojo.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "mojo/public/cpp/system/macros.h"
 #include "mojo/public/interfaces/bindings/tests/sample_interfaces.mojom.h"
 #include "mojo/public/interfaces/bindings/tests/sample_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,7 +23,7 @@ namespace {
 
 class BindingTestBase : public testing::Test {
  public:
-  BindingTestBase() : loop_(common::MessagePumpMojo::Create()) {}
+  BindingTestBase() {}
   ~BindingTestBase() override {}
 
   base::MessageLoop& loop() { return loop_; }
@@ -32,7 +31,7 @@ class BindingTestBase : public testing::Test {
  private:
   base::MessageLoop loop_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(BindingTestBase);
+  DISALLOW_COPY_AND_ASSIGN(BindingTestBase);
 };
 
 class ServiceImpl : public sample::Service {
@@ -56,8 +55,23 @@ class ServiceImpl : public sample::Service {
 
   bool* const was_deleted_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(ServiceImpl);
+  DISALLOW_COPY_AND_ASSIGN(ServiceImpl);
 };
+
+template <typename... Args>
+void DoSetFlagAndRunClosure(bool* flag,
+                            const base::Closure& closure,
+                            Args... args) {
+  *flag = true;
+  closure.Run();
+}
+
+template <typename... Args>
+base::Callback<void(Args...)> SetFlagAndRunClosure(
+    bool* flag,
+    const base::Closure& callback = base::Closure()) {
+  return base::Bind(&DoSetFlagAndRunClosure<Args...>, flag, callback);
+}
 
 // BindingTest -----------------------------------------------------------------
 
@@ -68,10 +82,8 @@ TEST_F(BindingTest, Close) {
   sample::ServicePtr ptr;
   auto request = GetProxy(&ptr);
   base::RunLoop run_loop;
-  ptr.set_connection_error_handler([&called, &run_loop]() {
-    called = true;
-    run_loop.Quit();
-  });
+  ptr.set_connection_error_handler(
+      SetFlagAndRunClosure(&called, run_loop.QuitClosure()));
   ServiceImpl impl;
   Binding<sample::Service> binding(&impl, std::move(request));
 
@@ -89,20 +101,14 @@ TEST_F(BindingTest, DestroyClosesMessagePipe) {
   auto request = GetProxy(&ptr);
   base::RunLoop run_loop;
   ptr.set_connection_error_handler(
-      [&encountered_error, &run_loop]() {
-        encountered_error = true;
-        run_loop.Quit();
-      });
+      SetFlagAndRunClosure(&encountered_error, run_loop.QuitClosure()));
   bool called = false;
   base::RunLoop run_loop2;
-  auto called_cb = [&called, &run_loop2](int32_t result) {
-    called = true;
-    run_loop2.Quit();
-  };
   {
     Binding<sample::Service> binding(&impl, std::move(request));
     ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                   called_cb);
+                   SetFlagAndRunClosure<int32_t>(&called,
+                                                 run_loop2.QuitClosure()));
     run_loop2.Run();
     EXPECT_TRUE(called);
     EXPECT_FALSE(encountered_error);
@@ -115,7 +121,8 @@ TEST_F(BindingTest, DestroyClosesMessagePipe) {
   // And calls should fail.
   called = false;
   ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                 called_cb);
+                 SetFlagAndRunClosure<int32_t>(&called,
+                                               run_loop2.QuitClosure()));
   loop().RunUntilIdle();
   EXPECT_FALSE(called);
 }
@@ -129,10 +136,8 @@ TEST_F(BindingTest, ConnectionError) {
     sample::ServicePtr ptr;
     Binding<sample::Service> binding(&impl, GetProxy(&ptr));
     base::RunLoop run_loop;
-    binding.set_connection_error_handler([&called, &run_loop]() {
-      called = true;
-      run_loop.Quit();
-    });
+    binding.set_connection_error_handler(
+        SetFlagAndRunClosure(&called, run_loop.QuitClosure()));
     ptr.reset();
     EXPECT_FALSE(called);
     run_loop.Run();
@@ -150,7 +155,7 @@ TEST_F(BindingTest, CloseDoesntCallConnectionErrorHandler) {
   sample::ServicePtr ptr;
   Binding<sample::Service> binding(&impl, GetProxy(&ptr));
   bool called = false;
-  binding.set_connection_error_handler([&called]() { called = true; });
+  binding.set_connection_error_handler(SetFlagAndRunClosure(&called));
   binding.Close();
   loop().RunUntilIdle();
   EXPECT_FALSE(called);
@@ -170,7 +175,9 @@ class ServiceImplWithBinding : public ServiceImpl {
       : ServiceImpl(was_deleted),
         binding_(this, std::move(request)),
         closure_(closure) {
-    binding_.set_connection_error_handler([this]() { delete this; });
+    binding_.set_connection_error_handler(
+        base::Bind(&ServiceImplWithBinding::OnConnectionError,
+                   base::Unretained(this)));
   }
 
  private:
@@ -178,10 +185,12 @@ class ServiceImplWithBinding : public ServiceImpl {
     closure_.Run();
   }
 
+  void OnConnectionError() { delete this; }
+
   Binding<sample::Service> binding_;
   base::Closure closure_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(ServiceImplWithBinding);
+  DISALLOW_COPY_AND_ASSIGN(ServiceImplWithBinding);
 };
 
 // Tests that the binding may be deleted in the connection error handler.
@@ -206,12 +215,9 @@ TEST_F(BindingTest, Unbind) {
 
   bool called = false;
   base::RunLoop run_loop;
-  auto called_cb = [&called, &run_loop](int32_t result) {
-    called = true;
-    run_loop.Quit();
-  };
   ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                 called_cb);
+                 SetFlagAndRunClosure<int32_t>(&called,
+                                               run_loop.QuitClosure()));
   run_loop.Run();
   EXPECT_TRUE(called);
 
@@ -220,7 +226,8 @@ TEST_F(BindingTest, Unbind) {
   EXPECT_FALSE(binding.is_bound());
   // All calls should fail when not bound...
   ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                 called_cb);
+                 SetFlagAndRunClosure<int32_t>(&called,
+                                               run_loop.QuitClosure()));
   loop().RunUntilIdle();
   EXPECT_FALSE(called);
 
@@ -229,12 +236,9 @@ TEST_F(BindingTest, Unbind) {
   EXPECT_TRUE(binding.is_bound());
   // ...and should succeed again when the rebound.
   base::RunLoop run_loop2;
-  auto called_cb2 = [&called, &run_loop2](int32_t result) {
-    called = true;
-    run_loop2.Quit();
-  };
   ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                 called_cb2);
+                 SetFlagAndRunClosure<int32_t>(&called,
+                                               run_loop2.QuitClosure()));
   run_loop2.Run();
   EXPECT_TRUE(called);
 }
@@ -251,7 +255,7 @@ class IntegerAccessorImpl : public sample::IntegerAccessor {
   }
   void SetInteger(int64_t data, sample::Enum type) override {}
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(IntegerAccessorImpl);
+  DISALLOW_COPY_AND_ASSIGN(IntegerAccessorImpl);
 };
 
 TEST_F(BindingTest, SetInterfacePtrVersion) {
@@ -264,17 +268,14 @@ TEST_F(BindingTest, SetInterfacePtrVersion) {
 TEST_F(BindingTest, PauseResume) {
   bool called = false;
   base::RunLoop run_loop;
-  auto called_cb = [&called, &run_loop](int32_t result) {
-    called = true;
-    run_loop.Quit();
-  };
   sample::ServicePtr ptr;
   auto request = GetProxy(&ptr);
   ServiceImpl impl;
   Binding<sample::Service> binding(&impl, std::move(request));
   binding.PauseIncomingMethodCallProcessing();
   ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                 called_cb);
+                 SetFlagAndRunClosure<int32_t>(&called,
+                                               run_loop.QuitClosure()));
   EXPECT_FALSE(called);
   loop().RunUntilIdle();
   // Frobinate() should not be called as the binding is paused.
@@ -294,10 +295,8 @@ TEST_F(BindingTest, ErrorHandleNotRunWhilePaused) {
   auto request = GetProxy(&ptr);
   ServiceImpl impl;
   Binding<sample::Service> binding(&impl, std::move(request));
-  binding.set_connection_error_handler([&called, &run_loop]() {
-      called = true;
-      run_loop.Quit();
-  });
+  binding.set_connection_error_handler(
+      SetFlagAndRunClosure(&called, run_loop.QuitClosure()));
   binding.PauseIncomingMethodCallProcessing();
 
   ptr.reset();
@@ -325,20 +324,14 @@ TEST_F(StrongBindingTest, DestroyClosesMessagePipe) {
   sample::ServicePtr ptr;
   auto request = GetProxy(&ptr);
   ptr.set_connection_error_handler(
-      [&encountered_error, &run_loop]() {
-        encountered_error = true;
-        run_loop.Quit();
-      });
+      SetFlagAndRunClosure(&encountered_error, run_loop.QuitClosure()));
   bool called = false;
   base::RunLoop run_loop2;
-  auto called_cb = [&called, &run_loop2](int32_t result) {
-    called = true;
-    run_loop2.Quit();
-  };
   {
     StrongBinding<sample::Service> binding(&impl, std::move(request));
     ptr->Frobinate(nullptr, sample::Service::BazOptions::REGULAR, nullptr,
-                   called_cb);
+                   SetFlagAndRunClosure<int32_t>(&called,
+                                                 run_loop2.QuitClosure()));
     run_loop2.Run();
     EXPECT_TRUE(called);
     EXPECT_FALSE(encountered_error);
@@ -362,7 +355,7 @@ class ServiceImplWithStrongBinding : public ServiceImpl {
  private:
   StrongBinding<sample::Service> binding_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(ServiceImplWithStrongBinding);
+  DISALLOW_COPY_AND_ASSIGN(ServiceImplWithStrongBinding);
 };
 
 // Tests the typical case, where the implementation object owns the
@@ -394,18 +387,13 @@ TEST_F(StrongBindingTest, ExplicitDeleteImpl) {
   auto request = GetProxy(&ptr);
   base::RunLoop run_loop;
   ptr.set_connection_error_handler(
-      [&ptr_error_handler_called, &run_loop]() {
-        ptr_error_handler_called = true;
-        run_loop.Quit();
-      });
+      SetFlagAndRunClosure(&ptr_error_handler_called, run_loop.QuitClosure()));
   bool was_deleted = false;
   ServiceImplWithStrongBinding* impl =
       new ServiceImplWithStrongBinding(&was_deleted, std::move(request));
   bool binding_error_handler_called = false;
   impl->binding().set_connection_error_handler(
-      [&binding_error_handler_called]() {
-        binding_error_handler_called = true;
-      });
+      SetFlagAndRunClosure(&binding_error_handler_called));
 
   loop().RunUntilIdle();
   EXPECT_FALSE(ptr_error_handler_called);

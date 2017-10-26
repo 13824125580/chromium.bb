@@ -11,8 +11,6 @@ template("common_tmpl") {
     sources = [
       "data_reduction_proxy_bypass_action_list.h",
       "data_reduction_proxy_bypass_type_list.h",
-      "data_reduction_proxy_client_config_parser.cc",
-      "data_reduction_proxy_client_config_parser.h",
       "data_reduction_proxy_config_values.h",
       "data_reduction_proxy_event_creator.cc",
       "data_reduction_proxy_event_creator.h",
@@ -21,12 +19,15 @@ template("common_tmpl") {
       "data_reduction_proxy_event_store.h",
       "data_reduction_proxy_headers.cc",
       "data_reduction_proxy_headers.h",
+      "data_reduction_proxy_page_load_timing.h",
       "data_reduction_proxy_params.cc",
       "data_reduction_proxy_params.h",
       "data_reduction_proxy_pref_names.cc",
       "data_reduction_proxy_pref_names.h",
       "data_reduction_proxy_switches.cc",
       "data_reduction_proxy_switches.h",
+      "data_reduction_proxy_util.cc",
+      "data_reduction_proxy_util.h",
       "lofi_decider.h",
       "lofi_ui_service.h",
     ]
@@ -38,20 +39,14 @@ template("common_tmpl") {
       "//base",
       "//components/data_reduction_proxy/proto:data_reduction_proxy_proto",
       "//components/variations",
+      "//google_apis",
     ]
+
+    defines = [ "USE_GOOGLE_API_KEYS" ]
 
     if (defined(invoker.deps)) {
       deps += invoker.deps
     }
-  }
-}
-
-if (is_android) {
-  common_tmpl("common_small") {
-    deps = [
-      "//net:net_small",
-      "//url:url_lib_use_icu_alternatives_on_android",
-    ]
   }
 }
 
@@ -88,10 +83,10 @@ source_set("test_support") {
 source_set("unit_tests") {
   testonly = true
   sources = [
-    "data_reduction_proxy_client_config_parser_unittest.cc",
     "data_reduction_proxy_event_store_unittest.cc",
     "data_reduction_proxy_headers_unittest.cc",
     "data_reduction_proxy_params_unittest.cc",
+    "data_reduction_proxy_util_unittest.cc",
   ]
 
   deps = [

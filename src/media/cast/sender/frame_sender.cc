@@ -12,7 +12,6 @@
 #include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "media/cast/cast_defines.h"
 #include "media/cast/constants.h"
 #include "media/cast/sender/sender_encoded_frame.h"
 
@@ -32,9 +31,30 @@ const int kMaxFrameBurst = 5;
 // Convenience macro used in logging statements throughout this file.
 #define SENDER_SSRC (is_audio_ ? "AUDIO[" : "VIDEO[") << ssrc_ << "] "
 
+FrameSender::RtcpClient::RtcpClient(base::WeakPtr<FrameSender> frame_sender)
+    : frame_sender_(frame_sender) {}
+
+FrameSender::RtcpClient::~RtcpClient() {}
+
+void FrameSender::RtcpClient::OnReceivedCastMessage(
+    const RtcpCastMessage& cast_message) {
+  if (frame_sender_)
+    frame_sender_->OnReceivedCastFeedback(cast_message);
+}
+
+void FrameSender::RtcpClient::OnReceivedRtt(base::TimeDelta round_trip_time) {
+  if (frame_sender_)
+    frame_sender_->OnMeasuredRoundTripTime(round_trip_time);
+}
+
+void FrameSender::RtcpClient::OnReceivedPli() {
+  if (frame_sender_)
+    frame_sender_->OnReceivedPli();
+}
+
 FrameSender::FrameSender(scoped_refptr<CastEnvironment> cast_environment,
                          bool is_audio,
-                         CastTransportSender* const transport_sender,
+                         CastTransport* const transport_sender,
                          int rtp_timebase,
                          uint32_t ssrc,
                          double max_frame_rate,
@@ -45,20 +65,18 @@ FrameSender::FrameSender(scoped_refptr<CastEnvironment> cast_environment,
     : cast_environment_(cast_environment),
       transport_sender_(transport_sender),
       ssrc_(ssrc),
-      min_playout_delay_(min_playout_delay == base::TimeDelta()
-                             ? max_playout_delay
-                             : min_playout_delay),
+      min_playout_delay_(min_playout_delay.is_zero() ? max_playout_delay
+                                                     : min_playout_delay),
       max_playout_delay_(max_playout_delay),
-      animated_playout_delay_(animated_playout_delay == base::TimeDelta()
+      animated_playout_delay_(animated_playout_delay.is_zero()
                                   ? max_playout_delay
                                   : animated_playout_delay),
       send_target_playout_delay_(false),
       max_frame_rate_(max_frame_rate),
       num_aggressive_rtcp_reports_sent_(0),
-      last_sent_frame_id_(0),
-      latest_acked_frame_id_(0),
       duplicate_ack_counter_(0),
       congestion_control_(congestion_control),
+      picture_lost_at_receiver_(false),
       rtp_timebase_(rtp_timebase),
       is_audio_(is_audio),
       weak_factory_(this) {
@@ -177,27 +195,26 @@ void FrameSender::ResendForKickstart() {
   transport_sender_->ResendFrameForKickstart(ssrc_, last_sent_frame_id_);
 }
 
-void FrameSender::RecordLatestFrameTimestamps(uint32_t frame_id,
+void FrameSender::RecordLatestFrameTimestamps(FrameId frame_id,
                                               base::TimeTicks reference_time,
                                               RtpTimeTicks rtp_timestamp) {
   DCHECK(!reference_time.is_null());
-  frame_reference_times_[frame_id % arraysize(frame_reference_times_)] =
-      reference_time;
-  frame_rtp_timestamps_[frame_id % arraysize(frame_rtp_timestamps_)] =
-      rtp_timestamp;
+  frame_reference_times_[frame_id.lower_8_bits()] = reference_time;
+  frame_rtp_timestamps_[frame_id.lower_8_bits()] = rtp_timestamp;
 }
 
-base::TimeTicks FrameSender::GetRecordedReferenceTime(uint32_t frame_id) const {
-  return frame_reference_times_[frame_id % arraysize(frame_reference_times_)];
+base::TimeTicks FrameSender::GetRecordedReferenceTime(FrameId frame_id) const {
+  return frame_reference_times_[frame_id.lower_8_bits()];
 }
 
-RtpTimeTicks FrameSender::GetRecordedRtpTimestamp(uint32_t frame_id) const {
-  return frame_rtp_timestamps_[frame_id % arraysize(frame_rtp_timestamps_)];
+RtpTimeTicks FrameSender::GetRecordedRtpTimestamp(FrameId frame_id) const {
+  return frame_rtp_timestamps_[frame_id.lower_8_bits()];
 }
 
 int FrameSender::GetUnacknowledgedFrameCount() const {
-  const int count =
-      static_cast<int32_t>(last_sent_frame_id_ - latest_acked_frame_id_);
+  if (last_send_time_.is_null())
+    return 0;
+  const int count = last_sent_frame_id_ - latest_acked_frame_id_;
   DCHECK_GE(count, 0);
   return count;
 }
@@ -212,15 +229,27 @@ base::TimeDelta FrameSender::GetAllowedInFlightMediaDuration() const {
 
 void FrameSender::SendEncodedFrame(
     int requested_bitrate_before_encode,
-    scoped_ptr<SenderEncodedFrame> encoded_frame) {
+    std::unique_ptr<SenderEncodedFrame> encoded_frame) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
 
   VLOG(2) << SENDER_SSRC << "About to send another frame: last_sent="
           << last_sent_frame_id_ << ", latest_acked=" << latest_acked_frame_id_;
 
-  const uint32_t frame_id = encoded_frame->frame_id;
-
+  const FrameId frame_id = encoded_frame->frame_id;
   const bool is_first_frame_to_be_sent = last_send_time_.is_null();
+
+  if (picture_lost_at_receiver_ &&
+      (encoded_frame->dependency == EncodedFrame::KEY)) {
+    picture_lost_at_receiver_ = false;
+    DCHECK(frame_id > latest_acked_frame_id_);
+    // Cancel sending remaining frames.
+    std::vector<FrameId> cancel_sending_frames;
+    for (FrameId id = latest_acked_frame_id_ + 1; id < frame_id; ++id) {
+      cancel_sending_frames.push_back(id);
+    }
+    transport_sender_->CancelSendingFrames(ssrc_, cancel_sending_frames);
+  }
+
   last_send_time_ = cast_environment_->Clock()->NowTicks();
   last_sent_frame_id_ = frame_id;
   // If this is the first frame about to be sent, fake the value of
@@ -234,7 +263,7 @@ void FrameSender::SendEncodedFrame(
   VLOG_IF(1, !is_audio_ && encoded_frame->dependency == EncodedFrame::KEY)
       << SENDER_SSRC << "Sending encoded key frame, id=" << frame_id;
 
-  scoped_ptr<FrameEvent> encode_event(new FrameEvent());
+  std::unique_ptr<FrameEvent> encode_event(new FrameEvent());
   encode_event->timestamp = encoded_frame->encode_completion_time;
   encode_event->type = FRAME_ENCODED;
   encode_event->media_type = is_audio_ ? AUDIO_EVENT : VIDEO_EVENT;
@@ -243,7 +272,7 @@ void FrameSender::SendEncodedFrame(
   encode_event->size = base::checked_cast<uint32_t>(encoded_frame->data.size());
   encode_event->key_frame = encoded_frame->dependency == EncodedFrame::KEY;
   encode_event->target_bitrate = requested_bitrate_before_encode;
-  encode_event->encoder_cpu_utilization = encoded_frame->deadline_utilization;
+  encode_event->encoder_cpu_utilization = encoded_frame->encoder_utilization;
   encode_event->idealized_bitrate_utilization =
       encoded_frame->lossy_utilization;
   cast_environment_->logger()->DispatchFrameEvent(std::move(encode_event));
@@ -285,9 +314,9 @@ void FrameSender::SendEncodedFrame(
   }
 
   TRACE_EVENT_ASYNC_BEGIN1("cast.stream",
-      is_audio_ ? "Audio Transport" : "Video Transport",
-      frame_id,
-      "rtp_timestamp", encoded_frame->rtp_timestamp.lower_32_bits());
+                           is_audio_ ? "Audio Transport" : "Video Transport",
+                           frame_id.lower_32_bits(), "rtp_timestamp",
+                           encoded_frame->rtp_timestamp.lower_32_bits());
   transport_sender_->InsertFrame(ssrc_, *encoded_frame);
 }
 
@@ -313,14 +342,15 @@ void FrameSender::OnReceivedCastFeedback(const RtcpCastMessage& cast_feedback) {
   if (last_send_time_.is_null())
     return;  // Cannot get an ACK without having first sent a frame.
 
-  if (cast_feedback.missing_frames_and_packets.empty()) {
+  if (cast_feedback.missing_frames_and_packets.empty() &&
+      cast_feedback.received_later_frames.empty()) {
     if (latest_acked_frame_id_ == cast_feedback.ack_frame_id) {
       VLOG(1) << SENDER_SSRC << "Received duplicate ACK for frame "
               << latest_acked_frame_id_;
       TRACE_EVENT_INSTANT2(
-        "cast.stream", "Duplicate ACK", TRACE_EVENT_SCOPE_THREAD,
-        "ack_frame_id", cast_feedback.ack_frame_id,
-        "last_sent_frame_id", last_sent_frame_id_);
+          "cast.stream", "Duplicate ACK", TRACE_EVENT_SCOPE_THREAD,
+          "ack_frame_id", cast_feedback.ack_frame_id.lower_32_bits(),
+          "last_sent_frame_id", last_sent_frame_id_.lower_32_bits());
     }
     // We only count duplicate ACKs when we have sent newer frames.
     if (latest_acked_frame_id_ == cast_feedback.ack_frame_id &&
@@ -341,8 +371,13 @@ void FrameSender::OnReceivedCastFeedback(const RtcpCastMessage& cast_feedback) {
 
   base::TimeTicks now = cast_environment_->Clock()->NowTicks();
   congestion_control_->AckFrame(cast_feedback.ack_frame_id, now);
+  if (!cast_feedback.received_later_frames.empty()) {
+    // Ack the received frames.
+    congestion_control_->AckLaterFrames(cast_feedback.received_later_frames,
+                                        now);
+  }
 
-  scoped_ptr<FrameEvent> ack_event(new FrameEvent());
+  std::unique_ptr<FrameEvent> ack_event(new FrameEvent());
   ack_event->timestamp = now;
   ack_event->type = FRAME_ACK_RECEIVED;
   ack_event->media_type = is_audio_ ? AUDIO_EVENT : VIDEO_EVENT;
@@ -352,33 +387,37 @@ void FrameSender::OnReceivedCastFeedback(const RtcpCastMessage& cast_feedback) {
   cast_environment_->logger()->DispatchFrameEvent(std::move(ack_event));
 
   const bool is_acked_out_of_order =
-      static_cast<int32_t>(cast_feedback.ack_frame_id -
-                           latest_acked_frame_id_) < 0;
+      cast_feedback.ack_frame_id < latest_acked_frame_id_;
   VLOG(2) << SENDER_SSRC
           << "Received ACK" << (is_acked_out_of_order ? " out-of-order" : "")
           << " for frame " << cast_feedback.ack_frame_id;
   if (is_acked_out_of_order) {
     TRACE_EVENT_INSTANT2(
         "cast.stream", "ACK out of order", TRACE_EVENT_SCOPE_THREAD,
-        "ack_frame_id", cast_feedback.ack_frame_id,
-        "latest_acked_frame_id", latest_acked_frame_id_);
-  } else {
+        "ack_frame_id", cast_feedback.ack_frame_id.lower_32_bits(),
+        "latest_acked_frame_id", latest_acked_frame_id_.lower_32_bits());
+  } else if (latest_acked_frame_id_ < cast_feedback.ack_frame_id) {
     // Cancel resends of acked frames.
-    std::vector<uint32_t> cancel_sending_frames;
-    while (latest_acked_frame_id_ != cast_feedback.ack_frame_id) {
-      latest_acked_frame_id_++;
-      cancel_sending_frames.push_back(latest_acked_frame_id_);
+    std::vector<FrameId> frames_to_cancel;
+    frames_to_cancel.reserve(cast_feedback.ack_frame_id -
+                             latest_acked_frame_id_);
+    do {
+      ++latest_acked_frame_id_;
+      frames_to_cancel.push_back(latest_acked_frame_id_);
       // This is a good place to match the trace for frame ids
       // since this ensures we not only track frame ids that are
       // implicitly ACKed, but also handles duplicate ACKs
-      TRACE_EVENT_ASYNC_END1("cast.stream",
-          is_audio_ ? "Audio Transport" : "Video Transport",
-          cast_feedback.ack_frame_id,
-          "RTT_usecs", current_round_trip_time_.InMicroseconds());
-    }
-    transport_sender_->CancelSendingFrames(ssrc_, cancel_sending_frames);
-    latest_acked_frame_id_ = cast_feedback.ack_frame_id;
+      TRACE_EVENT_ASYNC_END1(
+          "cast.stream", is_audio_ ? "Audio Transport" : "Video Transport",
+          latest_acked_frame_id_.lower_32_bits(), "RTT_usecs",
+          current_round_trip_time_.InMicroseconds());
+    } while (latest_acked_frame_id_ < cast_feedback.ack_frame_id);
+    transport_sender_->CancelSendingFrames(ssrc_, frames_to_cancel);
   }
+}
+
+void FrameSender::OnReceivedPli() {
+  picture_lost_at_receiver_ = true;
 }
 
 bool FrameSender::ShouldDropNextFrame(base::TimeDelta frame_duration) const {

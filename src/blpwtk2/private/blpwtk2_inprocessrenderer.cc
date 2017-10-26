@@ -28,10 +28,11 @@
 #include <content/common/in_process_child_thread_params.h>
 #include <content/public/renderer/render_thread.h>
 #include <content/renderer/render_process_impl.h>
+#include <content/child/dwrite_font_proxy/dwrite_font_proxy_init_win.h>
 #include <third_party/WebKit/public/web/WebRuntimeFeatures.h>
 #include <third_party/WebKit/public/web/win/WebFontRendering.h>
 #include <ui/gfx/win/direct_write.h>
-#include <ui/gfx/win/dpi.h>
+#include <ui/display/win/dpi.h>
 
 namespace blpwtk2 {
 
@@ -41,16 +42,21 @@ static void InitDirectWrite()
     // which is used for out-of-process renderers, but is not used for in-process
     // renderers.  So, we need to do it here.
 
-    bool useDirectWrite = gfx::win::ShouldUseDirectWrite();
-    blink::WebFontRendering::setUseDirectWrite(useDirectWrite);
-    blink::WebFontRendering::setDeviceScaleFactor(gfx::GetDPIScale());
+    content::InitializeDWriteFontProxy();
+    blink::WebFontRendering::setDeviceScaleFactor(display::win::GetDPIScale());
 }
 
 class InProcessRendererThread : public base::Thread {
 public:
-    InProcessRendererThread(const scoped_refptr<base::SingleThreadTaskRunner>& browserIOTaskRunner)
+    InProcessRendererThread(const scoped_refptr<base::SingleThreadTaskRunner>& browserIOTaskRunner,
+                            const std::string& ipcToken,
+                            const std::string& serviceToken,
+                            int mojoControllerHandle)
     : base::Thread("BlpInProcRenderer")
     , d_browserIOTaskRunner(browserIOTaskRunner)
+    , d_ipcToken(ipcToken)
+    , d_serviceToken(serviceToken)
+    , d_clientFileDescriptor(mojoControllerHandle)
     {
         base::Thread::Options options;
         options.message_loop_type = base::MessageLoop::TYPE_UI;
@@ -68,7 +74,11 @@ private:
         Statics::rendererMessageLoop = message_loop();
         InitDirectWrite();
         content::RenderThread::InitInProcessRenderer(
-            content::InProcessChildThreadParams("", d_browserIOTaskRunner));
+            content::InProcessChildThreadParams("",
+                                                d_browserIOTaskRunner,
+                                                d_ipcToken,
+                                                d_serviceToken,
+                                                d_clientFileDescriptor));
 
         // No longer need to hold on to this reference.
         d_browserIOTaskRunner = nullptr;
@@ -82,13 +92,19 @@ private:
     }
 
     scoped_refptr<base::SingleThreadTaskRunner> d_browserIOTaskRunner;
+    std::string d_ipcToken;
+    std::string d_serviceToken;
+    int d_clientFileDescriptor;
 
     DISALLOW_COPY_AND_ASSIGN(InProcessRendererThread);
 };
 static InProcessRendererThread* g_inProcessRendererThread = 0;
 
 // static
-void InProcessRenderer::init(const scoped_refptr<base::SingleThreadTaskRunner>& browserIOTaskRunner)
+void InProcessRenderer::init(const scoped_refptr<base::SingleThreadTaskRunner>& browserIOTaskRunner,
+                             const std::string& ipc_token,
+                             const std::string& application_token,
+                             int mojo_controller_handle)
 {
     DCHECK(Statics::isInApplicationMainThread());
     DCHECK(!g_inProcessRendererThread);
@@ -96,13 +112,21 @@ void InProcessRenderer::init(const scoped_refptr<base::SingleThreadTaskRunner>& 
 
     if (Statics::isOriginalThreadMode()) {
         DCHECK(Statics::isOriginalThreadMode());
-        g_inProcessRendererThread = new InProcessRendererThread(browserIOTaskRunner);
+        g_inProcessRendererThread =
+            new InProcessRendererThread(browserIOTaskRunner,
+                                        ipc_token,
+                                        application_token,
+                                        mojo_controller_handle);
     }
     else {
         Statics::rendererMessageLoop = base::MessageLoop::current();
         InitDirectWrite();
         content::RenderThread::InitInProcessRenderer(
-            content::InProcessChildThreadParams("", browserIOTaskRunner));
+            content::InProcessChildThreadParams("",
+                                                browserIOTaskRunner,
+                                                ipc_token,
+                                                application_token,
+                                                mojo_controller_handle));
 
         DCHECK(Statics::rendererMessageLoop);
     }

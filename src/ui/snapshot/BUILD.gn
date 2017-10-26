@@ -26,6 +26,7 @@ component("snapshot") {
     "//base",
     "//skia",
     "//ui/base",
+    "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
   ]
@@ -58,8 +59,17 @@ component("snapshot") {
   } else {
     sources -= [ "snapshot_aura.cc" ]
   }
+
+  if (is_mac) {
+    libs = [
+      "AppKit.framework",
+      "ApplicationServices.framework",  # Temporary hack around https://crbug.com/620127. Remove after https://crbug.com/622481 is fixed.
+      "CoreGraphics.framework",
+    ]
+  }
 }
 
+if (false) {
 test("snapshot_unittests") {
   sources = [
     "snapshot_aura_unittest.cc",
@@ -91,3 +101,5 @@ test("snapshot_unittests") {
     sources -= [ "snapshot_aura_unittest.cc" ]
   }
 }
+}
+

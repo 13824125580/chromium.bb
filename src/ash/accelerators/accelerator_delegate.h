@@ -13,15 +13,14 @@
 namespace ash {
 
 class ASH_EXPORT AcceleratorDelegate
-    : NON_EXPORTED_BASE(public wm::AcceleratorDelegate) {
+    : NON_EXPORTED_BASE(public ::wm::AcceleratorDelegate) {
  public:
   AcceleratorDelegate();
   ~AcceleratorDelegate() override;
 
   // wm::AcceleratorDelegate:
   bool ProcessAccelerator(const ui::KeyEvent& event,
-                          const ui::Accelerator& accelerator,
-                          KeyType key_type) override;
+                          const ui::Accelerator& accelerator) override;
 
  private:
   // Returns true if the window should be allowed a chance to handle

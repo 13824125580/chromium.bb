@@ -5,6 +5,7 @@
 """Generates reports base on bisect result data."""
 
 import copy
+import math
 
 _CONFIDENCE_THRESHOLD = 99.5
 
@@ -55,10 +56,15 @@ _REVISION_TABLE_TEMPLATE = """
 ===== TESTED REVISIONS =====
 %(table)s"""
 
-_RESULTS_THANKYOU = """
+_RESULTS_THANK_YOU = """
 | O O | Visit http://www.chromium.org/developers/speed-infra/perf-bug-faq
 |  X  | for more information addressing perf regression bugs. For feedback,
-| / \\ | file a bug with label Cr-Tests-AutoBisect.  Thank you!"""
+| / \\ | file a bug with component Tests>AutoBisect.  Thank you!"""
+
+_REPORT_BAD_BISECT_TEMPLATE = """
+Not what you expected? We'll investigate and get back to you!
+  https://chromeperf.appspot.com/bad_bisect?try_job_id=%s
+"""
 
 
 def GetReport(try_job_entity):
@@ -91,7 +97,9 @@ def GetReport(try_job_entity):
 
   results_data['result'] = result
   report = _BISECT_REPORT_TEMPLATE % results_data
-  report += _RESULTS_THANKYOU
+  if try_job_entity.bug_id > 0:
+    report += _REPORT_BAD_BISECT_TEMPLATE % try_job_entity.key.id()
+  report += _RESULTS_THANK_YOU
   return report
 
 
@@ -104,25 +112,27 @@ def _MakeLegacyRevisionString(r):
 
 def _RevisionTable(results_data):
   is_return_code = results_data.get('test_type') == 'return_code'
-  has_culprit = 'culprit_data' in results_data
+  culprit_commit_hash = None
+  if 'culprit_data' in results_data and results_data['culprit_data']:
+    culprit_commit_hash = results_data['culprit_data']['cl']
 
   def RevisionRow(r):
     result = [
         r.get('revision_string', _MakeLegacyRevisionString(r)),
         _FormatNumber(r['mean_value']),
         _FormatNumber(r['std_dev']),
-        len(r['values']),
+        _FormatNumber(len(r['values'])),
         r['result'],
-        '<-' if has_culprit == r else '',
+        '<--' if r['commit_hash'] == culprit_commit_hash  else '',
     ]
     return map(str, result)
   revision_rows = [RevisionRow(r) for r in results_data['revision_data']]
 
   headers_row = [[
       'Revision',
-      'Mean Value' if not is_return_code else 'Exit Code',
-      'Std. Dev.',
-      'Num Values',
+      'Mean' if not is_return_code else 'Exit Code',
+      'Std Dev',
+      'N',
       'Good?',
       '',
   ]]
@@ -133,14 +143,23 @@ def _RevisionTable(results_data):
 def _FormatNumber(x):
   if x is None:
     return 'N/A'
-  if isinstance(x, int):
+  if isinstance(x, int) or x == 0:
     return str(x)
-  return str(round(x, 6))
+
+  if x >= 10**5:
+    # It's a little awkward to round 123456789.987 to 123457000.0,
+    # so just make it 123456790.
+    return str(int(round(x)))
+  # Round to 6 significant figures.
+  return str(round(x, 5-int(math.floor(math.log10(abs(x))))))
 
 
 def _PrettyTable(data):
-  results = []
+  column_lengths = [max(map(len, c)) for c in zip(*data)]
+  formatted_rows = []
   for row in data:
-    results.append(
-        (('%-24s' + '%-12s' * (len(row) - 1)) % tuple(row)).rstrip())
-  return '\n'.join(results)
+    formatted_elements = []
+    for element_length, element in zip(column_lengths, row):
+      formatted_elements.append(element.ljust(element_length))
+    formatted_rows.append('  '.join(formatted_elements).strip())
+  return '\n'.join(formatted_rows)

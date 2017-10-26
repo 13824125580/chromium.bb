@@ -4,11 +4,12 @@
 
 #include "chrome/browser/ui/views/bar_control_button.h"
 
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icons_public.h"
-#include "ui/views/animation/button_ink_drop_delegate.h"
 #include "ui/views/border.h"
+#include "ui/views/painter.h"
 
 namespace {
 
@@ -18,11 +19,12 @@ const int kButtonExtraTouchSize = 4;
 }  // namespace
 
 BarControlButton::BarControlButton(views::ButtonListener* listener)
-    : views::ImageButton(listener),
-      id_(gfx::VectorIconId::VECTOR_ICON_NONE),
-      ink_drop_delegate_(new views::ButtonInkDropDelegate(this, this)) {
-  set_ink_drop_delegate(ink_drop_delegate_.get());
+    : views::ImageButton(listener), id_(gfx::VectorIconId::VECTOR_ICON_NONE) {
+  SetHasInkDrop(ui::MaterialDesignController::IsModeMaterial());
   set_has_ink_drop_action_on_click(true);
+  SetImageAlignment(views::ImageButton::ALIGN_CENTER,
+                    views::ImageButton::ALIGN_MIDDLE);
+  SetFocusPainter(nullptr);
 }
 
 BarControlButton::~BarControlButton() {}
@@ -33,19 +35,19 @@ void BarControlButton::SetIcon(
   id_ = id;
   get_text_color_callback_ = get_text_color_callback;
 
-  SetBorder(views::Border::CreateEmptyBorder(
-      kButtonExtraTouchSize, kButtonExtraTouchSize, kButtonExtraTouchSize,
-      kButtonExtraTouchSize));
-  SetImageAlignment(views::ImageButton::ALIGN_CENTER,
-                    views::ImageButton::ALIGN_MIDDLE);
+  if (!border()) {
+    SetBorder(views::Border::CreateEmptyBorder(
+        kButtonExtraTouchSize, kButtonExtraTouchSize, kButtonExtraTouchSize,
+        kButtonExtraTouchSize));
+  }
 }
 
 void BarControlButton::OnThemeChanged() {
   SkColor icon_color =
       color_utils::DeriveDefaultIconColor(get_text_color_callback_.Run());
-  gfx::ImageSkia image = gfx::CreateVectorIcon(id_, 16, icon_color);
+  gfx::ImageSkia image = gfx::CreateVectorIcon(id_, icon_color);
   SetImage(views::CustomButton::STATE_NORMAL, &image);
-  image = gfx::CreateVectorIcon(id_, 16, SkColorSetA(icon_color, 0xff / 2));
+  image = gfx::CreateVectorIcon(id_, SkColorSetA(icon_color, 0xff / 2));
   SetImage(views::CustomButton::STATE_DISABLED, &image);
   set_ink_drop_base_color(icon_color);
 }

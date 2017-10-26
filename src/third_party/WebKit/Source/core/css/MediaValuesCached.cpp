@@ -8,6 +8,7 @@
 #include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
 #include "core/layout/LayoutObject.h"
+#include "core/layout/api/LayoutViewItem.h"
 
 namespace blink {
 
@@ -19,7 +20,7 @@ MediaValuesCached::MediaValuesCachedData::MediaValuesCachedData(Document& docume
     // TODO(hiroshige): Clean up |frame->view()| conditions.
     ASSERT(!frame || frame->view());
     if (frame && frame->view()) {
-        ASSERT(frame->document() && frame->document()->layoutView());
+        ASSERT(frame->document() && !frame->document()->layoutViewItem().isNull());
 
         // In case that frame is missing (e.g. for images that their document does not have a frame)
         // We simply leave the MediaValues object with the default MediaValuesCachedData values.
@@ -42,14 +43,14 @@ MediaValuesCached::MediaValuesCachedData::MediaValuesCachedData(Document& docume
     }
 }
 
-PassRefPtrWillBeRawPtr<MediaValuesCached> MediaValuesCached::create()
+MediaValuesCached* MediaValuesCached::create()
 {
-    return adoptRefWillBeNoop(new MediaValuesCached());
+    return new MediaValuesCached();
 }
 
-PassRefPtrWillBeRawPtr<MediaValuesCached> MediaValuesCached::create(const MediaValuesCachedData& data)
+MediaValuesCached* MediaValuesCached::create(const MediaValuesCachedData& data)
 {
-    return adoptRefWillBeNoop(new MediaValuesCached(data));
+    return new MediaValuesCached(data);
 }
 
 MediaValuesCached::MediaValuesCached()
@@ -61,9 +62,9 @@ MediaValuesCached::MediaValuesCached(const MediaValuesCachedData& data)
 {
 }
 
-PassRefPtrWillBeRawPtr<MediaValues> MediaValuesCached::copy() const
+MediaValues* MediaValuesCached::copy() const
 {
-    return adoptRefWillBeNoop(new MediaValuesCached(m_data));
+    return new MediaValuesCached(m_data);
 }
 
 bool MediaValuesCached::computeLength(double value, CSSPrimitiveValue::UnitType type, int& result) const
@@ -161,13 +162,9 @@ bool MediaValuesCached::hasValues() const
     return true;
 }
 
-void MediaValuesCached::setViewportWidth(double width)
+void MediaValuesCached::overrideViewportDimensions(double width, double height)
 {
     m_data.viewportWidth = width;
-}
-
-void MediaValuesCached::setViewportHeight(double height)
-{
     m_data.viewportHeight = height;
 }
 

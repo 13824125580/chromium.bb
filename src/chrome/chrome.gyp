@@ -32,7 +32,7 @@
         ],
         'chromium_child_dependencies': [
           'child',
-          'plugin',
+          'gpu',
           'renderer',
           'utility',
           '../content/content.gyp:content_gpu',
@@ -40,12 +40,6 @@
           '../third_party/WebKit/public/blink_devtools.gyp:blink_devtools_frontend_resources',
         ],
         'conditions': [
-          [ 'cld_version==0 or cld_version==2', {
-            'chromium_child_dependencies': [
-              # Use whatever CLD2 data access mode that the application
-              # embedder is using.
-              '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld2_platform_impl', ],
-          }],
           ['enable_plugins==1 and disable_nacl==0', {
             'chromium_child_dependencies': [
               '<(DEPTH)/components/nacl/renderer/plugin/plugin.gyp:nacl_trusted_plugin',
@@ -102,6 +96,7 @@
     'chrome_browser.gypi',
     'chrome_browser_ui.gypi',
     'chrome_common.gypi',
+    'chrome_installer_static.gypi',
     'chrome_installer_util.gypi',
     'chrome_features.gypi',
   ],
@@ -113,8 +108,8 @@
         'chrome_debugger.gypi',
         'chrome_dll.gypi',
         'chrome_exe.gypi',
+        'chrome_gpu.gypi',
         'chrome_installer.gypi',
-        'chrome_plugin.gypi',
         'chrome_renderer.gypi',
         'chrome_tests.gypi',
         'chrome_tests_unit.gypi',
@@ -230,6 +225,7 @@
               # never placed into the helper.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['<(tweak_info_plist_path)',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--breakpad=0',
                          '--keystone=0',
                          '--scm=0'],
@@ -325,9 +321,8 @@
           'dependencies': [
             'chrome_resources.gyp:chrome_strings',
             '../base/base.gyp:base',
+            '../base/base.gyp:base_i18n',
             '../ui/base/ui_base.gyp:ui_data_pack',
-            '../ui/gfx/gfx.gyp:gfx',
-            '../ui/gfx/gfx.gyp:gfx_geometry',
           ],
           'include_dirs': [
             '<(grit_out_dir)',
@@ -419,28 +414,6 @@
           ],
         },
         {
-          # GN version: //chrome/tools/crash_service
-          'target_name': 'crash_service',
-          'type': 'executable',
-          'dependencies': [
-            'installer_util',
-            '../base/base.gyp:base',
-            '../chrome/common_constants.gyp:common_constants',
-            '../components/components.gyp:breakpad_crash_service',
-          ],
-          'include_dirs': [
-            '..',
-          ],
-          'sources': [
-            'tools/crash_service/main.cc',
-          ],
-          'msvs_settings': {
-            'VCLinkerTool': {
-              'SubSystem': '2',         # Set /SUBSYSTEM:WINDOWS
-            },
-          },
-        },
-        {
           'target_name': 'sb_sigutil',
           'type': 'executable',
           'dependencies': [
@@ -456,6 +429,13 @@
             'common/safe_browsing/pe_image_reader_win.h',
             'tools/safe_browsing/sb_sigutil.cc',
           ],
+          'msvs_settings': {
+            'VCLinkerTool': {
+              'AdditionalDependencies': [
+                'wintrust.lib',
+              ],
+            },
+          },
         },
       ],  # 'targets'
       'includes': [
@@ -463,63 +443,6 @@
         'chrome_process_finder.gypi',
       ],
     }],  # OS=="win"
-    ['OS=="win" and target_arch=="ia32"',
-      { 'targets': [
-        {
-          'target_name': 'chrome_user32_delay_imports',
-          'type': 'none',
-          'variables': {
-            'lib_dir': '<(INTERMEDIATE_DIR)',
-          },
-          'sources': [
-              'chrome.user32.delay.imports'
-          ],
-          'includes': [
-              '../build/win/importlibs/create_import_lib.gypi',
-          ],
-          'direct_dependent_settings': {
-            'msvs_settings': {
-              'VCLinkerTool': {
-                'AdditionalLibraryDirectories': ['<(lib_dir)', ],
-                'AdditionalDependencies': ['chrome.user32.delay.lib', ],
-              },
-            },
-          },
-        },
-        {
-          # GN version: //chrome/tools/crash_service:crash_service_win64
-          'target_name': 'crash_service_win64',
-          'type': 'executable',
-          'product_name': 'crash_service64',
-          'dependencies': [
-            'installer_util_nacl_win64',
-            '../base/base.gyp:base_static_win64',
-            '../chrome/common_constants.gyp:common_constants_win64',
-            '../components/components.gyp:breakpad_crash_service_win64',
-          ],
-          'include_dirs': [
-            '..',
-          ],
-          'sources': [
-            '../content/public/common/content_switches.cc',
-            'tools/crash_service/main.cc',
-          ],
-          'defines': [
-            'COMPILE_CONTENT_STATICALLY',
-          ],
-          'msvs_settings': {
-            'VCLinkerTool': {
-              'SubSystem': '2',         # Set /SUBSYSTEM:WINDOWS
-            },
-          },
-          'configurations': {
-            'Common_Base': {
-              'msvs_target_platform': 'x64',
-            },
-          },
-        },
-      ]},  # 'targets'
-    ],  # OS=="win" and target_arch=="ia32"
     ['chromeos==1', {
       'includes': [ 'chrome_browser_chromeos.gypi' ],
     }],  # chromeos==1
@@ -546,6 +469,7 @@
             'infobar_action_type_java',
             'most_visited_tile_type_java',
             'page_info_connection_type_java',
+            'policy_auditor_java',
             'profile_account_management_metrics_java',
             'resource_id_java',
             'shortcut_source_java',
@@ -556,17 +480,21 @@
             '../base/base.gyp:base_build_config_gen',
             '../build/android/java_google_api_keys.gyp:google_api_keys_java',
             '../chrome/android/chrome_apk.gyp:custom_tabs_service_aidl',
+            '../components/components.gyp:app_restrictions_resources',
             '../components/components.gyp:autocomplete_match_java',
             '../components/components.gyp:autocomplete_match_type_java',
             '../components/components.gyp:bookmarks_java',
             '../components/components.gyp:dom_distiller_core_java',
             '../components/components.gyp:gcm_driver_java',
             '../components/components.gyp:infobar_delegate_java',
+            '../components/components.gyp:instance_id_driver_java',
             '../components/components.gyp:invalidation_java',
             '../components/components.gyp:investigated_scenario_java',
+            '../components/components.gyp:ntp_tiles_enums_java',
+            '../components/components.gyp:ntp_tiles_java',
             '../components/components.gyp:navigation_interception_java',
-            '../components/components.gyp:offline_page_feature_enums_java',
             '../components/components.gyp:offline_page_model_enums_java',
+            '../components/components.gyp:policy_java',
             '../components/components.gyp:precache_java',
             '../components/components.gyp:safe_json_java',
             '../components/components.gyp:security_state_enums_java',
@@ -578,8 +506,11 @@
             '../components/components_strings.gyp:components_strings',
             '../content/content.gyp:content_java',
             '../media/media.gyp:media_java',
+            '../mojo/mojo_public.gyp:mojo_bindings_java',
+            '../mojo/mojo_public.gyp:mojo_public_java',
             '../printing/printing.gyp:printing_java',
             '../sync/sync.gyp:sync_java',
+            '../third_party/WebKit/public/blink.gyp:android_mojo_bindings_java',
             '../third_party/android_data_chart/android_data_chart.gyp:android_data_chart_java',
             '../third_party/android_media/android_media.gyp:android_media_java',
             '../third_party/android_protobuf/android_protobuf.gyp:protobuf_nano_javalib',
@@ -618,14 +549,6 @@
               '<!@pymod_do_main(grit_info <@(grit_defines) --outputs "<(SHARED_INTERMEDIATE_DIR)/chrome" app/generated_resources.grd)',
             ],
           },
-          'conditions': [
-            ['configuration_policy == 1', {
-              'dependencies': [
-                '../components/components.gyp:app_restrictions_resources',
-                '../components/components.gyp:policy_java',
-              ],
-            }],
-          ],
           'includes': [
             '../build/java.gypi',
           ],
@@ -713,7 +636,7 @@
         'chrome_android.gypi',
       ]}, # 'includes'
     ],  # OS=="android"
-    ['configuration_policy==1 and OS!="android" and OS!="ios"', {
+    ['OS!="android" and OS!="ios"', {
       'includes': [ 'policy.gypi', ],
     }],
     ['enable_extensions==1', {
@@ -735,6 +658,7 @@
             '../components/components.gyp:cloud_devices_common',
             '../google_apis/google_apis.gyp:google_apis',
             '../jingle/jingle.gyp:notifier',
+            '../mojo/mojo_edk.gyp:mojo_system_impl',
             '../net/net.gyp:net',
             '../printing/printing.gyp:printing',
             '../skia/skia.gyp:skia',
@@ -786,7 +710,7 @@
             '..',
           ],
           'conditions': [
-            ['use_cups==1', {
+            ['use_cups==1 and OS!="chromeos"', {
               'dependencies': [
                 '../printing/printing.gyp:cups',
               ],
@@ -803,11 +727,6 @@
               'sources': [
                 'service/service_utility_process_host.cc',
                 'service/service_utility_process_host.h',
-              ],
-              'deps': [
-                # TODO(fdoray): Remove this once the PreRead field trial has
-                # expired. crbug.com/577698
-                '../components/components.gyp:startup_metric_utils_common',
               ],
             }],
           ],

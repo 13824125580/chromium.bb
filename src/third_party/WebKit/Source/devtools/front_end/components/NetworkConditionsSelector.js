@@ -41,7 +41,7 @@ WebInspector.NetworkConditionsSelector._throughputText = function(throughput, pl
 
 /** @type {!Array.<!WebInspector.NetworkManager.Conditions>} */
 WebInspector.NetworkConditionsSelector._presets = [
-    {title: "Offline", download: 0 * 1024 / 8, upload: 0 * 1024 / 8, latency: 0},
+    WebInspector.NetworkManager.OfflineConditions,
     {title: "GPRS", download: 50 * 1024 / 8, upload: 20 * 1024 / 8, latency: 500},
     {title: "Regular 2G", download: 250 * 1024 / 8, upload: 50 * 1024 / 8, latency: 300},
     {title: "Good 2G", download: 450 * 1024 / 8, upload: 150 * 1024 / 8, latency: 150},
@@ -80,7 +80,14 @@ WebInspector.NetworkConditionsSelector.prototype = {
         var presetsGroup = {title: WebInspector.UIString("Presets"), items: WebInspector.NetworkConditionsSelector._presets};
         var disabledGroup = {title: WebInspector.UIString("Disabled"), items: [WebInspector.NetworkManager.NoThrottlingConditions]};
         this._options = this._populateCallback([customGroup, presetsGroup, disabledGroup]);
-        this._conditionsChanged();
+        if (!this._conditionsChanged()) {
+            for (var i = this._options.length - 1; i >= 0; i--) {
+                if (this._options[i]) {
+                    this.optionSelected(/** @type {!WebInspector.NetworkManager.Conditions} */ (this._options[i]));
+                    break;
+                }
+            }
+        }
     },
 
     revealAndUpdate: function()
@@ -97,16 +104,20 @@ WebInspector.NetworkConditionsSelector.prototype = {
         this._manager.setNetworkConditions(conditions);
     },
 
+    /**
+     * @return {boolean}
+     */
     _conditionsChanged: function()
     {
         var value = this._manager.networkConditions();
         for (var index = 0; index < this._options.length; ++index) {
             var option = this._options[index];
-            if (!option)
-                continue;
-            if (option.download === value.download && option.upload === value.upload && option.latency === value.latency && option.title === value.title)
+            if (option && option.download === value.download && option.upload === value.upload && option.latency === value.latency && option.title === value.title) {
                 this._selectCallback(index);
+                return true;
+            }
         }
+        return false;
     }
 }
 
@@ -217,6 +228,37 @@ WebInspector.NetworkConditionsSelector.createToolbarMenuButton = function()
         selectedIndex = index;
         button.setText(options[index].title);
     }
+}
+
+/**
+ * @return {!WebInspector.ToolbarCheckbox}
+ */
+WebInspector.NetworkConditionsSelector.createOfflineToolbarCheckbox = function()
+{
+    var checkbox = new WebInspector.ToolbarCheckbox(WebInspector.UIString("Offline"), WebInspector.UIString("Force disconnected from network"), undefined, forceOffline);
+    WebInspector.multitargetNetworkManager.addEventListener(WebInspector.MultitargetNetworkManager.Events.ConditionsChanged, networkConditionsChanged);
+    checkbox.setChecked(WebInspector.multitargetNetworkManager.networkConditions() === WebInspector.NetworkManager.OfflineConditions);
+
+    var lastNetworkConditions;
+
+    function forceOffline()
+    {
+        if (checkbox.checked()) {
+            lastNetworkConditions = WebInspector.multitargetNetworkManager.networkConditions();
+            WebInspector.multitargetNetworkManager.setNetworkConditions(WebInspector.NetworkManager.OfflineConditions);
+        } else {
+            WebInspector.multitargetNetworkManager.setNetworkConditions(lastNetworkConditions);
+        }
+    }
+
+    function networkConditionsChanged()
+    {
+        var conditions = WebInspector.multitargetNetworkManager.networkConditions();
+        if (conditions !== WebInspector.NetworkManager.OfflineConditions)
+            lastNetworkConditions = conditions;
+        checkbox.setChecked(conditions === WebInspector.NetworkManager.OfflineConditions);
+    }
+    return checkbox;
 }
 
 /**
@@ -426,4 +468,33 @@ WebInspector.NetworkConditionsSettingsTab.prototype = {
     },
 
     __proto__: WebInspector.VBox.prototype
+}
+
+/**
+ * @constructor
+ * @implements {WebInspector.ActionDelegate}
+ */
+WebInspector.NetworkConditionsActionDelegate = function()
+{
+}
+
+WebInspector.NetworkConditionsActionDelegate.prototype = {
+    /**
+     * @override
+     * @param {!WebInspector.Context} context
+     * @param {string} actionId
+     * @return {boolean}
+     */
+    handleAction: function(context, actionId)
+    {
+        if (actionId === "components.network-online") {
+            WebInspector.multitargetNetworkManager.setNetworkConditions(WebInspector.NetworkManager.NoThrottlingConditions);
+            return true;
+        }
+        if (actionId === "components.network-offline") {
+            WebInspector.multitargetNetworkManager.setNetworkConditions(WebInspector.NetworkManager.OfflineConditions);
+            return true;
+        }
+        return false;
+    }
 }

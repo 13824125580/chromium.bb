@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_DELEGATE_H_
 #define COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_DELEGATE_H_
 
+#include <string>
+
 #include "base/macros.h"
 #include "net/base/proxy_delegate.h"
 #include "net/proxy/proxy_retry_info.h"
@@ -35,7 +37,6 @@ class DataReductionProxyDelegate : public net::ProxyDelegate {
   // ProxyDelegate instance is owned by io_thread. |auth_handler| and |config|
   // outlives this class instance.
   explicit DataReductionProxyDelegate(
-      DataReductionProxyRequestOptions* request_options,
       DataReductionProxyConfig* config,
       const DataReductionProxyConfigurator* configurator,
       DataReductionProxyEventCreator* event_creator,
@@ -46,13 +47,11 @@ class DataReductionProxyDelegate : public net::ProxyDelegate {
 
   // net::ProxyDelegate implementation:
   void OnResolveProxy(const GURL& url,
+                      const std::string& method,
                       int load_flags,
                       const net::ProxyService& proxy_service,
                       net::ProxyInfo* result) override;
   void OnFallback(const net::ProxyServer& bad_proxy, int net_error) override;
-  void OnBeforeSendHeaders(net::URLRequest* request,
-                           const net::ProxyInfo& proxy_info,
-                           net::HttpRequestHeaders* headers) override;
   void OnBeforeTunnelRequest(const net::HostPortPair& proxy_server,
                              net::HttpRequestHeaders* extra_headers) override;
   void OnTunnelConnectCompleted(const net::HostPortPair& endpoint,
@@ -65,7 +64,6 @@ class DataReductionProxyDelegate : public net::ProxyDelegate {
       const net::HttpResponseHeaders& response_headers) override;
 
  private:
-  DataReductionProxyRequestOptions* request_options_;
   const DataReductionProxyConfig* config_;
   const DataReductionProxyConfigurator* configurator_;
   DataReductionProxyEventCreator* event_creator_;
@@ -81,6 +79,7 @@ class DataReductionProxyDelegate : public net::ProxyDelegate {
 // |result|'s current proxy is the data reduction proxy
 // This is visible for test purposes.
 void OnResolveProxyHandler(const GURL& url,
+                           const std::string& method,
                            int load_flags,
                            const net::ProxyConfig& data_reduction_proxy_config,
                            const net::ProxyRetryInfoMap& proxy_retry_info,

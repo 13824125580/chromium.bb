@@ -28,7 +28,6 @@
 
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/modules/v8/UnionTypesModules.h"
 #include "modules/indexeddb/IDBCursor.h"
 #include "modules/indexeddb/IDBIndex.h"
 #include "modules/indexeddb/IDBIndexParameters.h"
@@ -64,7 +63,7 @@ public:
     int64_t id() const { return m_metadata.id; }
     const String& name() const { return m_metadata.name; }
     ScriptValue keyPath(ScriptState*) const;
-    PassRefPtrWillBeRawPtr<DOMStringList> indexNames() const;
+    DOMStringList* indexNames() const;
     IDBTransaction* transaction() const { return m_transaction.get(); }
     bool autoIncrement() const { return m_metadata.autoIncrement; }
 
@@ -97,6 +96,7 @@ public:
 
     void markDeleted() { m_deleted = true; }
     bool isDeleted() const { return m_deleted; }
+    void abort();
     void transactionFinished();
 
     const IDBObjectStoreMetadata& metadata() const { return m_metadata; }
@@ -124,6 +124,10 @@ private:
 
     typedef HeapHashMap<String, Member<IDBIndex>> IDBIndexMap;
     IDBIndexMap m_indexMap;
+
+    // Used to mark indexes created in an aborted upgrade transaction as
+    // deleted.
+    HeapHashSet<Member<IDBIndex>> m_createdIndexes;
 };
 
 } // namespace blink

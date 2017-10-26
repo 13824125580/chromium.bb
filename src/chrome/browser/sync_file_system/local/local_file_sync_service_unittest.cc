@@ -12,8 +12,8 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/sync_file_system/file_change.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
@@ -200,11 +200,11 @@ class LocalFileSyncServiceTest
   content::TestBrowserThreadBundle thread_bundle_;
 
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
   TestingProfile profile_;
 
-  scoped_ptr<CannedSyncableFileSystem> file_system_;
-  scoped_ptr<LocalFileSyncService> local_service_;
+  std::unique_ptr<CannedSyncableFileSystem> file_system_;
+  std::unique_ptr<LocalFileSyncService> local_service_;
 
   int64_t num_changes_;
 };

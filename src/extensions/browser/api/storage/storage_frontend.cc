@@ -11,15 +11,17 @@
 #include "base/files/file_path.h"
 #include "base/json/json_reader.h"
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/extensions_api_client.h"
-#include "extensions/browser/api/storage/leveldb_settings_storage_factory.h"
 #include "extensions/browser/api/storage/local_value_store_cache.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/value_store/value_store_factory.h"
 #include "extensions/common/api/storage.h"
 
 using content::BrowserContext;
@@ -45,13 +47,12 @@ class DefaultObserver : public SettingsObserver {
                          const std::string& change_json) override {
     // TODO(gdk): This is a temporary hack while the refactoring for
     // string-based event payloads is removed. http://crbug.com/136045
-    scoped_ptr<base::ListValue> args(new base::ListValue());
+    std::unique_ptr<base::ListValue> args(new base::ListValue());
     args->Append(base::JSONReader::Read(change_json));
-    args->Append(new base::StringValue(settings_namespace::ToString(
-        settings_namespace)));
-    scoped_ptr<Event> event(new Event(events::STORAGE_ON_CHANGED,
-                                      api::storage::OnChanged::kEventName,
-                                      std::move(args)));
+    args->AppendString(settings_namespace::ToString(settings_namespace));
+    std::unique_ptr<Event> event(new Event(events::STORAGE_ON_CHANGED,
+                                           api::storage::OnChanged::kEventName,
+                                           std::move(args)));
     EventRouter::Get(browser_context_)
         ->DispatchEventToExtension(extension_id, std::move(event));
   }
@@ -68,26 +69,24 @@ StorageFrontend* StorageFrontend::Get(BrowserContext* context) {
 }
 
 // static
-scoped_ptr<StorageFrontend> StorageFrontend::CreateForTesting(
-    const scoped_refptr<SettingsStorageFactory>& storage_factory,
+std::unique_ptr<StorageFrontend> StorageFrontend::CreateForTesting(
+    const scoped_refptr<ValueStoreFactory>& storage_factory,
     BrowserContext* context) {
-  return make_scoped_ptr(new StorageFrontend(storage_factory, context));
+  return base::WrapUnique(new StorageFrontend(storage_factory, context));
 }
 
 StorageFrontend::StorageFrontend(BrowserContext* context)
-    : browser_context_(context) {
-  Init(new LeveldbSettingsStorageFactory());
+    : StorageFrontend(ExtensionSystem::Get(context)->store_factory(), context) {
 }
 
 StorageFrontend::StorageFrontend(
-    const scoped_refptr<SettingsStorageFactory>& factory,
+    const scoped_refptr<ValueStoreFactory>& factory,
     BrowserContext* context)
     : browser_context_(context) {
   Init(factory);
 }
 
-void StorageFrontend::Init(
-    const scoped_refptr<SettingsStorageFactory>& factory) {
+void StorageFrontend::Init(const scoped_refptr<ValueStoreFactory>& factory) {
   TRACE_EVENT0("browser,startup", "StorageFrontend::Init")
   SCOPED_UMA_HISTOGRAM_TIMER("Extensions.StorageFrontendInitTime");
 
@@ -98,8 +97,7 @@ void StorageFrontend::Init(
 
   observers_->AddObserver(browser_context_observer_.get());
 
-  caches_[settings_namespace::LOCAL] =
-      new LocalValueStoreCache(factory, browser_context_->GetPath());
+  caches_[settings_namespace::LOCAL] = new LocalValueStoreCache(factory);
 
   // Add any additional caches the embedder supports (for example, caches
   // for chrome.storage.managed and chrome.storage.sync).

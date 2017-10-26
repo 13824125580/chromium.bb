@@ -4,20 +4,20 @@
 
 #include "modules/fetch/Body.h"
 
-#include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
 #include "bindings/core/v8/V8ThrowException.h"
 #include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/DOMTypedArray.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/fileapi/Blob.h"
 #include "core/frame/UseCounter.h"
 #include "modules/fetch/BodyStreamBuffer.h"
 #include "modules/fetch/FetchDataLoader.h"
+#include "public/platform/WebDataConsumerHandle.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -31,8 +31,8 @@ public:
     ScriptPromiseResolver* resolver() { return m_resolver; }
     void didFetchDataLoadFailed() override
     {
-        ScriptState::Scope scope(resolver()->scriptState());
-        m_resolver->reject(V8ThrowException::createTypeError(resolver()->scriptState()->isolate(), "Failed to fetch"));
+        ScriptState::Scope scope(resolver()->getScriptState());
+        m_resolver->reject(V8ThrowException::createTypeError(resolver()->getScriptState()->isolate(), "Failed to fetch"));
     }
 
     DEFINE_INLINE_TRACE()
@@ -61,7 +61,7 @@ class BodyArrayBufferConsumer final : public BodyConsumerBase {
 public:
     explicit BodyArrayBufferConsumer(ScriptPromiseResolver* resolver) : BodyConsumerBase(resolver) {}
 
-    void didFetchDataLoadedArrayBuffer(PassRefPtr<DOMArrayBuffer> arrayBuffer) override
+    void didFetchDataLoadedArrayBuffer(DOMArrayBuffer* arrayBuffer) override
     {
         resolver()->resolve(arrayBuffer);
     }
@@ -85,10 +85,10 @@ public:
 
     void didFetchDataLoadedString(const String& string) override
     {
-        if (!resolver()->executionContext() || resolver()->executionContext()->activeDOMObjectsAreStopped())
+        if (!resolver()->getExecutionContext() || resolver()->getExecutionContext()->activeDOMObjectsAreStopped())
             return;
-        ScriptState::Scope scope(resolver()->scriptState());
-        v8::Isolate* isolate = resolver()->scriptState()->isolate();
+        ScriptState::Scope scope(resolver()->getScriptState());
+        v8::Isolate* isolate = resolver()->getScriptState()->isolate();
         v8::Local<v8::String> inputString = v8String(isolate, string);
         v8::TryCatch trycatch(isolate);
         v8::Local<v8::Value> parsed;
@@ -113,13 +113,13 @@ ScriptPromise Body::arrayBuffer(ScriptState* scriptState)
     // first check the ExecutionContext and return immediately if it's already
     // gone (which means that the V8::TerminateExecution() signal has been sent
     // to this worker thread).
-    if (!scriptState->executionContext())
+    if (!scriptState->getExecutionContext())
         return ScriptPromise();
 
     ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
     promise = resolver->promise();
     if (bodyBuffer()) {
-        bodyBuffer()->startLoading(scriptState->executionContext(), FetchDataLoader::createLoaderAsArrayBuffer(), new BodyArrayBufferConsumer(resolver));
+        bodyBuffer()->startLoading(FetchDataLoader::createLoaderAsArrayBuffer(), new BodyArrayBufferConsumer(resolver));
     } else {
         resolver->resolve(DOMArrayBuffer::create(0u, 1));
     }
@@ -133,17 +133,17 @@ ScriptPromise Body::blob(ScriptState* scriptState)
         return promise;
 
     // See above comment.
-    if (!scriptState->executionContext())
+    if (!scriptState->getExecutionContext())
         return ScriptPromise();
 
     ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
     promise = resolver->promise();
     if (bodyBuffer()) {
-        bodyBuffer()->startLoading(scriptState->executionContext(), FetchDataLoader::createLoaderAsBlobHandle(mimeType()), new BodyBlobConsumer(resolver));
+        bodyBuffer()->startLoading(FetchDataLoader::createLoaderAsBlobHandle(mimeType()), new BodyBlobConsumer(resolver));
     } else {
-        OwnPtr<BlobData> blobData = BlobData::create();
+        std::unique_ptr<BlobData> blobData = BlobData::create();
         blobData->setContentType(mimeType());
-        resolver->resolve(Blob::create(BlobDataHandle::create(blobData.release(), 0)));
+        resolver->resolve(Blob::create(BlobDataHandle::create(std::move(blobData), 0)));
     }
     return promise;
 
@@ -156,13 +156,13 @@ ScriptPromise Body::json(ScriptState* scriptState)
         return promise;
 
     // See above comment.
-    if (!scriptState->executionContext())
+    if (!scriptState->getExecutionContext())
         return ScriptPromise();
 
     ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
     promise = resolver->promise();
     if (bodyBuffer()) {
-        bodyBuffer()->startLoading(scriptState->executionContext(), FetchDataLoader::createLoaderAsString(), new BodyJsonConsumer(resolver));
+        bodyBuffer()->startLoading(FetchDataLoader::createLoaderAsString(), new BodyJsonConsumer(resolver));
     } else {
         resolver->reject(V8ThrowException::createSyntaxError(scriptState->isolate(), "Unexpected end of input"));
     }
@@ -176,58 +176,52 @@ ScriptPromise Body::text(ScriptState* scriptState)
         return promise;
 
     // See above comment.
-    if (!scriptState->executionContext())
+    if (!scriptState->getExecutionContext())
         return ScriptPromise();
 
     ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
     promise = resolver->promise();
     if (bodyBuffer()) {
-        bodyBuffer()->startLoading(scriptState->executionContext(), FetchDataLoader::createLoaderAsString(), new BodyTextConsumer(resolver));
+        bodyBuffer()->startLoading(FetchDataLoader::createLoaderAsString(), new BodyTextConsumer(resolver));
     } else {
         resolver->resolve(String());
     }
     return promise;
 }
 
-ReadableByteStream* Body::body()
+ScriptValue Body::bodyWithUseCounter(ScriptState* scriptState)
 {
-    return bodyBuffer() ? bodyBuffer()->stream() : nullptr;
-}
-
-ReadableByteStream* Body::bodyWithUseCounter()
-{
-    UseCounter::count(executionContext(), UseCounter::FetchBodyStream);
-    return body();
+    UseCounter::count(getExecutionContext(), UseCounter::FetchBodyStream);
+    if (!bodyBuffer())
+        return ScriptValue::createNull(scriptState);
+    ScriptValue stream = bodyBuffer()->stream();
+    ASSERT(stream.getScriptState() == scriptState);
+    return stream;
 }
 
 bool Body::bodyUsed()
 {
-    return body() && body()->isDisturbed();
+    return bodyBuffer() && bodyBuffer()->isStreamDisturbed();
 }
 
 bool Body::isBodyLocked()
 {
-    return body() && body()->isLocked();
+    return bodyBuffer() && bodyBuffer()->isStreamLocked();
 }
 
 bool Body::hasPendingActivity() const
 {
-    if (executionContext()->activeDOMObjectsAreStopped())
+    if (getExecutionContext()->activeDOMObjectsAreStopped())
         return false;
     if (!bodyBuffer())
         return false;
     return bodyBuffer()->hasPendingActivity();
 }
 
-Body::Body(ExecutionContext* context) : ActiveDOMObject(context), m_opaque(false)
-{
-    suspendIfNeeded();
-}
+Body::Body(ExecutionContext* context) : ActiveScriptWrappable(this) , ContextLifecycleObserver(context) {}
 
 ScriptPromise Body::rejectInvalidConsumption(ScriptState* scriptState)
 {
-    if (m_opaque)
-        return ScriptPromise::reject(scriptState, V8ThrowException::createTypeError(scriptState->isolate(), "The body is opaque."));
     if (isBodyLocked() || bodyUsed())
         return ScriptPromise::reject(scriptState, V8ThrowException::createTypeError(scriptState->isolate(), "Already read"));
     return ScriptPromise();

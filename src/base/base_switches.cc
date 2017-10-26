@@ -20,6 +20,10 @@ const char kEnableCrashReporter[]           = "enable-crash-reporter";
 // the memory-infra category is enabled.
 const char kEnableHeapProfiling[]           = "enable-heap-profiling";
 
+// Report native (walk the stack) allocation traces. By default pseudo stacks
+// derived from trace events are reported.
+const char kEnableHeapProfilingModeNative[] = "native";
+
 // Generates full memory crash dump.
 const char kFullMemoryCrashReport[]         = "full-memory-crash-report";
 
@@ -45,6 +49,11 @@ const char kNoErrorDialogs[]                = "noerrdialogs";
 // When running certain tests that spawn child processes, this switch indicates
 // to the test framework that the current process is a child process.
 const char kTestChildProcess[]              = "test-child-process";
+
+// When running certain tests that spawn child processes, this switch indicates
+// to the test framework that the current process should not initialize ICU to
+// avoid creating any scoped handles too early in startup.
+const char kTestDoNotInitializeIcu[]        = "test-do-not-initialize-icu";
 
 // Gives the default maximal active V-logging level; 0 is the default.
 // Normally positive values are used for V-logging levels.

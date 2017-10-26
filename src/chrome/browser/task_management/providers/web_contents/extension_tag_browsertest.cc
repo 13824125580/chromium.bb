@@ -6,7 +6,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/task_management/task_management_browsertest_util.h"
+#include "chrome/browser/task_management/mock_web_contents_task_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "extensions/browser/test_image_loader.h"
 #include "extensions/common/constants.h"
@@ -109,7 +109,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTagsTest,
   // Reload the extension, the task manager should show it again.
   ReloadExtension(extension->id());
   EXPECT_EQ(2U, tracked_tags().size());
-  EXPECT_EQ(2U, task_manager.tasks().size());
+  ASSERT_EQ(2U, task_manager.tasks().size());
   EXPECT_EQ(Task::EXTENSION, task_manager.tasks().back()->GetType());
 }
 

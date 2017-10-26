@@ -8,6 +8,7 @@
 #include "modules/geolocation/PositionError.h"
 #include "modules/geolocation/PositionOptions.h"
 #include "platform/Histogram.h"
+#include "wtf/Assertions.h"
 
 namespace blink {
 
@@ -19,8 +20,8 @@ GeoNotifier::GeoNotifier(Geolocation* geolocation, PositionCallback* successCall
     , m_timer(this, &GeoNotifier::timerFired)
     , m_useCachedPosition(false)
 {
-    ASSERT(m_geolocation);
-    ASSERT(m_successCallback);
+    DCHECK(m_geolocation);
+    DCHECK(m_successCallback);
 
     DEFINE_STATIC_LOCAL(CustomCountHistogram, timeoutHistogram, ("Geolocation.Timeout", 0, 1000 * 60 * 10 /* 10 minute max */, 20 /* buckets */));
     timeoutHistogram.count(m_options.timeout());
@@ -82,7 +83,7 @@ void GeoNotifier::timerFired(Timer<GeoNotifier>*)
     // Test for fatal error first. This is required for the case where the LocalFrame is
     // disconnected and requests are cancelled.
     if (m_fatalError) {
-        runErrorCallback(m_fatalError.get());
+        runErrorCallback(m_fatalError);
         // This will cause this notifier to be deleted.
         m_geolocation->fatalErrorOccurred(this);
         return;

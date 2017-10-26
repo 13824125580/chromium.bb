@@ -116,7 +116,7 @@
         '../ui/shell_dialogs/shell_dialogs.gyp:shell_dialogs',
         '../ui/views/views.gyp:views',
         '../url/url.gyp:url_lib',
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
         'blpwtk2_generate_sources',
       ],
       'conditions': [
@@ -272,8 +272,6 @@
         'public/blpwtk2_profilecreateparams.h',
         'public/blpwtk2_proxyconfig.cc',
         'public/blpwtk2_proxyconfig.h',
-        'public/blpwtk2_pumpmode.cc',
-        'public/blpwtk2_pumpmode.h',
         'public/blpwtk2_resourcecontext.cc',
         'public/blpwtk2_resourcecontext.h',
         'public/blpwtk2_resourceloader.cc',
@@ -373,7 +371,7 @@
       'type': 'executable',
       'dependencies': [
         'blpwtk2',
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
         '../blppdfutil/blppdfutil.gyp:blppdfutil',
       ],
       'msvs_settings': {

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <queue>
 
 #include "base/bind.h"
@@ -28,12 +29,21 @@ class SyncPointManagerTest : public testing::Test {
   // Simple static function which can be used to test callbacks.
   static void SetIntegerFunction(int* test, int value) { *test = value; }
 
-  scoped_ptr<SyncPointManager> sync_point_manager_;
+  // Simple static function used for testing OnWaitCallback.
+  static void OnWait(CommandBufferNamespace* namespace_id_ptr,
+                     CommandBufferId* client_id_ptr,
+                     CommandBufferNamespace namespace_id,
+                     CommandBufferId client_id) {
+    *namespace_id_ptr = namespace_id;
+    *client_id_ptr = client_id;
+  }
+
+  std::unique_ptr<SyncPointManager> sync_point_manager_;
 };
 
 struct SyncPointStream {
   scoped_refptr<SyncPointOrderData> order_data;
-  scoped_ptr<SyncPointClient> client;
+  std::unique_ptr<SyncPointClient> client;
   std::queue<uint32_t> order_numbers;
 
   SyncPointStream(SyncPointManager* sync_point_manager,
@@ -111,7 +121,7 @@ TEST_F(SyncPointManagerTest, SyncPointClientRegistration) {
 
   scoped_refptr<SyncPointOrderData> order_data = SyncPointOrderData::Create();
 
-  scoped_ptr<SyncPointClient> client =
+  std::unique_ptr<SyncPointClient> client =
       sync_point_manager_->CreateSyncPointClient(order_data, kNamespaceId,
                                                  kBufferId);
 
@@ -127,7 +137,7 @@ TEST_F(SyncPointManagerTest, BasicFenceSyncRelease) {
   const CommandBufferId kBufferId = CommandBufferId::FromUnsafeValue(0x123);
 
   scoped_refptr<SyncPointOrderData> order_data = SyncPointOrderData::Create();
-  scoped_ptr<SyncPointClient> client =
+  std::unique_ptr<SyncPointClient> client =
       sync_point_manager_->CreateSyncPointClient(order_data, kNamespaceId,
                                                  kBufferId);
   scoped_refptr<SyncPointClientState> client_state = client->client_state();
@@ -152,10 +162,10 @@ TEST_F(SyncPointManagerTest, MultipleClientsPerOrderData) {
   const CommandBufferId kBufferId2 = CommandBufferId::FromUnsafeValue(0x234);
 
   scoped_refptr<SyncPointOrderData> order_data = SyncPointOrderData::Create();
-  scoped_ptr<SyncPointClient> client1 =
+  std::unique_ptr<SyncPointClient> client1 =
       sync_point_manager_->CreateSyncPointClient(order_data, kNamespaceId,
                                                  kBufferId1);
-  scoped_ptr<SyncPointClient> client2 =
+  std::unique_ptr<SyncPointClient> client2 =
       sync_point_manager_->CreateSyncPointClient(order_data, kNamespaceId,
                                                  kBufferId2);
 
@@ -371,13 +381,21 @@ TEST_F(SyncPointManagerTest, NonExistentRelease2) {
   EXPECT_EQ(10, test_num);
 
   // Even though release stream order [1] did not have a release, it
-  // should still release the fence when finish processing since the wait
-  // stream had expected on to exist there.
+  // should have changed test_num although the fence sync is still not released.
   release_stream.BeginProcessing();
   ASSERT_EQ(1u, release_stream.order_data->current_order_num());
   release_stream.EndProcessing();
-  EXPECT_TRUE(release_stream.client->client_state()->IsFenceSyncReleased(1));
+  EXPECT_FALSE(release_stream.client->client_state()->IsFenceSyncReleased(1));
   EXPECT_EQ(123, test_num);
+
+  // Ensure that the wait callback does not get triggered again when it is
+  // actually released.
+  test_num = 1;
+  release_stream.AllocateOrderNum(sync_point_manager_.get());
+  release_stream.BeginProcessing();
+  release_stream.client->ReleaseFenceSync(1);
+  release_stream.EndProcessing();
+  EXPECT_EQ(1, test_num);
 }
 
 TEST_F(SyncPointManagerTest, NonExistentOrderNumRelease) {
@@ -423,10 +441,68 @@ TEST_F(SyncPointManagerTest, NonExistentOrderNumRelease) {
   EXPECT_FALSE(release_stream.client->client_state()->IsFenceSyncReleased(1));
   EXPECT_EQ(10, test_num);
 
-  // Beginning order [4] should immediately trigger the release.
+  // Beginning order [4] should immediately trigger the wait although the fence
+  // sync is still not released yet.
   release_stream.BeginProcessing();
   ASSERT_EQ(4u, release_stream.order_data->current_order_num());
-  EXPECT_TRUE(release_stream.client->client_state()->IsFenceSyncReleased(1));
+  EXPECT_FALSE(release_stream.client->client_state()->IsFenceSyncReleased(1));
+  EXPECT_EQ(123, test_num);
+
+  // Ensure that the wait callback does not get triggered again when it is
+  // actually released.
+  test_num = 1;
+  release_stream.client->ReleaseFenceSync(1);
+  EXPECT_EQ(1, test_num);
+}
+
+TEST_F(SyncPointManagerTest, OnWaitCallbackTest) {
+  const CommandBufferNamespace kNamespaceId =
+      gpu::CommandBufferNamespace::GPU_IO;
+  const CommandBufferId kBufferId1 = CommandBufferId::FromUnsafeValue(0x123);
+  const CommandBufferId kBufferId2 = CommandBufferId::FromUnsafeValue(0x234);
+
+  SyncPointStream release_stream(sync_point_manager_.get(), kNamespaceId,
+                                 kBufferId1);
+  SyncPointStream wait_stream(sync_point_manager_.get(), kNamespaceId,
+                              kBufferId2);
+
+  CommandBufferNamespace namespace_id = CommandBufferNamespace::INVALID;
+  CommandBufferId client_id;
+  release_stream.client->SetOnWaitCallback(
+      base::Bind(&SyncPointManagerTest::OnWait, &namespace_id, &client_id));
+
+  release_stream.AllocateOrderNum(sync_point_manager_.get());
+  wait_stream.AllocateOrderNum(sync_point_manager_.get());
+  release_stream.AllocateOrderNum(sync_point_manager_.get());
+
+  wait_stream.BeginProcessing();
+  int test_num = 10;
+  bool valid_wait = wait_stream.client->Wait(
+      release_stream.client->client_state().get(), 1,
+      base::Bind(&SyncPointManagerTest::SetIntegerFunction, &test_num, 123));
+  EXPECT_TRUE(valid_wait);
+  EXPECT_EQ(10, test_num);
+  EXPECT_EQ(kNamespaceId, namespace_id);
+  EXPECT_EQ(kBufferId2, client_id);
+
+  release_stream.BeginProcessing();
+  release_stream.client->ReleaseFenceSync(1);
+  EXPECT_EQ(123, test_num);
+
+  wait_stream.EndProcessing();
+
+  namespace_id = CommandBufferNamespace::INVALID;
+  client_id = CommandBufferId();
+  test_num = 10;
+  valid_wait = wait_stream.client->WaitOutOfOrder(
+      release_stream.client->client_state().get(), 2,
+      base::Bind(&SyncPointManagerTest::SetIntegerFunction, &test_num, 123));
+  EXPECT_TRUE(valid_wait);
+  EXPECT_EQ(10, test_num);
+  EXPECT_EQ(kNamespaceId, namespace_id);
+  EXPECT_EQ(kBufferId2, client_id);
+
+  release_stream.client->ReleaseFenceSync(2);
   EXPECT_EQ(123, test_num);
 }
 

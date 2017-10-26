@@ -9,10 +9,10 @@
 
 #include <list>
 #include <map>
+#include <memory>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/byte_queue.h"
 #include "media/base/media_export.h"
@@ -52,6 +52,7 @@ class MEDIA_EXPORT Mp2tStreamParser : public StreamParser {
     BufferQueueWithConfig(bool is_cfg_sent,
                           const AudioDecoderConfig& audio_cfg,
                           const VideoDecoderConfig& video_cfg);
+    BufferQueueWithConfig(const BufferQueueWithConfig& other);
     ~BufferQueueWithConfig();
 
     bool is_config_sent;
@@ -139,5 +140,4 @@ class MEDIA_EXPORT Mp2tStreamParser : public StreamParser {
 }  // namespace mp2t
 }  // namespace media
 
-#endif
-
+#endif  // MEDIA_FORMATS_MP2T_MP2T_STREAM_PARSER_H_

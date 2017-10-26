@@ -132,9 +132,9 @@ TEST_F('CursorsTest', 'CharacterCursor', function() {
   this.runCursorMovesOnDocument(this.simpleDoc, [
     [CHARACTER, DIRECTIONAL, FORWARD, {index: 1, value: 'start '}],
     [CHARACTER, DIRECTIONAL, BACKWARD, {index: 0, value: 'start '}],
-    [CHARACTER, DIRECTIONAL, BACKWARD, {index: 0, value: undefined}],
+    // Bumps up against edge.
+    [CHARACTER, DIRECTIONAL, BACKWARD, {index: 0, value: 'start '}],
 
-    [CHARACTER, DIRECTIONAL, FORWARD, {index: 0, value: 'start '}],
     [CHARACTER, DIRECTIONAL, FORWARD, {index: 1, value: 'start '}],
     [CHARACTER, DIRECTIONAL, FORWARD, {index: 2, value: 'start '}],
     [CHARACTER, DIRECTIONAL, FORWARD, {index: 3, value: 'start '}],
@@ -198,9 +198,9 @@ TEST_F('CursorsTest', 'LineCursor', function() {
     [LINE, DIRECTIONAL, FORWARD, {value: 'end'}],
     [LINE, DIRECTIONAL, FORWARD, {value: 'end'}],
     [LINE, DIRECTIONAL, BACKWARD, {value: 'same line'}],
-    [LINE, DIRECTIONAL, BACKWARD, {value: undefined}],
-    [LINE, BOUND, BACKWARD, {value: undefined}],
-    [LINE, DIRECTIONAL, FORWARD, {value: 'start '}]]);
+    // Bump against an edge.
+    [LINE, DIRECTIONAL, BACKWARD, {value: 'same line'}],
+    [LINE, BOUND, BACKWARD, {value: 'start '}]]);
 });
 
 TEST_F('CursorsTest', 'CharacterRange', function() {
@@ -272,10 +272,10 @@ TEST_F('CursorsTest', 'LineRange', function() {
           {value: 'start ', index: 0}, {value: 'same line', index: 9}],
 
       [LINE, BACKWARD,
-          {value: undefined, index: 0}, {value: undefined, index: 0}],
+          {value: 'start ', index: 0}, {value: 'same line', index: 9}]
   ], this.RANGE);
 });
-      
+
 TEST_F('CursorsTest', 'DontSplitOnNodeNavigation', function() {
   this.runWithLoadedTree(this.multiInlineDoc, function(root) {
     var para = root.firstChild;
@@ -319,5 +319,59 @@ TEST_F('CursorsTest', 'IsInWebRange', function() {
     var auraRange = cursors.Range.fromNode(root.parent);
     assertFalse(auraRange.isWebRange());
     assertTrue(webRange.isWebRange());
+  });
+});
+
+TEST_F('CursorsTest', 'SingleDocSelection', function() {
+  this.runWithLoadedTree(function() {/*!
+    <a href="google.com">google home page</a>
+    <p>some more text</p>
+    <p>end of text</p>
+  */},
+  function(root) {
+    var link = root.firstChild.firstChild;
+    var p1 = root.firstChild.nextSibling;
+    var p2 = p1.nextSibling;
+
+    var singleSel = new cursors.Range(
+        new cursors.Cursor(link, 0),
+        new cursors.Cursor(link, 1));
+
+    var multiSel = new cursors.Range(
+        new cursors.Cursor(p1.firstChild, 2),
+        new cursors.Cursor(p2.firstChild, 4));
+
+    function verifySel() {
+      if (root.anchorObject == link.firstChild) {
+        assertEquals(link.firstChild, root.anchorObject);
+        assertEquals(0, root.anchorOffset);
+        assertEquals(link.firstChild, root.focusObject);
+        assertEquals(16, root.focusOffset);
+        this.listenOnce(root, 'textSelectionChanged', verifySel);
+        multiSel.select();
+      } else {
+        assertEquals(p1.firstChild, root.anchorObject);
+        assertEquals(2, root.anchorOffset);
+        assertEquals(p2.firstChild, root.focusObject);
+        assertEquals(4, root.focusOffset);
+      }
+    }
+
+    this.listenOnce(root, 'textSelectionChanged', verifySel, true);
+    singleSel.select();
+  });
+});
+
+TEST_F('CursorsTest', 'MultiLineOffsetSelection', function() {
+  this.runWithLoadedTree(this.multiInlineDoc, function(root) {
+    var secondLine = root.firstChild.firstChild.firstChild.nextSibling;
+    assertEquals('inlineTextBox', secondLine.role);
+    assertEquals('diff ', secondLine.name);
+
+    var secondLineCursor = new cursors.Cursor(secondLine, -1);
+    assertEquals(0, secondLineCursor.selectionIndex_);
+    secondLineCursor = new cursors.Cursor(secondLine, 0);
+    secondLineCursor.index = 0;
+    assertEquals(6, secondLineCursor.selectionIndex_);
   });
 });

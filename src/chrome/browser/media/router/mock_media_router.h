@@ -41,13 +41,14 @@ class MockMediaRouter : public MediaRouter {
                     const std::vector<MediaRouteResponseCallback>& callbacks,
                     base::TimeDelta timeout,
                     bool off_the_record));
-  MOCK_METHOD6(ConnectRouteByRouteId,
+  MOCK_METHOD7(ConnectRouteByRouteId,
                void(const MediaSource::Id& source,
                     const MediaRoute::Id& route_id,
                     const GURL& origin,
                     content::WebContents* web_contents,
                     const std::vector<MediaRouteResponseCallback>& callbacks,
-                    base::TimeDelta timeout));
+                    base::TimeDelta timeout,
+                    bool off_the_record));
   MOCK_METHOD1(DetachRoute, void(const MediaRoute::Id& route_id));
   MOCK_METHOD1(TerminateRoute, void(const MediaRoute::Id& route_id));
   MOCK_METHOD3(SendRouteMessage,
@@ -56,7 +57,7 @@ class MockMediaRouter : public MediaRouter {
                     const SendRouteMessageCallback& callback));
   void SendRouteBinaryMessage(
       const MediaRoute::Id& route_id,
-      scoped_ptr<std::vector<uint8_t>> data,
+      std::unique_ptr<std::vector<uint8_t>> data,
       const SendRouteMessageCallback& callback) override {
     SendRouteBinaryMessageInternal(route_id, data.get(), callback);
   }
@@ -67,9 +68,16 @@ class MockMediaRouter : public MediaRouter {
   MOCK_METHOD1(AddIssue, void(const Issue& issue));
   MOCK_METHOD1(ClearIssue, void(const Issue::Id& issue_id));
   MOCK_METHOD0(OnUserGesture, void());
+  MOCK_METHOD5(
+      SearchSinks,
+      void(const MediaSink::Id& sink_id,
+           const MediaSource::Id& source_id,
+           const std::string& search_input,
+           const std::string& domain,
+           const MediaSinkSearchResponseCallback& sink_callback));
   MOCK_METHOD1(OnPresentationSessionDetached,
                void(const MediaRoute::Id& route_id));
-  scoped_ptr<PresentationConnectionStateSubscription>
+  std::unique_ptr<PresentationConnectionStateSubscription>
   AddPresentationConnectionStateChangedCallback(
       const MediaRoute::Id& route_id,
       const content::PresentationConnectionStateChangedCallback& callback)
@@ -77,6 +85,8 @@ class MockMediaRouter : public MediaRouter {
     OnAddPresentationConnectionStateChangedCallbackInvoked(callback);
     return connection_state_callbacks_.Add(callback);
   }
+
+  MOCK_METHOD0(OnOffTheRecordProfileShutdown, void());
   MOCK_METHOD1(OnAddPresentationConnectionStateChangedCallbackInvoked,
                void(const content::PresentationConnectionStateChangedCallback&
                         callback));

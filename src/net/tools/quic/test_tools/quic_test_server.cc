@@ -7,7 +7,7 @@
 #include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/quic/crypto/crypto_handshake.h"
@@ -19,8 +19,10 @@
 #include "net/quic/quic_packet_writer.h"
 #include "net/quic/quic_protocol.h"
 #include "net/tools/quic/quic_dispatcher.h"
+#include "net/tools/quic/quic_epoll_alarm_factory.h"
 #include "net/tools/quic/quic_epoll_connection_helper.h"
 #include "net/tools/quic/quic_simple_server_session.h"
+#include "net/tools/quic/quic_simple_server_session_helper.h"
 #include "net/tools/quic/quic_simple_server_stream.h"
 
 namespace net {
@@ -31,11 +33,18 @@ class CustomStreamSession : public QuicSimpleServerSession {
   CustomStreamSession(
       const QuicConfig& config,
       QuicConnection* connection,
-      QuicServerSessionVisitor* visitor,
+      QuicServerSessionBase::Visitor* visitor,
+      QuicServerSessionBase::Helper* helper,
       const QuicCryptoServerConfig* crypto_config,
+      QuicCompressedCertsCache* compressed_certs_cache,
       QuicTestServer::StreamFactory* factory,
       QuicTestServer::CryptoStreamFactory* crypto_stream_factory)
-      : QuicSimpleServerSession(config, connection, visitor, crypto_config),
+      : QuicSimpleServerSession(config,
+                                connection,
+                                visitor,
+                                helper,
+                                crypto_config,
+                                compressed_certs_cache),
         stream_factory_(factory),
         crypto_stream_factory_(crypto_stream_factory) {}
 
@@ -44,17 +53,21 @@ class CustomStreamSession : public QuicSimpleServerSession {
       return nullptr;
     }
     if (stream_factory_) {
-      return stream_factory_->CreateStream(id, this);
+      QuicSpdyStream* stream = stream_factory_->CreateStream(id, this);
+      ActivateStream(stream);
+      return stream;
     }
     return QuicSimpleServerSession::CreateIncomingDynamicStream(id);
   }
 
   QuicCryptoServerStreamBase* CreateQuicCryptoServerStream(
-      const QuicCryptoServerConfig* crypto_config) override {
+      const QuicCryptoServerConfig* crypto_config,
+      QuicCompressedCertsCache* compressed_certs_cache) override {
     if (crypto_stream_factory_) {
       return crypto_stream_factory_->CreateCryptoStream(crypto_config, this);
     }
-    return QuicSimpleServerSession::CreateQuicCryptoServerStream(crypto_config);
+    return QuicSimpleServerSession::CreateQuicCryptoServerStream(
+        crypto_config, compressed_certs_cache);
   }
 
  private:
@@ -64,11 +77,19 @@ class CustomStreamSession : public QuicSimpleServerSession {
 
 class QuicTestDispatcher : public QuicDispatcher {
  public:
-  QuicTestDispatcher(const QuicConfig& config,
-                     const QuicCryptoServerConfig* crypto_config,
-                     const QuicVersionVector& versions,
-                     QuicConnectionHelperInterface* helper)
-      : QuicDispatcher(config, crypto_config, versions, helper),
+  QuicTestDispatcher(
+      const QuicConfig& config,
+      const QuicCryptoServerConfig* crypto_config,
+      const QuicVersionVector& versions,
+      std::unique_ptr<QuicConnectionHelperInterface> helper,
+      std::unique_ptr<QuicServerSessionBase::Helper> session_helper,
+      std::unique_ptr<QuicAlarmFactory> alarm_factory)
+      : QuicDispatcher(config,
+                       crypto_config,
+                       versions,
+                       std::move(helper),
+                       std::move(session_helper),
+                       std::move(alarm_factory)),
         session_factory_(nullptr),
         stream_factory_(nullptr),
         crypto_stream_factory_(nullptr) {}
@@ -81,17 +102,19 @@ class QuicTestDispatcher : public QuicDispatcher {
       return QuicDispatcher::CreateQuicSession(id, client);
     }
     QuicConnection* connection = new QuicConnection(
-        id, client, helper(), CreatePerConnectionWriter(),
-        /* owns_writer= */ true, Perspective::IS_SERVER, supported_versions());
+        id, client, helper(), alarm_factory(), CreatePerConnectionWriter(),
+        /* owns_writer= */ true, Perspective::IS_SERVER,
+        GetSupportedVersions());
 
     QuicServerSessionBase* session = nullptr;
     if (stream_factory_ != nullptr || crypto_stream_factory_ != nullptr) {
-      session =
-          new CustomStreamSession(config(), connection, this, crypto_config(),
-                                  stream_factory_, crypto_stream_factory_);
+      session = new CustomStreamSession(
+          config(), connection, this, session_helper(), crypto_config(),
+          compressed_certs_cache(), stream_factory_, crypto_stream_factory_);
     } else {
-      session = session_factory_->CreateSession(config(), connection, this,
-                                                crypto_config());
+      session = session_factory_->CreateSession(
+          config(), connection, this, session_helper(), crypto_config(),
+          compressed_certs_cache());
     }
     session->Initialize();
     return session;
@@ -132,12 +155,20 @@ QuicTestServer::QuicTestServer(ProofSource* proof_source)
 QuicTestServer::QuicTestServer(ProofSource* proof_source,
                                const QuicConfig& config,
                                const QuicVersionVector& supported_versions)
-    : QuicServer(proof_source, config, supported_versions) {}
+    : QuicServer(proof_source,
+                 config,
+                 QuicCryptoServerConfig::ConfigOptions(),
+                 supported_versions) {}
 
 QuicDispatcher* QuicTestServer::CreateQuicDispatcher() {
-  return new QuicTestDispatcher(config(), &crypto_config(),
-                                supported_versions(),
-                                new QuicEpollConnectionHelper(epoll_server()));
+  return new QuicTestDispatcher(
+      config(), &crypto_config(), supported_versions(),
+      std::unique_ptr<QuicEpollConnectionHelper>(new QuicEpollConnectionHelper(
+          epoll_server(), QuicAllocator::BUFFER_POOL)),
+      std::unique_ptr<QuicServerSessionBase::Helper>(
+          new QuicSimpleServerSessionHelper(QuicRandom::GetInstance())),
+      std::unique_ptr<QuicEpollAlarmFactory>(
+          new QuicEpollAlarmFactory(epoll_server())));
 }
 
 void QuicTestServer::SetSessionFactory(SessionFactory* factory) {
@@ -159,10 +190,20 @@ void QuicTestServer::SetCryptoStreamFactory(CryptoStreamFactory* factory) {
 ImmediateGoAwaySession::ImmediateGoAwaySession(
     const QuicConfig& config,
     QuicConnection* connection,
-    QuicServerSessionVisitor* visitor,
-    const QuicCryptoServerConfig* crypto_config)
-    : QuicSimpleServerSession(config, connection, visitor, crypto_config) {
+    QuicServerSessionBase::Visitor* visitor,
+    QuicServerSessionBase::Helper* helper,
+    const QuicCryptoServerConfig* crypto_config,
+    QuicCompressedCertsCache* compressed_certs_cache)
+    : QuicSimpleServerSession(config,
+                              connection,
+                              visitor,
+                              helper,
+                              crypto_config,
+                              compressed_certs_cache) {}
+
+void ImmediateGoAwaySession::OnStreamFrame(const QuicStreamFrame& frame) {
   SendGoAway(QUIC_PEER_GOING_AWAY, "");
+  QuicSimpleServerSession::OnStreamFrame(frame);
 }
 
 }  // namespace test

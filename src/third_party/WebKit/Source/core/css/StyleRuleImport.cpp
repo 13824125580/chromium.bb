@@ -30,15 +30,15 @@
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<StyleRuleImport> StyleRuleImport::create(const String& href, PassRefPtrWillBeRawPtr<MediaQuerySet> media)
+StyleRuleImport* StyleRuleImport::create(const String& href, MediaQuerySet* media)
 {
-    return adoptRefWillBeNoop(new StyleRuleImport(href, media));
+    return new StyleRuleImport(href, media);
 }
 
-StyleRuleImport::StyleRuleImport(const String& href, PassRefPtrWillBeRawPtr<MediaQuerySet> media)
+StyleRuleImport::StyleRuleImport(const String& href, MediaQuerySet* media)
     : StyleRuleBase(Import)
     , m_parentStyleSheet(nullptr)
-    , m_styleSheetClient(this)
+    , m_styleSheetClient(new ImportedStyleSheetClient(this))
     , m_strHref(href)
     , m_mediaQueries(media)
     , m_loading(false)
@@ -46,24 +46,17 @@ StyleRuleImport::StyleRuleImport(const String& href, PassRefPtrWillBeRawPtr<Medi
     if (!m_mediaQueries)
         m_mediaQueries = MediaQuerySet::create(String());
 
-#if ENABLE(OILPAN)
     ThreadState::current()->registerPreFinalizer(this);
-#endif
 }
 
 StyleRuleImport::~StyleRuleImport()
 {
-#if !ENABLE(OILPAN)
-    if (m_styleSheet)
-        m_styleSheet->clearOwnerRule();
-    dispose();
-#endif
 }
 
 void StyleRuleImport::dispose()
 {
     if (m_resource)
-        m_resource->removeClient(&m_styleSheetClient);
+        m_resource->removeClient(m_styleSheetClient);
     m_resource = nullptr;
 }
 
@@ -93,7 +86,7 @@ void StyleRuleImport::setCSSStyleSheet(const String& href, const KURL& baseURL, 
 
     m_styleSheet = StyleSheetContents::create(this, href, context);
 
-    m_styleSheet->parseAuthorStyleSheet(cachedStyleSheet, document ? document->securityOrigin() : 0);
+    m_styleSheet->parseAuthorStyleSheet(cachedStyleSheet, document ? document->getSecurityOrigin() : 0);
 
     m_loading = false;
 
@@ -147,7 +140,7 @@ void StyleRuleImport::requestStyleSheet()
         if (m_parentStyleSheet && m_parentStyleSheet->loadCompleted() && rootSheet == m_parentStyleSheet)
             m_parentStyleSheet->startLoadingDynamicSheet();
         m_loading = true;
-        m_resource->addClient(&m_styleSheetClient);
+        m_resource->addClient(m_styleSheetClient);
     }
 }
 

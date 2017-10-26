@@ -7,13 +7,13 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/base64.h"
 #include "base/build_time.h"
 #include "base/cpu.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/metrics_hashes.h"
@@ -40,8 +40,7 @@
 #endif
 
 #if defined(OS_WIN)
-// http://blogs.msdn.com/oldnewthing/archive/2004/10/25/247180.aspx
-extern "C" IMAGE_DOS_HEADER __ImageBase;
+#include "base/win/current_module.h"
 #endif
 
 using base::SampleCountIterator;
@@ -252,6 +251,30 @@ bool MetricsLog::HasEnvironment() const {
   return uma_proto()->system_profile().has_uma_enabled_date();
 }
 
+void MetricsLog::WriteMetricsEnableDefault(EnableMetricsDefault metrics_default,
+                                           SystemProfileProto* system_profile) {
+  if (client_->IsReportingPolicyManaged()) {
+    // If it's managed, then it must be reporting, otherwise we wouldn't be
+    // sending metrics.
+    system_profile->set_uma_default_state(
+        SystemProfileProto_UmaDefaultState_POLICY_FORCED_ENABLED);
+    return;
+  }
+
+  switch (metrics_default) {
+    case EnableMetricsDefault::DEFAULT_UNKNOWN:
+      // Don't set the field if it's unknown.
+      break;
+    case EnableMetricsDefault::OPT_IN:
+      system_profile->set_uma_default_state(
+          SystemProfileProto_UmaDefaultState_OPT_IN);
+      break;
+    case EnableMetricsDefault::OPT_OUT:
+      system_profile->set_uma_default_state(
+          SystemProfileProto_UmaDefaultState_OPT_OUT);
+  }
+}
+
 bool MetricsLog::HasStabilityMetrics() const {
   return uma_proto()->system_profile().stability().has_launch_count();
 }
@@ -300,6 +323,9 @@ void MetricsLog::RecordEnvironment(
 
   SystemProfileProto* system_profile = uma_proto()->mutable_system_profile();
 
+  WriteMetricsEnableDefault(client_->GetMetricsReportingDefaultState(),
+                            system_profile);
+
   std::string brand_code;
   if (client_->GetBrand(&brand_code))
     system_profile->set_brand_code(brand_code);
@@ -322,12 +348,17 @@ void MetricsLog::RecordEnvironment(
   hardware->set_cpu_architecture(base::SysInfo::OperatingSystemArchitecture());
   hardware->set_system_ram_mb(base::SysInfo::AmountOfPhysicalMemoryMB());
 #if defined(OS_WIN)
-  hardware->set_dll_base(reinterpret_cast<uint64_t>(&__ImageBase));
+  hardware->set_dll_base(reinterpret_cast<uint64_t>(CURRENT_MODULE()));
 #endif
 
   SystemProfileProto::OS* os = system_profile->mutable_os();
+#if defined(OVERRIDE_OS_NAME_TO_BLIMP)
+  os->set_name("Blimp");
+#else
   std::string os_name = base::SysInfo::OperatingSystemName();
   os->set_name(os_name);
+#endif
+
   os->set_version(base::SysInfo::OperatingSystemVersion());
 #if defined(OS_ANDROID)
   os->set_fingerprint(

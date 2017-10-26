@@ -5,8 +5,8 @@ import unittest
 
 from telemetry.core import exceptions
 from telemetry import decorators
+from telemetry.internal.actions import action_runner as action_runner_module
 from telemetry.internal.actions import page_action
-from telemetry.page import action_runner as action_runner_module
 from telemetry.testing import tab_test_case
 import mock
 from telemetry.timeline import model
@@ -31,7 +31,7 @@ class ActionRunnerInteractionTest(tab_test_case.TabTestCase):
     self.Navigate('interaction_enabled_page.html')
     action_runner.Wait(1)
     config = tracing_config.TracingConfig()
-    config.SetNoOverheadFilter()
+    config.chrome_trace_config.SetLowOverheadFilter()
     config.enable_chrome_trace = True
     self._browser.platform.tracing_controller.StartTracing(config)
     with action_runner.CreateInteraction('InteractionName',
@@ -51,7 +51,6 @@ class ActionRunnerInteractionTest(tab_test_case.TabTestCase):
   # Test disabled for android: crbug.com/437057
   # Test disabled for linux: crbug.com/513874
   @decorators.Disabled('android', 'chromeos', 'linux')
-  @decorators.Disabled('win')  # crbug.com/570955
   def testIssuingMultipleMeasurementInteractionRecords(self):
     self.VerifyIssuingInteractionRecords(repeatable=True)
 
@@ -183,7 +182,8 @@ class ActionRunnerTest(tab_test_case.TabTestCase):
     self.assertRaises(exceptions.EvaluateException, WillFail)
 
   @decorators.Disabled('android', 'debug',  # crbug.com/437068
-                       'chromeos')          # crbug.com/483212
+                       'chromeos',          # crbug.com/483212
+                       'win')               # catapult/issues/2282
   def testTapElement(self):
     self.Navigate('page_with_clickables.html')
     action_runner = action_runner_module.ActionRunner(self._tab,

@@ -19,12 +19,10 @@ class ScriptState;
 class SecurityOrigin;
 class WindowProxy;
 
-class CORE_EXPORT WindowProxyManager final : public NoBaseWillBeGarbageCollectedFinalized<WindowProxyManager> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(WindowProxyManager);
+class CORE_EXPORT WindowProxyManager final : public GarbageCollected<WindowProxyManager> {
 public:
-    static PassOwnPtrWillBeRawPtr<WindowProxyManager> create(Frame&);
+    static WindowProxyManager* create(Frame&);
 
-    ~WindowProxyManager();
     DECLARE_TRACE();
 
     Frame* frame() const { return m_frame.get(); }
@@ -44,14 +42,14 @@ public:
     void setGlobals(const HashMap<DOMWrapperWorld*, v8::Local<v8::Object>>&);
 
 private:
-    typedef WillBeHeapHashMap<int, OwnPtrWillBeMember<WindowProxy>> IsolatedWorldMap;
+    typedef HeapHashMap<int, Member<WindowProxy>> IsolatedWorldMap;
 
     explicit WindowProxyManager(Frame&);
 
-    RawPtrWillBeMember<Frame> m_frame;
+    Member<Frame> m_frame;
     v8::Isolate* const m_isolate;
 
-    const OwnPtrWillBeMember<WindowProxy> m_windowProxy;
+    const Member<WindowProxy> m_windowProxy;
     IsolatedWorldMap m_isolatedWorlds;
 };
 

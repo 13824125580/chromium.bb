@@ -33,9 +33,9 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/MessagePort.h"
-#include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/workers/WorkerGlobalScope.h"
-#include "platform/heap/Handle.h"
+#include "platform/heap/Visitor.h"
+#include <memory>
 
 namespace blink {
 
@@ -45,8 +45,7 @@ class WorkerThreadStartupData;
 class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    typedef WorkerGlobalScope Base;
-    static PassRefPtrWillBeRawPtr<DedicatedWorkerGlobalScope> create(DedicatedWorkerThread*, PassOwnPtr<WorkerThreadStartupData>, double timeOrigin);
+    static DedicatedWorkerGlobalScope* create(DedicatedWorkerThread*, std::unique_ptr<WorkerThreadStartupData>, double timeOrigin);
     ~DedicatedWorkerGlobalScope() override;
 
     bool isDedicatedWorkerGlobalScope() const override { return true; }
@@ -56,7 +55,7 @@ public:
     // EventTarget
     const AtomicString& interfaceName() const override;
 
-    void postMessage(ExecutionContext*, PassRefPtr<SerializedScriptValue>, const MessagePortArray*, ExceptionState&);
+    void postMessage(ExecutionContext*, PassRefPtr<SerializedScriptValue>, const MessagePortArray&, ExceptionState&);
 
     DEFINE_ATTRIBUTE_EVENT_LISTENER(message);
 
@@ -65,7 +64,7 @@ public:
     DECLARE_VIRTUAL_TRACE();
 
 private:
-    DedicatedWorkerGlobalScope(const KURL&, const String& userAgent, DedicatedWorkerThread*, double timeOrigin, PassOwnPtr<SecurityOrigin::PrivilegeData>, PassOwnPtrWillBeRawPtr<WorkerClients>);
+    DedicatedWorkerGlobalScope(const KURL&, const String& userAgent, DedicatedWorkerThread*, double timeOrigin, std::unique_ptr<SecurityOrigin::PrivilegeData>, WorkerClients*);
 };
 
 } // namespace blink

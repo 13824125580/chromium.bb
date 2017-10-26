@@ -34,10 +34,10 @@
 #include "platform/PlatformExport.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCompositorSupport.h"
-#include "public/platform/WebDiscardableMemory.h"
 #include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -45,22 +45,6 @@ class TestingPlatformMockWebTaskRunner;
 class TestingPlatformMockWebThread;
 class WebCompositorSupport;
 class WebThread;
-
-class TestingDiscardableMemory : public WebDiscardableMemory {
-public:
-    explicit TestingDiscardableMemory(size_t);
-    ~TestingDiscardableMemory() override;
-
-    // WebDiscardableMemory:
-    bool lock() override;
-    void* data() override;
-    void unlock() override;
-    WebMemoryAllocatorDump* createMemoryAllocatorDump(const WebString& name, WebProcessMemoryDump*) const override;
-
-private:
-    Vector<char> m_data;
-    bool m_isLocked;
-};
 
 class TestingCompositorSupport : public WebCompositorSupport {
 };
@@ -83,28 +67,23 @@ public:
     void postIdleTask(const WebTraceLocation&, WebThread::IdleTask*) override { }
     void postNonNestableIdleTask(const WebTraceLocation&, WebThread::IdleTask*) override { }
     void postIdleTaskAfterWakeup(const WebTraceLocation&, WebThread::IdleTask*) override { }
-    WebPassOwnPtr<WebViewScheduler> createWebViewScheduler(blink::WebView*) override { return nullptr; }
+    std::unique_ptr<WebViewScheduler> createWebViewScheduler(blink::WebView*) override { return nullptr; }
     void suspendTimerQueue() override { }
     void resumeTimerQueue() override { }
-    void addPendingNavigation() override { }
-    void removePendingNavigation() override { }
+    void addPendingNavigation(WebScheduler::NavigatingFrameType) override { }
+    void removePendingNavigation(WebScheduler::NavigatingFrameType) override { }
     void onNavigationStarted() override { }
 
 private:
-    WTF::Deque<OwnPtr<WebTaskRunner::Task>> m_tasks;
-    OwnPtr<TestingPlatformMockWebTaskRunner> m_mockWebTaskRunner;
+    WTF::Deque<std::unique_ptr<WebTaskRunner::Task>> m_tasks;
+    std::unique_ptr<TestingPlatformMockWebTaskRunner> m_mockWebTaskRunner;
 };
 
 class TestingPlatformSupport : public Platform {
     WTF_MAKE_NONCOPYABLE(TestingPlatformSupport);
 public:
     struct Config {
-        Config()
-            : hasDiscardableMemorySupport(false)
-            , compositorSupport(nullptr) { }
-
-        bool hasDiscardableMemorySupport;
-        WebCompositorSupport* compositorSupport;
+        WebCompositorSupport* compositorSupport = nullptr;
     };
 
     TestingPlatformSupport();
@@ -113,14 +92,9 @@ public:
     ~TestingPlatformSupport() override;
 
     // Platform:
-    WebDiscardableMemory* allocateAndLockDiscardableMemory(size_t bytes) override;
     WebString defaultLocale() override;
     WebCompositorSupport* compositorSupport() override;
     WebThread* currentThread() override;
-    WebUnitTestSupport* unitTestSupport() override;
-    void registerMemoryDumpProvider(blink::WebMemoryDumpProvider*, const char* name) override {}
-    void unregisterMemoryDumpProvider(blink::WebMemoryDumpProvider*) override {}
-    void connectToRemoteService(const char* name, mojo::ScopedMessagePipeHandle) override;
 
 protected:
     const Config m_config;
@@ -139,7 +113,7 @@ public:
     TestingPlatformMockScheduler* mockWebScheduler();
 
 protected:
-    OwnPtr<TestingPlatformMockWebThread> m_mockWebThread;
+    std::unique_ptr<TestingPlatformMockWebThread> m_mockWebThread;
 };
 
 } // namespace blink

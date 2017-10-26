@@ -22,14 +22,6 @@
       # it easier for us to reference them internally.
       'actions': [
         {
-          # GN version: //chrome/browser/resources:memory_internals_resources
-          'action_name': 'generate_memory_internals_resources',
-          'variables': {
-            'grit_grd_file': 'browser/resources/memory_internals_resources.grd',
-          },
-          'includes': [ 'chrome_grit_action.gypi' ],
-        },
-        {
           # GN version: //chrome/browser/resources:net_internals_resources
           'action_name': 'generate_net_internals_resources',
           'variables': {
@@ -186,6 +178,7 @@
       'dependencies': [
         'chrome_internal_resources_gen',
         'chrome_web_ui_mojo_bindings.gyp:web_ui_mojo_bindings',
+        '../url/url.gyp:url_interfaces_mojom',
       ],
       'actions': [
         {
@@ -229,6 +222,9 @@
               'includes': [ 'chrome_grit_action.gypi' ],
             }
           ],
+        }],
+        ['OS != "android" and OS != "ios"', {
+          'dependencies': [ 'make_file_types_protobuf' ]
         }],
       ],
       'includes': [ '../build/grit_target.gypi' ],
@@ -299,6 +295,64 @@
           },
           'includes': [ 'chrome_grit_action.gypi' ],
         },
+      ],
+    },
+
+    {
+      # GN version: //chrome/browser/resources/safe_browsing:make_file_types_protobuf
+      # Convert the ascii proto file to a binary resource.
+      'target_name': 'make_file_types_protobuf',
+      'type': 'none',
+      'hard_dependency': 1,
+      'dependencies': [
+        'chrome.gyp:safe_browsing_proto',
+        '<(DEPTH)/third_party/protobuf/protobuf.gyp:py_proto',
+      ],
+      'actions': [
+        {
+          'action_name': 'generate_file_types_protobuf',
+          'variables' : {
+            'script_file':'browser/resources/safe_browsing/gen_file_type_proto.py',
+            'asciipb_file' : 'browser/resources/safe_browsing/download_file_types.asciipb',
+            'output_dir' : '<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/safe_browsing',
+            'output_basename' : 'download_file_types.pb',
+            'conditions': [
+              ['OS=="android"', {
+                'platform': 'android'
+              }, 'chromeos==1', {
+                'platform': 'chromeos'
+              }, 'OS=="linux"', {
+                'platform': 'linux'
+              }, 'OS=="mac"', {
+                'platform': 'mac'
+              }, 'OS=="win"', {
+                'platform': 'win'
+              }, {
+                # This will cause the script to fail
+                'platform': 'unknown_target_arch'
+              }],
+            ],
+          },
+          'inputs': [
+            '<(script_file)',
+            '<(asciipb_file)',
+          ],
+          'outputs': [
+            '<(output_dir)/<(output_basename)',
+          ],
+          'action': [
+            'python',
+            '<(script_file)',
+            '-w',
+            '-i', '<(asciipb_file)',
+            '-d', '<(output_dir)',
+            '-o', '<(output_basename)',
+            '-t', '<(platform)',
+            '-p', '<(PRODUCT_DIR)/pyproto',
+            '-p', '<(PRODUCT_DIR)/pyproto/chrome/common/safe_browsing',
+          ],
+          'message': 'Generating download_file_types.pb.',
+        }
       ],
     },
     {
@@ -491,12 +545,6 @@
         {
           'includes': ['chrome_repack_chrome_200_percent.gypi']
         },
-        {
-          'includes': ['chrome_repack_chrome_material_100_percent.gypi']
-        },
-        {
-          'includes': ['chrome_repack_chrome_material_200_percent.gypi']
-        },
       ],
       'conditions': [  # GN version: chrome_repack_locales.gni template("_repack_one_locale")
         ['OS != "ios"', {
@@ -534,7 +582,7 @@
             '<(DEPTH)/ui/chromeos/ui_chromeos.gyp:ui_chromeos_strings',
           ],
         }],
-        ['enable_autofill_dialog==1 and OS!="android"', {
+        ['OS != "android" and OS != "ios"', {
           'dependencies': [  # Update duplicate logic in repack_locales.py
             '<(DEPTH)/third_party/libaddressinput/libaddressinput.gyp:libaddressinput_strings',
           ],
@@ -547,6 +595,16 @@
         ['enable_app_list==1', {
           'dependencies': [
              '<(DEPTH)/ui/app_list/resources/app_list_resources.gyp:app_list_resources',
+          ],
+        }],
+        ['OS == "mac"', {
+          'actions': [
+            {
+              'includes': ['chrome_repack_chrome_material_100_percent.gypi']
+            },
+            {
+              'includes': ['chrome_repack_chrome_material_200_percent.gypi']
+            },
           ],
         }],
         ['OS != "mac" and OS != "ios"', {
@@ -599,26 +657,6 @@
                   'destination': '<(PRODUCT_DIR)',
                   'files': [
                     '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_200_percent.pak',
-                  ],
-                },
-              ],
-            }],
-            ['enable_topchrome_md == 1', {
-              'copies': [
-                {
-                  'destination': '<(PRODUCT_DIR)',
-                  'files': [
-                    '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_material_100_percent.pak',
-                  ],
-                },
-              ],
-            }],
-            ['enable_hidpi == 1 and enable_topchrome_md == 1', {
-              'copies': [
-                {
-                  'destination': '<(PRODUCT_DIR)',
-                  'files': [
-                    '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_material_200_percent.pak',
                   ],
                 },
               ],

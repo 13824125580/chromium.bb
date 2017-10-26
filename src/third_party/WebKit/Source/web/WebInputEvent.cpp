@@ -31,6 +31,7 @@
 #include "public/web/WebInputEvent.h"
 
 #include "platform/KeyboardCodes.h"
+#include "wtf/ASCIICType.h"
 #include "wtf/Assertions.h"
 #include "wtf/StringExtras.h"
 #include <ctype.h>
@@ -54,12 +55,12 @@ struct SameSizeAsWebMouseWheelEvent : public SameSizeAsWebMouseEvent {
 };
 
 struct SameSizeAsWebGestureEvent : public SameSizeAsWebInputEvent {
-    int gestureData[12];
+    int gestureData[14];
 };
 
 struct SameSizeAsWebTouchEvent : public SameSizeAsWebInputEvent {
     WebTouchPoint touchPoints[WebTouchEvent::touchesLengthCap];
-    int touchData[3];
+    int touchData[4];
 };
 
 static_assert(sizeof(WebInputEvent) == sizeof(SameSizeAsWebInputEvent), "WebInputEvent should not have gaps");
@@ -193,8 +194,9 @@ void WebKeyboardEvent::setKeyIdentifierFromWindowsKeyCode()
     if (id) {
         strncpy(keyIdentifier, id, sizeof(keyIdentifier) - 1);
         keyIdentifier[sizeof(keyIdentifier) - 1] = '\0';
-    } else
-        snprintf(keyIdentifier, sizeof(keyIdentifier), "U+%04X", toupper(windowsKeyCode));
+    } else {
+        snprintf(keyIdentifier, sizeof(keyIdentifier), "U+%04X", toASCIIUpper(windowsKeyCode));
+    }
 }
 
 } // namespace blink

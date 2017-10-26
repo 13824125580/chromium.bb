@@ -78,7 +78,7 @@ double NetworkInformation::downlinkMax() const
 
 void NetworkInformation::connectionChange(WebConnectionType type, double downlinkMaxMbps)
 {
-    ASSERT(executionContext()->isContextThread());
+    ASSERT(getExecutionContext()->isContextThread());
 
     // This can happen if the observer removes and then adds itself again
     // during notification.
@@ -98,26 +98,22 @@ const AtomicString& NetworkInformation::interfaceName() const
     return EventTargetNames::NetworkInformation;
 }
 
-ExecutionContext* NetworkInformation::executionContext() const
+ExecutionContext* NetworkInformation::getExecutionContext() const
 {
-    return ActiveDOMObject::executionContext();
+    return ActiveDOMObject::getExecutionContext();
 }
 
-bool NetworkInformation::addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener> listener, const EventListenerOptions& options)
+void NetworkInformation::addedEventListener(const AtomicString& eventType, RegisteredEventListener& registeredListener)
 {
-    if (!EventTargetWithInlineData::addEventListenerInternal(eventType, listener, options))
-        return false;
+    EventTargetWithInlineData::addedEventListener(eventType, registeredListener);
     startObserving();
-    return true;
 }
 
-bool NetworkInformation::removeEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener> listener, const EventListenerOptions& options)
+void NetworkInformation::removedEventListener(const AtomicString& eventType, const RegisteredEventListener& registeredListener)
 {
-    if (!EventTargetWithInlineData::removeEventListenerInternal(eventType, listener, options))
-        return false;
+    EventTargetWithInlineData::removedEventListener(eventType, registeredListener);
     if (!hasEventListeners())
         stopObserving();
-    return true;
 }
 
 void NetworkInformation::removeAllEventListeners()
@@ -145,7 +141,7 @@ void NetworkInformation::startObserving()
 {
     if (!m_observing && !m_contextStopped) {
         m_type = networkStateNotifier().connectionType();
-        networkStateNotifier().addObserver(this, executionContext());
+        networkStateNotifier().addObserver(this, getExecutionContext());
         m_observing = true;
     }
 }
@@ -153,13 +149,14 @@ void NetworkInformation::startObserving()
 void NetworkInformation::stopObserving()
 {
     if (m_observing) {
-        networkStateNotifier().removeObserver(this, executionContext());
+        networkStateNotifier().removeObserver(this, getExecutionContext());
         m_observing = false;
     }
 }
 
 NetworkInformation::NetworkInformation(ExecutionContext* context)
-    : ActiveDOMObject(context)
+    : ActiveScriptWrappable(this)
+    , ActiveDOMObject(context)
     , m_type(networkStateNotifier().connectionType())
     , m_downlinkMaxMbps(networkStateNotifier().maxBandwidth())
     , m_observing(false)
@@ -169,7 +166,7 @@ NetworkInformation::NetworkInformation(ExecutionContext* context)
 
 DEFINE_TRACE(NetworkInformation)
 {
-    RefCountedGarbageCollectedEventTargetWithInlineData<NetworkInformation>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     ActiveDOMObject::trace(visitor);
 }
 

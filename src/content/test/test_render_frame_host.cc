@@ -132,6 +132,7 @@ void TestRenderFrameHost::SimulateNavigationCommit(const GURL& url) {
   params.page_id = ComputeNextPageID();
   params.nav_entry_id = 0;
   params.url = url;
+  params.origin = url::Origin(url);
   if (!GetParent())
     params.transition = ui::PAGE_TRANSITION_LINK;
   else if (is_auto_subframe)
@@ -142,7 +143,7 @@ void TestRenderFrameHost::SimulateNavigationCommit(const GURL& url) {
   params.did_create_new_entry = !is_auto_subframe;
   params.gesture = NavigationGestureUser;
   params.contents_mime_type = contents_mime_type_;
-  params.is_post = false;
+  params.method = "GET";
   params.http_status_code = 200;
   params.socket_address.set_host("2001:db8::1");
   params.socket_address.set_port(80);
@@ -229,8 +230,8 @@ void TestRenderFrameHost::SendNavigate(int page_id,
                                        int nav_entry_id,
                                        bool did_create_new_entry,
                                        const GURL& url) {
-  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, url,
-                             ui::PAGE_TRANSITION_LINK, 200,
+  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, false,
+                             url, ui::PAGE_TRANSITION_LINK, 200,
                              ModificationCallback());
 }
 
@@ -238,8 +239,8 @@ void TestRenderFrameHost::SendFailedNavigate(int page_id,
                                              int nav_entry_id,
                                              bool did_create_new_entry,
                                              const GURL& url) {
-  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, url,
-                             ui::PAGE_TRANSITION_RELOAD, 500,
+  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, false,
+                             url, ui::PAGE_TRANSITION_RELOAD, 500,
                              ModificationCallback());
 }
 
@@ -249,8 +250,17 @@ void TestRenderFrameHost::SendNavigateWithTransition(
     bool did_create_new_entry,
     const GURL& url,
     ui::PageTransition transition) {
-  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, url,
-                             transition, 200, ModificationCallback());
+  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, false,
+                             url, transition, 200, ModificationCallback());
+}
+
+void TestRenderFrameHost::SendNavigateWithReplacement(int page_id,
+                                                      int nav_entry_id,
+                                                      bool did_create_new_entry,
+                                                      const GURL& url) {
+  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, true,
+                             url, ui::PAGE_TRANSITION_LINK, 200,
+                             ModificationCallback());
 }
 
 void TestRenderFrameHost::SendNavigateWithModificationCallback(
@@ -259,14 +269,15 @@ void TestRenderFrameHost::SendNavigateWithModificationCallback(
     bool did_create_new_entry,
     const GURL& url,
     const ModificationCallback& callback) {
-  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, url,
-                             ui::PAGE_TRANSITION_LINK, 200, callback);
+  SendNavigateWithParameters(page_id, nav_entry_id, did_create_new_entry, false,
+                             url, ui::PAGE_TRANSITION_LINK, 200, callback);
 }
 
 void TestRenderFrameHost::SendNavigateWithParameters(
     int page_id,
     int nav_entry_id,
     bool did_create_new_entry,
+    bool should_replace_entry,
     const GURL& url,
     ui::PageTransition transition,
     int response_code,
@@ -286,14 +297,18 @@ void TestRenderFrameHost::SendNavigateWithParameters(
   params.transition = transition;
   params.should_update_history = true;
   params.did_create_new_entry = did_create_new_entry;
+  params.should_replace_current_entry = should_replace_entry;
   params.gesture = NavigationGestureUser;
   params.contents_mime_type = contents_mime_type_;
-  params.is_post = false;
+  params.method = "GET";
   params.http_status_code = response_code;
   params.socket_address.set_host("2001:db8::1");
   params.socket_address.set_port(80);
   params.history_list_was_cleared = simulate_history_list_was_cleared_;
   params.original_request_url = url_copy;
+
+  // Simulate Blink assigning an item sequence number to the navigation.
+  params.item_sequence_number = base::Time::Now().ToDoubleT() * 1000000;
 
   // In most cases, the origin will match the URL's origin.  Tests that need to
   // check corner cases (like about:blank) should specify the origin param
@@ -304,8 +319,8 @@ void TestRenderFrameHost::SendNavigateWithParameters(
   url::Replacements<char> replacements;
   replacements.ClearRef();
   params.was_within_same_page =
-      transition != ui::PAGE_TRANSITION_RELOAD &&
-      transition != ui::PAGE_TRANSITION_TYPED &&
+      !ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD) &&
+      !ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED) &&
       url_copy.ReplaceComponents(replacements) ==
           GetLastCommittedURL().ReplaceComponents(replacements);
 
@@ -348,15 +363,14 @@ void TestRenderFrameHost::SendRendererInitiatedNavigationRequest(
   InitializeRenderFrameIfNeeded();
 
   if (IsBrowserSideNavigationEnabled()) {
-    BeginNavigationParams begin_params("GET", std::string(), net::LOAD_NORMAL,
+    BeginNavigationParams begin_params(std::string(), net::LOAD_NORMAL,
                                        has_user_gesture, false,
                                        REQUEST_CONTEXT_TYPE_HYPERLINK);
     CommonNavigationParams common_params;
     common_params.url = url;
     common_params.referrer = Referrer(GURL(), blink::WebReferrerPolicyDefault);
     common_params.transition = ui::PAGE_TRANSITION_LINK;
-    OnBeginNavigation(common_params, begin_params,
-                      scoped_refptr<ResourceRequestBody>());
+    OnBeginNavigation(common_params, begin_params);
   }
 }
 
@@ -364,8 +378,9 @@ void TestRenderFrameHost::DidChangeOpener(int opener_routing_id) {
   OnDidChangeOpener(opener_routing_id);
 }
 
-void TestRenderFrameHost::DidEnforceStrictMixedContentChecking() {
-  OnEnforceStrictMixedContentChecking();
+void TestRenderFrameHost::DidEnforceInsecureRequestPolicy(
+    blink::WebInsecureRequestPolicy policy) {
+  OnEnforceInsecureRequestPolicy(policy);
 }
 
 void TestRenderFrameHost::PrepareForCommit() {
@@ -406,7 +421,7 @@ void TestRenderFrameHost::PrepareForCommitWithServerRedirect(
   scoped_refptr<ResourceResponse> response(new ResourceResponse);
   // TODO(carlosk): ideally with PlzNavigate it should be possible someday to
   // fully commit the navigation at this call to CallOnResponseStarted.
-  url_loader->CallOnResponseStarted(response, MakeEmptyStream());
+  url_loader->CallOnResponseStarted(response, MakeEmptyStream(), nullptr);
 }
 
 int32_t TestRenderFrameHost::ComputeNextPageID() {

@@ -20,6 +20,7 @@
 
 #include "core/svg/SVGRectElement.h"
 
+#include "core/dom/StyleChangeReason.h"
 #include "core/layout/svg/LayoutSVGRect.h"
 #include "core/svg/SVGLength.h"
 
@@ -80,9 +81,9 @@ Path SVGRectElement::asPath() const
     bool hasRx = rx > 0;
     bool hasRy = ry > 0;
     if (hasRx || hasRy) {
-        if (!hasRx)
+        if (svgStyle.rx().isAuto())
             rx = ry;
-        else if (!hasRy)
+        else if (svgStyle.ry().isAuto())
             ry = rx;
 
         path.addRoundedRect(FloatRect(x, y, width, height), FloatSize(rx, ry));

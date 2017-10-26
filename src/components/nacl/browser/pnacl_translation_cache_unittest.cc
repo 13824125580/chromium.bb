@@ -48,7 +48,7 @@ class PnaclTranslationCacheTest : public testing::Test {
   void StoreNexe(const std::string& key, const std::string& nexe);
   std::string GetNexe(const std::string& key);
 
-  scoped_ptr<PnaclTranslationCache> cache_;
+  std::unique_ptr<PnaclTranslationCache> cache_;
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
 };
@@ -226,11 +226,6 @@ TEST_F(PnaclTranslationCacheTest, StoreSmallOnDisk) {
 }
 
 TEST_F(PnaclTranslationCacheTest, StoreLargeOnDisk) {
-#if defined(OS_WIN)
-  // Flaky on XP bot http://crbug.com/468741
-  if (base::win::GetVersion() <= base::win::VERSION_XP)
-    return;
-#endif
   // Test a value too large(?) for a single I/O operation
   InitBackend(false);
   const std::string large_buffer(kLargeNexeSize, 'a');

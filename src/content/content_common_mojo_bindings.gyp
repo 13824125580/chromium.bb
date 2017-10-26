@@ -11,38 +11,29 @@
       'variables': {
         'mojom_files': [
           # NOTE: Sources duplicated in //content/common/BUILD.gn:mojo_bindings.
-          'common/application_setup.mojom',
-          'common/background_sync_service.mojom',
-          'common/geolocation_service.mojom',
+          'common/frame.mojom',
           'common/image_downloader/image_downloader.mojom',
           'common/leveldb_wrapper.mojom',
-          'common/permission_service.mojom',
-          'common/presentation/presentation_service.mojom',
           'common/process_control.mojom',
-          'common/render_frame_setup.mojom',
-          'common/service_port_service.mojom',
           'common/service_worker/embedded_worker_setup.mojom',
           'common/storage_partition_service.mojom',
-          'common/vr_service.mojom',
-          'common/wake_lock_service.mojom',
-
-          # NOTE: Sources duplicated in
-          # //content/public/common/BUILD.gn:mojo_bindings.
-          'public/common/background_sync.mojom',
-          'public/common/mojo_geoposition.mojom',
-          'public/common/permission_status.mojom',
-          'public/common/service_worker_event_status.mojom',
+        ],
+        'mojom_typemaps': [
+          '../skia/public/interfaces/skbitmap.typemap',
+          '../ui/gfx/geometry/mojo/geometry.typemap',
+          '../url/mojo/gurl.typemap',
+          '../url/mojo/origin.typemap',
         ],
       },
       'dependencies': [
         '../components/leveldb/leveldb.gyp:leveldb_bindings_mojom',
-        '../mojo/mojo_base.gyp:mojo_application_bindings',
-        '../mojo/mojo_base.gyp:mojo_environment_chromium',
         '../mojo/mojo_public.gyp:mojo_cpp_bindings',
+        '../services/shell/shell_public.gyp:shell_public',
         '../skia/skia.gyp:skia_mojo',
-        '../ui/mojo/geometry/mojo_bindings.gyp:mojo_geometry_bindings',
+        '../third_party/WebKit/public/blink.gyp:mojo_bindings',
+        '../ui/gfx/gfx.gyp:mojo_geometry_bindings',
       ],
-      'includes': [ '../mojo/mojom_bindings_generator_explicit.gypi' ], 
+      'includes': [ '../mojo/mojom_bindings_generator_explicit.gypi' ],
     },
     {
       'target_name': 'content_common_mojo_bindings',
@@ -51,7 +42,13 @@
         'enable_wexit_time_destructors': 1,
       },
       'dependencies': [
+        '../url/url.gyp:url_mojom',
+        '../skia/skia.gyp:skia',
         'content_common_mojo_bindings_mojom',
+      ],
+      'export_dependent_settings': [
+        '../skia/skia.gyp:skia',
+        '../url/url.gyp:url_mojom',
       ],
     },
   ]

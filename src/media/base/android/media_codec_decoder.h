@@ -7,11 +7,12 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
@@ -281,11 +282,12 @@ class MediaCodecDecoder {
   virtual void DissociatePTSFromTime() {}
 
   // Processes the change of the output format, varies by stream.
-  virtual void OnOutputFormatChanged() = 0;
+  // Returns true if this processing succeeded.
+  virtual bool OnOutputFormatChanged() = 0;
 
-  // Renders the decoded frame and releases output buffer, or posts
-  // a delayed task to do it at a later time,
-  virtual void Render(int buffer_index,
+  // Renders the decoded frame and releases output buffer, or posts a delayed
+  // task to do it at a later time. Returnes false if an error occurred.
+  virtual bool Render(int buffer_index,
                       size_t offset,
                       size_t size,
                       RenderMode render_mode,
@@ -328,7 +330,7 @@ class MediaCodecDecoder {
   FrameStatistics* frame_statistics_;
 
   // Controls Android MediaCodec
-  scoped_ptr<MediaCodecBridge> media_codec_bridge_;
+  std::unique_ptr<MediaCodecBridge> media_codec_bridge_;
 
   // The queue of access units.
   AccessUnitQueue au_queue_;

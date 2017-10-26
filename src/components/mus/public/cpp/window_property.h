@@ -7,9 +7,6 @@
 
 #include <stdint.h>
 
-// This header should be included by code that defines WindowProperties. It
-// should not be included by code that only gets and sets WindowProperties.
-//
 // To define a new WindowProperty:
 //
 //  #include "components/mus/public/cpp/window_property.h"
@@ -47,7 +44,7 @@ namespace mus {
 template <typename T>
 void Window::SetSharedProperty(const std::string& name, const T& data) {
   const std::vector<uint8_t> bytes =
-      mojo::TypeConverter<const std::vector<uint8_t>, T>::Convert(data);
+      mojo::TypeConverter<std::vector<uint8_t>, T>::Convert(data);
   SetSharedPropertyInternal(name, &bytes);
 }
 
@@ -55,8 +52,7 @@ template <typename T>
 T Window::GetSharedProperty(const std::string& name) const {
   DCHECK(HasSharedProperty(name));
   auto it = properties_.find(name);
-  return mojo::TypeConverter<T, const std::vector<uint8_t>>::Convert(
-      it->second);
+  return mojo::TypeConverter<T, std::vector<uint8_t>>::Convert(it->second);
 }
 
 namespace {

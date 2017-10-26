@@ -165,11 +165,7 @@ void SpellingMenuObserver::InitMenu(const content::ContextMenuParams& params) {
   // suggestions".
   proxy_->AddMenuItem(IDC_SPELLCHECK_ADD_TO_DICTIONARY,
       l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_ADD_TO_DICTIONARY));
-
-  proxy_->AddCheckItem(
-      IDC_CONTENT_CONTEXT_SPELLING_TOGGLE,
-      l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_SPELLING_ASK_GOOGLE));
-
+  proxy_->AddSpellCheckServiceItem(integrate_spelling_service_.GetValue());
   proxy_->AddSeparator();
 }
 
@@ -290,7 +286,7 @@ void SpellingMenuObserver::ExecuteCommand(int command_id) {
     if (!integrate_spelling_service_.GetValue()) {
       content::RenderViewHost* rvh = proxy_->GetRenderViewHost();
       gfx::Rect rect = rvh->GetWidget()->GetView()->GetViewBounds();
-      scoped_ptr<SpellingBubbleModel> model(
+      std::unique_ptr<SpellingBubbleModel> model(
           new SpellingBubbleModel(profile, proxy_->GetWebContents()));
       chrome::ShowConfirmBubble(
           proxy_->GetWebContents()->GetTopLevelNativeWindow(),

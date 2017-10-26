@@ -8,18 +8,20 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
+#include "chrome/browser/net/file_downloader.h"
+#include "chrome/browser/supervised_user/experimental/safe_search_url_reporter.h"
 #include "chrome/browser/supervised_user/experimental/supervised_user_blacklist.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
 #include "chrome/browser/supervised_user/supervised_users.h"
@@ -31,11 +33,11 @@
 #include "net/url_request/url_request_context_getter.h"
 
 #if defined(ENABLE_EXTENSIONS)
+#include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/management_policy.h"
 #endif
 
 class Browser;
-class FileDownloader;
 class GoogleServiceAuthError;
 class PermissionRequestCreator;
 class Profile;
@@ -59,6 +61,10 @@ namespace extensions {
 class ExtensionRegistry;
 }
 
+namespace sync_driver {
+class SyncSetupInProgressHandle;
+}
+
 namespace user_prefs {
 class PrefRegistrySyncable;
 }
@@ -68,6 +74,7 @@ class PrefRegistrySyncable;
 // manual whitelist/blacklist overrides).
 class SupervisedUserService : public KeyedService,
 #if defined(ENABLE_EXTENSIONS)
+                              public extensions::ExtensionRegistryObserver,
                               public extensions::ManagementPolicy::Provider,
 #endif
                               public SyncTypePreferenceProvider,
@@ -120,6 +127,19 @@ class SupervisedUserService : public KeyedService,
   // Adds an access request for the given URL.
   void AddURLAccessRequest(const GURL& url, const SuccessCallback& callback);
 
+  // Reports |url| to the SafeSearch API, because the user thinks this is an
+  // inappropriate URL.
+  void ReportURL(const GURL& url, const SuccessCallback& callback);
+
+  // Adds an install request for the given WebStore item (App/Extension).
+  void AddExtensionInstallRequest(const std::string& extension_id,
+                                  const base::Version& version,
+                                  const SuccessCallback& callback);
+
+  // Same as above, but without a callback, just logging errors on failure.
+  void AddExtensionInstallRequest(const std::string& extension_id,
+                                  const base::Version& version);
+
   // Adds an update request for the given WebStore item (App/Extension).
   void AddExtensionUpdateRequest(const std::string& extension_id,
                                  const base::Version& version,
@@ -129,11 +149,10 @@ class SupervisedUserService : public KeyedService,
   void AddExtensionUpdateRequest(const std::string& extension_id,
                                  const base::Version& version);
 
-  // Get the string used to identify an extension update request. Public for
-  // testing.
-  static std::string GetExtensionUpdateRequestId(
-      const std::string& extension_id,
-      const base::Version& version);
+  // Get the string used to identify an extension install or update request.
+  // Public for testing.
+  static std::string GetExtensionRequestId(const std::string& extension_id,
+                                           const base::Version& version);
 
   // Returns the email address of the custodian.
   std::string GetCustodianEmailAddress() const;
@@ -178,7 +197,14 @@ class SupervisedUserService : public KeyedService,
   void RemoveObserver(SupervisedUserServiceObserver* observer);
 
   void AddPermissionRequestCreator(
-      scoped_ptr<PermissionRequestCreator> creator);
+      std::unique_ptr<PermissionRequestCreator> creator);
+
+  void SetSafeSearchURLReporter(
+      std::unique_ptr<SafeSearchURLReporter> reporter);
+
+  // Returns true if the syncer::SESSIONS type should be included in Sync.
+  // Public for testing.
+  bool IncludesSyncSessionsType() const;
 
   // ProfileKeyedService override:
   void Shutdown() override;
@@ -202,12 +228,12 @@ class SupervisedUserService : public KeyedService,
   friend class SupervisedUserServiceFactory;
   FRIEND_TEST_ALL_PREFIXES(SingleClientSupervisedUserSettingsSyncTest, Sanity);
   FRIEND_TEST_ALL_PREFIXES(SupervisedUserServiceTest, ClearOmitOnRegistration);
-  FRIEND_TEST_ALL_PREFIXES(SupervisedUserServiceTest,
-                           ChangesIncludedSessionOnChangedSettings);
-  FRIEND_TEST_ALL_PREFIXES(SupervisedUserServiceTest,
-                           ChangesSyncSessionStateOnChangedSettings);
-  FRIEND_TEST_ALL_PREFIXES(SupervisedUserServiceExtensionTest,
-                           ExtensionManagementPolicyProvider);
+  FRIEND_TEST_ALL_PREFIXES(
+      SupervisedUserServiceExtensionTest,
+      ExtensionManagementPolicyProviderWithoutSUInitiatedInstalls);
+  FRIEND_TEST_ALL_PREFIXES(
+      SupervisedUserServiceExtensionTest,
+      ExtensionManagementPolicyProviderWithSUInitiatedInstalls);
 
   using CreatePermissionRequestCallback =
       base::Callback<void(PermissionRequestCreator*, const SuccessCallback&)>;
@@ -231,8 +257,8 @@ class SupervisedUserService : public KeyedService,
     // will retain a reference to the blacklist.
     void SetBlacklist(const SupervisedUserBlacklist* blacklist);
     bool HasBlacklist() const;
-    void SetManualHosts(scoped_ptr<std::map<std::string, bool>> host_map);
-    void SetManualURLs(scoped_ptr<std::map<GURL, bool>> url_map);
+    void SetManualHosts(std::unique_ptr<std::map<std::string, bool>> host_map);
+    void SetManualURLs(std::unique_ptr<std::map<GURL, bool>> url_map);
 
     void InitAsyncURLChecker(
         const scoped_refptr<net::URLRequestContextGetter>& context);
@@ -289,9 +315,42 @@ class SupervisedUserService : public KeyedService,
                              base::string16* error) const override;
   bool MustRemainInstalled(const extensions::Extension* extension,
                            base::string16* error) const override;
+  bool MustRemainDisabled(const extensions::Extension* extension,
+                          extensions::Extension::DisableReason* reason,
+                          base::string16* error) const override;
+
+  // extensions::ExtensionRegistryObserver overrides:
+  void OnExtensionInstalled(content::BrowserContext* browser_context,
+                            const extensions::Extension* extension,
+                            bool is_update) override;
+
+  // An extension can be in one of the following states:
+  //
+  // FORCED: if it is installed by the custodian.
+  // REQUIRE_APPROVAL: if it is installed by the supervised user and
+  //    hasn't been approved by the custodian yet.
+  // ALLOWED: Components, Themes, Default extensions ..etc
+  //    are generally allowed.  Extensions that have been approved by the
+  //    custodian are also allowed.
+  // BLOCKED: if it is not ALLOWED or FORCED
+  //    and supervised users initiated installs are disabled.
+  enum class ExtensionState { FORCED, BLOCKED, ALLOWED, REQUIRE_APPROVAL };
+
+  // Returns the state of an extension whether being FORCED, BLOCKED, ALLOWED or
+  // REQUIRE_APPROVAL from the Supervised User service's point of view.
+  ExtensionState GetExtensionState(
+      const extensions::Extension& extension) const;
 
   // Extensions helper to SetActive().
   void SetExtensionsActive();
+
+  // Enables/Disables extensions upon change in approved version of the
+  // extension_id.
+  void ChangeExtensionStateIfNecessary(const std::string& extension_id);
+
+  // Updates the map of approved extensions when the corresponding preference
+  // is changed.
+  void UpdateApprovedExtensions();
 #endif
 
   SupervisedUserSettingsService* GetSettingsService();
@@ -329,7 +388,8 @@ class SupervisedUserService : public KeyedService,
   // it to the URL filters.
   void LoadBlacklistFromFile(const base::FilePath& path);
 
-  void OnBlacklistDownloadDone(const base::FilePath& path, bool success);
+  void OnBlacklistDownloadDone(const base::FilePath& path,
+                               FileDownloader::Result result);
 
   void OnBlacklistLoaded();
 
@@ -349,10 +409,7 @@ class SupervisedUserService : public KeyedService,
   // Subscribes to the SupervisedUserPrefStore, refreshes
   // |includes_sync_sessions_type_| and triggers reconfiguring the
   // ProfileSyncService.
-  void OnHistoryRecordingStateChanged();
-
-  // Returns true if the syncer::SESSIONS type should be included in Sync.
-  bool IncludesSyncSessionsType() const;
+  void OnForceSessionSyncChanged();
 
   // The option a custodian sets to either record or prevent recording the
   // supervised user's history. Set by |FetchNewSessionSyncState()| and
@@ -382,6 +439,10 @@ class SupervisedUserService : public KeyedService,
 
   URLFilterContext url_filter_context_;
 
+  // Stores a map from extension_id -> approved version by the custodian.
+  // It is only relevant for SU-initiated installs.
+  std::map<std::string, base::Version> approved_extensions_map_;
+
   enum class BlacklistLoadState {
     NOT_LOADED,
     LOAD_STARTED,
@@ -389,16 +450,28 @@ class SupervisedUserService : public KeyedService,
   } blacklist_state_;
 
   SupervisedUserBlacklist blacklist_;
-  scoped_ptr<FileDownloader> blacklist_downloader_;
+  std::unique_ptr<FileDownloader> blacklist_downloader_;
 
-  scoped_ptr<SupervisedUserWhitelistService> whitelist_service_;
+  std::unique_ptr<SupervisedUserWhitelistService> whitelist_service_;
 
   std::vector<scoped_refptr<SupervisedUserSiteList>> whitelists_;
 
   // Used to create permission requests.
   ScopedVector<PermissionRequestCreator> permissions_creators_;
 
+  // Used to report inappropriate URLs to SafeSarch API.
+  std::unique_ptr<SafeSearchURLReporter> url_reporter_;
+
+#if defined(ENABLE_EXTENSIONS)
+  ScopedObserver<extensions::ExtensionRegistry,
+                 extensions::ExtensionRegistryObserver>
+      registry_observer_;
+#endif
+
   base::ObserverList<SupervisedUserServiceObserver> observer_list_;
+
+  // Prevents Sync from running until configuration is complete.
+  std::unique_ptr<sync_driver::SyncSetupInProgressHandle> sync_blocker_;
 
   base::WeakPtrFactory<SupervisedUserService> weak_ptr_factory_;
 };

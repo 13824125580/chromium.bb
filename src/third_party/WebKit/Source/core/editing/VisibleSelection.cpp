@@ -44,7 +44,6 @@ namespace blink {
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate()
     : m_affinity(TextAffinity::Downstream)
-    , m_changeObserver(nullptr)
     , m_selectionType(NoSelection)
     , m_baseIsFirst(true)
     , m_isDirectional(false)
@@ -64,7 +63,6 @@ VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate(const PositionTempl
     : m_base(base)
     , m_extent(extent)
     , m_affinity(affinity)
-    , m_changeObserver(nullptr)
     , m_isDirectional(isDirectional)
     , m_granularity(CharacterGranularity)
     , m_hasTrailingWhitespace(false)
@@ -100,12 +98,12 @@ template <typename Strategy>
 static SelectionType computeSelectionType(const PositionTemplate<Strategy>& start, const PositionTemplate<Strategy>& end)
 {
     if (start.isNull()) {
-        ASSERT(end.isNull());
+        DCHECK(end.isNull());
         return NoSelection;
     }
     if (start == end)
         return CaretSelection;
-    // TODO(yosin) We should call |Document::updateLayout()| here for
+    // TODO(yosin) We should call |Document::updateStyleAndLayout()| here for
     // |mostBackwardCaretPosition()|. However, we are here during
     // |Node::removeChild()|.
     start.anchorNode()->updateDistribution();
@@ -122,7 +120,6 @@ VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate(const VisibleSelect
     , m_start(other.m_start)
     , m_end(other.m_end)
     , m_affinity(other.m_affinity)
-    , m_changeObserver(nullptr) // Observer is associated with only one VisibleSelection, so this should not be copied.
     , m_selectionType(other.m_selectionType)
     , m_baseIsFirst(other.m_baseIsFirst)
     , m_isDirectional(other.m_isDirectional)
@@ -134,14 +131,11 @@ VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate(const VisibleSelect
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy>& VisibleSelectionTemplate<Strategy>::operator=(const VisibleSelectionTemplate<Strategy>& other)
 {
-    didChange();
-
     m_base = other.m_base;
     m_extent = other.m_extent;
     m_start = other.m_start;
     m_end = other.m_end;
     m_affinity = other.m_affinity;
-    m_changeObserver = nullptr;
     m_selectionType = other.m_selectionType;
     m_baseIsFirst = other.m_baseIsFirst;
     m_isDirectional = other.m_isDirectional;
@@ -150,59 +144,39 @@ VisibleSelectionTemplate<Strategy>& VisibleSelectionTemplate<Strategy>::operator
     return *this;
 }
 
-#if !ENABLE(OILPAN)
-template <typename Strategy>
-VisibleSelectionTemplate<Strategy>::~VisibleSelectionTemplate()
-{
-    didChange();
-}
-#endif
-
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy> VisibleSelectionTemplate<Strategy>::selectionFromContentsOfNode(Node* node)
 {
-    ASSERT(!Strategy::editingIgnoresContent(node));
+    DCHECK(!Strategy::editingIgnoresContent(node));
     return VisibleSelectionTemplate(PositionTemplate<Strategy>::firstPositionInNode(node), PositionTemplate<Strategy>::lastPositionInNode(node));
 }
 
 template <typename Strategy>
 void VisibleSelectionTemplate<Strategy>::setBase(const PositionTemplate<Strategy>& position)
 {
-    const PositionTemplate<Strategy> oldBase = m_base;
     m_base = position;
     validate();
-    if (m_base != oldBase)
-        didChange();
 }
 
 template <typename Strategy>
 void VisibleSelectionTemplate<Strategy>::setBase(const VisiblePositionTemplate<Strategy>& visiblePosition)
 {
-    const PositionTemplate<Strategy> oldBase = m_base;
     m_base = visiblePosition.deepEquivalent();
     validate();
-    if (m_base != oldBase)
-        didChange();
 }
 
 template <typename Strategy>
 void VisibleSelectionTemplate<Strategy>::setExtent(const PositionTemplate<Strategy>& position)
 {
-    const PositionTemplate<Strategy> oldExtent = m_extent;
     m_extent = position;
     validate();
-    if (m_extent != oldExtent)
-        didChange();
 }
 
 template <typename Strategy>
 void VisibleSelectionTemplate<Strategy>::setExtent(const VisiblePositionTemplate<Strategy>& visiblePosition)
 {
-    const PositionTemplate<Strategy> oldExtent = m_extent;
     m_extent = visiblePosition.deepEquivalent();
     validate();
-    if (m_extent != oldExtent)
-        didChange();
 }
 
 EphemeralRange firstEphemeralRangeOf(const VisibleSelection& selection)
@@ -214,7 +188,7 @@ EphemeralRange firstEphemeralRangeOf(const VisibleSelection& selection)
     return EphemeralRange(start, end);
 }
 
-PassRefPtrWillBeRawPtr<Range> firstRangeOf(const VisibleSelection& selection)
+Range* firstRangeOf(const VisibleSelection& selection)
 {
     return createRange(firstEphemeralRangeOf(selection));
 }
@@ -229,7 +203,7 @@ EphemeralRangeTemplate<Strategy> VisibleSelectionTemplate<Strategy>::toNormalize
     // in the course of running edit commands which modify the DOM.
     // Failing to call this can result in equivalentXXXPosition calls returning
     // incorrect results.
-    m_start.document()->updateLayout();
+    m_start.document()->updateStyleAndLayout();
 
     // Check again, because updating layout can clear the selection.
     if (isNone())
@@ -253,25 +227,16 @@ EphemeralRangeTemplate<Strategy> VisibleSelectionTemplate<Strategy>::toNormalize
     // On a treasure map, <b>X</b> marks the spot.
     //                       ^ selected
     //
-    ASSERT(isRange());
+    DCHECK(isRange());
     return normalizeRange(EphemeralRangeTemplate<Strategy>(m_start, m_end));
 }
 
 template <typename Strategy>
-bool VisibleSelectionTemplate<Strategy>::expandUsingGranularity(TextGranularity granularity)
+void VisibleSelectionTemplate<Strategy>::expandUsingGranularity(TextGranularity granularity)
 {
     if (isNone())
-        return false;
-
-    // TODO(yosin) Do we need to check all of them?
-    const PositionTemplate<Strategy>oldBase = m_base;
-    const PositionTemplate<Strategy>oldExtent = m_extent;
-    const PositionTemplate<Strategy>oldStart = m_start;
-    const PositionTemplate<Strategy>oldEnd = m_end;
+        return;
     validate(granularity);
-    if (m_base != oldBase || m_extent != oldExtent || m_start != oldStart || m_end != oldEnd)
-        didChange();
-    return true;
 }
 
 template <typename Strategy>
@@ -293,10 +258,14 @@ static EphemeralRangeTemplate<Strategy> makeSearchRange(const PositionTemplate<S
 template <typename Strategy>
 void VisibleSelectionTemplate<Strategy>::appendTrailingWhitespace()
 {
-    ASSERT(m_granularity == WordGranularity);
+    DCHECK_EQ(m_granularity, WordGranularity);
     const EphemeralRangeTemplate<Strategy> searchRange = makeSearchRange(end());
     if (searchRange.isNull())
         return;
+
+    // TODO(dglazkov): The use of updateStyleAndLayoutIgnorePendingStylesheets needs to be audited.
+    // see http://crbug.com/590369 for more details.
+    searchRange.startPosition().document()->updateStyleAndLayoutIgnorePendingStylesheets();
 
     CharacterIteratorAlgorithm<Strategy> charIt(searchRange.startPosition(), searchRange.endPosition(), TextIteratorEmitsCharactersBetweenAllVisiblePositions);
     bool changed = false;
@@ -311,7 +280,6 @@ void VisibleSelectionTemplate<Strategy>::appendTrailingWhitespace()
     if (!changed)
         return;
     m_hasTrailingWhitespace = true;
-    didChange();
 }
 
 template <typename Strategy>
@@ -342,10 +310,10 @@ void VisibleSelectionTemplate<Strategy>::setBaseAndExtentToDeepEquivalents()
 }
 
 template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::setStartRespectingGranularity(TextGranularity granularity, EWordSide wordSide)
+void VisibleSelectionTemplate<Strategy>::setStartRespectingGranularity(TextGranularity granularity)
 {
-    ASSERT(m_base.isNotNull());
-    ASSERT(m_extent.isNotNull());
+    DCHECK(m_base.isNotNull());
+    DCHECK(m_extent.isNotNull());
 
     m_start = m_baseIsFirst ? m_base : m_extent;
 
@@ -361,7 +329,7 @@ void VisibleSelectionTemplate<Strategy>::setStartRespectingGranularity(TextGranu
         // Edge case: If the caret is after the last word in a paragraph, select from the the end of the
         // last word to the line break (also RightWordIfOnBoundary);
         const VisiblePositionTemplate<Strategy> visibleStart = createVisiblePosition(m_start, m_affinity);
-        EWordSide side = wordSide;
+        EWordSide side = RightWordIfOnBoundary;
         if (isEndOfEditableOrNonEditableContent(visibleStart) || (isEndOfLine(visibleStart) && !isStartOfLine(visibleStart) && !isEndOfParagraph(visibleStart)))
             side = LeftWordIfOnBoundary;
         m_start = startOfWord(visibleStart, side).deepEquivalent();
@@ -402,10 +370,10 @@ void VisibleSelectionTemplate<Strategy>::setStartRespectingGranularity(TextGranu
 }
 
 template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::setEndRespectingGranularity(TextGranularity granularity, EWordSide wordSide)
+void VisibleSelectionTemplate<Strategy>::setEndRespectingGranularity(TextGranularity granularity)
 {
-    ASSERT(m_base.isNotNull());
-    ASSERT(m_extent.isNotNull());
+    DCHECK(m_base.isNotNull());
+    DCHECK(m_extent.isNotNull());
 
     m_end = m_baseIsFirst ? m_extent : m_base;
 
@@ -424,7 +392,7 @@ void VisibleSelectionTemplate<Strategy>::setEndRespectingGranularity(TextGranula
         // from the the end of the last word to the line break (also
         // |RightWordIfOnBoundary|);
         const VisiblePositionTemplate<Strategy> originalEnd = createVisiblePosition(m_end, m_affinity);
-        EWordSide side = wordSide;
+        EWordSide side = RightWordIfOnBoundary;
         if (isEndOfEditableOrNonEditableContent(originalEnd) || (isEndOfLine(originalEnd) && !isStartOfLine(originalEnd) && !isEndOfParagraph(originalEnd)))
             side = LeftWordIfOnBoundary;
 
@@ -436,7 +404,7 @@ void VisibleSelectionTemplate<Strategy>::setEndRespectingGranularity(TextGranula
             // to the start of the next one) to match TextEdit.
             end = nextPositionOf(wordEnd);
 
-            if (Element* table = isFirstPositionAfterTable(end)) {
+            if (Element* table = tableElementJustBefore(end)) {
                 // The paragraph break after the last paragraph in the last cell
                 // of a block table ends at the start of the paragraph after the
                 // table.
@@ -480,7 +448,7 @@ void VisibleSelectionTemplate<Strategy>::setEndRespectingGranularity(TextGranula
         // paragraph to the start of the next one) in the selection.
         VisiblePositionTemplate<Strategy> end = nextPositionOf(visibleParagraphEnd);
 
-        if (Element* table = isFirstPositionAfterTable(end)) {
+        if (Element* table = tableElementJustBefore(end)) {
             // The paragraph break after the last paragraph in the last cell of
             // a block table ends at the start of the paragraph after the table,
             // not at the position just after the table.
@@ -540,9 +508,9 @@ void VisibleSelectionTemplate<Strategy>::validate(TextGranularity granularity)
     m_start = m_baseIsFirst ? m_base : m_extent;
     m_end = m_baseIsFirst ? m_extent : m_base;
     setStartRespectingGranularity(granularity);
-    ASSERT(m_start.isNotNull());
+    DCHECK(m_start.isNotNull());
     setEndRespectingGranularity(granularity);
-    ASSERT(m_end.isNotNull());
+    DCHECK(m_end.isNotNull());
     adjustSelectionToAvoidCrossingShadowBoundaries();
     adjustSelectionToAvoidCrossingEditingBoundaries();
     updateSelectionType();
@@ -606,7 +574,6 @@ void VisibleSelectionTemplate<Strategy>::setWithoutValidation(const PositionTemp
         // |m_affinity| is |TextAffinity::Upstream|.
         m_affinity = TextAffinity::Downstream;
     }
-    didChange();
 }
 
 template <typename Strategy>
@@ -655,7 +622,7 @@ void VisibleSelectionTemplate<Strategy>::adjustSelectionToAvoidCrossingEditingBo
             const VisiblePositionTemplate<Strategy> first = firstEditableVisiblePositionAfterPositionInRoot(m_start, *baseRoot);
             m_start = first.deepEquivalent();
             if (m_start.isNull()) {
-                ASSERT_NOT_REACHED();
+                NOTREACHED();
                 m_start = m_end;
             }
         }
@@ -694,7 +661,7 @@ void VisibleSelectionTemplate<Strategy>::adjustSelectionToAvoidCrossingEditingBo
             if (previous.isNull()) {
                 // The selection crosses an Editing boundary.  This is a
                 // programmer error in the editing code.  Happy debugging!
-                ASSERT_NOT_REACHED();
+                NOTREACHED();
                 m_base = PositionTemplate<Strategy>();
                 m_extent = PositionTemplate<Strategy>();
                 validate();
@@ -723,7 +690,7 @@ void VisibleSelectionTemplate<Strategy>::adjustSelectionToAvoidCrossingEditingBo
             if (next.isNull()) {
                 // The selection crosses an Editing boundary.  This is a
                 // programmer error in the editing code.  Happy debugging!
-                ASSERT_NOT_REACHED();
+                NOTREACHED();
                 m_base = PositionTemplate<Strategy>();
                 m_extent = PositionTemplate<Strategy>();
                 validate();
@@ -739,33 +706,6 @@ void VisibleSelectionTemplate<Strategy>::adjustSelectionToAvoidCrossingEditingBo
 }
 
 template <typename Strategy>
-VisiblePositionTemplate<Strategy> VisibleSelectionTemplate<Strategy>::visiblePositionRespectingEditingBoundary(const LayoutPoint& localPoint, Node* targetNode) const
-{
-    return createVisiblePosition(positionRespectingEditingBoundary(localPoint, targetNode));
-}
-
-template <typename Strategy>
-PositionWithAffinityTemplate<Strategy> VisibleSelectionTemplate<Strategy>::positionRespectingEditingBoundary(const LayoutPoint& localPoint, Node* targetNode) const
-{
-    if (!targetNode->layoutObject())
-        return PositionWithAffinityTemplate<Strategy>();
-
-    LayoutPoint selectionEndPoint = localPoint;
-    Element* editableElement = rootEditableElement();
-
-    if (editableElement && !editableElement->contains(targetNode)) {
-        if (!editableElement->layoutObject())
-            return PositionWithAffinityTemplate<Strategy>();
-
-        FloatPoint absolutePoint = targetNode->layoutObject()->localToAbsolute(FloatPoint(selectionEndPoint));
-        selectionEndPoint = roundedLayoutPoint(editableElement->layoutObject()->absoluteToLocal(absolutePoint));
-        targetNode = editableElement;
-    }
-
-    return fromPositionInDOMTree<Strategy>(targetNode->layoutObject()->positionForPoint(selectionEndPoint));
-}
-
-template <typename Strategy>
 bool VisibleSelectionTemplate<Strategy>::isContentEditable() const
 {
     return isEditablePosition(start());
@@ -774,7 +714,7 @@ bool VisibleSelectionTemplate<Strategy>::isContentEditable() const
 template <typename Strategy>
 bool VisibleSelectionTemplate<Strategy>::hasEditableStyle() const
 {
-    return isEditablePosition(start(), ContentIsEditable, DoNotUpdateStyle);
+    return isEditablePosition(start(), ContentIsEditable);
 }
 
 template <typename Strategy>
@@ -790,44 +730,9 @@ Element* VisibleSelectionTemplate<Strategy>::rootEditableElement() const
 }
 
 template <typename Strategy>
-Node* VisibleSelectionTemplate<Strategy>::nonBoundaryShadowTreeRootNode() const
-{
-    return start().anchorNode() && !start().anchorNode()->isShadowRoot() ? start().anchorNode()->nonBoundaryShadowTreeRootNode() : 0;
-}
-
-VisibleSelectionChangeObserver::VisibleSelectionChangeObserver()
-{
-}
-
-VisibleSelectionChangeObserver::~VisibleSelectionChangeObserver()
-{
-}
-
-template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::setChangeObserver(VisibleSelectionChangeObserver& observer)
-{
-    ASSERT(!m_changeObserver);
-    m_changeObserver = &observer;
-}
-
-template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::clearChangeObserver()
-{
-    ASSERT(m_changeObserver);
-    m_changeObserver = nullptr;
-}
-
-template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::didChange()
-{
-    if (m_changeObserver)
-        m_changeObserver->didChangeVisibleSelection();
-}
-
-template <typename Strategy>
 static bool isValidPosition(const PositionTemplate<Strategy>& position)
 {
-    if (!position.inDocument())
+    if (!position.inShadowIncludingDocument())
         return false;
 
     if (!position.isOffsetInAnchor())
@@ -847,7 +752,7 @@ void VisibleSelectionTemplate<Strategy>::updateIfNeeded()
     Document* document = m_base.document();
     if (!document)
         return;
-    document->updateLayoutIgnorePendingStylesheets();
+    document->updateStyleAndLayoutIgnorePendingStylesheets();
     const bool hasTrailingWhitespace = m_hasTrailingWhitespace;
     validate(m_granularity);
     if (!hasTrailingWhitespace)
@@ -858,8 +763,13 @@ void VisibleSelectionTemplate<Strategy>::updateIfNeeded()
 template <typename Strategy>
 void VisibleSelectionTemplate<Strategy>::validatePositionsIfNeeded()
 {
-    if (!isValidPosition(m_base) || !isValidPosition(m_extent) || !isValidPosition(m_start) || !isValidPosition(m_end))
-        validate();
+    if (!m_base.inShadowIncludingDocument() || !m_extent.inShadowIncludingDocument()) {
+        *this = VisibleSelectionTemplate();
+        return;
+    }
+    if (isValidPosition(m_base) && isValidPosition(m_extent) && isValidPosition(m_start) && isValidPosition(m_end))
+        return;
+    validate();
 }
 
 template <typename Strategy>
@@ -878,13 +788,6 @@ static bool equalSelectionsAlgorithm(const VisibleSelectionTemplate<Strategy>& s
         && selectionWrapper1.end() == selectionWrapper2.end()
         && selectionWrapper1.base() == selectionWrapper2.base()
         && selectionWrapper1.extent() == selectionWrapper2.extent();
-}
-
-// TODO(yosin): We should use |operator==()| instead of
-// |equalSelectionsInDOMTree()|.
-bool equalSelectionsInDOMTree(const VisibleSelection& selection1, const VisibleSelection& selection2)
-{
-    return selection1 == selection2;
 }
 
 template <typename Strategy>
@@ -924,14 +827,14 @@ void VisibleSelectionTemplate<Strategy>::formatForDebugger(char* buffer, unsigne
     String s;
 
     if (isNone()) {
-        result.appendLiteral("<none>");
+        result.append("<none>");
     } else {
         const int FormatBufferSize = 1024;
         char s[FormatBufferSize];
-        result.appendLiteral("from ");
+        result.append("from ");
         start().formatForDebugger(s, FormatBufferSize);
         result.append(s);
-        result.appendLiteral(" to ");
+        result.append(" to ");
         end().formatForDebugger(s, FormatBufferSize);
         result.append(s);
     }
@@ -953,8 +856,38 @@ void VisibleSelectionTemplate<Strategy>::showTreeForThis() const
 
 #endif
 
+template <typename Strategy>
+void VisibleSelectionTemplate<Strategy>::PrintTo(
+    const VisibleSelectionTemplate<Strategy>& selection,
+    std::ostream* ostream)
+{
+    if (selection.isNone()) {
+        *ostream << "VisibleSelection()";
+        return;
+    }
+    *ostream << "VisibleSelection(base: " << selection.base()
+        << " extent:" << selection.extent()
+        << " start: " << selection.start()
+        << " end: " << selection.end()
+        << ' ' << selection.affinity()
+        << ' ' << (selection.isDirectional() ? "Directional" : "NonDirectional")
+        << ')';
+}
+
 template class CORE_TEMPLATE_EXPORT VisibleSelectionTemplate<EditingStrategy>;
 template class CORE_TEMPLATE_EXPORT VisibleSelectionTemplate<EditingInFlatTreeStrategy>;
+
+std::ostream& operator<<(std::ostream& ostream, const VisibleSelection& selection)
+{
+    VisibleSelection::PrintTo(selection, &ostream);
+    return ostream;
+}
+
+std::ostream& operator<<(std::ostream& ostream, const VisibleSelectionInFlatTree& selection)
+{
+    VisibleSelectionInFlatTree::PrintTo(selection, &ostream);
+    return ostream;
+}
 
 } // namespace blink
 

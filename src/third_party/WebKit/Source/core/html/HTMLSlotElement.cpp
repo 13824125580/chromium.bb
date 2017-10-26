@@ -30,11 +30,14 @@
 
 #include "core/html/HTMLSlotElement.h"
 
+#include "bindings/core/v8/Microtask.h"
 #include "core/HTMLNames.h"
-#include "core/dom/Microtask.h"
 #include "core/dom/NodeTraversal.h"
+#include "core/dom/StyleChangeReason.h"
+#include "core/dom/StyleEngine.h"
 #include "core/dom/shadow/ElementShadow.h"
 #include "core/dom/shadow/InsertionPoint.h"
+#include "core/dom/shadow/SlotAssignment.h"
 #include "core/events/Event.h"
 #include "core/html/AssignedNodesOptions.h"
 
@@ -44,14 +47,26 @@ using namespace HTMLNames;
 
 inline HTMLSlotElement::HTMLSlotElement(Document& document)
     : HTMLElement(slotTag, document)
-    , m_distributionState(DistributionUnchanged)
 {
     setHasCustomStyleCallbacks();
 }
 
 DEFINE_NODE_FACTORY(HTMLSlotElement);
 
-const WillBeHeapVector<RefPtrWillBeMember<Node>> HTMLSlotElement::getAssignedNodesForBinding(const AssignedNodesOptions& options)
+// static
+AtomicString HTMLSlotElement::normalizeSlotName(const AtomicString& name)
+{
+    return (name.isNull() || name.isEmpty()) ? emptyAtom : name;
+}
+
+const HeapVector<Member<Node>>& HTMLSlotElement::assignedNodes()
+{
+    DCHECK(!needsDistributionRecalc());
+    DCHECK(isInShadowTree() || m_assignedNodes.isEmpty());
+    return m_assignedNodes;
+}
+
+const HeapVector<Member<Node>> HTMLSlotElement::assignedNodesForBinding(const AssignedNodesOptions& options)
 {
     updateDistribution();
     if (options.hasFlatten() && options.flatten())
@@ -59,32 +74,52 @@ const WillBeHeapVector<RefPtrWillBeMember<Node>> HTMLSlotElement::getAssignedNod
     return m_assignedNodes;
 }
 
-const WillBeHeapVector<RefPtrWillBeMember<Node>>& HTMLSlotElement::getDistributedNodes()
+const HeapVector<Member<Node>>& HTMLSlotElement::getDistributedNodes()
 {
-    ASSERT(!needsDistributionRecalc());
+    DCHECK(!needsDistributionRecalc());
     if (isInShadowTree())
         return m_distributedNodes;
 
     // A slot is unlikely to be used outside of a shadow tree.
     // We do not need to optimize this case in most cases.
     // TODO(hayato): If this path causes a performance issue, we should move
-    // ShadowRootRaraDate::m_descendantSlots into TreeScopreRareData-ish and
+    // ShadowRoot::m_slotAssignment into TreeScopreRareData-ish and
     // update the distribution code so it considers a document tree too.
     clearDistribution();
-    for (Node& child : NodeTraversal::childrenOf(*this)) {
-        if (!child.isSlotAssignable())
+    Node* child = NodeTraversal::firstChild(*this);
+    while (child) {
+        if (!child->isSlotable()) {
+            child = NodeTraversal::nextSkippingChildren(*child, this);
             continue;
-        if (isHTMLSlotElement(child))
-            m_distributedNodes.appendVector(toHTMLSlotElement(child).getDistributedNodes());
-        else
-            m_distributedNodes.append(&child);
+        }
+        if (isHTMLSlotElement(child)) {
+            child = NodeTraversal::next(*child, this);
+        } else {
+            m_distributedNodes.append(child);
+            child = NodeTraversal::nextSkippingChildren(*child, this);
+        }
     }
     return m_distributedNodes;
 }
 
-void HTMLSlotElement::appendAssignedNode(Node& node)
+void HTMLSlotElement::appendAssignedNode(Node& hostChild)
 {
-    m_assignedNodes.append(&node);
+    DCHECK(hostChild.isSlotable());
+    m_assignedNodes.append(&hostChild);
+}
+
+void HTMLSlotElement::resolveDistributedNodes()
+{
+    for (auto& node : m_assignedNodes) {
+        DCHECK(node->isSlotable());
+        if (isHTMLSlotElement(*node))
+            appendDistributedNodesFrom(toHTMLSlotElement(*node));
+        else
+            appendDistributedNode(*node);
+
+        if (isChildOfV1ShadowHost())
+            parentElementShadow()->setNeedsDistributionRecalc();
+    }
 }
 
 void HTMLSlotElement::appendDistributedNode(Node& node)
@@ -104,21 +139,22 @@ void HTMLSlotElement::appendDistributedNodesFrom(const HTMLSlotElement& other)
 
 void HTMLSlotElement::clearDistribution()
 {
+    // TODO(hayato): Figure out when to call lazyReattachDistributedNodesIfNeeded()
     m_assignedNodes.clear();
-    m_oldDistributedNodes.swap(m_distributedNodes);
     m_distributedNodes.clear();
     m_distributedIndices.clear();
-    m_distributionState = DistributionReset;
 }
 
-bool HTMLSlotElement::hasSlotChangeEventListener()
+void HTMLSlotElement::saveAndClearDistribution()
 {
-    return eventTargetData() && eventTargetData()->eventListenerMap.find(EventTypeNames::slotchange);
+    m_oldDistributedNodes.swap(m_distributedNodes);
+    clearDistribution();
 }
 
 void HTMLSlotElement::dispatchSlotChangeEvent()
 {
-    RefPtrWillBeRawPtr<Event> event = Event::create(EventTypeNames::slotchange);
+    m_slotchangeEventEnqueued = false;
+    Event* event = Event::create(EventTypeNames::slotchange);
     event->setTarget(this);
     dispatchScopedEvent(event);
 }
@@ -145,6 +181,11 @@ Node* HTMLSlotElement::distributedNodePreviousTo(const Node& node) const
     return m_distributedNodes[index - 1].get();
 }
 
+AtomicString HTMLSlotElement::name() const
+{
+    return normalizeSlotName(fastGetAttribute(HTMLNames::nameAttr));
+}
+
 void HTMLSlotElement::attach(const AttachContext& context)
 {
     for (auto& node : m_distributedNodes) {
@@ -166,29 +207,34 @@ void HTMLSlotElement::detach(const AttachContext& context)
 void HTMLSlotElement::attributeChanged(const QualifiedName& name, const AtomicString& oldValue, const AtomicString& newValue, AttributeModificationReason reason)
 {
     if (name == nameAttr) {
-        if (ShadowRoot* root = containingShadowRoot())
-            root->owner()->willAffectSelector();
+        if (ShadowRoot* root = containingShadowRoot()) {
+            if (root->isV1() && oldValue != newValue)
+                root->ensureSlotAssignment().slotRenamed(normalizeSlotName(oldValue), *this);
+        }
     }
     HTMLElement::attributeChanged(name, oldValue, newValue, reason);
 }
 
-void HTMLSlotElement::childrenChanged(const ChildrenChange& change)
+static bool wasInShadowTreeBeforeInserted(HTMLSlotElement& slot, ContainerNode& insertionPoint)
 {
-    HTMLElement::childrenChanged(change);
-    if (ShadowRoot* root = containingShadowRoot()) {
-        if (ElementShadow* rootOwner = root->owner())
-            rootOwner->setNeedsDistributionRecalc();
-    }
+    ShadowRoot* root1 = slot.containingShadowRoot();
+    ShadowRoot* root2 = insertionPoint.containingShadowRoot();
+    if (root1 && root2 && root1 == root2)
+        return false;
+    return root1;
 }
 
 Node::InsertionNotificationRequest HTMLSlotElement::insertedInto(ContainerNode* insertionPoint)
 {
     HTMLElement::insertedInto(insertionPoint);
-    if (ShadowRoot* root = containingShadowRoot()) {
-        if (ElementShadow* rootOwner = root->owner())
-            rootOwner->setNeedsDistributionRecalc();
-        if (root == insertionPoint->treeScope().rootNode())
-            root->didAddSlot();
+    ShadowRoot* root = containingShadowRoot();
+    if (root) {
+        DCHECK(root->owner());
+        root->owner()->setNeedsDistributionRecalc();
+        // Relevant DOM Standard: https://dom.spec.whatwg.org/#concept-node-insert
+        // - 6.4:  Run assign slotables for a tree with node's tree and a set containing each inclusive descendant of node that is a slot.
+        if (!wasInShadowTreeBeforeInserted(*this, *insertionPoint))
+            root->ensureSlotAssignment().slotAdded(*this);
     }
 
     // We could have been distributed into in a detached subtree, make sure to
@@ -198,11 +244,21 @@ Node::InsertionNotificationRequest HTMLSlotElement::insertedInto(ContainerNode* 
     return InsertionDone;
 }
 
+static ShadowRoot* containingShadowRootBeforeRemoved(Node& removedDescendant, ContainerNode& insertionPoint)
+{
+    if (ShadowRoot* root = removedDescendant.containingShadowRoot())
+        return root;
+    return insertionPoint.containingShadowRoot();
+}
+
 void HTMLSlotElement::removedFrom(ContainerNode* insertionPoint)
 {
-    ShadowRoot* root = containingShadowRoot();
-    if (!root)
-        root = insertionPoint->containingShadowRoot();
+    // `removedFrom` is called after the node is removed from the tree.
+    // That means:
+    // 1. If this slot is still in a tree scope, it means the slot has been in a shadow tree. An inclusive shadow-including ancestor of the shadow host was originally removed from its parent.
+    // 2. Or (this slot is now not in a tree scope), this slot's inclusive ancestor was orginally removed from its parent (== insertion point). This slot and the originally removed node was in the same tree.
+
+    ShadowRoot* root = containingShadowRootBeforeRemoved(*this, *insertionPoint);
     if (root) {
         if (ElementShadow* rootOwner = root->owner())
             rootOwner->setNeedsDistributionRecalc();
@@ -211,8 +267,10 @@ void HTMLSlotElement::removedFrom(ContainerNode* insertionPoint)
     // Since this insertion point is no longer visible from the shadow subtree, it need to clean itself up.
     clearDistribution();
 
-    if (root == insertionPoint->treeScope().rootNode())
-        root->didRemoveSlot();
+    if (root && root->isV1() && root == insertionPoint->treeScope().rootNode()) {
+        // This slot was in a shadow tree and got disconnected from the shadow root.
+        root->ensureSlotAssignment().slotRemoved(*this);
+    }
 
     HTMLElement::removedFrom(insertionPoint);
 }
@@ -231,10 +289,7 @@ void HTMLSlotElement::updateDistributedNodesWithFallback()
     if (!m_distributedNodes.isEmpty())
         return;
     for (auto& child : NodeTraversal::childrenOf(*this)) {
-        if (!child.isSlotAssignable())
-            continue;
-        // Insertion points are not supported as slots fallback
-        if (isActiveInsertionPoint(child))
+        if (!child.isSlotable())
             continue;
         if (isHTMLSlotElement(child))
             appendDistributedNodesFrom(toHTMLSlotElement(child));
@@ -243,35 +298,67 @@ void HTMLSlotElement::updateDistributedNodesWithFallback()
     }
 }
 
-bool HTMLSlotElement::distributionChanged()
+void HTMLSlotElement::lazyReattachDistributedNodesIfNeeded()
 {
-    if (m_distributionState == DistributionReset)
-        m_distributionState = m_oldDistributedNodes == m_distributedNodes ? DistributionUnchanged : DistributionChanged;
-    return m_distributionState == DistributionChanged;
+    // TODO(hayato): Figure out an exact condition where reattach is required
+    if (m_oldDistributedNodes != m_distributedNodes) {
+        for (auto& node : m_oldDistributedNodes)
+            node->lazyReattachIfAttached();
+        for (auto& node : m_distributedNodes)
+            node->lazyReattachIfAttached();
+    }
+    m_oldDistributedNodes.clear();
 }
 
-void HTMLSlotElement::didUpdateDistribution()
+void HTMLSlotElement::enqueueSlotChangeEvent()
 {
-    if (isChildOfV1ShadowHost()) {
-        ElementShadow* shadow = parentElementShadow();
-        ASSERT(shadow);
-        if (!shadow->needsDistributionRecalc() && distributionChanged())
-            shadow->setNeedsDistributionRecalc();
+    if (!m_slotchangeEventEnqueued) {
+        Microtask::enqueueMicrotask(WTF::bind(&HTMLSlotElement::dispatchSlotChangeEvent, wrapPersistent(this)));
+        m_slotchangeEventEnqueued = true;
     }
-    if (hasSlotChangeEventListener() && distributionChanged()) {
-        // TODO(hayato): Do not enqueue a slotchange event for the same slot twice in the microtask queue
-        Microtask::enqueueMicrotask(WTF::bind(&HTMLSlotElement::dispatchSlotChangeEvent, PassRefPtrWillBeRawPtr<HTMLSlotElement>(this)));
+
+    ShadowRoot* root = containingShadowRoot();
+    DCHECK(root);
+    DCHECK(root->isV1());
+    root->owner()->setNeedsDistributionRecalc();
+
+    if (ShadowRoot* parentShadowRoot = v1ShadowRootOfParent()) {
+        if (HTMLSlotElement* next = parentShadowRoot->ensureSlotAssignment().findSlot(*this))
+            next->enqueueSlotChangeEvent();
     }
+}
+
+bool HTMLSlotElement::hasAssignedNodesSlow() const
+{
+    ShadowRoot* root = containingShadowRoot();
+    DCHECK(root);
+    DCHECK(root->isV1());
+    SlotAssignment& assignment = root->ensureSlotAssignment();
+    if (assignment.findSlotByName(name()) != this)
+        return false;
+    return assignment.findHostChildBySlotName(name());
+}
+
+bool HTMLSlotElement::findHostChildWithSameSlotName() const
+{
+    ShadowRoot* root = containingShadowRoot();
+    DCHECK(root);
+    DCHECK(root->isV1());
+    SlotAssignment& assignment = root->ensureSlotAssignment();
+    return assignment.findHostChildBySlotName(name());
+}
+
+short HTMLSlotElement::tabIndex() const
+{
+    return Element::tabIndex();
 }
 
 DEFINE_TRACE(HTMLSlotElement)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_assignedNodes);
     visitor->trace(m_distributedNodes);
-    visitor->trace(m_distributedIndices);
     visitor->trace(m_oldDistributedNodes);
-#endif
+    visitor->trace(m_distributedIndices);
     HTMLElement::trace(visitor);
 }
 

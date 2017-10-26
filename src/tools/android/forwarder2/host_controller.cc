@@ -4,14 +4,14 @@
 
 #include "tools/android/forwarder2/host_controller.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "tools/android/forwarder2/command.h"
 #include "tools/android/forwarder2/forwarder.h"
 #include "tools/android/forwarder2/socket.h"
@@ -19,15 +19,15 @@
 namespace forwarder2 {
 
 // static
-scoped_ptr<HostController> HostController::Create(
+std::unique_ptr<HostController> HostController::Create(
     int device_port,
     int host_port,
     int adb_port,
     int exit_notifier_fd,
     const ErrorCallback& error_callback) {
-  scoped_ptr<HostController> host_controller;
-  scoped_ptr<PipeNotifier> delete_controller_notifier(new PipeNotifier());
-  scoped_ptr<Socket> adb_control_socket(new Socket());
+  std::unique_ptr<HostController> host_controller;
+  std::unique_ptr<PipeNotifier> delete_controller_notifier(new PipeNotifier());
+  std::unique_ptr<Socket> adb_control_socket(new Socket());
   adb_control_socket->AddEventFd(exit_notifier_fd);
   adb_control_socket->AddEventFd(delete_controller_notifier->receiver_fd());
   if (!adb_control_socket->ConnectTcp(std::string(), adb_port)) {
@@ -48,9 +48,8 @@ scoped_ptr<HostController> HostController::Create(
     return host_controller;
   }
   host_controller.reset(new HostController(
-      device_port_allocated, host_port, adb_port, exit_notifier_fd,
-      error_callback, std::move(adb_control_socket),
-      std::move(delete_controller_notifier)));
+      device_port_allocated, host_port, adb_port, error_callback,
+      std::move(adb_control_socket), std::move(delete_controller_notifier)));
   return host_controller;
 }
 
@@ -68,15 +67,13 @@ HostController::HostController(
     int device_port,
     int host_port,
     int adb_port,
-    int exit_notifier_fd,
     const ErrorCallback& error_callback,
-    scoped_ptr<Socket> adb_control_socket,
-    scoped_ptr<PipeNotifier> delete_controller_notifier)
+    std::unique_ptr<Socket> adb_control_socket,
+    std::unique_ptr<PipeNotifier> delete_controller_notifier)
     : self_deleter_helper_(this, error_callback),
       device_port_(device_port),
       host_port_(host_port),
       adb_port_(adb_port),
-      global_exit_notifier_fd_(exit_notifier_fd),
       adb_control_socket_(std::move(adb_control_socket)),
       delete_controller_notifier_(std::move(delete_controller_notifier)),
       deletion_task_runner_(base::ThreadTaskRunnerHandle::Get()),
@@ -97,7 +94,7 @@ void HostController::ReadCommandOnInternalThread() {
     return;
   }
   // Try to connect to host server.
-  scoped_ptr<Socket> host_server_data_socket(new Socket());
+  std::unique_ptr<Socket> host_server_data_socket(new Socket());
   if (!host_server_data_socket->ConnectTcp(std::string(), host_port_)) {
     LOG(ERROR) << "Could not Connect HostServerData socket on port: "
                << host_port_;
@@ -121,8 +118,8 @@ void HostController::ReadCommandOnInternalThread() {
 }
 
 void HostController::StartForwarder(
-    scoped_ptr<Socket> host_server_data_socket) {
-  scoped_ptr<Socket> adb_data_socket(new Socket());
+    std::unique_ptr<Socket> host_server_data_socket) {
+  std::unique_ptr<Socket> adb_data_socket(new Socket());
   if (!adb_data_socket->ConnectTcp("", adb_port_)) {
     LOG(ERROR) << "Could not connect AdbDataSocket on port: " << adb_port_;
     OnInternalThreadError();

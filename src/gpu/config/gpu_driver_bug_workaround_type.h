@@ -9,9 +9,14 @@
 
 #include "gpu/gpu_export.h"
 
+// Clang format is toggled off here so that newlines can be kept consistent
+// throughout the table.
+// clang-format off
 #define GPU_DRIVER_BUG_WORKAROUNDS(GPU_OP)                   \
   GPU_OP(AVDA_DONT_COPY_PICTURES,                            \
          avda_dont_copy_pictures)                            \
+  GPU_OP(AVDA_NO_EGLIMAGE_FOR_LUMINANCE_TEX,                 \
+         avda_no_eglimage_for_luminance_tex)                 \
   GPU_OP(AVOID_EGL_IMAGE_TARGET_TEXTURE_REUSE,               \
          avoid_egl_image_target_texture_reuse)               \
   GPU_OP(BROKEN_EGL_IMAGE_REF_COUNTING,                      \
@@ -34,14 +39,20 @@
          disable_d3d11)                                      \
   GPU_OP(DISABLE_DEPTH_TEXTURE,                              \
          disable_depth_texture)                              \
+  GPU_OP(DISABLE_DIRECT_COMPOSITION,                         \
+         disable_direct_composition)                         \
   GPU_OP(DISABLE_DISCARD_FRAMEBUFFER,                        \
          disable_discard_framebuffer)                        \
+  GPU_OP(DISABLE_DXGI_ZERO_COPY_VIDEO,                       \
+         disable_dxgi_zero_copy_video)                       \
+  GPU_OP(DISABLE_NV12_DXGI_VIDEO,                            \
+         disable_nv12_dxgi_video)                            \
   GPU_OP(DISABLE_EXT_DRAW_BUFFERS,                           \
          disable_ext_draw_buffers)                           \
+  GPU_OP(DISABLE_FRAMEBUFFER_CMAA,                           \
+         disable_framebuffer_cmaa)                           \
   GPU_OP(DISABLE_GL_RGB_FORMAT,                              \
          disable_gl_rgb_format)                              \
-  GPU_OP(DISABLE_MSAA_ON_NON_WEBGL_CONTEXTS,                 \
-         disable_msaa_on_non_webgl_contexts)                 \
   GPU_OP(DISABLE_MULTIMONITOR_MULTISAMPLING,                 \
          disable_multimonitor_multisampling)                 \
   GPU_OP(DISABLE_MULTISAMPLED_RENDER_TO_TEXTURE,             \
@@ -52,10 +63,16 @@
          disable_post_sub_buffers_for_onscreen_surfaces)     \
   GPU_OP(DISABLE_PROGRAM_CACHE,                              \
          disable_program_cache)                              \
+  GPU_OP(DISABLE_TEXTURE_CUBE_MAP_SEAMLESS,                  \
+         disable_texture_cube_map_seamless)                  \
   GPU_OP(DISABLE_TEXTURE_STORAGE,                            \
          disable_texture_storage)                            \
   GPU_OP(DISABLE_TIMESTAMP_QUERIES,                          \
          disable_timestamp_queries)                          \
+  GPU_OP(DISABLE_WEBGL_MULTISAMPLING_COLOR_MASK_USAGE,       \
+         disable_webgl_multisampling_color_mask_usage)       \
+  GPU_OP(DISABLE_WEBGL_RGB_MULTISAMPLING_USAGE,              \
+         disable_webgl_rgb_multisampling_usage)              \
   GPU_OP(ETC1_POWER_OF_TWO_ONLY,                             \
          etc1_power_of_two_only)                             \
   GPU_OP(EXIT_ON_CONTEXT_LOST,                               \
@@ -66,12 +83,8 @@
          force_cube_map_positive_x_allocation)               \
   GPU_OP(FORCE_DISCRETE_GPU,                                 \
          force_discrete_gpu)                                 \
-  GPU_OP(FORCE_GL_FINISH_AFTER_COMPOSITING,                  \
-         force_gl_finish_after_compositing)                  \
   GPU_OP(FORCE_INTEGRATED_GPU,                               \
          force_integrated_gpu)                               \
-  GPU_OP(GL_BEGIN_GL_END_ON_FBO_CHANGE_TO_BACKBUFFER,        \
-         gl_begin_gl_end_on_fbo_change_to_backbuffer)        \
   GPU_OP(GL_CLEAR_BROKEN,                                    \
          gl_clear_broken)                                    \
   GPU_OP(IGNORE_EGL_SYNC_FAILURES,                           \
@@ -88,12 +101,6 @@
          max_copy_texture_chromium_size_1048576)             \
   GPU_OP(MAX_COPY_TEXTURE_CHROMIUM_SIZE_262144,              \
          max_copy_texture_chromium_size_262144)              \
-  GPU_OP(MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_1024,               \
-         max_cube_map_texture_size_limit_1024)               \
-  GPU_OP(MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_4096,               \
-         max_cube_map_texture_size_limit_4096)               \
-  GPU_OP(MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_512,                \
-         max_cube_map_texture_size_limit_512)                \
   GPU_OP(MAX_FRAGMENT_UNIFORM_VECTORS_32,                    \
          max_fragment_uniform_vectors_32)                    \
   GPU_OP(MAX_TEXTURE_SIZE_LIMIT_4096,                        \
@@ -102,6 +109,8 @@
          max_varying_vectors_16)                             \
   GPU_OP(MAX_VERTEX_UNIFORM_VECTORS_256,                     \
          max_vertex_uniform_vectors_256)                     \
+  GPU_OP(MSAA_IS_SLOW,                                       \
+         msaa_is_slow)                                       \
   GPU_OP(NEEDS_GLSL_BUILT_IN_FUNCTION_EMULATION,             \
          needs_glsl_built_in_function_emulation)             \
   GPU_OP(NEEDS_OFFSCREEN_BUFFER_WORKAROUND,                  \
@@ -120,6 +129,8 @@
          scalarize_vec_and_mat_constructor_args)             \
   GPU_OP(SET_TEXTURE_FILTER_BEFORE_GENERATING_MIPMAP,        \
          set_texture_filter_before_generating_mipmap)        \
+  GPU_OP(SET_ZERO_LEVEL_BEFORE_GENERATING_MIPMAP,            \
+         set_zero_level_before_generating_mipmap)            \
   GPU_OP(SIMULATE_OUT_OF_MEMORY_ON_LARGE_TEXTURES,           \
          simulate_out_of_memory_on_large_textures)           \
   GPU_OP(SURFACE_TEXTURE_CANT_DETACH,                        \
@@ -130,30 +141,35 @@
          texsubimage_faster_than_teximage)                   \
   GPU_OP(UNBIND_ATTACHMENTS_ON_BOUND_RENDER_FBO_DELETE,      \
          unbind_attachments_on_bound_render_fbo_delete)      \
+  GPU_OP(UNBIND_EGL_CONTEXT_TO_FLUSH_DRIVER_CACHES,          \
+         unbind_egl_context_to_flush_driver_caches)          \
   GPU_OP(UNBIND_FBO_ON_CONTEXT_SWITCH,                       \
          unbind_fbo_on_context_switch)                       \
   GPU_OP(UNFOLD_SHORT_CIRCUIT_AS_TERNARY_OPERATION,          \
          unfold_short_circuit_as_ternary_operation)          \
-  GPU_OP(UNROLL_FOR_LOOP_WITH_SAMPLER_ARRAY_INDEX,           \
-         unroll_for_loop_with_sampler_array_index)           \
+  GPU_OP(UNPACK_ALIGNMENT_WORKAROUND_WITH_UNPACK_BUFFER,     \
+         unpack_alignment_workaround_with_unpack_buffer)     \
+  GPU_OP(UNPACK_OVERLAPPING_ROWS_SEPARATELY_UNPACK_BUFFER,   \
+         unpack_overlapping_rows_separately_unpack_buffer)   \
   GPU_OP(USE_CLIENT_SIDE_ARRAYS_FOR_STREAM_BUFFERS,          \
          use_client_side_arrays_for_stream_buffers)          \
   GPU_OP(USE_CURRENT_PROGRAM_AFTER_SUCCESSFUL_LINK,          \
          use_current_program_after_successful_link)          \
+  GPU_OP(USE_INTERMEDIARY_FOR_COPY_TEXTURE_IMAGE,            \
+         use_intermediary_for_copy_texture_image)            \
   GPU_OP(USE_NON_ZERO_SIZE_FOR_CLIENT_SIDE_STREAM_BUFFERS,   \
          use_non_zero_size_for_client_side_stream_buffers)   \
+  GPU_OP(USE_SHADOWED_TEX_LEVEL_PARAMS,                      \
+         use_shadowed_tex_level_params)                      \
   GPU_OP(USE_VIRTUALIZED_GL_CONTEXTS,                        \
          use_virtualized_gl_contexts)                        \
   GPU_OP(VALIDATE_MULTISAMPLE_BUFFER_ALLOCATION,             \
          validate_multisample_buffer_allocation)             \
   GPU_OP(WAKE_UP_GPU_BEFORE_DRAWING,                         \
          wake_up_gpu_before_drawing)                         \
-  GPU_OP(UNBIND_EGL_CONTEXT_TO_FLUSH_DRIVER_CACHES,          \
-         unbind_egl_context_to_flush_driver_caches)          \
-  GPU_OP(SET_ZERO_LEVEL_BEFORE_GENERATING_MIPMAP,            \
-         set_zero_level_before_generating_mipmap)            \
-  GPU_OP(DISABLE_DIRECT_COMPOSITION,                         \
-         disable_direct_composition)                         \
+  GPU_OP(USE_TESTING_GPU_DRIVER_WORKAROUND,                  \
+         use_gpu_driver_workaround_for_testing)              \
+// clang-format on
 
 namespace gpu {
 

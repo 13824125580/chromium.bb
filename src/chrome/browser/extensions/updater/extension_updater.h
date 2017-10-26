@@ -7,6 +7,7 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <stack>
 #include <string>
@@ -15,7 +16,6 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
@@ -56,7 +56,6 @@ class ExtensionUpdaterTest;
 // ....
 // updater->Stop();
 class ExtensionUpdater : public ExtensionDownloaderDelegate,
-                         public ExtensionRegistryObserver,
                          public content::NotificationObserver {
  public:
   typedef base::Closure FinishedCallback;
@@ -104,10 +103,8 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // already a pending task that has not yet run.
   void CheckSoon();
 
-  // Starts an update check for the specified extension soon. If a check
-  // is already running, or finished too recently without an update being
-  // installed, this method returns false and the check won't be scheduled.
-  bool CheckExtensionSoon(const std::string& extension_id,
+  // Starts an update check for the specified extension soon.
+  void CheckExtensionSoon(const std::string& extension_id,
                           const FinishedCallback& callback);
 
   // Starts an update check right now, instead of waiting for the next
@@ -157,8 +154,6 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
     // The ids of extensions that have in-progress update checks.
     std::list<std::string> in_progress_ids_;
   };
-
-  struct ThrottleInfo;
 
   // Ensure that we have a valid ExtensionDownloader instance referenced by
   // |downloader|.
@@ -214,12 +209,6 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  // Implementation of ExtensionRegistryObserver.
-  void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
-                                  const Extension* extension,
-                                  bool is_update,
-                                  const std::string& old_name) override;
-
   // Send a notification that update checks are starting.
   void NotifyStarted();
 
@@ -240,7 +229,7 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   const ExtensionDownloader::Factory downloader_factory_;
 
   // Fetches the crx files for the extensions that have an available update.
-  scoped_ptr<ExtensionDownloader> downloader_;
+  std::unique_ptr<ExtensionDownloader> downloader_;
 
   base::OneShotTimer timer_;
   int frequency_seconds_;
@@ -256,9 +245,6 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // Observes CRX installs we initiate.
   content::NotificationRegistrar registrar_;
 
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
-
   // True when a CrxInstaller is doing an install.  Used in MaybeUpdateCrxFile()
   // to keep more than one install from running at once.
   bool crx_install_is_running_;
@@ -268,10 +254,6 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   FetchedCRXFile current_crx_file_;
 
   ExtensionCache* extension_cache_;
-
-  // Keeps track of when an extension tried to update itself, so we can throttle
-  // checks to prevent too many requests from being made.
-  std::map<std::string, ThrottleInfo> throttle_info_;
 
   base::WeakPtrFactory<ExtensionUpdater> weak_ptr_factory_;
 

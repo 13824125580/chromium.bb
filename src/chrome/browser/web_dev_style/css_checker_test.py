@@ -185,8 +185,9 @@ blah /* hey! */
   100% { height: 500px; }
 }
 
-#id { /* $i18n{TemplateExpressions} should be ignored. */
+#id { /* $i18n{*} and $i18nRaw{*} should be ignored. */
   rule: $i18n{someValue};
+  rule2: $i18nRaw{someValue};
   --css-mixin: {
     color: red;
   };
@@ -442,6 +443,20 @@ body.alternate-logo #logo {
     }
   -->
   <style>
+    body {
+      flex-direction:column;
+    }
+  </style>
+</head>
+</html>""", """
+- Colons (:) should have a space after them.
+    flex-direction:column;
+""", filename='test.html')
+
+  def testHtmlIncludeStyle(self):
+    self.VerifyContentsProducesOutput("""<!doctype html>
+<html>
+  <style include="fake-shared-css">
     body {
       flex-direction:column;
     }

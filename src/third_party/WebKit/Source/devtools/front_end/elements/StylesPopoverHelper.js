@@ -119,12 +119,12 @@ WebInspector.StylesPopoverHelper.prototype = {
      */
     _onKeyDown: function(event)
     {
-        if (event.keyIdentifier === "Enter") {
+        if (event.key === "Enter") {
             this.hide(true);
             event.consume(true);
             return;
         }
-        if (event.keyIdentifier === "U+001B") { // Escape key
+        if (event.key === "Escape") {
             this.hide(false);
             event.consume(true);
         }
@@ -197,6 +197,9 @@ WebInspector.BezierPopoverIcon.prototype = {
 
         this._originalPropertyText = this._treeElement.property.propertyText;
         this._treeElement.parentPane().setEditingStyle(true);
+        var uiLocation = WebInspector.cssWorkspaceBinding.propertyUILocation(this._treeElement.property, false /* forName */);
+        if (uiLocation)
+            WebInspector.Revealer.reveal(uiLocation, true /* omitFocus */);
     },
 
     /**
@@ -307,6 +310,9 @@ WebInspector.ColorSwatchPopoverIcon.prototype = {
 
         this._originalPropertyText = this._treeElement.property.propertyText;
         this._treeElement.parentPane().setEditingStyle(true);
+        var uiLocation = WebInspector.cssWorkspaceBinding.propertyUILocation(this._treeElement.property, false /* forName */);
+        if (uiLocation)
+            WebInspector.Revealer.reveal(uiLocation, true /* omitFocus */);
     },
 
     /**

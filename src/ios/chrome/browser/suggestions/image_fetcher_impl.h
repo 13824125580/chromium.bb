@@ -5,20 +5,26 @@
 #ifndef IOS_CHROME_BROWSER_SUGGESTIONS_IMAGE_FETCHER_IMPL_H_
 #define IOS_CHROME_BROWSER_SUGGESTIONS_IMAGE_FETCHER_IMPL_H_
 
+#include <memory>
+#include <string>
+
 #include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "components/suggestions/image_fetcher.h"
+#include "components/image_fetcher/image_fetcher.h"
 
 class GURL;
-class SkBitmap;
-
-namespace image_fetcher {
 class ImageFetcher;
-}
 
 namespace base {
 class SequencedWorkerPool;
+}
+
+namespace gfx {
+class Image;
+}
+
+namespace image_fetcher {
+class ImageFetcherDelegate;
 }
 
 namespace net {
@@ -27,26 +33,26 @@ class URLRequestContextGetter;
 
 namespace suggestions {
 
-class ImageFetcherDelegate;
-
 // A class used to fetch server images asynchronously.
-class ImageFetcherImpl : public suggestions::ImageFetcher {
+class ImageFetcherImpl : public image_fetcher::ImageFetcher {
  public:
   ImageFetcherImpl(net::URLRequestContextGetter* url_request_context,
                    base::SequencedWorkerPool* blocking_pool);
   ~ImageFetcherImpl() override;
 
-  void SetImageFetcherDelegate(ImageFetcherDelegate* delegate) override;
+  void SetImageFetcherDelegate(
+      image_fetcher::ImageFetcherDelegate* delegate) override;
 
   void StartOrQueueNetworkRequest(
-      const GURL& url,
+      const std::string& id,
       const GURL& image_url,
-      base::Callback<void(const GURL&, const SkBitmap*)> callback) override;
+      base::Callback<void(const std::string&, const gfx::Image&)> callback)
+      override;
 
  private:
-  scoped_ptr<image_fetcher::ImageFetcher> imageFetcher_;
+  std::unique_ptr<::ImageFetcher> imageFetcher_;
 
-  ImageFetcherDelegate* delegate_;
+  image_fetcher::ImageFetcherDelegate* delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageFetcherImpl);
 };

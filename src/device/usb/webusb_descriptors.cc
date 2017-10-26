@@ -2,19 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "device/usb/webusb_descriptors.h"
+
 #include <stddef.h>
 
 #include <iterator>
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/barrier_closure.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/usb/usb_device_handle.h"
-#include "device/usb/webusb_descriptors.h"
 #include "net/base/io_buffer.h"
 
 using net::IOBufferWithSize;
@@ -45,11 +48,11 @@ const uint8_t kWebUsbCapabilityUUID[16] = {
 const int kControlTransferTimeout = 60000;  // 1 minute
 
 using ReadWebUsbDescriptorsCallback =
-    base::Callback<void(scoped_ptr<WebUsbAllowedOrigins> allowed_origins,
+    base::Callback<void(std::unique_ptr<WebUsbAllowedOrigins> allowed_origins,
                         const GURL& landing_page)>;
 
 using ReadWebUsbAllowedOriginsCallback =
-    base::Callback<void(scoped_ptr<WebUsbAllowedOrigins> allowed_origins)>;
+    base::Callback<void(std::unique_ptr<WebUsbAllowedOrigins> allowed_origins)>;
 
 // Parses a WebUSB Function Subset Header:
 // http://wicg.github.io/webusb/#dfn-function-subset-header
@@ -150,9 +153,9 @@ bool ParseConfiguration(WebUsbConfigurationSubset* configuration,
   return true;
 }
 
-void OnDoneReadingUrls(scoped_ptr<WebUsbAllowedOrigins> allowed_origins,
+void OnDoneReadingUrls(std::unique_ptr<WebUsbAllowedOrigins> allowed_origins,
                        uint8_t landing_page_id,
-                       scoped_ptr<std::map<uint8_t, GURL>> url_map,
+                       std::unique_ptr<std::map<uint8_t, GURL>> url_map,
                        const ReadWebUsbDescriptorsCallback& callback) {
   for (uint8_t origin_id : allowed_origins->origin_ids) {
     const auto& it = url_map->find(origin_id);
@@ -225,7 +228,7 @@ void ReadUrlDescriptors(scoped_refptr<UsbDeviceHandle> device_handle,
                         uint8_t vendor_code,
                         uint8_t landing_page_id,
                         const ReadWebUsbDescriptorsCallback& callback,
-                        scoped_ptr<WebUsbAllowedOrigins> allowed_origins) {
+                        std::unique_ptr<WebUsbAllowedOrigins> allowed_origins) {
   if (!allowed_origins) {
     callback.Run(nullptr, GURL());
     return;
@@ -244,7 +247,8 @@ void ReadUrlDescriptors(scoped_refptr<UsbDeviceHandle> device_handle,
     }
   }
 
-  scoped_ptr<std::map<uint8_t, GURL>> url_map(new std::map<uint8_t, GURL>());
+  std::unique_ptr<std::map<uint8_t, GURL>> url_map(
+      new std::map<uint8_t, GURL>());
   std::map<uint8_t, GURL>* url_map_ptr = url_map.get();
   base::Closure barrier = base::BarrierClosure(
       static_cast<int>(to_request.size()),
@@ -267,7 +271,8 @@ void OnReadWebUsbAllowedOrigins(
     return;
   }
 
-  scoped_ptr<WebUsbAllowedOrigins> allowed_origins(new WebUsbAllowedOrigins());
+  std::unique_ptr<WebUsbAllowedOrigins> allowed_origins(
+      new WebUsbAllowedOrigins());
   if (allowed_origins->Parse(
           std::vector<uint8_t>(buffer->data(), buffer->data() + length))) {
     callback.Run(std::move(allowed_origins));
@@ -289,7 +294,8 @@ void OnReadWebUsbAllowedOriginsHeader(
     return;
   }
 
-  uint16_t new_length = buffer->data()[2] | (buffer->data()[3] << 8);
+  const uint8_t* data = reinterpret_cast<uint8_t*>(buffer->data());
+  uint16_t new_length = data[2] | (data[3] << 8);
   scoped_refptr<IOBufferWithSize> new_buffer = new IOBufferWithSize(new_length);
   device_handle->ControlTransfer(
       USB_DIRECTION_INBOUND, UsbDeviceHandle::VENDOR, UsbDeviceHandle::DEVICE,
@@ -346,7 +352,8 @@ void OnReadBosDescriptorHeader(scoped_refptr<UsbDeviceHandle> device_handle,
     return;
   }
 
-  uint16_t new_length = buffer->data()[2] | (buffer->data()[3] << 8);
+  const uint8_t* data = reinterpret_cast<uint8_t*>(buffer->data());
+  uint16_t new_length = data[2] | (data[3] << 8);
   scoped_refptr<IOBufferWithSize> new_buffer = new IOBufferWithSize(new_length);
   device_handle->ControlTransfer(
       USB_DIRECTION_INBOUND, UsbDeviceHandle::STANDARD, UsbDeviceHandle::DEVICE,
@@ -530,7 +537,7 @@ bool ParseWebUsbUrlDescriptor(const std::vector<uint8_t>& bytes, GURL* output) {
 
   // Validate that the length is consistent and fits within the buffer.
   uint8_t length = bytes[0];
-  if (length < kDescriptorMinLength || length < bytes.size() ||
+  if (length < kDescriptorMinLength || length > bytes.size() ||
       bytes[1] != kDescriptorType) {
     return false;
   }
@@ -565,6 +572,28 @@ void ReadWebUsbDescriptors(scoped_refptr<UsbDeviceHandle> device_handle,
       kGetDescriptorRequest, kBosDescriptorType << 8, 0, buffer, buffer->size(),
       kControlTransferTimeout,
       base::Bind(&OnReadBosDescriptorHeader, device_handle, callback));
+}
+
+bool FindInWebUsbAllowedOrigins(
+    const device::WebUsbAllowedOrigins* allowed_origins,
+    const GURL& origin) {
+  if (!allowed_origins)
+    return false;
+
+  if (ContainsValue(allowed_origins->origins, origin))
+    return true;
+
+  for (const auto& config : allowed_origins->configurations) {
+    if (ContainsValue(config.origins, origin))
+      return true;
+
+    for (const auto& function : config.functions) {
+      if (ContainsValue(function.origins, origin))
+        return true;
+    }
+  }
+
+  return false;
 }
 
 }  // namespace device

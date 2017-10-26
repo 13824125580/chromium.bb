@@ -22,7 +22,7 @@
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/ui/webui/options/options_handlers_helper.h"
+#include "chrome/browser/ui/webui/profile_helper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/browser_sync/browser/profile_sync_service.h"
@@ -200,7 +200,7 @@ void CreateProfileHandler::CreateShortcutAndShowSuccess(bool create_shortcut,
       profile_creation_type_ == SUPERVISED_PROFILE_IMPORT;
   dict.SetBoolean("isSupervised", is_supervised);
 #endif
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       GetJavascriptMethodName(PROFILE_CREATION_SUCCESS), dict);
 
   // If the new profile is a supervised user, instead of opening a new window
@@ -217,8 +217,7 @@ void CreateProfileHandler::CreateShortcutAndShowSuccess(bool create_shortcut,
   if (should_open_new_window) {
     // Opening the new window must be the last action, after all callbacks
     // have been run, to give them a chance to initialize the profile.
-    helper::OpenNewWindowForProfile(profile,
-                                    Profile::CREATE_STATUS_INITIALIZED);
+    webui::OpenNewWindowForProfile(profile, Profile::CREATE_STATUS_INITIALIZED);
   }
   profile_creation_type_ = NO_CREATION_IN_PROGRESS;
 }
@@ -229,12 +228,15 @@ void CreateProfileHandler::ShowProfileCreationError(
   DCHECK_NE(NO_CREATION_IN_PROGRESS, profile_creation_type_);
   profile_creation_type_ = NO_CREATION_IN_PROGRESS;
   profile_path_being_created_.clear();
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       GetJavascriptMethodName(PROFILE_CREATION_ERROR),
       base::StringValue(error));
   // The ProfileManager calls us back with a NULL profile in some cases.
-  if (profile)
-    helper::DeleteProfileAtPath(profile->GetPath(), web_ui());
+  if (profile) {
+    webui::DeleteProfileAtPath(profile->GetPath(),
+                               web_ui(),
+                               ProfileMetrics::DELETE_PROFILE_SETTINGS);
+  }
 }
 
 void CreateProfileHandler::RecordProfileCreationMetrics(
@@ -375,7 +377,9 @@ void CreateProfileHandler::CancelProfileRegistration(bool user_initiated) {
   // Cancelling registration means the callback passed into
   // RegisterAndInitSync() won't be called, so the cleanup must be done here.
   profile_path_being_created_.clear();
-  helper::DeleteProfileAtPath(new_profile->GetPath(), web_ui());
+  webui::DeleteProfileAtPath(new_profile->GetPath(),
+                             web_ui(),
+                             ProfileMetrics::DELETE_PROFILE_SETTINGS);
 }
 
 void CreateProfileHandler::RegisterSupervisedUser(
@@ -427,8 +431,8 @@ void CreateProfileHandler::OnSupervisedUserRegistered(
 void CreateProfileHandler::ShowProfileCreationWarning(
     const base::string16& warning) {
   DCHECK_EQ(SUPERVISED_PROFILE_CREATION, profile_creation_type_);
-  web_ui()->CallJavascriptFunction("BrowserOptions.showCreateProfileWarning",
-                                   base::StringValue(warning));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "BrowserOptions.showCreateProfileWarning", base::StringValue(warning));
 }
 
 void CreateProfileHandler::RecordSupervisedProfileCreationMetrics(

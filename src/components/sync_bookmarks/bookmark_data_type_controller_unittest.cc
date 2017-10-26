@@ -4,13 +4,15 @@
 
 #include "components/sync_bookmarks/bookmark_data_type_controller.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -88,10 +90,10 @@ class SyncBookmarkDataTypeControllerTest : public testing::Test,
 
   void CreateBookmarkModel(BookmarkLoadPolicy bookmark_load_policy) {
     bookmark_model_.reset(new BookmarkModel(
-        make_scoped_ptr(new bookmarks::TestBookmarkClient())));
+        base::WrapUnique(new bookmarks::TestBookmarkClient())));
     if (bookmark_load_policy == LOAD_MODEL) {
       TestingPrefServiceSimple prefs;
-      bookmark_model_->Load(&prefs, std::string(), base::FilePath(),
+      bookmark_model_->Load(&prefs, base::FilePath(),
                             base::ThreadTaskRunnerHandle::Get(),
                             base::ThreadTaskRunnerHandle::Get());
       bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model_.get());
@@ -126,7 +128,7 @@ class SyncBookmarkDataTypeControllerTest : public testing::Test,
     bookmark_dtc_->StartAssociating(
         base::Bind(&StartCallbackMock::Run,
                    base::Unretained(&start_callback_)));
-     base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void NotifyHistoryServiceLoaded() {
@@ -135,9 +137,9 @@ class SyncBookmarkDataTypeControllerTest : public testing::Test,
 
   base::MessageLoop message_loop_;
   scoped_refptr<BookmarkDataTypeController> bookmark_dtc_;
-  scoped_ptr<SyncApiComponentFactoryMock> profile_sync_factory_;
-  scoped_ptr<BookmarkModel> bookmark_model_;
-  scoped_ptr<HistoryMock> history_service_;
+  std::unique_ptr<SyncApiComponentFactoryMock> profile_sync_factory_;
+  std::unique_ptr<BookmarkModel> bookmark_model_;
+  std::unique_ptr<HistoryMock> history_service_;
   sync_driver::FakeSyncService service_;
   ModelAssociatorMock* model_associator_;
   ChangeProcessorMock* change_processor_;
@@ -169,7 +171,7 @@ TEST_F(SyncBookmarkDataTypeControllerTest, StartBookmarkModelNotReady) {
   EXPECT_EQ(DataTypeController::MODEL_STARTING, bookmark_dtc_->state());
 
   TestingPrefServiceSimple prefs;
-  bookmark_model_->Load(&prefs, std::string(), base::FilePath(),
+  bookmark_model_->Load(&prefs, base::FilePath(),
                        base::ThreadTaskRunnerHandle::Get(),
                        base::ThreadTaskRunnerHandle::Get());
   bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model_.get());
@@ -178,8 +180,7 @@ TEST_F(SyncBookmarkDataTypeControllerTest, StartBookmarkModelNotReady) {
   bookmark_dtc_->StartAssociating(
       base::Bind(&StartCallbackMock::Run,
                  base::Unretained(&start_callback_)));
-  base::MessageLoop::current()->RunUntilIdle();
-
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(DataTypeController::RUNNING, bookmark_dtc_->state());
 }

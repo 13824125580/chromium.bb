@@ -7,31 +7,38 @@
 #include <Cocoa/Cocoa.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <tuple>
 
-#include "base/mac/mac_util.h"
+#include "base/command_line.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/histogram_tester.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/compositor/test/no_transport_image_transport_factory.h"
 #include "content/browser/frame_host/render_widget_host_view_guest.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
-#include "content/common/gpu/gpu_messages.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_widget_host_view_mac_delegate.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/test_render_view_host.h"
+#include "gpu/ipc/common/gpu_messages.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
+#include "ui/events/base_event_utils.h"
+#include "ui/events/latency_info.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
 #import "ui/gfx/test/ui_cocoa_test_helper.h"
 
@@ -77,6 +84,11 @@
   if (!consumed)
     unhandledWheelEventReceived_ = true;
 }
+- (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
+                                 consumed:(BOOL)consumed {
+  if (!consumed && event.type == blink::WebInputEvent::GestureScrollUpdate)
+    unhandledWheelEventReceived_ = true;
+}
 - (void)touchesBeganWithEvent:(NSEvent*)event {}
 - (void)touchesMovedWithEvent:(NSEvent*)event {}
 - (void)touchesCancelledWithEvent:(NSEvent*)event {}
@@ -103,7 +115,7 @@ std::string GetInputMessageTypes(MockRenderProcessHost* process) {
     EXPECT_EQ(InputMsg_HandleInputEvent::ID, message->type());
     InputMsg_HandleInputEvent::Param params;
     EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
-    const blink::WebInputEvent* event = base::get<0>(params);
+    const blink::WebInputEvent* event = std::get<0>(params);
     if (i != 0)
       result += " ";
     result += WebInputEventTraits::GetName(event->type);
@@ -152,10 +164,21 @@ class MockRenderWidgetHostImpl : public RenderWidgetHostImpl {
                            int32_t routing_id)
       : RenderWidgetHostImpl(delegate, process, routing_id, false) {
     set_renderer_initialized(true);
+    lastWheelEventLatencyInfo = ui::LatencyInfo();
+  }
+
+  // Extracts |latency_info| and stores it in |lastWheelEventLatencyInfo|.
+  void ForwardWheelEventWithLatencyInfo (
+        const blink::WebMouseWheelEvent& wheel_event,
+        const ui::LatencyInfo& ui_latency) override {
+    RenderWidgetHostImpl::ForwardWheelEventWithLatencyInfo (
+        wheel_event, ui_latency);
+    lastWheelEventLatencyInfo = ui::LatencyInfo(ui_latency);
   }
 
   MOCK_METHOD0(Focus, void());
   MOCK_METHOD0(Blur, void());
+  ui::LatencyInfo lastWheelEventLatencyInfo;
 };
 
 // Generates the |length| of composition rectangle vector and save them to
@@ -204,6 +227,8 @@ gfx::Rect GetExpectedRect(const gfx::Point& origin,
 NSEvent* MockScrollWheelEventWithPhase(SEL mockPhaseSelector, int32_t delta) {
   CGEventRef cg_event =
       CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, delta, 0);
+  CGEventTimestamp timestamp = 0;
+  CGEventSetTimestamp(cg_event, timestamp);
   NSEvent* event = [NSEvent eventWithCGEvent:cg_event];
   CFRelease(cg_event);
   method_setImplementation(
@@ -216,14 +241,15 @@ NSEvent* MockScrollWheelEventWithPhase(SEL mockPhaseSelector, int32_t delta) {
 
 class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
  public:
-  RenderWidgetHostViewMacTest() : old_rwhv_(NULL), rwhv_mac_(NULL) {}
+  RenderWidgetHostViewMacTest() : old_rwhv_(NULL), rwhv_mac_(NULL) {
+    std::unique_ptr<base::SimpleTestTickClock> mock_clock(
+        new base::SimpleTestTickClock());
+    mock_clock->Advance(base::TimeDelta::FromMilliseconds(100));
+    ui::SetEventTickClockForTesting(std::move(mock_clock));
+  }
 
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
-    ImageTransportFactory::InitializeForUnitTests(
-        scoped_ptr<ImageTransportFactory>(
-            new NoTransportImageTransportFactory));
-
     // TestRenderViewHost's destruction assumes that its view is a
     // TestRenderWidgetHostView, so store its view and reset it back to the
     // stored view in |TearDown()|.
@@ -242,13 +268,12 @@ class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
     test_rvh()->GetWidget()->SetView(
         static_cast<RenderWidgetHostViewBase*>(old_rwhv_));
 
-    ImageTransportFactory::Terminate();
     RenderViewHostImplTestHarness::TearDown();
   }
 
   void RecycleAndWait() {
     pool_.Recycle();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     pool_.Recycle();
   }
 
@@ -393,6 +418,31 @@ TEST_F(RenderWidgetHostViewMacTest, FilterNonPrintableCharacter) {
           0x58, 'x', NSKeyDown, NSControlKeyMask)];
   EXPECT_EQ(2U, process_host->sink().message_count());
   EXPECT_EQ("RawKeyDown Char", GetInputMessageTypes(process_host));
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
+
+// Test that invalid |keyCode| shouldn't generate key events.
+// https://crbug.com/601964
+TEST_F(RenderWidgetHostViewMacTest, InvalidKeyCode) {
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+
+  // Simulate "Convert" key on JIS PC keyboard, will generate a |NSFlagsChanged|
+  // NSEvent with |keyCode| == 0xFF.
+  process_host->sink().ClearMessages();
+  EXPECT_EQ(0U, process_host->sink().message_count());
+  [view->cocoa_view() keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(
+                                   0xFF, 0, NSFlagsChanged, 0)];
+  EXPECT_EQ(0U, process_host->sink().message_count());
 
   // Clean up.
   host->ShutdownAndDestroyWidget(true);
@@ -728,17 +778,22 @@ TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionMultilineCase) {
 // firstRectForCharacterRange:actualRange] are handled in a sane manner if they
 // arrive after the C++ RenderWidgetHostView is destroyed.
 TEST_F(RenderWidgetHostViewMacTest, CompositionEventAfterDestroy) {
-  // The test view isn't in an NSWindow to perform the final coordinate
-  // conversion, so use an origin of 0,0, but verify the size.
   const gfx::Rect composition_bounds(0, 0, 30, 40);
   const gfx::Range range(0, 1);
   rwhv_mac_->ImeCompositionRangeChanged(
       range, std::vector<gfx::Rect>(1, composition_bounds));
 
   NSRange actual_range = NSMakeRange(0, 0);
+
+  base::scoped_nsobject<CocoaTestHelperWindow> window(
+      [[CocoaTestHelperWindow alloc] init]);
+  [[window contentView] addSubview:rwhv_cocoa_];
+  [rwhv_cocoa_ setFrame:NSMakeRect(0, 0, 400, 400)];
+
   NSRect rect = [rwhv_cocoa_ firstRectForCharacterRange:range.ToNSRange()
                                             actualRange:&actual_range];
-  EXPECT_NSEQ(NSMakeRect(0, 0, 30, 40), rect);
+  EXPECT_EQ(30, rect.size.width);
+  EXPECT_EQ(40, rect.size.height);
   EXPECT_EQ(range, gfx::Range(actual_range));
 
   DestroyHostViewRetainCocoaView();
@@ -794,11 +849,45 @@ TEST_F(RenderWidgetHostViewMacTest, BlurAndFocusOnSetActive) {
   rwh->ShutdownAndDestroyWidget(true);
 }
 
-TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
-  // This tests Lion+ functionality, so don't run the test pre-Lion.
-  if (!base::mac::IsOSLionOrLater())
-    return;
+TEST_F(RenderWidgetHostViewMacTest, LastWheelEventLatencyInfoExists) {
+  // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
+  // the MockRenderProcessHost that is set up by the test harness which mocks
+  // out |OnMessageReceived()|.
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
 
+  // Send an initial wheel event for scrolling by 3 lines.
+  // Verifies that ui::INPUT_EVENT_LATENCY_UI_COMPONENT is added
+  // properly in scrollWheel function.
+  NSEvent* wheelEvent1 = MockScrollWheelEventWithPhase(@selector(phaseBegan),3);
+  [view->cocoa_view() scrollWheel:wheelEvent1];
+  ui::LatencyInfo::LatencyComponent ui_component1;
+  ASSERT_TRUE(host->lastWheelEventLatencyInfo.FindLatency(
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, &ui_component1) );
+
+  // Send a wheel event with phaseEnded.
+  // Verifies that ui::INPUT_EVENT_LATENCY_UI_COMPONENT is added
+  // properly in shortCircuitScrollWheelEvent function which is called
+  // in scrollWheel.
+  NSEvent* wheelEvent2 = MockScrollWheelEventWithPhase(@selector(phaseEnded),0);
+  [view->cocoa_view() scrollWheel:wheelEvent2];
+  ui::LatencyInfo::LatencyComponent ui_component2;
+  ASSERT_TRUE(host->lastWheelEventLatencyInfo.FindLatency(
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, &ui_component2) );
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
+
+TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
   // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
   // the MockRenderProcessHost that is set up by the test harness which mocks
   // out |OnMessageReceived()|.
@@ -821,7 +910,7 @@ TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
   // Send an ACK for the first wheel event, so that the queue will be flushed.
   InputEventAck ack(blink::WebInputEvent::MouseWheel,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
-  scoped_ptr<IPC::Message> response(
+  std::unique_ptr<IPC::Message> response(
       new InputHostMsg_HandleInputEvent_ACK(0, ack));
   host->OnMessageReceived(*response);
 
@@ -829,18 +918,15 @@ TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
   // render view receives it.
   NSEvent* event2 = MockScrollWheelEventWithPhase(@selector(phaseEnded), 0);
   [NSApp postEvent:event2 atStart:NO];
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(2U, process_host->sink().message_count());
 
   // Clean up.
   host->ShutdownAndDestroyWidget(true);
 }
 
-TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
-  // This tests Lion+ functionality, so don't run the test pre-Lion.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
+TEST_F(RenderWidgetHostViewMacTest,
+       IgnoreEmptyUnhandledWheelEventWithWheelGestures) {
   // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
   // the MockRenderProcessHost that is set up by the test harness which mocks
   // out |OnMessageReceived()|.
@@ -869,9 +955,17 @@ TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
   // Indicate that the wheel event was unhandled.
   InputEventAck unhandled_ack(blink::WebInputEvent::MouseWheel,
                               INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
-  scoped_ptr<IPC::Message> response1(
+  std::unique_ptr<IPC::Message> response1(
       new InputHostMsg_HandleInputEvent_ACK(0, unhandled_ack));
   host->OnMessageReceived(*response1);
+  ASSERT_EQ(2U, process_host->sink().message_count());
+  process_host->sink().ClearMessages();
+
+  InputEventAck unhandled_scroll_ack(blink::WebInputEvent::GestureScrollUpdate,
+                                     INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  std::unique_ptr<IPC::Message> scroll_response1(
+      new InputHostMsg_HandleInputEvent_ACK(0, unhandled_scroll_ack));
+  host->OnMessageReceived(*scroll_response1);
 
   // Check that the view delegate got an unhandled wheel event.
   ASSERT_EQ(YES, view_delegate.get().unhandledWheelEventReceived);
@@ -880,10 +974,10 @@ TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
   // Send another wheel event, this time for scrolling by 0 lines (empty event).
   NSEvent* event2 = MockScrollWheelEventWithPhase(@selector(phaseChanged), 0);
   [view->cocoa_view() scrollWheel:event2];
-  ASSERT_EQ(1U, process_host->sink().message_count());
+  ASSERT_EQ(2U, process_host->sink().message_count());
 
   // Indicate that the wheel event was also unhandled.
-  scoped_ptr<IPC::Message> response2(
+  std::unique_ptr<IPC::Message> response2(
       new InputHostMsg_HandleInputEvent_ACK(0, unhandled_ack));
   host->OnMessageReceived(*response2);
 
@@ -962,9 +1056,9 @@ TEST_F(RenderWidgetHostViewMacTest, Background) {
   set_background = process_host->sink().GetUniqueMessageMatching(
       ViewMsg_SetBackgroundOpaque::ID);
   ASSERT_TRUE(set_background);
-  base::Tuple<bool> sent_background;
+  std::tuple<bool> sent_background;
   ViewMsg_SetBackgroundOpaque::Read(set_background, &sent_background);
-  EXPECT_FALSE(base::get<0>(sent_background));
+  EXPECT_FALSE(std::get<0>(sent_background));
 
   // Try setting it back.
   process_host->sink().ClearMessages();
@@ -975,7 +1069,7 @@ TEST_F(RenderWidgetHostViewMacTest, Background) {
       ViewMsg_SetBackgroundOpaque::ID);
   ASSERT_TRUE(set_background);
   ViewMsg_SetBackgroundOpaque::Read(set_background, &sent_background);
-  EXPECT_TRUE(base::get<0>(sent_background));
+  EXPECT_TRUE(std::get<0>(sent_background));
 
   host->ShutdownAndDestroyWidget(true);
 }
@@ -1000,11 +1094,11 @@ class RenderWidgetHostViewMacPinchTest : public RenderWidgetHostViewMacTest {
         break;
     }
     DCHECK(message);
-    base::Tuple<IPC::WebInputEventPointer, ui::LatencyInfo,
-                InputEventDispatchType>
+    std::tuple<IPC::WebInputEventPointer, ui::LatencyInfo,
+               InputEventDispatchType>
         data;
     InputMsg_HandleInputEvent::Read(message, &data);
-    IPC::WebInputEventPointer ipc_event = base::get<0>(data);
+    IPC::WebInputEventPointer ipc_event = std::get<0>(data);
     const blink::WebGestureEvent* gesture_event =
         static_cast<const blink::WebGestureEvent*>(ipc_event);
     return gesture_event->data.pinchUpdate.zoomDisabled;
@@ -1014,10 +1108,6 @@ class RenderWidgetHostViewMacPinchTest : public RenderWidgetHostViewMacTest {
 };
 
 TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
-  // This tests Lion+ functionality, so don't run the test pre-Lion.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
   // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
   // the MockRenderProcessHost that is set up by the test harness which mocks
   // out |OnMessageReceived()|.
@@ -1034,7 +1124,7 @@ TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
   // We'll use this IPC message to ack events.
   InputEventAck ack(blink::WebInputEvent::GesturePinchUpdate,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
-  scoped_ptr<IPC::Message> response(
+  std::unique_ptr<IPC::Message> response(
       new InputHostMsg_HandleInputEvent_ACK(0, ack));
 
   // Do a gesture that crosses the threshold.
@@ -1135,5 +1225,31 @@ TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
   host->ShutdownAndDestroyWidget(true);
 }
 
+TEST_F(RenderWidgetHostViewMacTest, EventLatencyOSMouseWheelHistogram) {
+  base::HistogramTester histogram_tester;
+
+  // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
+  // the MockRenderProcessHost that is set up by the test harness which mocks
+  // out |OnMessageReceived()|.
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
+
+  // Send an initial wheel event for scrolling by 3 lines.
+  // Verify that Event.Latency.OS.MOUSE_WHEEL histogram is computed properly.
+  NSEvent* wheelEvent = MockScrollWheelEventWithPhase(@selector(phaseBegan),3);
+  [view->cocoa_view() scrollWheel:wheelEvent];
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.MOUSE_WHEEL", 1);
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
 
 }  // namespace content

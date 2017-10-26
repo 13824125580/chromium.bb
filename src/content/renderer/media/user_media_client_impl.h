@@ -5,13 +5,13 @@
 #ifndef CONTENT_RENDERER_MEDIA_USER_MEDIA_CLIENT_IMPL_H_
 #define CONTENT_RENDERER_MEDIA_USER_MEDIA_CLIENT_IMPL_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
@@ -23,6 +23,7 @@
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebSourceInfo.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
+#include "third_party/WebKit/public/web/WebMediaDeviceChangeObserver.h"
 #include "third_party/WebKit/public/web/WebMediaDevicesRequest.h"
 #include "third_party/WebKit/public/web/WebUserMediaClient.h"
 #include "third_party/WebKit/public/web/WebUserMediaRequest.h"
@@ -30,6 +31,7 @@
 
 namespace content {
 class PeerConnectionDependencyFactory;
+class MediaStreamAudioSource;
 class MediaStreamDispatcher;
 class MediaStreamVideoSource;
 class VideoCapturerDelegate;
@@ -49,7 +51,7 @@ class CONTENT_EXPORT UserMediaClientImpl
   UserMediaClientImpl(
       RenderFrame* render_frame,
       PeerConnectionDependencyFactory* dependency_factory,
-      scoped_ptr<MediaStreamDispatcher> media_stream_dispatcher);
+      std::unique_ptr<MediaStreamDispatcher> media_stream_dispatcher);
   ~UserMediaClientImpl() override;
 
   MediaStreamDispatcher* media_stream_dispatcher() const {
@@ -67,6 +69,8 @@ class CONTENT_EXPORT UserMediaClientImpl
       const blink::WebMediaDevicesRequest& media_devices_request) override;
   void requestSources(
       const blink::WebMediaStreamTrackSourcesRequest& sources_request) override;
+  void setMediaDeviceChangeObserver(
+      const blink::WebMediaDeviceChangeObserver& observer) override;
 
   // MediaStreamDispatcherEventHandler implementation.
   void OnStreamGenerated(int request_id,
@@ -83,6 +87,7 @@ class CONTENT_EXPORT UserMediaClientImpl
                       const std::string& label,
                       const StreamDeviceInfo& device_info) override;
   void OnDeviceOpenFailed(int request_id) override;
+  void OnDevicesChanged() override;
 
   // RenderFrameObserver override
   void FrameWillClose() override;
@@ -115,13 +120,16 @@ class CONTENT_EXPORT UserMediaClientImpl
   virtual void EnumerateSourcesSucceded(
       blink::WebMediaStreamTrackSourcesRequest* request,
       blink::WebVector<blink::WebSourceInfo>& sources);
-  // Creates a MediaStreamVideoSource object.
-  // This is virtual for test purposes.
+
+  // Creates a MediaStreamAudioSource/MediaStreamVideoSource objects.
+  // These are virtual for test purposes.
+  virtual MediaStreamAudioSource* CreateAudioSource(
+      const StreamDeviceInfo& device,
+      const blink::WebMediaConstraints& constraints);
   virtual MediaStreamVideoSource* CreateVideoSource(
       const StreamDeviceInfo& device,
       const MediaStreamSource::SourceStoppedCallback& stop_callback);
 
- private:
   // Class for storing information about a WebKit request to create a
   // MediaStream.
   class UserMediaRequestInfo
@@ -144,8 +152,7 @@ class CONTENT_EXPORT UserMediaClientImpl
     blink::WebMediaStream web_stream;
     blink::WebUserMediaRequest request;
 
-    void StartAudioTrack(const blink::WebMediaStreamTrack& track,
-                         const blink::WebMediaConstraints& constraints);
+    void StartAudioTrack(const blink::WebMediaStreamTrack& track);
 
     blink::WebMediaStreamTrack CreateAndStartVideoTrack(
         const blink::WebMediaStreamSource& source,
@@ -176,10 +183,21 @@ class CONTENT_EXPORT UserMediaClientImpl
   };
   typedef ScopedVector<UserMediaRequestInfo> UserMediaRequests;
 
-  typedef std::vector<blink::WebMediaStreamSource> LocalStreamSources;
+ protected:
+  // These methods can be accessed in unit tests.
+  UserMediaRequestInfo* FindUserMediaRequestInfo(int request_id);
+  UserMediaRequestInfo* FindUserMediaRequestInfo(
+      const blink::WebUserMediaRequest& request);
 
+  void DeleteUserMediaRequestInfo(UserMediaRequestInfo* request);
+
+ private:
+  typedef std::vector<blink::WebMediaStreamSource> LocalStreamSources;
   struct MediaDevicesRequestInfo;
   typedef ScopedVector<MediaDevicesRequestInfo> MediaDevicesRequests;
+
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
 
   // Creates a WebKit representation of stream sources based on
   // |devices| from the MediaStreamDispatcher.
@@ -215,10 +233,6 @@ class CONTENT_EXPORT UserMediaClientImpl
   void FinalizeEnumerateDevices(MediaDevicesRequestInfo* request);
   void FinalizeEnumerateSources(MediaDevicesRequestInfo* request);
 
-  UserMediaRequestInfo* FindUserMediaRequestInfo(int request_id);
-  UserMediaRequestInfo* FindUserMediaRequestInfo(
-      const blink::WebUserMediaRequest& request);
-  void DeleteUserMediaRequestInfo(UserMediaRequestInfo* request);
   void DeleteAllUserMediaRequests();
 
   MediaDevicesRequestInfo* FindMediaDevicesRequestInfo(int request_id);
@@ -231,6 +245,10 @@ class CONTENT_EXPORT UserMediaClientImpl
   const blink::WebMediaStreamSource* FindLocalSource(
       const StreamDeviceInfo& device) const;
 
+  // Returns true if we do find and remove the |source|.
+  // Otherwise returns false.
+  bool RemoveLocalSource(const blink::WebMediaStreamSource& source);
+
   void StopLocalSource(const blink::WebMediaStreamSource& source,
                        bool notify_dispatcher);
 
@@ -242,7 +260,7 @@ class CONTENT_EXPORT UserMediaClientImpl
 
   // UserMediaClientImpl owns MediaStreamDispatcher instead of RenderFrameImpl
   // (or RenderFrameObserver) to ensure tear-down occurs in the right order.
-  const scoped_ptr<MediaStreamDispatcher> media_stream_dispatcher_;
+  const std::unique_ptr<MediaStreamDispatcher> media_stream_dispatcher_;
 
   LocalStreamSources local_sources_;
 
@@ -250,6 +268,8 @@ class CONTENT_EXPORT UserMediaClientImpl
 
   // Requests to enumerate media devices.
   MediaDevicesRequests media_devices_requests_;
+
+  blink::WebMediaDeviceChangeObserver media_device_change_observer_;
 
   // Note: This member must be the last to ensure all outstanding weak pointers
   // are invalidated first.

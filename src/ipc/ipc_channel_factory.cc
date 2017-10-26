@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "ipc/ipc_channel_factory.h"
+#include "ipc/ipc_channel_mojo.h"
 
 namespace IPC {
 
@@ -18,7 +20,11 @@ class PlatformChannelFactory : public ChannelFactory {
     return handle_.name;
   }
 
-  scoped_ptr<Channel> BuildChannel(Listener* listener) override {
+  std::unique_ptr<Channel> BuildChannel(Listener* listener) override {
+    if (handle_.mojo_handle.is_valid()) {
+      return ChannelMojo::Create(
+          mojo::ScopedMessagePipeHandle(handle_.mojo_handle), mode_, listener);
+    }
     return Channel::Create(handle_, mode_, listener);
   }
 
@@ -32,9 +38,10 @@ class PlatformChannelFactory : public ChannelFactory {
 } // namespace
 
 // static
-scoped_ptr<ChannelFactory> ChannelFactory::Create(const ChannelHandle& handle,
-                                                  Channel::Mode mode) {
-  return scoped_ptr<ChannelFactory>(new PlatformChannelFactory(handle, mode));
+std::unique_ptr<ChannelFactory> ChannelFactory::Create(
+    const ChannelHandle& handle,
+    Channel::Mode mode) {
+  return base::WrapUnique(new PlatformChannelFactory(handle, mode));
 }
 
 }  // namespace IPC

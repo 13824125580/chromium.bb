@@ -17,6 +17,7 @@
 #include "webrtc/audio_receive_stream.h"
 #include "webrtc/audio_send_stream.h"
 #include "webrtc/audio_state.h"
+#include "webrtc/base/networkroute.h"
 #include "webrtc/base/socket.h"
 #include "webrtc/video_receive_stream.h"
 #include "webrtc/video_send_stream.h"
@@ -90,8 +91,9 @@ class Call {
   };
 
   struct Stats {
-    int send_bandwidth_bps = 0;
-    int recv_bandwidth_bps = 0;
+    int send_bandwidth_bps = 0;       // Estimated available send bandwidth.
+    int max_padding_bitrate_bps = 0;  // Cumulative configured max padding.
+    int recv_bandwidth_bps = 0;       // Estimated available receive bandwidth.
     int64_t pacer_delay_ms = 0;
     int64_t rtt_ms = -1;
   };
@@ -113,7 +115,7 @@ class Call {
   virtual void DestroyVideoSendStream(VideoSendStream* send_stream) = 0;
 
   virtual VideoReceiveStream* CreateVideoReceiveStream(
-      const VideoReceiveStream::Config& config) = 0;
+      VideoReceiveStream::Config configuration) = 0;
   virtual void DestroyVideoReceiveStream(
       VideoReceiveStream* receive_stream) = 0;
 
@@ -133,7 +135,16 @@ class Call {
   // implemented.
   virtual void SetBitrateConfig(
       const Config::BitrateConfig& bitrate_config) = 0;
-  virtual void SignalNetworkState(NetworkState state) = 0;
+
+  // TODO(skvlad): When the unbundled case with multiple streams for the same
+  // media type going over different networks is supported, track the state
+  // for each stream separately. Right now it's global per media type.
+  virtual void SignalChannelNetworkState(MediaType media,
+                                         NetworkState state) = 0;
+
+  virtual void OnNetworkRouteChanged(
+      const std::string& transport_name,
+      const rtc::NetworkRoute& network_route) = 0;
 
   virtual void OnSentPacket(const rtc::SentPacket& sent_packet) = 0;
 

@@ -187,9 +187,6 @@
               'dependencies': [
                 '../third_party/webrtc/modules/modules.gyp:desktop_capture',
               ],
-              'sources': [
-                '<@(remoting_cast_sources)',
-              ],
             }],
             ['remoting_use_gcd==1', {
               'defines': [
@@ -323,19 +320,6 @@
             ],
           }],
         },  # end of target 'remoting_native_messaging_manifests'
-        {
-          # GN target: //remoting/host:remoting_start_host
-          'target_name': 'remoting_start_host',
-          'type': 'executable',
-          'dependencies': [
-            'remoting_host_setup_base',
-          ],
-          'sources': [
-            'host/setup/host_starter.cc',
-            'host/setup/host_starter.h',
-            'host/setup/start_host.cc',
-          ],
-        },  # end of target 'remoting_start_host'
         {
           # GN: //remoting/host:remoting_infoplist_strings
           'target_name': 'remoting_infoplist_strings',
@@ -629,6 +613,24 @@
     }], # end of OS!="win" and enable_me2me_host==1
 
     ['OS!="win" and enable_remoting_host==1', {
+      'targets': [
+        {
+          # GN target: //remoting/host:remoting_start_host
+          'target_name': 'remoting_start_host',
+          'type': 'executable',
+          'variables': { 'enable_wexit_time_destructors': 1, },
+          'dependencies': [
+            'remoting_host_setup_base',
+          ],
+          'sources': [
+            'host/setup/host_starter.cc',
+            'host/setup/host_starter.h',
+            'host/setup/start_host_entry_point.cc',
+            'host/setup/start_host_main.cc',
+            'host/setup/start_host_main.h',
+          ],
+        },  # end of target 'remoting_start_host'
+      ],
       'conditions': [
         ['chromeos==0', {
           'targets': [

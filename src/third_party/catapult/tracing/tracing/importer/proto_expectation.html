@@ -8,18 +8,14 @@ found in the LICENSE file.
 <link rel="import" href="/tracing/base/base.html">
 <link rel="import" href="/tracing/base/range_utils.html">
 <link rel="import" href="/tracing/core/auditor.html">
+<link rel="import" href="/tracing/model/event_info.html">
 <link rel="import" href="/tracing/model/user_model/animation_expectation.html">
 <link rel="import" href="/tracing/model/user_model/response_expectation.html">
-<link rel="import" href="/tracing/model/event_info.html">
 
 <script>
 'use strict';
 
-/**
- * @fileoverview An intermediate data format between InputLatencyAsyncSlices
- * and RAILIRs.
- */
-tr.exportTo('tr.e.rail', function() {
+tr.exportTo('tr.importer', function() {
   // This is an intermediate data format between InputLatencyAsyncSlices and
   // Response and Animation IRs.
   function ProtoExpectation(irType, name) {
@@ -28,6 +24,7 @@ tr.exportTo('tr.e.rail', function() {
     this.start = Infinity;
     this.end = -Infinity;
     this.associatedEvents = new tr.model.EventSet();
+    this.isAnimationBegin = false;
   }
 
   ProtoExpectation.RESPONSE_TYPE = 'r';
@@ -45,29 +42,12 @@ tr.exportTo('tr.e.rail', function() {
 
     // Return true if any associatedEvent's typeName is in typeNames.
     containsTypeNames: function(typeNames) {
-      for (var i = 0; i < this.associatedEvents.length; ++i) {
-        if (typeNames.indexOf(this.associatedEvents[i].typeName) >= 0)
-          return true;
-      }
-      return false;
+      return this.associatedEvents.some(
+          x => typeNames.indexOf(x.typeName) >= 0);
     },
 
     containsSliceTitle: function(title) {
-      for (var i = 0; i < this.associatedEvents.length; ++i) {
-        if (title === this.associatedEvents[i].title)
-          return true;
-      }
-      return false;
-    },
-
-    getIRConstructor: function() {
-      switch (this.irType) {
-        case ProtoExpectation.RESPONSE_TYPE:
-          return tr.model.um.ResponseExpectation;
-        case ProtoExpectation.ANIMATION_TYPE:
-          return tr.model.um.AnimationExpectation;
-      }
-      return undefined;
+      return this.associatedEvents.some(x => title === x.title);
     },
 
     createInteractionRecord: function(model) {
@@ -77,10 +57,6 @@ tr.exportTo('tr.e.rail', function() {
         return undefined;
       }
 
-      var constructor = this.getIRConstructor();
-      if (constructor === undefined)
-        return undefined;
-
       var initiatorTitles = [];
       this.names.forEach(function(name) {
         initiatorTitles.push(name);
@@ -88,7 +64,21 @@ tr.exportTo('tr.e.rail', function() {
       initiatorTitles = initiatorTitles.sort().join(',');
 
       var duration = this.end - this.start;
-      var ir = new constructor(model, initiatorTitles, this.start, duration);
+
+      var ir = undefined;
+      switch (this.irType) {
+        case ProtoExpectation.RESPONSE_TYPE:
+          ir = new tr.model.um.ResponseExpectation(
+              model, initiatorTitles, this.start, duration,
+              this.isAnimationBegin);
+          break;
+        case ProtoExpectation.ANIMATION_TYPE:
+          ir = new tr.model.um.AnimationExpectation(
+              model, initiatorTitles, this.start, duration);
+          break;
+      }
+      if (!ir)
+        return undefined;
 
       ir.sourceEvents.addEventSet(this.associatedEvents);
 
@@ -124,6 +114,8 @@ tr.exportTo('tr.e.rail', function() {
       this.associatedEvents.addEventSet(other.associatedEvents);
       this.start = Math.min(this.start, other.start);
       this.end = Math.max(this.end, other.end);
+      if (other.isAnimationBegin)
+        this.isAnimationBegin = true;
     },
 
     // Include |event| in this ProtoExpectation, expanding start/end to include

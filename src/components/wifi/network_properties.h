@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <list>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -31,6 +32,7 @@ typedef std::set<Frequency> FrequencySet;
 // |GetVisibleNetworks|.
 struct WIFI_EXPORT NetworkProperties {
   NetworkProperties();
+  NetworkProperties(const NetworkProperties& other);
   ~NetworkProperties();
 
   std::string connection_state;
@@ -50,7 +52,7 @@ struct WIFI_EXPORT NetworkProperties {
   Frequency frequency;
   FrequencySet frequency_set;
 
-  scoped_ptr<base::DictionaryValue> ToValue(bool network_list) const;
+  std::unique_ptr<base::DictionaryValue> ToValue(bool network_list) const;
   // Updates only properties set in |value|.
   bool UpdateFromValue(const base::DictionaryValue& value);
   static std::string MacAddressAsString(const uint8_t mac_as_int[6]);

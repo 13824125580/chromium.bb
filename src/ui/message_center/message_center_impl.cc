@@ -46,11 +46,11 @@ class ChangeQueue {
    public:
     Change(ChangeType type,
            const std::string& id,
-           scoped_ptr<Notification> notification);
+           std::unique_ptr<Notification> notification);
     ~Change();
 
     // Used to transfer ownership of the contained notification.
-    scoped_ptr<Notification> PassNotification();
+    std::unique_ptr<Notification> PassNotification();
 
     Notification* notification() const { return notification_.get(); }
     // Returns the post-update ID. It means:
@@ -70,14 +70,14 @@ class ChangeQueue {
     void set_type(const ChangeType new_type) {
       type_ = new_type;
     }
-    void ReplaceNotification(scoped_ptr<Notification> new_notification);
+    void ReplaceNotification(std::unique_ptr<Notification> new_notification);
 
    private:
     ChangeType type_;
     std::string id_;
     std::string notification_list_id_;
     bool by_user_;
-    scoped_ptr<Notification> notification_;
+    std::unique_ptr<Notification> notification_;
 
     DISALLOW_COPY_AND_ASSIGN(Change);
   };
@@ -95,11 +95,11 @@ class ChangeQueue {
                          const std::string& id);
 
   // Causes a TYPE_ADD change to be added to the queue.
-  void AddNotification(scoped_ptr<Notification> notification);
+  void AddNotification(std::unique_ptr<Notification> notification);
 
   // Causes a TYPE_UPDATE change to be added to the queue.
   void UpdateNotification(const std::string& old_id,
-                          scoped_ptr<Notification> notification);
+                          std::unique_ptr<Notification> notification);
 
   // Causes a TYPE_DELETE change to be added to the queue.
   void EraseNotification(const std::string& id, bool by_user);
@@ -115,7 +115,7 @@ class ChangeQueue {
 
  private:
   void ApplyChangeInternal(MessageCenterImpl* message_center,
-                           scoped_ptr<Change> change);
+                           std::unique_ptr<Change> change);
 
   ScopedVector<Change> changes_;
 
@@ -137,25 +137,25 @@ struct ChangeFinder {
 
 ChangeQueue::Change::Change(ChangeType type,
                             const std::string& id,
-                            scoped_ptr<Notification> notification)
+                            std::unique_ptr<Notification> notification)
     : type_(type),
       notification_list_id_(id),
       by_user_(false),
       notification_(std::move(notification)) {
   DCHECK(!id.empty());
-  DCHECK(type != CHANGE_TYPE_DELETE || notification_.get() == NULL);
+  DCHECK(type != CHANGE_TYPE_DELETE || !notification_);
 
   id_ = notification_ ? notification_->id() : notification_list_id_;
 }
 
 ChangeQueue::Change::~Change() {}
 
-scoped_ptr<Notification> ChangeQueue::Change::PassNotification() {
+std::unique_ptr<Notification> ChangeQueue::Change::PassNotification() {
   return std::move(notification_);
 }
 
 void ChangeQueue::Change::ReplaceNotification(
-    scoped_ptr<Notification> new_notification) {
+    std::unique_ptr<Notification> new_notification) {
   id_ = new_notification ? new_notification->id() : notification_list_id_;
   notification_.swap(new_notification);
 }
@@ -171,7 +171,7 @@ void ChangeQueue::ApplyChanges(MessageCenterImpl* message_center) {
   // This method is re-entrant.
   while (!changes_.empty()) {
     ScopedVector<Change>::iterator iter = changes_.begin();
-    scoped_ptr<Change> change(*iter);
+    std::unique_ptr<Change> change(*iter);
     // TODO(dewittj): Replace changes_ with a deque.
     changes_.weak_erase(iter);
     ApplyChangeInternal(message_center, std::move(change));
@@ -190,7 +190,7 @@ void ChangeQueue::ApplyChangesForId(MessageCenterImpl* message_center,
     --iter;
     if (interesting_id != (*iter)->id())
       continue;
-    scoped_ptr<Change> change(*iter);
+    std::unique_ptr<Change> change(*iter);
 
     interesting_id = change->notification_list_id();
 
@@ -199,19 +199,20 @@ void ChangeQueue::ApplyChangesForId(MessageCenterImpl* message_center,
   }
 
   while (!changes_for_id.empty()) {
-    ApplyChangeInternal(
-        message_center, scoped_ptr<Change>(changes_for_id.back()));
+    ApplyChangeInternal(message_center,
+                        std::unique_ptr<Change>(changes_for_id.back()));
     changes_for_id.pop_back();
   }
 }
 
-void ChangeQueue::AddNotification(scoped_ptr<Notification> notification) {
+void ChangeQueue::AddNotification(std::unique_ptr<Notification> notification) {
   std::string id = notification->id();
   changes_.push_back(new Change(CHANGE_TYPE_ADD, id, std::move(notification)));
 }
 
-void ChangeQueue::UpdateNotification(const std::string& old_id,
-                                     scoped_ptr<Notification> notification) {
+void ChangeQueue::UpdateNotification(
+    const std::string& old_id,
+    std::unique_ptr<Notification> notification) {
   ScopedVector<Change>::reverse_iterator iter =
     std::find_if(changes_.rbegin(), changes_.rend(), ChangeFinder(old_id));
   if (iter == changes_.rend()) {
@@ -262,7 +263,7 @@ void ChangeQueue::EraseNotification(const std::string& id, bool by_user) {
   ScopedVector<Change>::reverse_iterator iter =
     std::find_if(changes_.rbegin(), changes_.rend(), ChangeFinder(id));
   if (iter == changes_.rend()) {
-    scoped_ptr<Change> change(new Change(CHANGE_TYPE_DELETE, id, nullptr));
+    std::unique_ptr<Change> change(new Change(CHANGE_TYPE_DELETE, id, nullptr));
     change->set_by_user(by_user);
     changes_.push_back(std::move(change));
     return;
@@ -306,7 +307,7 @@ Notification* ChangeQueue::GetLatestNotification(const std::string& id) const {
 }
 
 void ChangeQueue::ApplyChangeInternal(MessageCenterImpl* message_center,
-                                      scoped_ptr<Change> change) {
+                                      std::unique_ptr<Change> change) {
   switch (change->type()) {
     case CHANGE_TYPE_ADD:
       message_center->AddNotificationImmediately(change->PassNotification());
@@ -355,7 +356,7 @@ MessageCenterImpl::MessageCenterImpl()
     : MessageCenter(),
       popup_timers_controller_(new PopupTimersController(this)),
       settings_provider_(NULL) {
-  notification_list_.reset(new NotificationList());
+  notification_list_.reset(new NotificationList(this));
 
   bool enable_message_center_changes_while_open = true;  // enable by default
   std::string arg = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -439,14 +440,17 @@ void MessageCenterImpl::NotifierEnabledChanged(
 }
 
 void MessageCenterImpl::SetVisibility(Visibility visibility) {
-  std::set<std::string> updated_ids;
-  notification_list_->SetMessageCenterVisible(
-      (visibility == VISIBILITY_MESSAGE_CENTER), &updated_ids);
-  notification_cache_.RecountUnread();
+  visible_ = (visibility == VISIBILITY_MESSAGE_CENTER);
 
-  for (const auto& id : updated_ids) {
-    FOR_EACH_OBSERVER(
-        MessageCenterObserver, observer_list_, OnNotificationUpdated(id));
+  if (visible_ && !locked_) {
+    std::set<std::string> updated_ids;
+    notification_list_->SetNotificationsShown(blockers_, &updated_ids);
+    notification_cache_.RecountUnread();
+
+    for (const auto& id : updated_ids) {
+      FOR_EACH_OBSERVER(
+          MessageCenterObserver, observer_list_, OnNotificationUpdated(id));
+    }
   }
 
   if (notification_queue_ &&
@@ -460,7 +464,7 @@ void MessageCenterImpl::SetVisibility(Visibility visibility) {
 }
 
 bool MessageCenterImpl::IsMessageCenterVisible() const {
-  return notification_list_->is_message_center_visible();
+  return visible_;
 }
 
 size_t MessageCenterImpl::NotificationCount() const {
@@ -478,6 +482,10 @@ bool MessageCenterImpl::HasPopupNotifications() const {
 
 bool MessageCenterImpl::IsQuietMode() const {
   return notification_list_->quiet_mode();
+}
+
+bool MessageCenterImpl::IsLockedState() const {
+  return locked_;
 }
 
 bool MessageCenterImpl::HasClickedListener(const std::string& id) {
@@ -508,14 +516,14 @@ void MessageCenterImpl::ForceNotificationFlush(const std::string& id) {
 
 //------------------------------------------------------------------------------
 // Client code interface.
-void MessageCenterImpl::AddNotification(scoped_ptr<Notification> notification) {
+void MessageCenterImpl::AddNotification(
+    std::unique_ptr<Notification> notification) {
   DCHECK(notification);
   const std::string id = notification->id();
   for (size_t i = 0; i < blockers_.size(); ++i)
     blockers_[i]->CheckState();
 
-  if (notification_queue_ &&
-      notification_list_->is_message_center_visible()) {
+  if (notification_queue_ && visible_) {
     notification_queue_->AddNotification(std::move(notification));
     return;
   }
@@ -524,7 +532,7 @@ void MessageCenterImpl::AddNotification(scoped_ptr<Notification> notification) {
 }
 
 void MessageCenterImpl::AddNotificationImmediately(
-    scoped_ptr<Notification> notification) {
+    std::unique_ptr<Notification> notification) {
   const std::string id = notification->id();
 
   // Sometimes the notification can be added with the same id and the
@@ -546,12 +554,11 @@ void MessageCenterImpl::AddNotificationImmediately(
 
 void MessageCenterImpl::UpdateNotification(
     const std::string& old_id,
-    scoped_ptr<Notification> new_notification) {
+    std::unique_ptr<Notification> new_notification) {
   for (size_t i = 0; i < blockers_.size(); ++i)
     blockers_[i]->CheckState();
 
-  if (notification_queue_ &&
-      notification_list_->is_message_center_visible()) {
+  if (notification_queue_ && visible_) {
     // We will allow notifications that are progress types (and stay progress
     // types) to be updated even if the message center is open.  There are 3
     // requirements here:
@@ -580,7 +587,7 @@ void MessageCenterImpl::UpdateNotification(
 
 void MessageCenterImpl::UpdateNotificationImmediately(
     const std::string& old_id,
-    scoped_ptr<Notification> new_notification) {
+    std::unique_ptr<Notification> new_notification) {
   std::string new_id = new_notification->id();
   notification_list_->UpdateNotificationMessage(old_id,
                                                 std::move(new_notification));
@@ -599,8 +606,7 @@ void MessageCenterImpl::UpdateNotificationImmediately(
 
 void MessageCenterImpl::RemoveNotification(const std::string& id,
                                            bool by_user) {
-  if (notification_queue_ && !by_user &&
-      notification_list_->is_message_center_visible()) {
+  if (notification_queue_ && !by_user && visible_) {
     notification_queue_->EraseNotification(id, by_user);
     return;
   }
@@ -850,6 +856,14 @@ void MessageCenterImpl::SetQuietMode(bool in_quiet_mode) {
                       OnQuietModeChanged(in_quiet_mode));
   }
   quiet_mode_timer_.reset();
+}
+
+void MessageCenterImpl::SetLockedState(bool locked) {
+  if (locked != locked_) {
+    locked_ = locked;
+    FOR_EACH_OBSERVER(MessageCenterObserver, observer_list_,
+                      OnLockedStateChanged(locked));
+  }
 }
 
 void MessageCenterImpl::EnterQuietModeWithExpire(

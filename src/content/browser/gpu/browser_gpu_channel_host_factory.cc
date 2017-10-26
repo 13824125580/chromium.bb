@@ -10,23 +10,22 @@
 #include "base/profiler/scoped_tracker.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "content/browser/gpu/browser_gpu_memory_buffer_manager.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
-#include "content/browser/gpu/gpu_surface_tracker.h"
 #include "content/browser/gpu/shader_disk_cache.h"
 #include "content/common/child_process_host_impl.h"
-#include "content/common/gpu/gpu_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/common/content_client.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
+#include "gpu/ipc/common/gpu_messages.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/message_filter.h"
 
@@ -96,15 +95,15 @@ BrowserGpuChannelHostFactory::EstablishRequest::EstablishRequest(
     int gpu_client_id,
     uint64_t gpu_client_tracing_id,
     int gpu_host_id)
-    : event_(false, false),
+    : event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+             base::WaitableEvent::InitialState::NOT_SIGNALED),
       cause_for_gpu_launch_(cause),
       gpu_client_id_(gpu_client_id),
       gpu_client_tracing_id_(gpu_client_tracing_id),
       gpu_host_id_(gpu_host_id),
       reused_gpu_process_(false),
       finished_(false),
-      main_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
-}
+      main_task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
 
 void BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO() {
   // TODO(pkasting): Remove ScopedTracker below once crbug.com/477117 is fixed.
@@ -227,7 +226,9 @@ void BrowserGpuChannelHostFactory::Terminate() {
 BrowserGpuChannelHostFactory::BrowserGpuChannelHostFactory()
     : gpu_client_id_(ChildProcessHostImpl::GenerateChildProcessUniqueId()),
       gpu_client_tracing_id_(ChildProcessHost::kBrowserTracingProcessId),
-      shutdown_event_(new base::WaitableEvent(true, false)),
+      shutdown_event_(new base::WaitableEvent(
+          base::WaitableEvent::ResetPolicy::MANUAL,
+          base::WaitableEvent::InitialState::NOT_SIGNALED)),
       gpu_memory_buffer_manager_(
           new BrowserGpuMemoryBufferManager(gpu_client_id_,
                                             gpu_client_tracing_id_)),
@@ -269,31 +270,27 @@ BrowserGpuChannelHostFactory::GetIOThreadTaskRunner() {
   return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
 }
 
-scoped_ptr<base::SharedMemory>
+std::unique_ptr<base::SharedMemory>
 BrowserGpuChannelHostFactory::AllocateSharedMemory(size_t size) {
-  scoped_ptr<base::SharedMemory> shm(new base::SharedMemory());
+  std::unique_ptr<base::SharedMemory> shm(new base::SharedMemory());
   if (!shm->CreateAnonymous(size))
-    return scoped_ptr<base::SharedMemory>();
+    return std::unique_ptr<base::SharedMemory>();
   return shm;
-}
-
-gfx::GLSurfaceHandle BrowserGpuChannelHostFactory::GetSurfaceHandle(
-    int32_t surface_id) {
-  return GpuSurfaceTracker::Get()->GetSurfaceHandle(surface_id);
 }
 
 // Blocking the UI thread to open a GPU channel is not supported on Android.
 // (Opening the initial channel to a child process involves handling a reply
 // task on the UI thread first, so we cannot block here.)
 #if !defined(OS_ANDROID)
-GpuChannelHost* BrowserGpuChannelHostFactory::EstablishGpuChannelSync(
+scoped_refptr<gpu::GpuChannelHost>
+BrowserGpuChannelHostFactory::EstablishGpuChannelSync(
     CauseForGpuLaunch cause_for_gpu_launch) {
   EstablishGpuChannel(cause_for_gpu_launch, base::Closure());
 
   if (pending_request_.get())
     pending_request_->Wait();
 
-  return gpu_channel_.get();
+  return gpu_channel_;
 }
 #endif
 
@@ -323,7 +320,7 @@ void BrowserGpuChannelHostFactory::EstablishGpuChannel(
   }
 }
 
-GpuChannelHost* BrowserGpuChannelHostFactory::GetGpuChannel() {
+gpu::GpuChannelHost* BrowserGpuChannelHostFactory::GetGpuChannel() {
   if (gpu_channel_.get() && !gpu_channel_->IsLost())
     return gpu_channel_.get();
 
@@ -342,7 +339,7 @@ void BrowserGpuChannelHostFactory::GpuChannelEstablished() {
         FROM_HERE_WITH_EXPLICIT_FUNCTION(
             "466866 BrowserGpuChannelHostFactory::GpuChannelEstablished1"));
     GetContentClient()->SetGpuInfo(pending_request_->gpu_info());
-    gpu_channel_ = GpuChannelHost::Create(
+    gpu_channel_ = gpu::GpuChannelHost::Create(
         this, gpu_client_id_, pending_request_->gpu_info(),
         pending_request_->channel_handle(), shutdown_event_.get(),
         gpu_memory_buffer_manager_.get());

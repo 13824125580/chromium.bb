@@ -24,7 +24,6 @@
 #include "chrome/grit/generated_resources.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
 #include "grit/theme_resources.h"
 #include "net/base/url_util.h"
@@ -48,7 +47,7 @@ WebstoreResult::WebstoreResult(Profile* profile,
       install_tracker_(NULL),
       extension_registry_(NULL),
       weak_factory_(this) {
-  set_id(extensions::Extension::GetBaseURLFromExtensionId(app_id_).spec());
+  set_id(GetResultIdFromExtensionId(app_id));
 
   SetDefaultDetails();
 
@@ -70,6 +69,12 @@ WebstoreResult::WebstoreResult(Profile* profile,
 WebstoreResult::~WebstoreResult() {
   StopObservingInstall();
   StopObservingRegistry();
+}
+
+// static
+std::string WebstoreResult::GetResultIdFromExtensionId(
+    const std::string& extension_id) {
+  return extension_urls::GetWebstoreItemDetailURLPrefix() + extension_id;
 }
 
 void WebstoreResult::Open(int event_flags) {
@@ -96,8 +101,8 @@ void WebstoreResult::InvokeAction(int action_index, int event_flags) {
   StartInstall();
 }
 
-scoped_ptr<SearchResult> WebstoreResult::Duplicate() const {
-  scoped_ptr<SearchResult> copy(new WebstoreResult(
+std::unique_ptr<SearchResult> WebstoreResult::Duplicate() const {
+  std::unique_ptr<SearchResult> copy(new WebstoreResult(
       profile_, app_id_, icon_url_, is_paid_, item_type_, controller_));
   copy->set_title(title());
   copy->set_title_tags(title_tags());

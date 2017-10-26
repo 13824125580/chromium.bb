@@ -33,6 +33,7 @@
 
 #include "core/frame/LocalFrame.h"
 #include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
@@ -40,26 +41,25 @@ class MIDIAccessInitializer;
 class MIDIClient;
 class MIDIOptions;
 
-class MIDIController final : public NoBaseWillBeGarbageCollectedFinalized<MIDIController>, public WillBeHeapSupplement<LocalFrame> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MIDIController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(MIDIController);
+class MIDIController final : public GarbageCollectedFinalized<MIDIController>, public Supplement<LocalFrame> {
+    USING_GARBAGE_COLLECTED_MIXIN(MIDIController);
 public:
     virtual ~MIDIController();
 
     void requestPermission(MIDIAccessInitializer*, const MIDIOptions&);
     void cancelPermissionRequest(MIDIAccessInitializer*);
 
-    static PassOwnPtrWillBeRawPtr<MIDIController> create(PassOwnPtr<MIDIClient>);
+    static MIDIController* create(std::unique_ptr<MIDIClient>);
     static const char* supplementName();
-    static MIDIController* from(LocalFrame* frame) { return static_cast<MIDIController*>(WillBeHeapSupplement<LocalFrame>::from(frame, supplementName())); }
+    static MIDIController* from(LocalFrame* frame) { return static_cast<MIDIController*>(Supplement<LocalFrame>::from(frame, supplementName())); }
 
-    DEFINE_INLINE_VIRTUAL_TRACE() { WillBeHeapSupplement<LocalFrame>::trace(visitor); }
+    DEFINE_INLINE_VIRTUAL_TRACE() { Supplement<LocalFrame>::trace(visitor); }
 
 protected:
-    explicit MIDIController(PassOwnPtr<MIDIClient>);
+    explicit MIDIController(std::unique_ptr<MIDIClient>);
 
 private:
-    OwnPtr<MIDIClient> m_client;
+    std::unique_ptr<MIDIClient> m_client;
 };
 
 } // namespace blink

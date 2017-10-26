@@ -200,7 +200,7 @@ static bool passesTimingAllowCheck(const ResourceResponse& response, const Secur
 
     const String& securityOrigin = initiatorSecurityOrigin.toString();
     Vector<String> timingAllowOrigins;
-    timingAllowOriginString.string().split(' ', timingAllowOrigins);
+    timingAllowOriginString.getString().split(' ', timingAllowOrigins);
     for (const String& allowOrigin : timingAllowOrigins) {
         if (allowOrigin == securityOrigin)
             return true;
@@ -227,8 +227,8 @@ void PerformanceBase::addResourceTiming(const ResourceTimingInfo& info)
     if (isResourceTimingBufferFull() && !hasObserverFor(PerformanceEntry::Resource))
         return;
     SecurityOrigin* securityOrigin = nullptr;
-    if (ExecutionContext* context = executionContext())
-        securityOrigin = context->securityOrigin();
+    if (ExecutionContext* context = getExecutionContext())
+        securityOrigin = context->getSecurityOrigin();
     if (!securityOrigin)
         return;
 
@@ -352,6 +352,12 @@ void PerformanceBase::registerPerformanceObserver(PerformanceObserver& observer)
 
 void PerformanceBase::unregisterPerformanceObserver(PerformanceObserver& oldObserver)
 {
+    ASSERT(isMainThread());
+    // Deliver any pending observations on this observer before unregistering.
+    if (m_activeObservers.contains(&oldObserver) && !oldObserver.shouldBeSuspended()) {
+        oldObserver.deliver();
+        m_activeObservers.remove(&oldObserver);
+    }
     m_observers.remove(&oldObserver);
     updatePerformanceObserverFilterOptions();
 }
@@ -404,14 +410,13 @@ void PerformanceBase::resumeSuspendedObservers()
 void PerformanceBase::deliverObservationsTimerFired(Timer<PerformanceBase>*)
 {
     ASSERT(isMainThread());
-    PerformanceObserverVector observers;
-    copyToVector(m_activeObservers, observers);
-    m_activeObservers.clear();
-    for (size_t i = 0; i < observers.size(); ++i) {
-        if (observers[i]->shouldBeSuspended())
-            m_suspendedObservers.add(observers[i]);
+    PerformanceObservers observers;
+    m_activeObservers.swap(observers);
+    for (const auto& observer : observers) {
+        if (observer->shouldBeSuspended())
+            m_suspendedObservers.add(observer);
         else
-            observers[i]->deliver();
+            observer->deliver();
     }
 }
 
@@ -445,7 +450,7 @@ DEFINE_TRACE(PerformanceBase)
     visitor->trace(m_observers);
     visitor->trace(m_activeObservers);
     visitor->trace(m_suspendedObservers);
-    RefCountedGarbageCollectedEventTargetWithInlineData<PerformanceBase>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
 }
 
 } // namespace blink

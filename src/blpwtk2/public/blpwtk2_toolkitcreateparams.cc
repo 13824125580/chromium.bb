@@ -37,8 +37,6 @@ namespace blpwtk2 {
 
 struct ToolkitCreateParamsImpl {
     ThreadMode::Value d_threadMode;
-    PumpMode::Value d_pumpMode;
-    bool d_workMessageWhileDoingWorkDisabled;
     ToolkitCreateParams::LogMessageHandler d_logMessageHandler;
     ToolkitCreateParams::ConsoleLogMessageHandler d_consoleLogMessageHandler;
     ToolkitCreateParams::WinProcExceptionFilter d_winProcExceptionFilter;
@@ -66,8 +64,6 @@ struct ToolkitCreateParamsImpl {
 
     ToolkitCreateParamsImpl()
     : d_threadMode(ThreadMode::ORIGINAL)
-    , d_pumpMode(PumpMode::MANUAL)
-    , d_workMessageWhileDoingWorkDisabled(false)
     , d_logMessageHandler(0)
     , d_consoleLogMessageHandler(0)
     , d_winProcExceptionFilter(0)
@@ -116,16 +112,6 @@ ToolkitCreateParams& ToolkitCreateParams::operator=(
 void ToolkitCreateParams::setThreadMode(ThreadMode::Value mode)
 {
     d_impl->d_threadMode = mode;
-}
-
-void ToolkitCreateParams::setPumpMode(PumpMode::Value mode)
-{
-    d_impl->d_pumpMode = mode;
-}
-
-void ToolkitCreateParams::disableWorkMessageWhileDoingWork()
-{
-    d_impl->d_workMessageWhileDoingWorkDisabled = true;
 }
 
 void ToolkitCreateParams::enableDefaultPrintSettings()
@@ -182,11 +168,6 @@ void ToolkitCreateParams::appendSideLoadedFontInProcess(const StringRef& fontFil
     d_impl->d_sideLoadedFonts.push_back(std::string());
     d_impl->d_sideLoadedFonts.back().assign(fontFile.data(),
                                             fontFile.length());
-}
-
-void ToolkitCreateParams::disablePluginDiscovery()
-{
-    appendCommandLineSwitch(switches::kDisablePluginsDiscovery);
 }
 
 void ToolkitCreateParams::setInProcessResourceLoader(
@@ -282,16 +263,6 @@ void ToolkitCreateParams::disableInProcessResizeOptimization()
 ThreadMode::Value ToolkitCreateParams::threadMode() const
 {
     return d_impl->d_threadMode;
-}
-
-PumpMode::Value ToolkitCreateParams::pumpMode() const
-{
-    return d_impl->d_pumpMode;
-}
-
-bool ToolkitCreateParams::workMessageWhileDoingWorkDisabled() const
-{
-    return d_impl->d_workMessageWhileDoingWorkDisabled;
 }
 
 bool ToolkitCreateParams::useDefaultPrintSettings() const

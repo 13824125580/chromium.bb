@@ -7,10 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "content/common/content_export.h"
+#include "content/common/navigation_params.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/request_context_frame_type.h"
@@ -87,8 +89,8 @@ struct CONTENT_EXPORT RequestInfo {
   // True if the request was user initiated.
   bool has_user_gesture;
 
-  // True if the request should not be handled by the ServiceWorker.
-  bool skip_service_worker;
+  // Indicates which types of ServiceWorkers should skip handling this request.
+  SkipServiceWorker skip_service_worker;
 
   // True if corresponding AppCache group should be resetted.
   bool should_reset_appcache;
@@ -121,11 +123,15 @@ struct CONTENT_EXPORT RequestInfo {
   blink::WebURLRequest::ExtraData* extra_data;
 
   // Optional, the specific task queue to execute loading tasks on.
-  scoped_ptr<blink::WebTaskRunner> loading_web_task_runner;
+  std::unique_ptr<blink::WebTaskRunner> loading_web_task_runner;
 
   // PlzNavigate: the stream URL to request during navigations to get access to
   // the ResourceBody that has already been fetched by the browser process.
   GURL resource_body_stream_url;
+
+  // Whether or not to request a LoFi version of the document or let the browser
+  // decide.
+  LoFiState lofi_state;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RequestInfo);

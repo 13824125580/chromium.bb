@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/shared_memory.h"
 #include "base/strings/string_piece.h"
 #include "mojo/edk/test/mojo_test_base.h"
 #include "mojo/public/c/system/types.h"
@@ -31,7 +32,7 @@ TEST_F(SharedBufferTest, DuplicateSharedBuffer) {
   MojoHandle h = CreateBuffer(message.size());
   WriteToBuffer(h, 0, message);
 
-  MojoHandle dupe = DuplicateBuffer(h);
+  MojoHandle dupe = DuplicateBuffer(h, false);
   ExpectBufferContents(dupe, 0, message);
 }
 
@@ -40,7 +41,7 @@ TEST_F(SharedBufferTest, PassSharedBufferLocal) {
   MojoHandle h = CreateBuffer(message.size());
   WriteToBuffer(h, 0, message);
 
-  MojoHandle dupe = DuplicateBuffer(h);
+  MojoHandle dupe = DuplicateBuffer(h, false);
   MojoHandle p0, p1;
   CreateMessagePipe(&p0, &p1);
 
@@ -62,18 +63,12 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(CopyToBufferClient, SharedBufferTest, h) {
   EXPECT_EQ("quit", ReadMessage(h));
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_PassSharedBufferCrossProcess DISABLED_PassSharedBufferCrossProcess
-#else
-#define MAYBE_PassSharedBufferCrossProcess PassSharedBufferCrossProcess
-#endif
-TEST_F(SharedBufferTest, MAYBE_PassSharedBufferCrossProcess) {
+TEST_F(SharedBufferTest, PassSharedBufferCrossProcess) {
   const std::string message = "hello";
   MojoHandle b = CreateBuffer(message.size());
 
   RUN_CHILD_ON_PIPE(CopyToBufferClient, h)
-    MojoHandle dupe = DuplicateBuffer(b);
+    MojoHandle dupe = DuplicateBuffer(b, false);
     WriteMessageWithHandles(h, message, &dupe, 1);
     WriteMessage(h, "quit");
   END_CHILD()
@@ -92,13 +87,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(CreateBufferClient, SharedBufferTest, h) {
   EXPECT_EQ("quit", ReadMessage(h));
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_PassSharedBufferFromChild DISABLED_PassSharedBufferFromChild
-#else
-#define MAYBE_PassSharedBufferFromChild PassSharedBufferFromChild
-#endif
-TEST_F(SharedBufferTest, MAYBE_PassSharedBufferFromChild) {
+TEST_F(SharedBufferTest, PassSharedBufferFromChild) {
   const std::string message = "hello";
   MojoHandle b;
   RUN_CHILD_ON_PIPE(CreateBufferClient, h)
@@ -120,12 +109,11 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(CreateAndPassBuffer, SharedBufferTest, h) {
   MojoHandle b = CreateBuffer(message.size());
 
   // Send a copy of the buffer to the parent and the other child.
-  MojoHandle dupe = DuplicateBuffer(b);
+  MojoHandle dupe = DuplicateBuffer(b, false);
   WriteMessageWithHandles(h, "", &b, 1);
   WriteMessageWithHandles(other_child, "", &dupe, 1);
 
   EXPECT_EQ("quit", ReadMessage(h));
-  WriteMessage(h, "ok");
 }
 
 DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceiveAndEditBuffer, SharedBufferTest, h) {
@@ -142,17 +130,9 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceiveAndEditBuffer, SharedBufferTest, h) {
   WriteToBuffer(b, 0, message);
   EXPECT_EQ(MOJO_RESULT_OK, MojoClose(b));
   EXPECT_EQ("quit", ReadMessage(h));
-  WriteMessage(h, "ok");
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_PassSharedBufferFromChildToChild \
-    DISABLED_PassSharedBufferFromChildToChild
-#else
-#define MAYBE_PassSharedBufferFromChildToChild PassSharedBufferFromChildToChild
-#endif
-TEST_F(SharedBufferTest, MAYBE_PassSharedBufferFromChildToChild) {
+TEST_F(SharedBufferTest, PassSharedBufferFromChildToChild) {
   const std::string message = "hello";
   MojoHandle p0, p1;
   CreateMessagePipe(&p0, &p1);
@@ -170,10 +150,8 @@ TEST_F(SharedBufferTest, MAYBE_PassSharedBufferFromChildToChild) {
       ReadMessageWithHandles(h0, &b, 1);
 
       WriteMessage(h1, "quit");
-      EXPECT_EQ("ok", ReadMessage(h1));
     END_CHILD()
     WriteMessage(h0, "quit");
-    EXPECT_EQ("ok", ReadMessage(h0));
   END_CHILD()
 
   // The second child should have written this message.
@@ -196,8 +174,6 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(CreateAndPassBufferParent, SharedBufferTest,
 
     EXPECT_EQ("quit", ReadMessage(parent));
     WriteMessage(child, "quit");
-    EXPECT_EQ("ok", ReadMessage(child));
-    WriteMessage(parent, "ok");
   END_CHILD()
 }
 
@@ -211,13 +187,13 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceiveAndEditBufferParent, SharedBufferTest,
 
     EXPECT_EQ("quit", ReadMessage(parent));
     WriteMessage(child, "quit");
-    EXPECT_EQ("ok", ReadMessage(child));
-    WriteMessage(parent, "ok");
   END_CHILD()
 }
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Android multi-process tests are not executing the new process. This is flaky.
+// Passing shared memory handles between cousins is not currently supported on
+// OSX.
 #define MAYBE_PassHandleBetweenCousins DISABLED_PassHandleBetweenCousins
 #else
 #define MAYBE_PassHandleBetweenCousins PassHandleBetweenCousins
@@ -242,14 +218,97 @@ TEST_F(SharedBufferTest, MAYBE_PassHandleBetweenCousins) {
       ReadMessageWithHandles(child1, &b, 1);
 
       WriteMessage(child2, "quit");
-      EXPECT_EQ("ok", ReadMessage(child2));
     END_CHILD()
     WriteMessage(child1, "quit");
-    EXPECT_EQ("ok", ReadMessage(child1));
   END_CHILD()
 
   // The second grandchild should have written this message.
   ExpectBufferContents(b, 0, message);
+}
+
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReadAndMapWriteSharedBuffer,
+                                  SharedBufferTest, h) {
+  // Receive the shared buffer.
+  MojoHandle b;
+  EXPECT_EQ("hello", ReadMessageWithHandles(h, &b, 1));
+
+  // Read from the bufer.
+  ExpectBufferContents(b, 0, "hello");
+
+  // Extract the shared memory handle and try to map it writable.
+  base::SharedMemoryHandle shm_handle;
+  bool read_only = false;
+  ASSERT_EQ(MOJO_RESULT_OK,
+            PassSharedMemoryHandle(b, &shm_handle, nullptr, &read_only));
+  base::SharedMemory shared_memory(shm_handle, false);
+  EXPECT_TRUE(read_only);
+  EXPECT_FALSE(shared_memory.Map(1234));
+
+  EXPECT_EQ("quit", ReadMessage(h));
+  WriteMessage(h, "ok");
+}
+
+#if defined(OS_ANDROID)
+// Android multi-process tests are not executing the new process. This is flaky.
+#define MAYBE_CreateAndPassReadOnlyBuffer DISABLED_CreateAndPassReadOnlyBuffer
+#else
+#define MAYBE_CreateAndPassReadOnlyBuffer CreateAndPassReadOnlyBuffer
+#endif
+TEST_F(SharedBufferTest, MAYBE_CreateAndPassReadOnlyBuffer) {
+  RUN_CHILD_ON_PIPE(ReadAndMapWriteSharedBuffer, h)
+    // Create a new shared buffer.
+    MojoHandle b = CreateBuffer(1234);
+    WriteToBuffer(b, 0, "hello");
+
+    // Send a read-only copy of the buffer to the child.
+    MojoHandle dupe = DuplicateBuffer(b, true /* read_only */);
+    WriteMessageWithHandles(h, "hello", &dupe, 1);
+
+    WriteMessage(h, "quit");
+    EXPECT_EQ("ok", ReadMessage(h));
+  END_CHILD()
+}
+
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(CreateAndPassReadOnlyBuffer,
+                                  SharedBufferTest, h) {
+  // Create a new shared buffer.
+  MojoHandle b = CreateBuffer(1234);
+  WriteToBuffer(b, 0, "hello");
+
+  // Send a read-only copy of the buffer to the parent.
+  MojoHandle dupe = DuplicateBuffer(b, true /* read_only */);
+  WriteMessageWithHandles(h, "", &dupe, 1);
+
+  EXPECT_EQ("quit", ReadMessage(h));
+  WriteMessage(h, "ok");
+}
+
+#if defined(OS_ANDROID)
+// Android multi-process tests are not executing the new process. This is flaky.
+#define MAYBE_CreateAndPassFromChildReadOnlyBuffer \
+    DISABLED_CreateAndPassFromChildReadOnlyBuffer
+#else
+#define MAYBE_CreateAndPassFromChildReadOnlyBuffer \
+    CreateAndPassFromChildReadOnlyBuffer
+#endif
+TEST_F(SharedBufferTest, MAYBE_CreateAndPassFromChildReadOnlyBuffer) {
+  RUN_CHILD_ON_PIPE(CreateAndPassReadOnlyBuffer, h)
+    MojoHandle b;
+    EXPECT_EQ("", ReadMessageWithHandles(h, &b, 1));
+    ExpectBufferContents(b, 0, "hello");
+
+    // Extract the shared memory handle and try to map it writable.
+    base::SharedMemoryHandle shm_handle;
+    bool read_only = false;
+    ASSERT_EQ(MOJO_RESULT_OK,
+              PassSharedMemoryHandle(b, &shm_handle, nullptr, &read_only));
+    base::SharedMemory shared_memory(shm_handle, false);
+    EXPECT_TRUE(read_only);
+    EXPECT_FALSE(shared_memory.Map(1234));
+
+    WriteMessage(h, "quit");
+    EXPECT_EQ("ok", ReadMessage(h));
+  END_CHILD()
 }
 
 #endif  // !defined(OS_IOS)

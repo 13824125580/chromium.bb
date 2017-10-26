@@ -36,7 +36,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_observer.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/ui/zoom/zoom_event_manager.h"
+#include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/user_metrics.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/menu_model.h"
@@ -68,7 +68,6 @@ using base::UserMetricsAction;
 - (void)performCommandDispatch:(NSNumber*)tag;
 - (NSButton*)zoomDisplay;
 - (void)menu:(NSMenu*)menu willHighlightItem:(NSMenuItem*)item;
-- (void)removeAllItems:(NSMenu*)menu;
 - (NSMenu*)recentTabsSubmenu;
 - (RecentTabsSubMenuModel*)recentTabsMenuModel;
 - (int)maxWidthForMenuModel:(ui::MenuModel*)model
@@ -95,7 +94,7 @@ class AcceleratorDelegate : public ui::AcceleratorProvider {
 class ZoomLevelObserver {
  public:
   ZoomLevelObserver(AppMenuController* controller,
-                    ui_zoom::ZoomEventManager* manager)
+                    zoom::ZoomEventManager* manager)
       : controller_(controller) {
     subscription_ = manager->AddZoomLevelChangedCallback(
         base::Bind(&ZoomLevelObserver::OnZoomLevelChanged,
@@ -113,7 +112,7 @@ class ZoomLevelObserver {
     [[controller_ zoomDisplay] setTitle:SysUTF16ToNSString(level)];
   }
 
-  scoped_ptr<content::HostZoomMap::Subscription> subscription_;
+  std::unique_ptr<content::HostZoomMap::Subscription> subscription_;
 
   AppMenuController* controller_;  // Weak; owns this.
 
@@ -352,15 +351,20 @@ class ToolbarActionsBarObserverHelper : public ToolbarActionsBarObserver {
 - (void)menuWillOpen:(NSMenu*)menu {
   [super menuWillOpen:menu];
 
-  zoom_level_observer_.reset(
-      new AppMenuControllerInternal::ZoomLevelObserver(
-          self,
-          ui_zoom::ZoomEventManager::GetForBrowserContext(
-              browser_->profile())));
+  zoom_level_observer_.reset(new AppMenuControllerInternal::ZoomLevelObserver(
+      self, zoom::ZoomEventManager::GetForBrowserContext(browser_->profile())));
   NSString* title = base::SysUTF16ToNSString(
       [self appMenuModel]->GetLabelForCommandId(IDC_ZOOM_PERCENT_DISPLAY));
   [[[buttonViewController_ zoomItem] viewWithTag:IDC_ZOOM_PERCENT_DISPLAY]
       setTitle:title];
+  [[[[buttonViewController_ zoomItem]
+      viewWithTag:IDC_ZOOM_MINUS] image]
+          setAccessibilityDescription:l10n_util::GetNSString(
+              IDS_TEXT_SMALLER_MAC)];
+  [[[[buttonViewController_ zoomItem]
+      viewWithTag:IDC_ZOOM_PLUS] image]
+        setAccessibilityDescription:l10n_util::GetNSString(
+              IDS_TEXT_BIGGER_MAC)];
   content::RecordAction(UserMetricsAction("ShowAppMenu"));
 
   NSImage* icon = [self appMenuModel]->browser()->window()->IsFullscreen()
@@ -379,14 +383,21 @@ class ToolbarActionsBarObserverHelper : public ToolbarActionsBarObserver {
   // menu is about to be displayed at the start of a tracking session.)
   zoom_level_observer_.reset();
   toolbar_actions_bar_observer_.reset();
+  // Make sure to reset() the BrowserActionsController since the view will also
+  // be destroyed. If a new one's needed, it'll be created when we create the
+  // model in -menuNeedsUpdate:.
+  browserActionsController_.reset();
   UMA_HISTOGRAM_TIMES("Toolbar.AppMenuTimeToAction",
                       base::TimeTicks::Now() - menuOpenTime_);
   menuOpenTime_ = base::TimeTicks();
 }
 
 - (void)menuNeedsUpdate:(NSMenu*)menu {
+  // We should never have a BrowserActionsController before creating the menu.
+  DCHECK(!browserActionsController_.get());
+
   // First empty out the menu and create a new model.
-  [self removeAllItems:menu];
+  [menu removeAllItems];
   [self createModel];
   [menu setMinimumWidth:0];
 
@@ -394,7 +405,7 @@ class ToolbarActionsBarObserverHelper : public ToolbarActionsBarObserver {
   // start, so simply copy the items.
   NSMenu* newMenu = [self menuFromModel:model_];
   NSArray* itemArray = [newMenu itemArray];
-  [self removeAllItems:newMenu];
+  [newMenu removeAllItems];
   for (NSMenuItem* item in itemArray) {
     [menu addItem:item];
   }
@@ -527,13 +538,6 @@ class ToolbarActionsBarObserverHelper : public ToolbarActionsBarObserver {
   if (browserActionsController_.get()) {
     [browserActionsController_ setFocusedInOverflow:
         (item == browserActionsMenuItem_)];
-  }
-}
-
-// -[NSMenu removeAllItems] is only available on 10.6+.
-- (void)removeAllItems:(NSMenu*)menu {
-  while ([menu numberOfItems]) {
-    [menu removeItemAtIndex:0];
   }
 }
 

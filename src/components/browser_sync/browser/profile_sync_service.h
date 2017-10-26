@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_BROWSER_SYNC_BROWSER_PROFILE_SYNC_SERVICE_H_
 #define COMPONENTS_BROWSER_SYNC_BROWSER_PROFILE_SYNC_SERVICE_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
@@ -15,7 +17,6 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/memory_pressure_listener.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
@@ -24,12 +25,12 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/signin_manager_base.h"
 #include "components/sync_driver/data_type_controller.h"
 #include "components/sync_driver/data_type_manager.h"
 #include "components/sync_driver/data_type_manager_observer.h"
 #include "components/sync_driver/data_type_status_table.h"
-#include "components/sync_driver/device_info_sync_service.h"
 #include "components/sync_driver/glue/sync_backend_host.h"
 #include "components/sync_driver/local_device_info_provider.h"
 #include "components/sync_driver/protocol_event_observer.h"
@@ -69,11 +70,16 @@ class SessionsSyncManager;
 namespace sync_driver {
 class DataTypeManager;
 class DeviceInfoSyncService;
+class DeviceInfoTracker;
 class LocalDeviceInfoProvider;
 class OpenTabsUIDelegate;
 class SyncApiComponentFactory;
 class SyncClient;
 }  // namespace sync_driver
+
+namespace sync_driver_v2 {
+class DeviceInfoService;
+}
 
 namespace syncer {
 class BaseTransaction;
@@ -159,20 +165,16 @@ class EncryptedData;
 //   that control the initial sync download:
 //
 //    * SetFirstSetupComplete()
-//    * SetSetupInProgress()
+//    * GetSetupInProgressHandle()
 //
 //   SetFirstSetupComplete() should be called once the user has finished setting
-//   up sync at least once on their account. SetSetupInProgress(true) should be
-//   called while the user is actively configuring their account, and then
-//   SetSetupInProgress(false) should be called when configuration is complete.
-//   When SetFirstSetupComplete() == false, but SetSetupInProgress(true) has
-//   been called, then the sync engine knows not to download any user data.
+//   up sync at least once on their account. GetSetupInProgressHandle() should
+//   be called while the user is actively configuring their account. The handle
+//   should be deleted once configuration is complete.
 //
-//   When initial sync is complete, the UI code should call
-//   SetFirstSetupComplete() followed by SetSetupInProgress(false) - this will
-//   tell the sync engine that setup is completed and it can begin downloading
-//   data from the sync server.
-//
+//   Once first setup has completed and there are no outstanding
+//   setup-in-progress handles, CanConfigureDataTypes() will return true and
+//   datatype configuration can begin.
 class ProfileSyncService : public sync_driver::SyncService,
                            public sync_driver::SyncFrontend,
                            public sync_driver::SyncPrefObserver,
@@ -181,7 +183,8 @@ class ProfileSyncService : public sync_driver::SyncService,
                            public KeyedService,
                            public OAuth2TokenService::Consumer,
                            public OAuth2TokenService::Observer,
-                           public SigninManagerBase::Observer {
+                           public SigninManagerBase::Observer,
+                           public GaiaCookieManagerService::Observer {
  public:
   typedef browser_sync::SyncBackendHost::Status Status;
   typedef base::Callback<bool(void)> PlatformSyncAllowedProvider;
@@ -221,6 +224,13 @@ class ProfileSyncService : public sync_driver::SyncService,
     UNKNOWN_ERROR,
   };
 
+  // If AUTO_START, sync will set IsFirstSetupComplete() automatically and sync
+  // will begin syncing without the user needing to confirm sync settings.
+  enum StartBehavior {
+    AUTO_START,
+    MANUAL_START,
+  };
+
   // Bundles the arguments for ProfileSyncService construction. This is a
   // movable struct. Because of the non-POD data members, it needs out-of-line
   // constructors, so in particular the move constructor needs to be
@@ -230,11 +240,11 @@ class ProfileSyncService : public sync_driver::SyncService,
     ~InitParams();
     InitParams(InitParams&& other);  // NOLINT
 
-    scoped_ptr<sync_driver::SyncClient> sync_client;
-    scoped_ptr<SigninManagerWrapper> signin_wrapper;
+    std::unique_ptr<sync_driver::SyncClient> sync_client;
+    std::unique_ptr<SigninManagerWrapper> signin_wrapper;
     ProfileOAuth2TokenService* oauth2_token_service = nullptr;
-    browser_sync::ProfileSyncServiceStartBehavior start_behavior =
-        browser_sync::MANUAL_START;
+    GaiaCookieManagerService* gaia_cookie_manager_service = nullptr;
+    StartBehavior start_behavior = MANUAL_START;
     syncer::NetworkTimeUpdateCallback network_time_update_callback;
     base::FilePath base_directory;
     scoped_refptr<net::URLRequestContextGetter> url_request_context;
@@ -272,7 +282,8 @@ class ProfileSyncService : public sync_driver::SyncService,
                             syncer::ModelTypeSet chosen_types) override;
   void SetFirstSetupComplete() override;
   bool IsFirstSetupInProgress() const override;
-  void SetSetupInProgress(bool setup_in_progress) override;
+  std::unique_ptr<sync_driver::SyncSetupInProgressHandle>
+  GetSetupInProgressHandle() override;
   bool IsSetupInProgress() const override;
   bool ConfigurationDone() const override;
   const GoogleServiceAuthError& GetAuthError() const override;
@@ -319,7 +330,7 @@ class ProfileSyncService : public sync_driver::SyncService,
   void RemoveTypeDebugInfoObserver(
       syncer::TypeDebugInfoObserver* observer) override;
   base::WeakPtr<syncer::JsController> GetJsController() override;
-  void GetAllNodes(const base::Callback<void(scoped_ptr<base::ListValue>)>&
+  void GetAllNodes(const base::Callback<void(std::unique_ptr<base::ListValue>)>&
                        callback) override;
 
   // Add a sync type preference provider. Each provider may only be added once.
@@ -339,6 +350,9 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   // Returns the SyncableService for syncer::DEVICE_INFO.
   virtual syncer::SyncableService* GetDeviceInfoSyncableService();
+
+  // Returns the ModelTypeService for syncer::DEVICE_INFO.
+  virtual syncer_v2::ModelTypeService* GetDeviceInfoService();
 
   // Returns synced devices tracker.
   virtual sync_driver::DeviceInfoTracker* GetDeviceInfoTracker() const;
@@ -398,6 +412,12 @@ class ProfileSyncService : public sync_driver::SyncService,
                              const std::string& password) override;
   void GoogleSignedOut(const std::string& account_id,
                        const std::string& username) override;
+
+  // GaiaCookieManagerService::Observer implementation.
+  void OnGaiaAccountsInCookieUpdated(
+      const std::vector<gaia::ListedAccount>& accounts,
+      const std::vector<gaia::ListedAccount>& signed_out_accounts,
+      const GoogleServiceAuthError& error) override;
 
   // Get the sync status code.
   SyncStatusSummary QuerySyncStatusSummary();
@@ -508,9 +528,6 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   SigninManagerBase* signin() const;
 
-  // Used by tests.
-  bool auto_start_enabled() const;
-
   SyncErrorController* sync_error_controller() {
     return sync_error_controller_.get();
   }
@@ -553,7 +570,7 @@ class ProfileSyncService : public sync_driver::SyncService,
   // Overrides the NetworkResources used for Sync connections.
   // This function takes ownership of |network_resources|.
   void OverrideNetworkResourcesForTest(
-      scoped_ptr<syncer::NetworkResources> network_resources);
+      std::unique_ptr<syncer::NetworkResources> network_resources);
 
   virtual bool IsDataTypeControllerRunning(syncer::ModelType type) const;
 
@@ -593,10 +610,6 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   virtual syncer::WeakHandle<syncer::JsEventHandler> GetJsEventHandler();
 
-  const sync_driver::DataTypeController::TypeMap& data_type_controllers() {
-    return data_type_controllers_;
-  }
-
   // Helper method for managing encryption UI.
   bool IsEncryptedDatatypeEnabled() const;
 
@@ -615,7 +628,7 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   // Our asynchronous backend to communicate with sync components living on
   // other threads.
-  scoped_ptr<browser_sync::SyncBackendHost> backend_;
+  std::unique_ptr<browser_sync::SyncBackendHost> backend_;
 
   // Was the last SYNC_PASSPHRASE_REQUIRED notification sent because it
   // was required for encryption, decryption with a cached passphrase, or
@@ -668,11 +681,6 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   // Update the last auth error and notify observers of error state.
   void UpdateAuthErrorState(const GoogleServiceAuthError& error);
-
-  // Detects and attempts to recover from a previous improper datatype
-  // configuration where Keep Everything Synced and the preferred types were
-  // not correctly set.
-  void TrySyncDatatypePrefRecovery();
 
   // Puts the backend's sync scheduler into NORMAL mode.
   // Called when configuration is complete.
@@ -750,6 +758,13 @@ class ProfileSyncService : public sync_driver::SyncService,
   // Whether sync has been authenticated with an account ID.
   bool IsSignedIn() const;
 
+  // The backend can only start if sync can start and has an auth token. This is
+  // different fron CanSyncStart because it represents whether the backend can
+  // be started at this moment, whereas CanSyncStart represents whether sync can
+  // conceptually start without further user action (acquiring a token is an
+  // automatic process).
+  bool CanBackendStart() const;
+
   // True if a syncing backend exists.
   bool HasSyncingBackend() const;
 
@@ -782,9 +797,15 @@ class ProfileSyncService : public sync_driver::SyncService,
   // Restarts sync clearing directory in the process.
   void OnClearServerDataDone();
 
+  // True if setup has been completed at least once and is not in progress.
+  bool CanConfigureDataTypes() const;
+
+  // Called when a SetupInProgressHandle issued by this instance is destroyed.
+  virtual void OnSetupInProgressHandleDestroyed();
+
   // This profile's SyncClient, which abstracts away non-Sync dependencies and
   // the Sync API component factory.
-  scoped_ptr<sync_driver::SyncClient> sync_client_;
+  std::unique_ptr<sync_driver::SyncClient> sync_client_;
 
   // The class that handles getting, setting, and persisting sync
   // preferences.
@@ -824,6 +845,10 @@ class ProfileSyncService : public sync_driver::SyncService,
   // is equal to !IsFirstSetupComplete() at the time of OnBackendInitialized().
   bool is_first_time_sync_configure_;
 
+  // Number of UIs currently configuring the Sync service. When this number
+  // is decremented back to zero, Sync setup is marked no longer in progress.
+  int outstanding_setup_in_progress_handles_ = 0;
+
   // List of available data type controllers.
   sync_driver::DataTypeController::TypeMap data_type_controllers_;
 
@@ -841,7 +866,7 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   // Encapsulates user signin - used to set/get the user's authenticated
   // email address.
-  const scoped_ptr<SigninManagerWrapper> signin_;
+  const std::unique_ptr<SigninManagerWrapper> signin_;
 
   // Information describing an unrecoverable error.
   UnrecoverableErrorReason unrecoverable_error_reason_;
@@ -849,7 +874,7 @@ class ProfileSyncService : public sync_driver::SyncService,
   tracked_objects::Location unrecoverable_error_location_;
 
   // Manages the start and stop of the data types.
-  scoped_ptr<sync_driver::DataTypeManager> data_type_manager_;
+  std::unique_ptr<sync_driver::DataTypeManager> data_type_manager_;
 
   base::ObserverList<sync_driver::SyncServiceObserver> observers_;
   base::ObserverList<browser_sync::ProtocolEventObserver>
@@ -886,14 +911,14 @@ class ProfileSyncService : public sync_driver::SyncService,
   // if they e.g. don't remember their explicit passphrase.
   bool encryption_pending_;
 
-  scoped_ptr<browser_sync::BackendMigrator> migrator_;
+  std::unique_ptr<browser_sync::BackendMigrator> migrator_;
 
   // This is the last |SyncProtocolError| we received from the server that had
   // an action set on it.
   syncer::SyncProtocolError last_actionable_error_;
 
   // Exposes sync errors to the UI.
-  scoped_ptr<SyncErrorController> sync_error_controller_;
+  std::unique_ptr<SyncErrorController> sync_error_controller_;
 
   // Tracks the set of failed data types (those that encounter an error
   // or must delay loading for some reason).
@@ -913,7 +938,7 @@ class ProfileSyncService : public sync_driver::SyncService,
   //     * Created when backend starts for the first time.
   //     * If sync is disabled, PSS claims ownership from backend.
   //     * If sync is reenabled, PSS passes ownership to new backend.
-  scoped_ptr<base::Thread> sync_thread_;
+  std::unique_ptr<base::Thread> sync_thread_;
 
   // ProfileSyncService uses this service to get access tokens.
   ProfileOAuth2TokenService* const oauth2_token_service_;
@@ -924,7 +949,7 @@ class ProfileSyncService : public sync_driver::SyncService,
 
   // ProfileSyncService needs to hold reference to access_token_request_ for
   // the duration of request in order to receive callbacks.
-  scoped_ptr<OAuth2TokenService::Request> access_token_request_;
+  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
 
   // If RequestAccessToken fails with transient error then retry requesting
   // access token with exponential backoff.
@@ -939,29 +964,35 @@ class ProfileSyncService : public sync_driver::SyncService,
   GoogleServiceAuthError last_get_token_error_;
   base::Time next_token_request_time_;
 
-  scoped_ptr<sync_driver::LocalDeviceInfoProvider> local_device_;
+  // The gaia cookie manager. Used for monitoring cookie jar changes to detect
+  // when the user signs out of the content area.
+  GaiaCookieManagerService* const gaia_cookie_manager_service_;
 
-  // Locally owned SyncableService implementations.
-  scoped_ptr<browser_sync::SessionsSyncManager> sessions_sync_manager_;
-  scoped_ptr<sync_driver::DeviceInfoSyncService> device_info_sync_service_;
+  std::unique_ptr<sync_driver::LocalDeviceInfoProvider> local_device_;
 
-  scoped_ptr<syncer::NetworkResources> network_resources_;
+  // Locally owned SyncableService and ModelTypeService implementations.
+  std::unique_ptr<browser_sync::SessionsSyncManager> sessions_sync_manager_;
+  std::unique_ptr<sync_driver::DeviceInfoSyncService> device_info_sync_service_;
+  std::unique_ptr<sync_driver_v2::DeviceInfoService> device_info_service_;
 
-  browser_sync::ProfileSyncServiceStartBehavior start_behavior_;
-  scoped_ptr<browser_sync::StartupController> startup_controller_;
+  std::unique_ptr<syncer::NetworkResources> network_resources_;
+
+  StartBehavior start_behavior_;
+  std::unique_ptr<browser_sync::StartupController> startup_controller_;
 
   // The full path to the sync data directory.
   base::FilePath directory_path_;
 
-  scoped_ptr<browser_sync::SyncStoppedReporter> sync_stopped_reporter_;
+  std::unique_ptr<browser_sync::SyncStoppedReporter> sync_stopped_reporter_;
 
   // Listens for the system being under memory pressure.
-  scoped_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
   // Nigori state after user switching to custom passphrase, saved until
   // transition steps complete. It will be injected into new backend after sync
   // restart.
-  scoped_ptr<syncer::SyncEncryptionHandler::NigoriState> saved_nigori_state_;
+  std::unique_ptr<syncer::SyncEncryptionHandler::NigoriState>
+      saved_nigori_state_;
 
   // When BeginConfigureCatchUpBeforeClear is called it will set
   // catch_up_configure_in_progress_ to true. This is needed to detect that call
@@ -983,15 +1014,10 @@ class ProfileSyncService : public sync_driver::SyncService,
   // this object was created on.
   base::ThreadChecker thread_checker_;
 
-  base::WeakPtrFactory<ProfileSyncService> weak_factory_;
+  // This weak factory invalidates its issued pointers when Sync is disabled.
+  base::WeakPtrFactory<ProfileSyncService> sync_enabled_weak_factory_;
 
-  // We don't use |weak_factory_| for the StartupController because the weak
-  // ptrs should be bound to the lifetime of ProfileSyncService and not to the
-  // [Initialize -> sync disabled/shutdown] lifetime.  We don't pass
-  // StartupController an Unretained reference to future-proof against
-  // the controller impl changing to post tasks. Therefore, we have a separate
-  // factory.
-  base::WeakPtrFactory<ProfileSyncService> startup_controller_weak_factory_;
+  base::WeakPtrFactory<ProfileSyncService> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileSyncService);
 };

@@ -111,7 +111,7 @@ class WinPort(base.Port):
         # see comments in check_httpd(), above, for why this routine exists and what it's doing.
         try:
             # Note that we HKCR is a union of HKLM and HKCR (with the latter
-            # overridding the former), so reading from HKCR ensures that we get
+            # overriding the former), so reading from HKCR ensures that we get
             # the value if it is set in either place. See als comments below.
             hkey = _winreg.OpenKey(_winreg.HKEY_CLASSES_ROOT, sub_key)
             args = _winreg.QueryValue(hkey, '').split()
@@ -121,7 +121,7 @@ class WinPort(base.Port):
             # existing entry points to a valid path and has the right command line.
             if len(args) == 2 and self._filesystem.exists(args[0]) and args[0].endswith('perl.exe') and args[1] == '-wT':
                 return True
-        except WindowsError, e:
+        except WindowsError as e:
             if e.errno != errno.ENOENT:
                 raise e
             # The key simply probably doesn't exist.
@@ -140,7 +140,7 @@ class WinPort(base.Port):
 
         if not self.get_option('disable_breakpad'):
             assert not self._crash_service, 'Already running a crash service'
-            if self._crash_service_available == None:
+            if self._crash_service_available is None:
                 self._crash_service_available = self._check_crash_service_available()
             if not self._crash_service_available:
                 return
@@ -155,8 +155,8 @@ class WinPort(base.Port):
             self._crash_service.stop()
             self._crash_service = None
 
-    def setup_environ_for_server(self, server_name=None):
-        env = super(WinPort, self).setup_environ_for_server(server_name)
+    def setup_environ_for_server(self):
+        env = super(WinPort, self).setup_environ_for_server()
 
         # FIXME: This is a temporary hack to get the cr-win bot online until
         # someone from the cr-win port can take a look.
@@ -216,9 +216,9 @@ class WinPort(base.Port):
     # PROTECTED ROUTINES
     #
 
-    def _path_to_driver(self, configuration=None):
+    def _path_to_driver(self, target=None):
         binary_name = '%s.exe' % self.driver_name()
-        return self._build_path_with_configuration(configuration, binary_name)
+        return self._build_path_with_target(target, binary_name)
 
     def _path_to_crash_service(self):
         binary_name = 'content_shell_crash_service.exe'

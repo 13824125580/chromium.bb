@@ -52,6 +52,10 @@ scoped_refptr<ResourceResponse> ResourceResponse::DeepCopy() const {
   new_response->head.service_worker_ready_time =
       head.service_worker_ready_time;
   new_response->head.is_using_lofi = head.is_using_lofi;
+  new_response->head.effective_connection_type = head.effective_connection_type;
+  new_response->head.signed_certificate_timestamps =
+      head.signed_certificate_timestamps;
+  new_response->head.cors_exposed_header_names = head.cors_exposed_header_names;
   return new_response;
 }
 

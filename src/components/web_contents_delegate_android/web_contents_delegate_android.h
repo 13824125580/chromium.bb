@@ -7,10 +7,11 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/browser/web_contents_delegate.h"
 
 class GURL;
@@ -112,7 +113,8 @@ class WebContentsDelegateAndroid : public content::WebContentsDelegate {
   void HideValidationMessage(content::WebContents* web_contents) override;
   void MoveValidationMessage(content::WebContents* web_contents,
                              const gfx::Rect& anchor_in_root_view) override;
-  bool RequestAppBanner(content::WebContents* web_contents) override;
+  void RequestAppBannerFromDevTools(
+      content::WebContents* web_contents) override;
 
  protected:
   base::android::ScopedJavaLocalRef<jobject> GetJavaDelegate(JNIEnv* env) const;
@@ -123,7 +125,7 @@ class WebContentsDelegateAndroid : public content::WebContentsDelegate {
   // on it. Using a weak ref here allows it to be correctly GCed.
   JavaObjectWeakGlobalRef weak_java_delegate_;
 
-  scoped_ptr<ValidationMessageBubbleAndroid> validation_message_bubble_;
+  std::unique_ptr<ValidationMessageBubbleAndroid> validation_message_bubble_;
 };
 
 bool RegisterWebContentsDelegateAndroid(JNIEnv* env);

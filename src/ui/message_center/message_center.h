@@ -7,10 +7,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/message_center_types.h"
 #include "ui/message_center/notification_list.h"
@@ -76,6 +76,7 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   virtual size_t UnreadNotificationCount() const = 0;
   virtual bool HasPopupNotifications() const = 0;
   virtual bool IsQuietMode() const = 0;
+  virtual bool IsLockedState() const = 0;
   virtual bool HasClickedListener(const std::string& id) = 0;
 
   // Find the notification with the corresponding id. Returns NULL if not found.
@@ -100,12 +101,12 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // Basic operations of notification: add/remove/update.
 
   // Adds a new notification.
-  virtual void AddNotification(scoped_ptr<Notification> notification) = 0;
+  virtual void AddNotification(std::unique_ptr<Notification> notification) = 0;
 
   // Updates an existing notification with id = old_id and set its id to new_id.
   virtual void UpdateNotification(
       const std::string& old_id,
-      scoped_ptr<Notification> new_notification) = 0;
+      std::unique_ptr<Notification> new_notification) = 0;
 
   // Removes an existing notification.
   virtual void RemoveNotification(const std::string& id, bool by_user) = 0;
@@ -170,6 +171,9 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
 
   // This can be called to change the quiet mode state (without a timeout).
   virtual void SetQuietMode(bool in_quiet_mode) = 0;
+
+  // This can be called to change the lock mode state.
+  virtual void SetLockedState(bool locked) = 0;
 
   // Temporarily enables quiet mode for |expires_in| time.
   virtual void EnterQuietModeWithExpire(const base::TimeDelta& expires_in) = 0;

@@ -52,6 +52,7 @@ bool IsSharedByGroup(int column_id) {
     case IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN:
     case IDS_TASK_MANAGER_SHARED_MEM_COLUMN:
     case IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN:
+    case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
     case IDS_TASK_MANAGER_CPU_COLUMN:
     case IDS_TASK_MANAGER_NET_COLUMN:
     case IDS_TASK_MANAGER_PROCESS_ID_COLUMN:
@@ -312,6 +313,10 @@ base::string16 TaskManagerTableModel::GetText(int row, int column) {
       return stringifier_->GetMemoryUsageText(
           observed_task_manager()->GetPhysicalMemoryUsage(tasks_[row]), false);
 
+    case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
+      return stringifier_->GetMemoryUsageText(
+          observed_task_manager()->GetSwappedMemoryUsage(tasks_[row]), false);
+
     case IDS_TASK_MANAGER_PROCESS_ID_COLUMN:
       return stringifier_->GetProcessIdText(
           observed_task_manager()->GetProcessId(tasks_[row]));
@@ -443,6 +448,11 @@ int TaskManagerTableModel::CompareValues(int row1,
           observed_task_manager()->GetPhysicalMemoryUsage(tasks_[row1]),
           observed_task_manager()->GetPhysicalMemoryUsage(tasks_[row2]));
 
+    case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
+      return ValueCompare(
+          observed_task_manager()->GetSwappedMemoryUsage(tasks_[row1]),
+          observed_task_manager()->GetSwappedMemoryUsage(tasks_[row2]));
+
     case IDS_TASK_MANAGER_NACL_DEBUG_STUB_PORT_COLUMN:
       return ValueCompare(
           observed_task_manager()->GetNaClDebugStubPort(tasks_[row1]),
@@ -508,8 +518,15 @@ int TaskManagerTableModel::CompareValues(int row1,
 
     case IDS_TASK_MANAGER_JAVASCRIPT_MEMORY_ALLOCATED_COLUMN: {
       int64_t allocated1, allocated2, used1, used2;
-      observed_task_manager()->GetV8Memory(tasks_[row1], &allocated1, &used1);
-      observed_task_manager()->GetV8Memory(tasks_[row2], &allocated2, &used2);
+      bool row1_valid = observed_task_manager()->GetV8Memory(tasks_[row1],
+                                                             &allocated1,
+                                                             &used1);
+      bool row2_valid = observed_task_manager()->GetV8Memory(tasks_[row2],
+                                                             &allocated2,
+                                                             &used2);
+      if (!row1_valid || !row2_valid)
+        return OrderUnavailableValue(row1_valid, row2_valid);
+
       return ValueCompare(allocated1, allocated2);
     }
 
@@ -566,8 +583,12 @@ void TaskManagerTableModel::OnTaskAdded(TaskId id) {
   // adding |id| to |tasks_| because we want to keep |tasks_| sorted by proc IDs
   // and then by Task IDs.
   tasks_ = observed_task_manager()->GetTaskIdsList();
-  if (table_model_observer_)
-    table_model_observer_->OnItemsAdded(RowCount() - 1, 1);
+
+  if (table_model_observer_) {
+    std::vector<TaskId>::difference_type index =
+        std::find(tasks_.begin(), tasks_.end(), id) - tasks_.begin();
+    table_model_observer_->OnItemsAdded(static_cast<int>(index), 1);
+  }
 }
 
 void TaskManagerTableModel::OnTaskToBeRemoved(TaskId id) {
@@ -614,13 +635,16 @@ void TaskManagerTableModel::UpdateRefreshTypes(int column_id, bool visibility) {
     case IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN:
     case IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN:
     case IDS_TASK_MANAGER_SHARED_MEM_COLUMN:
+    case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
       type = REFRESH_TYPE_MEMORY;
       if (table_view_delegate_->IsColumnVisible(
               IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN) ||
           table_view_delegate_->IsColumnVisible(
               IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN) ||
           table_view_delegate_->IsColumnVisible(
-              IDS_TASK_MANAGER_SHARED_MEM_COLUMN)) {
+              IDS_TASK_MANAGER_SHARED_MEM_COLUMN) ||
+          table_view_delegate_->IsColumnVisible(
+              IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN)) {
         new_visibility = true;
       }
       break;
@@ -691,9 +715,8 @@ void TaskManagerTableModel::UpdateRefreshTypes(int column_id, bool visibility) {
     RemoveRefreshType(type);
 }
 
-bool TaskManagerTableModel::IsBrowserProcess(int row_index) const {
-  return observed_task_manager()->GetProcessId(tasks_[row_index]) ==
-      base::GetCurrentProcId();
+bool TaskManagerTableModel::IsTaskKillable(int row_index) const {
+  return observed_task_manager()->IsTaskKillable(tasks_[row_index]);
 }
 
 void TaskManagerTableModel::RetrieveSavedColumnsSettingsAndUpdateTable() {

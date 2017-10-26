@@ -5,26 +5,28 @@
 #include "platform/network/ResourceTimingInfo.h"
 
 #include "platform/CrossThreadCopier.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<ResourceTimingInfo> ResourceTimingInfo::adopt(PassOwnPtr<CrossThreadResourceTimingInfoData> data)
+std::unique_ptr<ResourceTimingInfo> ResourceTimingInfo::adopt(std::unique_ptr<CrossThreadResourceTimingInfoData> data)
 {
-    OwnPtr<ResourceTimingInfo> info = ResourceTimingInfo::create(AtomicString(data->m_type), data->m_initialTime, data->m_isMainResource);
+    std::unique_ptr<ResourceTimingInfo> info = ResourceTimingInfo::create(AtomicString(data->m_type), data->m_initialTime, data->m_isMainResource);
     info->m_originalTimingAllowOrigin = AtomicString(data->m_originalTimingAllowOrigin);
     info->m_loadFinishTime = data->m_loadFinishTime;
     info->m_initialRequest = ResourceRequest(data->m_initialRequest.get());
     info->m_finalResponse = ResourceResponse(data->m_finalResponse.get());
     for (auto& responseData : data->m_redirectChain)
         info->m_redirectChain.append(ResourceResponse(responseData.get()));
-    return info.release();
+    return info;
 }
 
-PassOwnPtr<CrossThreadResourceTimingInfoData> ResourceTimingInfo::copyData() const
+std::unique_ptr<CrossThreadResourceTimingInfoData> ResourceTimingInfo::copyData() const
 {
-    OwnPtr<CrossThreadResourceTimingInfoData> data = adoptPtr(new CrossThreadResourceTimingInfoData);
-    data->m_type = m_type.string().isolatedCopy();
-    data->m_originalTimingAllowOrigin = m_originalTimingAllowOrigin.string().isolatedCopy();
+    std::unique_ptr<CrossThreadResourceTimingInfoData> data = wrapUnique(new CrossThreadResourceTimingInfoData);
+    data->m_type = m_type.getString().isolatedCopy();
+    data->m_originalTimingAllowOrigin = m_originalTimingAllowOrigin.getString().isolatedCopy();
     data->m_initialTime = m_initialTime;
     data->m_loadFinishTime = m_loadFinishTime;
     data->m_initialRequest = m_initialRequest.copyData();
@@ -32,7 +34,7 @@ PassOwnPtr<CrossThreadResourceTimingInfoData> ResourceTimingInfo::copyData() con
     for (const auto& response : m_redirectChain)
         data->m_redirectChain.append(response.copyData());
     data->m_isMainResource = m_isMainResource;
-    return data.release();
+    return data;
 }
 
 } // namespace blink

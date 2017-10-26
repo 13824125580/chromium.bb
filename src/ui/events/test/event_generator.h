@@ -6,11 +6,11 @@
 #define UI_EVENTS_TEST_EVENT_GENERATOR_H_
 
 #include <list>
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -122,8 +122,7 @@ class EventGenerator {
                  const gfx::Point& initial_location);
 
   // Creates an EventGenerator with the mouse/touch location centered over
-  // |window|. This is currently the only constructor that works on Mac, since
-  // a specific window is required (and there is no root window).
+  // |window|.
   EventGenerator(gfx::NativeWindow root_window, gfx::NativeWindow window);
 
   virtual ~EventGenerator();
@@ -369,10 +368,10 @@ class EventGenerator {
   }
 
   // Specify an alternative tick clock to be used for simulating time in tests.
-  void SetTickClock(scoped_ptr<base::TickClock> tick_clock);
+  void SetTickClock(std::unique_ptr<base::TickClock> tick_clock);
 
   // Get the current time from the tick clock.
-  base::TimeDelta Now();
+  base::TimeTicks Now();
 
   // Default delegate set by a platform-specific GeneratorDelegate singleton.
   static EventGeneratorDelegate* default_delegate;
@@ -397,16 +396,16 @@ class EventGenerator {
   const EventGeneratorDelegate* delegate() const;
   EventGeneratorDelegate* delegate();
 
-  scoped_ptr<EventGeneratorDelegate> delegate_;
+  std::unique_ptr<EventGeneratorDelegate> delegate_;
   gfx::Point current_location_;
   EventTarget* current_target_;
   int flags_;
   bool grab_;
-  std::list<Event*> pending_events_;
+  std::list<std::unique_ptr<Event>> pending_events_;
   // Set to true to cause events to be posted asynchronously.
   bool async_;
   bool targeting_application_;
-  scoped_ptr<base::TickClock> tick_clock_;
+  std::unique_ptr<base::TickClock> tick_clock_;
 
   DISALLOW_COPY_AND_ASSIGN(EventGenerator);
 };

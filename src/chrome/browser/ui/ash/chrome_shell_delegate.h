@@ -5,40 +5,26 @@
 #ifndef CHROME_BROWSER_UI_ASH_CHROME_SHELL_DELEGATE_H_
 #define CHROME_BROWSER_UI_ASH_CHROME_SHELL_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
-#include "ash/shelf/shelf_item_types.h"
 #include "ash/shell_delegate.h"
-#include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/ash/metrics/chrome_user_metrics_recorder.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
-class Browser;
-
-namespace ash {
-class ShelfItemDelegate;
-}
-
-namespace content {
-class WebContents;
+namespace chromeos {
+class DisplayConfigurationObserver;
 }
 
 namespace keyboard {
 class KeyboardUI;
 }
 
-#if defined(OS_CHROMEOS)
-namespace chromeos {
-class DisplayConfigurationObserver;
-}
-#endif
-
-class ChromeLauncherController;
+class ChromeLauncherControllerImpl;
 
 class ChromeShellDelegate : public ash::ShellDelegate,
                             public content::NotificationObserver {
@@ -46,14 +32,12 @@ class ChromeShellDelegate : public ash::ShellDelegate,
   ChromeShellDelegate();
   ~ChromeShellDelegate() override;
 
-  static ChromeShellDelegate* instance() { return instance_; }
-
   // ash::ShellDelegate overrides;
   bool IsFirstRunAfterBoot() const override;
   bool IsMultiProfilesEnabled() const override;
   bool IsIncognitoAllowed() const override;
   bool IsRunningInForcedAppMode() const override;
-  bool CanShowWindowForUser(aura::Window* window) const override;
+  bool CanShowWindowForUser(ash::WmWindow* window) const override;
   bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
@@ -64,7 +48,8 @@ class ChromeShellDelegate : public ash::ShellDelegate,
       ash::VirtualKeyboardStateObserver* observer) override;
   void RemoveVirtualKeyboardStateObserver(
       ash::VirtualKeyboardStateObserver* observer) override;
-  app_list::AppListViewDelegate* GetAppListViewDelegate() override;
+  void OpenUrlFromArc(const GURL& url) override;
+  app_list::AppListPresenter* GetAppListPresenter() override;
   ash::ShelfDelegate* CreateShelfDelegate(ash::ShelfModel* model) override;
   ash::SystemTrayDelegate* CreateSystemTrayDelegate() override;
   ash::UserWallpaperDelegate* CreateUserWallpaperDelegate() override;
@@ -72,9 +57,10 @@ class ChromeShellDelegate : public ash::ShellDelegate,
   ash::AccessibilityDelegate* CreateAccessibilityDelegate() override;
   ash::NewWindowDelegate* CreateNewWindowDelegate() override;
   ash::MediaDelegate* CreateMediaDelegate() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root,
-                                   ash::ShelfItemDelegate* item_delegate,
-                                   ash::ShelfItem* item) override;
+  std::unique_ptr<ash::PointerWatcherDelegate> CreatePointerWatcherDelegate()
+      override;
+  ui::MenuModel* CreateContextMenu(ash::WmShelf* wm_shelf,
+                                   const ash::ShelfItem* item) override;
   ash::GPUSupport* CreateGPUSupport() override;
   base::string16 GetProductName() const override;
   void OpenKeyboardShortcutHelpPage() const override;
@@ -90,22 +76,18 @@ class ChromeShellDelegate : public ash::ShellDelegate,
  private:
   void PlatformInit();
 
-  static ChromeShellDelegate* instance_;
-
   content::NotificationRegistrar registrar_;
 
-  ChromeLauncherController* shelf_delegate_;
+  ChromeLauncherControllerImpl* shelf_delegate_;
 
   base::ObserverList<ash::VirtualKeyboardStateObserver>
       keyboard_state_observer_list_;
 
   // Proxies events from chrome/browser to ash::UserMetricsRecorder.
-  scoped_ptr<ChromeUserMetricsRecorder> chrome_user_metrics_recorder_;
+  std::unique_ptr<ChromeUserMetricsRecorder> chrome_user_metrics_recorder_;
 
-#if defined(OS_CHROMEOS)
-  scoped_ptr<chromeos::DisplayConfigurationObserver>
+  std::unique_ptr<chromeos::DisplayConfigurationObserver>
       display_configuration_observer_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeShellDelegate);
 };

@@ -46,7 +46,7 @@ enum SourceImageStatus {
 
 class CORE_EXPORT CanvasImageSource {
 public:
-    virtual PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint, SnapshotReason) const = 0;
+    virtual PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint, SnapshotReason, const FloatSize&) const = 0;
 
     // IMPORTANT: Result must be independent of whether destinationContext is
     // already tainted because this function may be used to determine whether
@@ -57,15 +57,19 @@ public:
     virtual bool isVideoElement() const { return false; }
     virtual bool isCanvasElement() const { return false; }
     virtual bool isSVGSource() const { return false; }
+    virtual bool isImageBitmap() const { return false; }
 
     // Adjusts the source and destination rectangles for cases where the actual
     // source image is a subregion of the image returned by getSourceImageForCanvas.
     virtual void adjustDrawRects(FloatRect* srcRect, FloatRect* dstRect) const { }
 
-    virtual FloatSize elementSize() const = 0;
-    virtual FloatSize defaultDestinationSize() const { return elementSize(); }
+    virtual FloatSize elementSize(const FloatSize& defaultObjectSize) const = 0;
+    virtual FloatSize defaultDestinationSize(const FloatSize& defaultObjectSize) const { return elementSize(defaultObjectSize); }
     virtual const KURL& sourceURL() const { return blankURL(); }
     virtual bool isOpaque() const { return false; }
+
+    virtual int sourceWidth() = 0;
+    virtual int sourceHeight() = 0;
 
 protected:
     virtual ~CanvasImageSource() { }

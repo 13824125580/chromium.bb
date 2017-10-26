@@ -23,21 +23,52 @@
 
 namespace cc {
 
-scoped_ptr<ProxyMain> ProxyMain::CreateThreaded(
+Profiler *s_profiler;
+
+class ProfilerScope final {
+    Profiler *profiler_;
+    int routing_id_;
+
+  public:
+    ProfilerScope(Profiler *profiler, int routing_id);
+    ~ProfilerScope();
+};
+
+ProfilerScope::ProfilerScope(Profiler *profiler, int routing_id)
+    : profiler_(profiler)
+    , routing_id_(routing_id)
+{
+  if (profiler_) {
+    profiler_->beginProfile(routing_id_);
+  }
+}
+
+ProfilerScope::~ProfilerScope()
+{
+  if (profiler_) {
+    profiler_->endProfile(routing_id_);
+  }
+}
+
+void ProxyMain::SetProfiler(Profiler *profiler) {
+  s_profiler = profiler;
+}
+
+std::unique_ptr<ProxyMain> ProxyMain::CreateThreaded(
     LayerTreeHost* layer_tree_host,
     TaskRunnerProvider* task_runner_provider) {
-  scoped_ptr<ProxyMain> proxy_main(
+  std::unique_ptr<ProxyMain> proxy_main(
       new ProxyMain(layer_tree_host, task_runner_provider));
   proxy_main->SetChannel(
       ThreadedChannel::Create(proxy_main.get(), task_runner_provider));
   return proxy_main;
 }
 
-scoped_ptr<ProxyMain> ProxyMain::CreateRemote(
+std::unique_ptr<ProxyMain> ProxyMain::CreateRemote(
     RemoteProtoChannel* remote_proto_channel,
     LayerTreeHost* layer_tree_host,
     TaskRunnerProvider* task_runner_provider) {
-  scoped_ptr<ProxyMain> proxy_main(
+  std::unique_ptr<ProxyMain> proxy_main(
       new ProxyMain(layer_tree_host, task_runner_provider));
   proxy_main->SetChannel(RemoteChannelMain::Create(
       remote_proto_channel, proxy_main.get(), task_runner_provider));
@@ -66,7 +97,7 @@ ProxyMain::~ProxyMain() {
   DCHECK(!started_);
 }
 
-void ProxyMain::SetChannel(scoped_ptr<ChannelMain> channel_main) {
+void ProxyMain::SetChannel(std::unique_ptr<ChannelMain> channel_main) {
   DCHECK(!channel_main_);
   channel_main_ = std::move(channel_main);
 }
@@ -93,7 +124,7 @@ void ProxyMain::DidCommitAndDrawFrame() {
   layer_tree_host_->DidCommitAndDrawFrame();
 }
 
-void ProxyMain::SetAnimationEvents(scoped_ptr<AnimationEvents> events) {
+void ProxyMain::SetAnimationEvents(std::unique_ptr<AnimationEvents> events) {
   TRACE_EVENT0("cc", "ProxyMain::SetAnimationEvents");
   DCHECK(IsMainThread());
   layer_tree_host_->SetAnimationEvents(std::move(events));
@@ -106,6 +137,7 @@ void ProxyMain::DidLoseOutputSurface() {
 }
 
 void ProxyMain::RequestNewOutputSurface() {
+  TRACE_EVENT0("cc", "ProxyMain::RequestNewOutputSurface");
   DCHECK(IsMainThread());
   layer_tree_host_->RequestNewOutputSurface();
 }
@@ -129,16 +161,11 @@ void ProxyMain::DidCompletePageScaleAnimation() {
   layer_tree_host_->DidCompletePageScaleAnimation();
 }
 
-void ProxyMain::PostFrameTimingEventsOnMain(
-    scoped_ptr<FrameTimingTracker::CompositeTimingSet> composite_events,
-    scoped_ptr<FrameTimingTracker::MainFrameTimingSet> main_frame_events) {
-  DCHECK(IsMainThread());
-  layer_tree_host_->RecordFrameTimingEvents(std::move(composite_events),
-                                            std::move(main_frame_events));
-}
-
 void ProxyMain::BeginMainFrame(
-    scoped_ptr<BeginMainFrameAndCommitState> begin_main_frame_state) {
+    std::unique_ptr<BeginMainFrameAndCommitState> begin_main_frame_state) {
+
+  ProfilerScope scope(s_profiler, layer_tree_host_->GetRoutingId());
+
   benchmark_instrumentation::ScopedBeginFrameTask begin_frame_task(
       benchmark_instrumentation::kDoBeginFrame,
       begin_main_frame_state->begin_frame_id);
@@ -186,6 +213,11 @@ void ProxyMain::BeginMainFrame(
 
   layer_tree_host_->ApplyScrollAndScale(
       begin_main_frame_state->scroll_info.get());
+
+  if (begin_main_frame_state->begin_frame_callbacks) {
+    for (auto& callback : *begin_main_frame_state->begin_frame_callbacks)
+      callback.Run();
+  }
 
   layer_tree_host_->WillBeginMainFrame();
 
@@ -289,12 +321,6 @@ void ProxyMain::SetVisible(bool visible) {
   channel_main_->SetVisibleOnImpl(visible);
 }
 
-void ProxyMain::SetThrottleFrameProduction(bool throttle) {
-  TRACE_EVENT1("cc", "ProxyMain::SetThrottleFrameProduction", "throttle",
-               throttle);
-  channel_main_->SetThrottleFrameProductionOnImpl(throttle);
-}
-
 const RendererCapabilities& ProxyMain::GetRendererCapabilities() const {
   DCHECK(IsMainThread());
   DCHECK(!layer_tree_host_->output_surface_lost());
@@ -388,7 +414,7 @@ void ProxyMain::MainThreadHasStoppedFlinging() {
 }
 
 void ProxyMain::Start(
-    scoped_ptr<BeginFrameSource> external_begin_frame_source) {
+    std::unique_ptr<BeginFrameSource> external_begin_frame_source) {
   DCHECK(IsMainThread());
   DCHECK(layer_tree_host_->IsThreaded() || layer_tree_host_->IsRemoteServer());
   DCHECK(channel_main_);
@@ -413,6 +439,11 @@ void ProxyMain::Stop() {
   started_ = false;
 }
 
+void ProxyMain::SetMutator(std::unique_ptr<LayerTreeMutator> mutator) {
+  TRACE_EVENT0("compositor-worker", "ThreadProxy::SetMutator");
+  channel_main_->InitializeMutatorOnImpl(std::move(mutator));
+}
+
 bool ProxyMain::SupportsImplScrolling() const {
   return true;
 }
@@ -428,14 +459,6 @@ bool ProxyMain::MainFrameWillHappenForTesting() {
     completion.Wait();
   }
   return main_frame_will_happen;
-}
-
-void ProxyMain::SetChildrenNeedBeginFrames(bool children_need_begin_frames) {
-  NOTREACHED() << "Only used by SingleThreadProxy";
-}
-
-void ProxyMain::SetAuthoritativeVSyncInterval(const base::TimeDelta& interval) {
-  NOTREACHED() << "Only used by SingleProxyMain";
 }
 
 void ProxyMain::ReleaseOutputSurface() {

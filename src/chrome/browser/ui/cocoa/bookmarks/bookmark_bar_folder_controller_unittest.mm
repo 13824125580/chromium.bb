@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <cmath>
+
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -20,8 +22,7 @@
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "ui/base/cocoa/animation_utils.h"
-
-#include <cmath>
+#include "ui/base/cocoa/cocoa_base_utils.h"
 
 using base::ASCIIToUTF16;
 using bookmarks::BookmarkModel;
@@ -169,12 +170,10 @@ class BookmarkBarFolderControllerTest : public CocoaProfileTest {
     model->AddURL(folderB, folderB->child_count(), ASCIIToUTF16("t"),
                   GURL("http://www.google.com/c"));
 
-    bar_.reset(
-      [[BookmarkBarControllerChildFolderRedirect alloc]
-          initWithBrowser:browser()
-             initialWidth:300
-                 delegate:nil
-           resizeDelegate:nil]);
+    bar_.reset([[BookmarkBarControllerChildFolderRedirect alloc]
+        initWithBrowser:browser()
+           initialWidth:300
+               delegate:nil]);
     [bar_ loaded:model];
     // Make parent frame for bookmark bar then open it.
     NSRect frame = [[test_window() contentView] frame];
@@ -269,8 +268,8 @@ TEST_F(BookmarkBarFolderControllerTest, BasicPosition) {
   NSPoint buttonOriginInWindow =
       [parentButton convertRect:[parentButton bounds]
                          toView:nil].origin;
-  NSPoint buttonOriginInScreen =
-      [[parentButton window] convertBaseToScreen:buttonOriginInWindow];
+  NSPoint buttonOriginInScreen = ui::ConvertPointFromWindowToScreen(
+      [parentButton window], buttonOriginInWindow);
   // Within margin
   EXPECT_LE(std::abs(pt.x - buttonOriginInScreen.x),
             bookmarks::kBookmarkMenuOverlap + 1);
@@ -622,7 +621,7 @@ TEST_F(BookmarkBarFolderControllerTest, MenuPlacementWhileScrollingDeleting) {
   // make sure the top has not moved.
   oldTop = newTop;
   const CGFloat scrollOneBookmark = bookmarks::kBookmarkFolderButtonHeight +
-      bookmarks::kBookmarkVerticalPadding;
+      bookmarks::BookmarkVerticalPadding();
   NSUInteger buttonCounter = 0;
   NSUInteger extraButtonLimit = 3;
   while (![bbfc canScrollDown] || extraButtonLimit > 0) {
@@ -722,16 +721,15 @@ class BookmarkBarFolderControllerMenuTest : public CocoaProfileTest {
     parent_view_.reset([[NSView alloc] initWithFrame:parent_frame]);
     [parent_view_ setHidden:YES];
     bar_.reset([[BookmarkBarController alloc]
-                initWithBrowser:browser()
-                   initialWidth:NSWidth(parent_frame)
-                       delegate:nil
-                 resizeDelegate:resizeDelegate_.get()]);
+        initWithBrowser:browser()
+           initialWidth:NSWidth(parent_frame)
+               delegate:nil]);
     InstallAndToggleBar(bar_.get());
   }
 
   void InstallAndToggleBar(BookmarkBarController* bar) {
-    // Force loading of the nib.
-    [bar view];
+    // Forces loading of the nib.
+    [[bar controlledView] setResizeDelegate:resizeDelegate_];
     // Awkwardness to look like we've been installed.
     [parent_view_ addSubview:[bar view]];
     NSRect frame = [[[bar view] superview] frame];
@@ -775,7 +773,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveBarBookmarkToFolder) {
   BookmarkButton* draggedButton = [bar_ buttonWithTitleEqualTo:@"1b"];
   ASSERT_TRUE(draggedButton);
   CGFloat horizontalShift =
-      NSWidth([draggedButton frame]) + bookmarks::kBookmarkHorizontalPadding;
+      NSWidth([draggedButton frame]) + bookmarks::BookmarkHorizontalPadding();
   BookmarkButton* targetButton =
       [folderController buttonWithTitleEqualTo:@"2f1b"];
   ASSERT_TRUE(targetButton);
@@ -1286,8 +1284,10 @@ TEST_F(BookmarkBarFolderControllerMenuTest, MenuSizingAndScrollArrows) {
   EXPECT_TRUE(folderController);
   NSWindow* folderWindow = [folderController window];
   EXPECT_TRUE(folderWindow);
-  CGFloat expectedHeight = (CGFloat)bookmarks::kBookmarkFolderButtonHeight +
-      (2*bookmarks::kBookmarkVerticalPadding);
+  CGFloat expectedHeight =
+      (CGFloat)bookmarks::kBookmarkFolderButtonHeight +
+      bookmarks::BookmarkTopVerticalPadding() +
+      bookmarks::BookmarkBottomVerticalPadding();
   NSRect windowFrame = [folderWindow frame];
   CGFloat windowHeight = NSHeight(windowFrame);
   EXPECT_CGFLOAT_EQ(expectedHeight, windowHeight);
@@ -1595,18 +1595,20 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DropPositionIndicator) {
   EXPECT_TRUE(folder);
 
   // Test a series of points starting at the top of the folder.
-  const CGFloat yOffset = 0.5 * bookmarks::kBookmarkVerticalPadding;
+  const CGFloat yTopOffset = 0.5 * bookmarks::BookmarkTopVerticalPadding();
+  const CGFloat yBottomOffset =
+      0.5 * bookmarks::BookmarkBottomVerticalPadding();
   BookmarkButton* targetButton = [folder buttonWithTitleEqualTo:@"2f1b"];
   ASSERT_TRUE(targetButton);
   NSPoint targetPoint = [targetButton top];
   CGFloat pos = [folder indicatorPosForDragToPoint:targetPoint];
-  EXPECT_CGFLOAT_EQ(targetPoint.y + yOffset, pos);
+  EXPECT_CGFLOAT_EQ(targetPoint.y + yTopOffset, pos);
   pos = [folder indicatorPosForDragToPoint:[targetButton bottom]];
   targetButton = [folder buttonWithTitleEqualTo:@"2f2f"];
-  EXPECT_CGFLOAT_EQ([targetButton top].y + yOffset, pos);
+  EXPECT_CGFLOAT_EQ([targetButton top].y + yTopOffset, pos);
   pos = [folder indicatorPosForDragToPoint:NSMakePoint(10,0)];
   targetButton = [folder buttonWithTitleEqualTo:@"2f3b"];
-  EXPECT_CGFLOAT_EQ([targetButton bottom].y - yOffset, pos);
+  EXPECT_CGFLOAT_EQ([targetButton bottom].y - yBottomOffset, pos);
 }
 
 @interface BookmarkBarControllerNoDelete : BookmarkBarController
@@ -1627,10 +1629,9 @@ class BookmarkBarFolderControllerClosingTest : public
     ASSERT_TRUE(browser());
 
     bar_.reset([[BookmarkBarControllerNoDelete alloc]
-                initWithBrowser:browser()
-                   initialWidth:NSWidth([parent_view_ frame])
-                       delegate:nil
-                 resizeDelegate:resizeDelegate_.get()]);
+        initWithBrowser:browser()
+           initialWidth:NSWidth([parent_view_ frame])
+               delegate:nil]);
     InstallAndToggleBar(bar_.get());
   }
 };

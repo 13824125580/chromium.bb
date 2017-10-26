@@ -33,6 +33,7 @@ class CursorIPC : public DrmCursorProxy {
                  const gfx::Point& point,
                  int frame_delay_ms) override;
   void Move(gfx::AcceleratedWidget window, const gfx::Point& point) override;
+  void InitializeOnEvdev() override;
 
  private:
   bool IsConnected();
@@ -64,6 +65,8 @@ void CursorIPC::CursorSet(gfx::AcceleratedWidget window,
 void CursorIPC::Move(gfx::AcceleratedWidget window, const gfx::Point& point) {
   Send(new OzoneGpuMsg_CursorMove(window, point));
 }
+
+void CursorIPC::InitializeOnEvdev() {}
 
 void CursorIPC::Send(IPC::Message* message) {
   if (IsConnected() &&
@@ -251,7 +254,8 @@ bool DrmGpuPlatformSupportHost::OnMessageReceivedForDrmOverlayManager(
   IPC_BEGIN_MESSAGE_MAP(DrmGpuPlatformSupportHost, message)
     IPC_MESSAGE_HANDLER(OzoneHostMsg_OverlayCapabilitiesReceived,
                         OnOverlayResult)
-  // TODO(rjk): insert the extra
+    // TODO(rjk): insert the extra
+    IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
 }
@@ -290,10 +294,13 @@ bool DrmGpuPlatformSupportHost::GpuSetHDCPState(int64_t display_id,
   return Send(new OzoneGpuMsg_SetHDCPState(display_id, state));
 }
 
-bool DrmGpuPlatformSupportHost::GpuSetGammaRamp(
+bool DrmGpuPlatformSupportHost::GpuSetColorCorrection(
     int64_t display_id,
-    const std::vector<GammaRampRGBEntry>& lut) {
-  return Send(new OzoneGpuMsg_SetGammaRamp(display_id, lut));
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
+  return Send(new OzoneGpuMsg_SetColorCorrection(display_id, degamma_lut,
+                                                 gamma_lut, correction_matrix));
 }
 
 bool DrmGpuPlatformSupportHost::GpuDestroyWindow(

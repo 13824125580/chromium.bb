@@ -6,8 +6,9 @@ extern "C" {
 #include <X11/Xlib.h>
 }
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_image_glx.h"
 #include "ui/gl/gl_surface_glx.h"
@@ -107,7 +108,7 @@ GLImageGLX::~GLImageGLX() {
 }
 
 bool GLImageGLX::Initialize(XID pixmap) {
-  if (!gfx::GLSurfaceGLX::IsTextureFromPixmapSupported()) {
+  if (!GLSurfaceGLX::IsTextureFromPixmapSupported()) {
     DVLOG(0) << "GLX_EXT_texture_from_pixmap not supported.";
     return false;
   }

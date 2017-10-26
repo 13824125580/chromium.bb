@@ -6,8 +6,10 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/histogram_tester.h"
+#include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/browser/ui/website_settings/mock_permission_bubble_factory.h"
 #include "chrome/browser/ui/website_settings/mock_permission_bubble_request.h"
 #include "chrome/browser/ui/website_settings/permission_bubble_manager.h"
@@ -20,8 +22,8 @@ class PermissionBubbleManagerTest : public ChromeRenderViewHostTestHarness {
  public:
   PermissionBubbleManagerTest()
       : ChromeRenderViewHostTestHarness(),
-        request1_("test1"),
-        request2_("test2"),
+        request1_("test1", PermissionBubbleType::QUOTA),
+        request2_("test2", PermissionBubbleType::DOWNLOAD),
         iframe_request_same_domain_("iframe",
                                     GURL("http://www.google.com/some/url")),
         iframe_request_other_domain_("iframe",
@@ -51,6 +53,10 @@ class PermissionBubbleManagerTest : public ChromeRenderViewHostTestHarness {
     manager_->Accept();
   }
 
+  void Deny() {
+    manager_->Deny();
+  }
+
   void Closing() {
     manager_->Closing();
   }
@@ -58,12 +64,12 @@ class PermissionBubbleManagerTest : public ChromeRenderViewHostTestHarness {
   void WaitForFrameLoad() {
     // PermissionBubbleManager ignores all parameters. Yay?
     manager_->DocumentLoadedInFrame(NULL);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void WaitForCoalescing() {
     manager_->DocumentOnLoadCompletedInMainFrame();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void MockTabSwitchAway() { manager_->HideBubble(); }
@@ -80,8 +86,8 @@ class PermissionBubbleManagerTest : public ChromeRenderViewHostTestHarness {
   MockPermissionBubbleRequest request2_;
   MockPermissionBubbleRequest iframe_request_same_domain_;
   MockPermissionBubbleRequest iframe_request_other_domain_;
-  scoped_ptr<PermissionBubbleManager> manager_;
-  scoped_ptr<MockPermissionBubbleFactory> view_factory_;
+  std::unique_ptr<PermissionBubbleManager> manager_;
+  std::unique_ptr<MockPermissionBubbleFactory> view_factory_;
 };
 
 TEST_F(PermissionBubbleManagerTest, SingleRequest) {
@@ -443,7 +449,158 @@ TEST_F(PermissionBubbleManagerTest, RequestsDontNeedUserGesture) {
   manager_->AddRequest(&request1_);
   manager_->AddRequest(&iframe_request_other_domain_);
   manager_->AddRequest(&request2_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(view_factory_->is_visible());
+}
+
+TEST_F(PermissionBubbleManagerTest, UMAForSimpleAcceptedBubble) {
+  base::HistogramTester histograms;
+
+  manager_->AddRequest(&request1_);
+  manager_->DisplayPendingRequests();
+  WaitForCoalescing();
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptShown,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA),
+      1);
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptRequestsPerPrompt, 1, 1);
+
+  ToggleAccept(0, true);
+  Accept();
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptAccepted,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA), 1);
+}
+
+TEST_F(PermissionBubbleManagerTest, UMAForSimpleDeniedBubble) {
+  base::HistogramTester histograms;
+
+  manager_->AddRequest(&request1_);
+  manager_->DisplayPendingRequests();
+  WaitForCoalescing();
+  // No need to test UMA for showing prompts again, they were tested in
+  // UMAForSimpleAcceptedBubble.
+
+  Deny();
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA), 1);
+}
+
+// This code path (calling Accept on a non-merged bubble, with no accepted
+// permission) would never be used in actual Chrome, but its still tested for
+// completeness.
+TEST_F(PermissionBubbleManagerTest, UMAForSimpleDeniedBubbleAlternatePath) {
+  base::HistogramTester histograms;
+
+  manager_->AddRequest(&request1_);
+  manager_->DisplayPendingRequests();
+  WaitForCoalescing();
+  // No need to test UMA for showing prompts again, they were tested in
+  // UMAForSimpleAcceptedBubble.
+
+  ToggleAccept(0, false);
+  Accept();
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA), 1);
+}
+
+TEST_F(PermissionBubbleManagerTest, UMAForMergedAcceptedBubble) {
+  base::HistogramTester histograms;
+
+  manager_->AddRequest(&request1_);
+  manager_->AddRequest(&request2_);
+  manager_->DisplayPendingRequests();
+  WaitForCoalescing();
+
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptShown,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::MULTIPLE),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleTypes,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleTypes,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::DOWNLOAD),
+      1);
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptRequestsPerPrompt, 2, 1);
+
+  ToggleAccept(0, true);
+  ToggleAccept(1, true);
+  Accept();
+
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptAccepted,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::MULTIPLE),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleAccepted,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleAccepted,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::DOWNLOAD),
+      1);
+}
+
+TEST_F(PermissionBubbleManagerTest, UMAForMergedMixedBubble) {
+  base::HistogramTester histograms;
+
+  manager_->AddRequest(&request1_);
+  manager_->AddRequest(&request2_);
+  manager_->DisplayPendingRequests();
+  WaitForCoalescing();
+  // No need to test UMA for showing prompts again, they were tested in
+  // UMAForMergedAcceptedBubble.
+
+  ToggleAccept(0, true);
+  ToggleAccept(1, false);
+  Accept();
+
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::MULTIPLE),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleAccepted,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::DOWNLOAD),
+      1);
+}
+
+TEST_F(PermissionBubbleManagerTest, UMAForMergedDeniedBubble) {
+  base::HistogramTester histograms;
+
+  manager_->AddRequest(&request1_);
+  manager_->AddRequest(&request2_);
+  manager_->DisplayPendingRequests();
+  WaitForCoalescing();
+  // No need to test UMA for showing prompts again, they were tested in
+  // UMAForMergedAcceptedBubble.
+
+  ToggleAccept(0, false);
+  ToggleAccept(1, false);
+  Accept();
+
+  histograms.ExpectUniqueSample(
+      PermissionUmaUtil::kPermissionsPromptDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::MULTIPLE),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::QUOTA),
+      1);
+  histograms.ExpectBucketCount(
+      PermissionUmaUtil::kPermissionsPromptMergedBubbleDenied,
+      static_cast<base::HistogramBase::Sample>(PermissionBubbleType::DOWNLOAD),
+      1);
 }

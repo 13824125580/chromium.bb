@@ -49,7 +49,8 @@ class RendererMediaPlayerManager :
                   int demuxer_client_id,
                   const GURL& frame_url,
                   bool allow_credentials,
-                  int delegate_id) override;
+                  int delegate_id,
+                  int media_session_id) override;
 
   // Starts the player.
   void Start(int player_id) override;
@@ -115,6 +116,9 @@ class RendererMediaPlayerManager :
 #endif  // defined(VIDEO_HOLE)
 
  private:
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   // Message handlers.
   void OnMediaMetadataChanged(int player_id,
                               base::TimeDelta duration,
@@ -136,6 +140,7 @@ class RendererMediaPlayerManager :
   void OnConnectedToRemoteDevice(int player_id,
       const std::string& remote_playback_message);
   void OnDisconnectedFromRemoteDevice(int player_id);
+  void OnCancelledRemotePlaybackRequest(int player_id);
   void OnDidExitFullscreen(int player_id);
   void OnDidEnterFullscreen(int player_id);
   void OnPlayerPlay(int player_id);

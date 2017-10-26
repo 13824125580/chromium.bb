@@ -5,8 +5,9 @@
 #ifndef BLIMP_NET_BLIMP_CONNECTION_H_
 #define BLIMP_NET_BLIMP_CONNECTION_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "blimp/net/blimp_net_export.h"
 #include "blimp/net/connection_error_observer.h"
@@ -15,6 +16,7 @@ namespace blimp {
 
 class BlimpMessageProcessor;
 class BlimpMessagePump;
+class BlimpMessageSender;
 class PacketReader;
 class PacketWriter;
 
@@ -22,8 +24,8 @@ class PacketWriter;
 // a network connection.
 class BLIMP_NET_EXPORT BlimpConnection : public ConnectionErrorObserver {
  public:
-  BlimpConnection(scoped_ptr<PacketReader> reader,
-                  scoped_ptr<PacketWriter> writer);
+  BlimpConnection(std::unique_ptr<PacketReader> reader,
+                  std::unique_ptr<PacketWriter> writer);
 
   ~BlimpConnection() override;
 
@@ -42,17 +44,21 @@ class BLIMP_NET_EXPORT BlimpConnection : public ConnectionErrorObserver {
   virtual BlimpMessageProcessor* GetOutgoingMessageProcessor();
 
  protected:
+  class EndConnectionFilter;
+  friend class EndConnectionFilter;
+
   BlimpConnection();
 
   // ConnectionErrorObserver implementation.
   void OnConnectionError(int error) override;
 
  private:
-  scoped_ptr<PacketReader> reader_;
-  scoped_ptr<BlimpMessagePump> message_pump_;
-  scoped_ptr<PacketWriter> writer_;
-  scoped_ptr<BlimpMessageProcessor> outgoing_msg_processor_;
+  std::unique_ptr<PacketReader> reader_;
+  std::unique_ptr<BlimpMessagePump> message_pump_;
+  std::unique_ptr<PacketWriter> writer_;
+  std::unique_ptr<BlimpMessageSender> outgoing_msg_processor_;
   base::ObserverList<ConnectionErrorObserver> error_observers_;
+  std::unique_ptr<EndConnectionFilter> end_connection_filter_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpConnection);
 };

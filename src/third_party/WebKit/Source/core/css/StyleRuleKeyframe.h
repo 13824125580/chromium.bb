@@ -6,6 +6,7 @@
 #define StyleRuleKeyframe_h
 
 #include "core/css/StyleRule.h"
+#include <memory>
 
 namespace blink {
 
@@ -13,11 +14,10 @@ class MutableStylePropertySet;
 class StylePropertySet;
 
 class StyleRuleKeyframe final : public StyleRuleBase {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(StyleRuleKeyframe);
 public:
-    static PassRefPtrWillBeRawPtr<StyleRuleKeyframe> create(PassOwnPtr<Vector<double>> keys, PassRefPtrWillBeRawPtr<StylePropertySet> properties)
+    static StyleRuleKeyframe* create(std::unique_ptr<Vector<double>> keys, StylePropertySet* properties)
     {
-        return adoptRefWillBeNoop(new StyleRuleKeyframe(keys, properties));
+        return new StyleRuleKeyframe(std::move(keys), properties);
     }
 
     // Exposed to JavaScript.
@@ -35,9 +35,9 @@ public:
     DECLARE_TRACE_AFTER_DISPATCH();
 
 private:
-    StyleRuleKeyframe(PassOwnPtr<Vector<double>>, PassRefPtrWillBeRawPtr<StylePropertySet>);
+    StyleRuleKeyframe(std::unique_ptr<Vector<double>>, StylePropertySet*);
 
-    RefPtrWillBeMember<StylePropertySet> m_properties;
+    Member<StylePropertySet> m_properties;
     Vector<double> m_keys;
 };
 

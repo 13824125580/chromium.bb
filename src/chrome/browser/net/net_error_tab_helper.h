@@ -105,10 +105,9 @@ class NetErrorTabHelper
 
   // Relates to offline pages handling.
 #if BUILDFLAG(ANDROID_JAVA_UI)
-  void SetOfflinePageInfo(content::RenderFrameHost* render_frame_host,
-                          const GURL& url);
+  void UpdateHasOfflinePages(content::RenderFrameHost* render_frame_host);
+  void SetHasOfflinePages(int frame_tree_node_id, bool has_offline_pages);
   void ShowOfflinePages();
-  void LoadOfflineCopy(const GURL& url);
   bool IsFromErrorPage() const;
 #endif  // BUILDFLAG(ANDROID_JAVA_UI)
 

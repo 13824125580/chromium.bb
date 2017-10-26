@@ -4,6 +4,8 @@
 
 #include "net/quic/quic_client_push_promise_index.h"
 
+#include <string>
+
 #include "net/quic/spdy_utils.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_quic_client_promised_info.h"
@@ -13,6 +15,7 @@
 using testing::_;
 using testing::Return;
 using testing::StrictMock;
+using std::string;
 
 namespace net {
 namespace test {
@@ -25,7 +28,7 @@ class MockQuicClientSession : public QuicClientSession {
       : QuicClientSession(
             DefaultQuicConfig(),
             connection,
-            QuicServerId("example.com", 80, PRIVACY_MODE_DISABLED),
+            QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
             &crypto_config_,
             push_promise_index),
         crypto_config_(CryptoTestUtils::ProofVerifierForTesting()) {}
@@ -42,8 +45,9 @@ class MockQuicClientSession : public QuicClientSession {
 class QuicClientPushPromiseIndexTest : public ::testing::Test {
  public:
   QuicClientPushPromiseIndexTest()
-      : connection_(
-            new StrictMock<MockConnection>(&helper_, Perspective::IS_CLIENT)),
+      : connection_(new StrictMock<MockQuicConnection>(&helper_,
+                                                       &alarm_factory_,
+                                                       Perspective::IS_CLIENT)),
         session_(connection_, &index_),
         promised_(&session_, kServerDataStreamId1, url_) {
     FLAGS_quic_supports_push_promise = true;
@@ -55,8 +59,9 @@ class QuicClientPushPromiseIndexTest : public ::testing::Test {
     url_ = SpdyUtils::GetUrlFromHeaderBlock(request_);
   }
 
-  MockConnectionHelper helper_;
-  StrictMock<MockConnection>* connection_;
+  MockQuicConnectionHelper helper_;
+  MockAlarmFactory alarm_factory_;
+  StrictMock<MockQuicConnection>* connection_;
   MockQuicClientSession session_;
   QuicClientPushPromiseIndex index_;
   SpdyHeaderBlock request_;
@@ -88,6 +93,15 @@ TEST_F(QuicClientPushPromiseIndexTest, TryRequestFailure) {
 
 TEST_F(QuicClientPushPromiseIndexTest, TryNoPromise) {
   EXPECT_EQ(index_.Try(request_, nullptr, &handle_), QUIC_FAILURE);
+}
+
+TEST_F(QuicClientPushPromiseIndexTest, GetNoPromise) {
+  EXPECT_EQ(index_.GetPromised(url_), nullptr);
+}
+
+TEST_F(QuicClientPushPromiseIndexTest, GetPromise) {
+  (*index_.promised_by_url())[url_] = &promised_;
+  EXPECT_EQ(index_.GetPromised(url_), &promised_);
 }
 
 }  // namespace

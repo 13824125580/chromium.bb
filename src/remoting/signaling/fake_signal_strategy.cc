@@ -12,7 +12,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "third_party/webrtc/libjingle/xmllite/xmlelement.h"
 #include "third_party/webrtc/libjingle/xmpp/constants.h"
 
@@ -32,7 +32,6 @@ FakeSignalStrategy::FakeSignalStrategy(const std::string& jid)
       jid_(jid),
       last_id_(0),
       weak_factory_(this) {
-
 }
 
 FakeSignalStrategy::~FakeSignalStrategy() {
@@ -98,23 +97,22 @@ void FakeSignalStrategy::RemoveListener(Listener* listener) {
   listeners_.RemoveObserver(listener);
 }
 
-bool FakeSignalStrategy::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
+bool FakeSignalStrategy::SendStanza(std::unique_ptr<buzz::XmlElement> stanza) {
   DCHECK(CalledOnValidThread());
 
   stanza->SetAttr(buzz::QN_FROM, jid_);
 
-  if (!peer_callback_.is_null()) {
-    if (send_delay_ != base::TimeDelta()) {
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(peer_callback_, base::Passed(&stanza)),
-          send_delay_);
-    } else {
-      peer_callback_.Run(std::move(stanza));
-    }
-    return true;
-  } else {
+  if (peer_callback_.is_null())
     return false;
+
+  if (send_delay_.is_zero()) {
+    peer_callback_.Run(std::move(stanza));
+  } else {
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, base::Bind(peer_callback_, base::Passed(&stanza)),
+        send_delay_);
   }
+  return true;
 }
 
 std::string FakeSignalStrategy::GetNextId() {
@@ -126,14 +124,14 @@ std::string FakeSignalStrategy::GetNextId() {
 void FakeSignalStrategy::DeliverMessageOnThread(
     scoped_refptr<base::SingleThreadTaskRunner> thread,
     base::WeakPtr<FakeSignalStrategy> target,
-    scoped_ptr<buzz::XmlElement> stanza) {
+    std::unique_ptr<buzz::XmlElement> stanza) {
   thread->PostTask(FROM_HERE,
                    base::Bind(&FakeSignalStrategy::OnIncomingMessage,
                               target, base::Passed(&stanza)));
 }
 
 void FakeSignalStrategy::OnIncomingMessage(
-    scoped_ptr<buzz::XmlElement> stanza) {
+    std::unique_ptr<buzz::XmlElement> stanza) {
   DCHECK(CalledOnValidThread());
 
   buzz::XmlElement* stanza_ptr = stanza.get();

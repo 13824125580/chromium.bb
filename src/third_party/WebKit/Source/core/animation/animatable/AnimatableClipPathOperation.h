@@ -33,7 +33,7 @@
 
 #include "core/CoreExport.h"
 #include "core/animation/animatable/AnimatableValue.h"
-#include "core/layout/ClipPathOperation.h"
+#include "core/style/ClipPathOperation.h"
 
 namespace blink {
 
@@ -44,7 +44,7 @@ public:
     {
         return adoptRef(new AnimatableClipPathOperation(operation));
     }
-    ClipPathOperation* clipPathOperation() const { return m_operation.get(); }
+    ClipPathOperation* getClipPathOperation() const { return m_operation.get(); }
 
 protected:
     PassRefPtr<AnimatableValue> interpolateTo(const AnimatableValue*, double fraction) const override;

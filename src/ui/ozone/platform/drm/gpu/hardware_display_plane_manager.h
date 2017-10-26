@@ -38,6 +38,7 @@ struct HardwareDisplayPlaneList {
 
   struct PageFlipInfo {
     PageFlipInfo(uint32_t crtc_id, uint32_t framebuffer, CrtcController* crtc);
+    PageFlipInfo(const PageFlipInfo& other);
     ~PageFlipInfo();
 
     uint32_t crtc_id;
@@ -91,7 +92,7 @@ class HardwareDisplayPlaneManager {
   virtual bool Commit(HardwareDisplayPlaneList* plane_list,
                       bool test_only) = 0;
 
-  const std::vector<scoped_ptr<HardwareDisplayPlane>>& planes() {
+  const std::vector<std::unique_ptr<HardwareDisplayPlane>>& planes() {
     return planes_;
   }
 
@@ -111,8 +112,9 @@ class HardwareDisplayPlaneManager {
                             const gfx::Rect& src_rect,
                             CrtcController* crtc) = 0;
 
-  virtual scoped_ptr<HardwareDisplayPlane> CreatePlane(uint32_t plane_id,
-                                                       uint32_t possible_crtcs);
+  virtual std::unique_ptr<HardwareDisplayPlane> CreatePlane(
+      uint32_t plane_id,
+      uint32_t possible_crtcs);
 
   // Finds the plane located at or after |*index| that is not in use and can
   // be used with |crtc_index|.
@@ -138,7 +140,7 @@ class HardwareDisplayPlaneManager {
   // calls to control it. Not owned.
   DrmDevice* drm_;
 
-  std::vector<scoped_ptr<HardwareDisplayPlane>> planes_;
+  std::vector<std::unique_ptr<HardwareDisplayPlane>> planes_;
   std::vector<uint32_t> crtcs_;
   std::vector<uint32_t> supported_formats_;
 

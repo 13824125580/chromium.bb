@@ -83,6 +83,8 @@ net::URLRequestJob* ServiceWorkerContextRequestHandler::MaybeCreateJob(
       incumbent_resource_id =
           stored_version->script_cache_map()->LookupResourceId(request->url());
     }
+    if (resource_type_ == RESOURCE_TYPE_SERVICE_WORKER)
+      version_->embedded_worker()->OnURLJobCreatedForMainScript();
     return new ServiceWorkerWriteToCacheJob(
         request, network_delegate, resource_type_, context_, version_.get(),
         extra_load_flags, resource_id, incumbent_resource_id);
@@ -90,6 +92,8 @@ net::URLRequestJob* ServiceWorkerContextRequestHandler::MaybeCreateJob(
 
   int64_t resource_id = kInvalidServiceWorkerResourceId;
   if (ShouldReadFromScriptCache(request->url(), &resource_id)) {
+    if (resource_type_ == RESOURCE_TYPE_SERVICE_WORKER)
+      version_->embedded_worker()->OnURLJobCreatedForMainScript();
     return new ServiceWorkerReadFromCacheJob(request, network_delegate,
                                              resource_type_, context_, version_,
                                              resource_id);
@@ -97,15 +101,6 @@ net::URLRequestJob* ServiceWorkerContextRequestHandler::MaybeCreateJob(
 
   // NULL means use the network.
   return NULL;
-}
-
-void ServiceWorkerContextRequestHandler::GetExtraResponseInfo(
-    ResourceResponseInfo* response_info) const {
-  response_info->was_fetched_via_service_worker = false;
-  response_info->was_fallback_required_by_service_worker = false;
-  response_info->original_url_via_service_worker = GURL();
-  response_info->response_type_via_service_worker =
-      blink::WebServiceWorkerResponseTypeDefault;
 }
 
 bool ServiceWorkerContextRequestHandler::ShouldAddToScriptCache(

@@ -13,6 +13,7 @@
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/content_settings/core/common/content_settings_types.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/infobars/core/infobar.h"
 #include "content/public/browser/web_contents.h"
@@ -24,13 +25,21 @@
 
 namespace {
 
-enum DevicePermissionActions {
-  kAllowHttps = 0,
-  kAllowHttp,
-  kDeny,
-  kCancel,
-  kPermissionActionsMax  // Must always be last!
-};
+const int kGroupedInfobarAudioPosition = 0;
+const int kGroupedInfobarVideoPosition = 1;
+
+// Get a list of content types being requested. Note that the order of the
+// resulting array corresponds to the kGroupedInfobarAudio/VideoPermission
+// constants.
+std::vector<ContentSettingsType> GetContentSettingsTypes(
+    MediaStreamDevicesController* controller) {
+  std::vector<ContentSettingsType> types;
+  if (controller->IsAskingForAudio())
+    types.push_back(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
+  if (controller->IsAskingForVideo())
+    types.push_back(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA);
+  return types;
+}
 
 }  // namespace
 
@@ -39,7 +48,7 @@ MediaStreamInfoBarDelegateAndroid::~MediaStreamInfoBarDelegateAndroid() {}
 // static
 bool MediaStreamInfoBarDelegateAndroid::Create(
     content::WebContents* web_contents,
-    scoped_ptr<MediaStreamDevicesController> controller) {
+    std::unique_ptr<MediaStreamDevicesController> controller) {
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents);
   if (!infobar_service) {
@@ -49,9 +58,10 @@ bool MediaStreamInfoBarDelegateAndroid::Create(
     return false;
   }
 
-  scoped_ptr<infobars::InfoBar> infobar(
-      infobar_service->CreateConfirmInfoBar(scoped_ptr<ConfirmInfoBarDelegate>(
-          new MediaStreamInfoBarDelegateAndroid(std::move(controller)))));
+  std::unique_ptr<infobars::InfoBar> infobar(
+      GroupedPermissionInfoBarDelegate::CreateInfoBar(infobar_service,
+          std::unique_ptr<GroupedPermissionInfoBarDelegate>(
+              new MediaStreamInfoBarDelegateAndroid(std::move(controller)))));
   for (size_t i = 0; i < infobar_service->infobar_count(); ++i) {
     infobars::InfoBar* old_infobar = infobar_service->infobar_at(i);
     if (old_infobar->delegate()->AsMediaStreamInfoBarDelegateAndroid()) {
@@ -63,41 +73,24 @@ bool MediaStreamInfoBarDelegateAndroid::Create(
   return true;
 }
 
-bool MediaStreamInfoBarDelegateAndroid::IsRequestingVideoAccess() const {
-  return controller_->IsAskingForVideo();
-}
-
-bool MediaStreamInfoBarDelegateAndroid::IsRequestingMicrophoneAccess() const {
-  return controller_->IsAskingForAudio();
-}
-
 infobars::InfoBarDelegate::InfoBarIdentifier
 MediaStreamInfoBarDelegateAndroid::GetIdentifier() const {
   return MEDIA_STREAM_INFOBAR_DELEGATE_ANDROID;
 }
 
 MediaStreamInfoBarDelegateAndroid::MediaStreamInfoBarDelegateAndroid(
-    scoped_ptr<MediaStreamDevicesController> controller)
-    : ConfirmInfoBarDelegate(), controller_(std::move(controller)) {
+    std::unique_ptr<MediaStreamDevicesController> controller)
+    : GroupedPermissionInfoBarDelegate(
+          controller->GetOrigin(),
+          GetContentSettingsTypes(controller.get())),
+      controller_(std::move(controller)) {
   DCHECK(controller_.get());
   DCHECK(controller_->IsAskingForAudio() || controller_->IsAskingForVideo());
-}
-
-infobars::InfoBarDelegate::Type
-MediaStreamInfoBarDelegateAndroid::GetInfoBarType() const {
-  return PAGE_ACTION_TYPE;
-}
-
-int MediaStreamInfoBarDelegateAndroid::GetIconId() const {
-  return controller_->IsAskingForVideo() ? IDR_INFOBAR_MEDIA_STREAM_CAMERA
-                                         : IDR_INFOBAR_MEDIA_STREAM_MIC;
 }
 
 void MediaStreamInfoBarDelegateAndroid::InfoBarDismissed() {
   // Deny the request if the infobar was closed with the 'x' button, since
   // we don't want WebRTC to be waiting for an answer that will never come.
-  UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions", kCancel,
-                            kPermissionActionsMax);
   controller_->Cancelled();
 }
 
@@ -106,47 +99,19 @@ MediaStreamInfoBarDelegateAndroid::AsMediaStreamInfoBarDelegateAndroid() {
   return this;
 }
 
-base::string16 MediaStreamInfoBarDelegateAndroid::GetMessageText() const {
-  int message_id = IDS_MEDIA_CAPTURE_AUDIO_AND_VIDEO;
-  if (!controller_->IsAskingForAudio())
-    message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY;
-  else if (!controller_->IsAskingForVideo())
-    message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY;
-  return l10n_util::GetStringFUTF16(
-      message_id, base::UTF8ToUTF16(controller_->GetSecurityOriginSpec()));
-}
-
-base::string16 MediaStreamInfoBarDelegateAndroid::GetButtonLabel(
-    InfoBarButton button) const {
-  return l10n_util::GetStringUTF16((button == BUTTON_OK)
-                                       ? IDS_MEDIA_CAPTURE_ALLOW
-                                       : IDS_MEDIA_CAPTURE_BLOCK);
-}
-
 bool MediaStreamInfoBarDelegateAndroid::Accept() {
-  GURL origin(controller_->GetSecurityOriginSpec());
-  if (content::IsOriginSecure(origin)) {
-    UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions", kAllowHttps,
-                              kPermissionActionsMax);
+  if (GetPermissionCount() == 2) {
+    controller_->GroupedRequestFinished(
+        GetAcceptState(kGroupedInfobarAudioPosition),
+        GetAcceptState(kGroupedInfobarVideoPosition));
   } else {
-    UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions", kAllowHttp,
-                              kPermissionActionsMax);
+    DCHECK_EQ(1, GetPermissionCount());
+    controller_->PermissionGranted();
   }
-  controller_->PermissionGranted();
   return true;
 }
 
 bool MediaStreamInfoBarDelegateAndroid::Cancel() {
-  UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions", kDeny,
-                            kPermissionActionsMax);
   controller_->PermissionDenied();
   return true;
-}
-
-base::string16 MediaStreamInfoBarDelegateAndroid::GetLinkText() const {
-  return base::string16();
-}
-
-GURL MediaStreamInfoBarDelegateAndroid::GetLinkURL() const {
-  return GURL(chrome::kMediaAccessLearnMoreUrl);
 }

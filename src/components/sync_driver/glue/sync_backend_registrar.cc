@@ -19,7 +19,7 @@ namespace browser_sync {
 SyncBackendRegistrar::SyncBackendRegistrar(
     const std::string& name,
     sync_driver::SyncClient* sync_client,
-    scoped_ptr<base::Thread> sync_thread,
+    std::unique_ptr<base::Thread> sync_thread,
     const scoped_refptr<base::SingleThreadTaskRunner>& ui_thread,
     const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
     const scoped_refptr<base::SingleThreadTaskRunner>& file_thread)
@@ -51,6 +51,14 @@ SyncBackendRegistrar::SyncBackendRegistrar(
   DCHECK_GT(workers_.size(), 0u);
 }
 
+void SyncBackendRegistrar::RegisterNonBlockingType(syncer::ModelType type) {
+  DCHECK(ui_thread_->BelongsToCurrentThread());
+  base::AutoLock lock(lock_);
+  DCHECK(routing_info_.find(type) == routing_info_.end() ||
+         routing_info_[type] == syncer::GROUP_NON_BLOCKING);
+  non_blocking_types_.Put(type);
+}
+
 void SyncBackendRegistrar::SetInitialTypes(syncer::ModelTypeSet initial_types) {
   base::AutoLock lock(lock_);
 
@@ -63,7 +71,7 @@ void SyncBackendRegistrar::SetInitialTypes(syncer::ModelTypeSet initial_types) {
   // return correct results.
   for (syncer::ModelTypeSet::Iterator it = initial_types.First(); it.Good();
        it.Inc()) {
-    routing_info_[it.Get()] = syncer::GROUP_PASSIVE;
+    routing_info_[it.Get()] = GetInitialGroupForType(it.Get());
   }
 
   if (!workers_.count(syncer::GROUP_HISTORY)) {
@@ -79,6 +87,15 @@ void SyncBackendRegistrar::SetInitialTypes(syncer::ModelTypeSet initial_types) {
   }
 
   last_configured_types_ = syncer::GetRoutingInfoTypes(routing_info_);
+}
+
+void SyncBackendRegistrar::AddRestoredNonBlockingType(syncer::ModelType type) {
+  DCHECK(ui_thread_->BelongsToCurrentThread());
+  base::AutoLock lock(lock_);
+  DCHECK(non_blocking_types_.Has(type));
+  DCHECK(routing_info_.find(type) == routing_info_.end());
+  routing_info_[type] = syncer::GROUP_NON_BLOCKING;
+  last_configured_types_.Put(type);
 }
 
 bool SyncBackendRegistrar::IsNigoriEnabled() const {
@@ -108,7 +125,7 @@ syncer::ModelTypeSet SyncBackendRegistrar::ConfigureDataTypes(
     // Add a newly specified data type as syncer::GROUP_PASSIVE into the
     // routing_info, if it does not already exist.
     if (routing_info_.count(it.Get()) == 0) {
-      routing_info_[it.Get()] = syncer::GROUP_PASSIVE;
+      routing_info_[it.Get()] = GetInitialGroupForType(it.Get());
       newly_added_types.Put(it.Get());
     }
   }
@@ -280,10 +297,12 @@ bool SyncBackendRegistrar::IsOnThreadForGroup(
     case syncer::GROUP_PASSWORD:
       // TODO(sync): How to check we're on the right thread?
       return type == syncer::PASSWORDS;
-    case syncer::MODEL_SAFE_GROUP_COUNT:
-    default:
+    case syncer::GROUP_NON_BLOCKING:
+      // IsOnThreadForGroup shouldn't be called for non-blocking types.
       return false;
   }
+  NOTREACHED();
+  return false;
 }
 
 SyncBackendRegistrar::~SyncBackendRegistrar() {
@@ -330,7 +349,7 @@ void SyncBackendRegistrar::RemoveWorker(syncer::ModelSafeGroup group) {
   }
 }
 
-scoped_ptr<base::Thread> SyncBackendRegistrar::ReleaseSyncThread() {
+std::unique_ptr<base::Thread> SyncBackendRegistrar::ReleaseSyncThread() {
   return std::move(sync_thread_);
 }
 
@@ -349,6 +368,14 @@ void SyncBackendRegistrar::Shutdown() {
 
 base::Thread* SyncBackendRegistrar::sync_thread() {
   return sync_thread_.get();
+}
+
+syncer::ModelSafeGroup SyncBackendRegistrar::GetInitialGroupForType(
+    syncer::ModelType type) const {
+  if (non_blocking_types_.Has(type))
+    return syncer::GROUP_NON_BLOCKING;
+  else
+    return syncer::GROUP_PASSIVE;
 }
 
 }  // namespace browser_sync

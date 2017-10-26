@@ -4,11 +4,13 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/platform_state_store.h"
 
+#include <utility>
+
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/win/registry.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -60,13 +62,13 @@ class PlatformStateStoreWinTest : public ::testing::Test {
         new_profile ? PersistentPrefStore::PREF_READ_ERROR_NO_FILE
                     : PersistentPrefStore::PREF_READ_ERROR_NONE);
     // Ownership of |user_pref_store| is passed to the service.
-    scoped_ptr<syncable_prefs::TestingPrefServiceSyncable> prefs(
+    std::unique_ptr<syncable_prefs::TestingPrefServiceSyncable> prefs(
         new syncable_prefs::TestingPrefServiceSyncable(
             new TestingPrefStore(), user_pref_store, new TestingPrefStore(),
             new user_prefs::PrefRegistrySyncable(), new PrefNotifierImpl()));
     chrome::RegisterUserProfilePrefs(prefs->registry());
     profile_ = profile_manager_.CreateTestingProfile(
-        kProfileName_, prefs.Pass(), base::UTF8ToUTF16(kProfileName_), 0,
+        kProfileName_, std::move(prefs), base::UTF8ToUTF16(kProfileName_), 0,
         std::string(), TestingProfile::TestingFactories());
     if (new_profile)
       ASSERT_TRUE(profile_->IsNewProfile());

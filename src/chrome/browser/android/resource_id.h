@@ -38,8 +38,6 @@ DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_NOTIFICATIONS,
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_GEOLOCATION,
                     R.drawable.infobar_geolocation)
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_FROZEN_TAB, R.drawable.infobar_restore)
-DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_FULLSCREEN,
-                    R.drawable.infobar_fullscreen)
 
 // WebsiteSettingsUI images, used in ConnectionInfoPopup
 // Good:
@@ -71,3 +69,13 @@ LINK_RESOURCE_ID(IDR_CREDIT_CARD_CVC_HINT, R.drawable.cvc_icon)
 LINK_RESOURCE_ID(IDR_CREDIT_CARD_CVC_HINT_AMEX, R.drawable.cvc_icon_amex)
 LINK_RESOURCE_ID(IDR_AUTOFILL_SETTINGS,
                  org.chromium.chrome.R.drawable.ic_settings)
+
+// PaymentRequest images.
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_AMEX, R.drawable.pr_amex)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_DINERS, R.drawable.pr_dinersclub)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_DISCOVER, R.drawable.pr_discover)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_GENERIC, R.drawable.pr_generic)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_JCB, R.drawable.pr_jcb)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_MASTERCARD, R.drawable.pr_mc)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_UNIONPAY, R.drawable.pr_unionpay)
+LINK_RESOURCE_ID(IDR_AUTOFILL_PR_VISA, R.drawable.pr_visa)

@@ -6,23 +6,25 @@
 #define CONTENT_PUBLIC_BROWSER_DOWNLOAD_URL_PARAMETERS_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_save_info.h"
 #include "content/public/common/referrer.h"
+#include "net/url_request/url_request_context_getter.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "url/gurl.h"
 
 namespace content {
 
 class DownloadItem;
-class ResourceContext;
 class ResourceDispatcherHost;
 class WebContents;
 
@@ -59,29 +61,34 @@ class CONTENT_EXPORT DownloadUrlParameters {
   typedef std::vector<RequestHeadersNameValuePair> RequestHeadersType;
 
   // Construct DownloadUrlParameters for downloading the resource at |url| and
-  // associating the download with |web_contents|.
-  static scoped_ptr<DownloadUrlParameters> FromWebContents(
+  // associating the download with the main frame of the given WebContents.
+  static std::unique_ptr<DownloadUrlParameters> CreateForWebContentsMainFrame(
       WebContents* web_contents,
       const GURL& url);
 
-  // Construct DownloadUrlParameters for downloading the resource at |url| and
-  // associating the download with the WebContents identified by
-  // |render_process_host_id| and |render_view_host_routing_id|.
+  // Constructs a download not associated with a frame.
   //
-  // If the download is not associated with a WebContents, then set the IDs to
-  // -1.
-  // NOTE: This is not safe and should only be done in a limited set of cases
-  // where the download URL has been previously vetted. A download that's
-  // initiated without associating it with a WebContents don't receive the same
-  // security checks as a request that's associated with one. Hence, downloads
-  // that are not associated with a WebContents should only be made for URLs
-  // that are either trusted or URLs that have previously been successfully
-  // issued using a non-privileged WebContents.
-  DownloadUrlParameters(const GURL& url,
-                        int render_process_host_id,
-                        int render_view_host_routing_id,
-                        int render_frame_host_routing_id,
-                        ResourceContext* resource_context);
+  // It is not safe to have downloads not associated with a frame and
+  // this should only be done in a limited set of cases where the download URL
+  // has been previously vetted. A download that's initiated without
+  // associating it with a frame don't receive the same security checks
+  // as a request that's associated with one. Hence, downloads that are not
+  // associated with a frame should only be made for URLs that are either
+  // trusted or URLs that have previously been successfully issued using a
+  // non-privileged frame.
+  DownloadUrlParameters(
+      const GURL& url,
+      net::URLRequestContextGetter* url_request_context_getter);
+
+  // The RenderView routing ID must correspond to the RenderView of the
+  // RenderFrame, both of which share the same RenderProcess. This may be a
+  // different RenderView than the WebContents' main RenderView.
+  DownloadUrlParameters(
+      const GURL& url,
+      int render_process_host_id,
+      int render_view_host_routing_id,
+      int render_frame_host_routing_id,
+      net::URLRequestContextGetter* url_request_context_getter);
 
   ~DownloadUrlParameters();
 
@@ -156,8 +163,21 @@ class CONTENT_EXPORT DownloadUrlParameters {
   // If |offset| is non-zero, then a byte range request will be issued to fetch
   // the range of bytes starting at |offset| through to the end of thedownload.
   void set_offset(int64_t offset) { save_info_.offset = offset; }
-  void set_hash_state(const std::string& hash_state) {
-    save_info_.hash_state = hash_state;
+
+  // If |offset| is non-zero, then |hash_of_partial_file| contains the raw
+  // SHA-256 hash of the first |offset| bytes of the target file. Only
+  // meaningful if a partial file exists and is identified by either the
+  // |file_path()| or |file()|.
+  void set_hash_of_partial_file(const std::string& hash_of_partial_file) {
+    save_info_.hash_of_partial_file = hash_of_partial_file;
+  }
+
+  // If |offset| is non-zero, then |hash_state| indicates the SHA-256 hash state
+  // of the first |offset| bytes of the target file. In this case, the prefix
+  // hash will be ignored since the |hash_state| is assumed to be correct if
+  // provided.
+  void set_hash_state(std::unique_ptr<crypto::SecureHash> hash_state) {
+    save_info_.hash_state = std::move(hash_state);
   }
 
   // If |prompt| is true, then the user will be prompted for a filename. Ignored
@@ -177,7 +197,7 @@ class CONTENT_EXPORT DownloadUrlParameters {
   // a blob by the time the download request starts, then the download will
   // fail.
   void set_blob_data_handle(
-      scoped_ptr<storage::BlobDataHandle> blob_data_handle) {
+      std::unique_ptr<storage::BlobDataHandle> blob_data_handle) {
     blob_data_handle_ = std::move(blob_data_handle);
   }
 
@@ -191,6 +211,9 @@ class CONTENT_EXPORT DownloadUrlParameters {
   bool prefer_cache() const { return prefer_cache_; }
   const Referrer& referrer() const { return referrer_; }
   const std::string& referrer_encoding() const { return referrer_encoding_; }
+
+  // These will be -1 if the request is not associated with a frame. See
+  // the constructors for more.
   int render_process_host_id() const { return render_process_host_id_; }
   int render_view_host_routing_id() const {
     return render_view_host_routing_id_;
@@ -198,26 +221,31 @@ class CONTENT_EXPORT DownloadUrlParameters {
   int render_frame_host_routing_id() const {
     return render_frame_host_routing_id_;
   }
+
   const RequestHeadersType& request_headers() const { return request_headers_; }
-  ResourceContext* resource_context() const { return resource_context_; }
+  net::URLRequestContextGetter* url_request_context_getter() {
+    return url_request_context_getter_.get();
+  }
   const base::FilePath& file_path() const { return save_info_.file_path; }
   const base::string16& suggested_name() const {
     return save_info_.suggested_name;
   }
   int64_t offset() const { return save_info_.offset; }
-  const std::string& hash_state() const { return save_info_.hash_state; }
+  const std::string& hash_of_partial_file() const {
+    return save_info_.hash_of_partial_file;
+  }
   bool prompt() const { return save_info_.prompt_for_save_location; }
   const GURL& url() const { return url_; }
   bool do_not_prompt_for_login() const { return do_not_prompt_for_login_; }
 
   // STATE_CHANGING: Return the BlobDataHandle.
-  scoped_ptr<storage::BlobDataHandle> GetBlobDataHandle() {
+  std::unique_ptr<storage::BlobDataHandle> GetBlobDataHandle() {
     return std::move(blob_data_handle_);
   }
 
-  // Note that this is state changing--the DownloadUrlParameters object
-  // will not have a file attached to it after this call.
-  base::File GetFile() { return std::move(save_info_.file); }
+  // STATE CHANGING: All save_info_ sub-objects will be in an indeterminate
+  // state following this call.
+  DownloadSaveInfo GetSaveInfo() { return std::move(save_info_); }
 
  private:
   OnStartedCallback callback_;
@@ -234,11 +262,11 @@ class CONTENT_EXPORT DownloadUrlParameters {
   int render_process_host_id_;
   int render_view_host_routing_id_;
   int render_frame_host_routing_id_;
-  ResourceContext* resource_context_;
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
   DownloadSaveInfo save_info_;
   GURL url_;
   bool do_not_prompt_for_login_;
-  scoped_ptr<storage::BlobDataHandle> blob_data_handle_;
+  std::unique_ptr<storage::BlobDataHandle> blob_data_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadUrlParameters);
 };

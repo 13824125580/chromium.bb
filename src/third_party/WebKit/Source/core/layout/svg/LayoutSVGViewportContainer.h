@@ -35,10 +35,9 @@ public:
     FloatRect viewport() const { return m_viewport; }
 
     bool isLayoutSizeChanged() const { return m_isLayoutSizeChanged; }
-    bool didTransformToRootUpdate() override { return m_didTransformToRootUpdate; }
 
     void determineIfLayoutSizeChanged() override;
-    void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
+    void setNeedsTransformUpdate() override;
 
     void paint(const PaintInfo&, const LayoutPoint&) const override;
 
@@ -48,16 +47,15 @@ private:
     bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectSVGViewportContainer || LayoutSVGContainer::isOfType(type); }
 
     AffineTransform viewportTransform() const;
-    const AffineTransform& localToParentTransform() const override { return m_localToParentTransform; }
+    const AffineTransform& localToSVGParentTransform() const override { return m_localToParentTransform; }
 
     void calcViewport() override;
-    bool calculateLocalTransform() override;
+    SVGTransformChange calculateLocalTransform() override;
 
     bool pointIsInsideViewportClip(const FloatPoint& pointInParent) override;
 
     FloatRect m_viewport;
     mutable AffineTransform m_localToParentTransform;
-    bool m_didTransformToRootUpdate : 1;
     bool m_isLayoutSizeChanged : 1;
     bool m_needsTransformUpdate : 1;
 };

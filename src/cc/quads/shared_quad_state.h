@@ -5,7 +5,8 @@
 #ifndef CC_QUADS_SHARED_QUAD_STATE_H_
 #define CC_QUADS_SHARED_QUAD_STATE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "cc/base/cc_export.h"
 #include "third_party/skia/include/core/SkXfermode.h"
 #include "ui/gfx/geometry/rect.h"
@@ -28,9 +29,8 @@ namespace cc {
 class CC_EXPORT SharedQuadState {
  public:
   SharedQuadState();
+  SharedQuadState(const SharedQuadState& other);
   ~SharedQuadState();
-
-  void CopyFrom(const SharedQuadState* other);
 
   void SetAll(const gfx::Transform& quad_to_target_transform,
               const gfx::Size& layer_bounds,

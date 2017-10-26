@@ -5,8 +5,9 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_PLATFORM_DATA_AURA_H_
 #define CONTENT_SHELL_BROWSER_SHELL_PLATFORM_DATA_AURA_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/aura/window_tree_host.h"
 
 namespace aura {
@@ -38,15 +39,8 @@ class ShellPlatformDataAura {
   aura::WindowTreeHost* host() { return host_.get(); }
 
  private:
-  scoped_ptr<aura::WindowTreeHost> host_;
-
-  // SHEZ: Remove test-only code.
-  // scoped_ptr<aura::client::FocusClient> focus_client_;
-
-  scoped_ptr<aura::client::DefaultCaptureClient> capture_client_;
-
-  // SHEZ: Remove test-only code.
-  // scoped_ptr<aura::client::WindowTreeClient> window_tree_client_;
+  std::unique_ptr<aura::WindowTreeHost> host_;
+  std::unique_ptr<aura::client::DefaultCaptureClient> capture_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellPlatformDataAura);
 };

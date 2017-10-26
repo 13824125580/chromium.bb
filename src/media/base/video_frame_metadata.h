@@ -5,6 +5,7 @@
 #ifndef MEDIA_BASE_VIDEO_FRAME_METADATA_H_
 #define MEDIA_BASE_VIDEO_FRAME_METADATA_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -39,6 +40,12 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // WebView because of limitations about sharing surface textures between GL
     // contexts.
     COPY_REQUIRED,
+
+    // Indicates that the frame is owned by the decoder and that destroying the
+    // decoder will make the frame unrenderable. TODO(sandersd): Remove once OSX
+    // and Windows hardware decoders support frames which outlive the decoder.
+    // http://crbug.com/595716 and http://crbug.com/602708.
+    DECODER_OWNS_FRAME,
 
     // Indicates if the current frame is the End of its current Stream. Use
     // Get/SetBoolean() for this Key.
@@ -116,7 +123,7 @@ class MEDIA_EXPORT VideoFrameMetadata {
   void SetString(Key key, const std::string& value);
   void SetTimeDelta(Key key, const base::TimeDelta& value);
   void SetTimeTicks(Key key, const base::TimeTicks& value);
-  void SetValue(Key key, scoped_ptr<base::Value> value);
+  void SetValue(Key key, std::unique_ptr<base::Value> value);
 
   // Getters.  Returns true if |key| is present, and its value has been set.
   bool GetBoolean(Key key, bool* value) const WARN_UNUSED_RESULT;
@@ -135,6 +142,9 @@ class MEDIA_EXPORT VideoFrameMetadata {
   // For serialization.
   void MergeInternalValuesInto(base::DictionaryValue* out) const;
   void MergeInternalValuesFrom(const base::DictionaryValue& in);
+
+  // Merges internal values from |metadata_source|.
+  void MergeMetadataFrom(const VideoFrameMetadata* metadata_source);
 
  private:
   const base::BinaryValue* GetBinaryValue(Key key) const;

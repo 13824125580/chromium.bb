@@ -23,16 +23,18 @@
 #include "core/fetch/ResourceFetcher.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/heap/Handle.h"
+#include "platform/heap/Heap.h"
 #include "platform/network/ResourceRequest.h"
 #include "platform/testing/URLTestHelpers.h"
 #include "platform/testing/UnitTestHelpers.h"
 #include "platform/weborigin/KURL.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebURLResponse.h"
-#include "public/platform/WebUnitTestSupport.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -57,7 +59,7 @@ protected:
     Document* document() { return &m_page->document(); }
 
     Persistent<MemoryCache> m_originalMemoryCache;
-    OwnPtr<DummyPageHolder> m_page;
+    std::unique_ptr<DummyPageHolder> m_page;
 };
 
 TEST_F(CSSStyleSheetResourceTest, PruneCanCauseEviction)
@@ -71,28 +73,28 @@ TEST_F(CSSStyleSheetResourceTest, PruneCanCauseEviction)
         // the image resource.
         document()->fetcher()->setAutoLoadImages(false);
 
-        RefPtrWillBeRawPtr<CSSStyleSheetResource> cssResource = CSSStyleSheetResource::createForTest(ResourceRequest(cssURL), "utf-8");
-        memoryCache()->add(cssResource.get());
+        CSSStyleSheetResource* cssResource = CSSStyleSheetResource::createForTest(ResourceRequest(cssURL), "utf-8");
+        memoryCache()->add(cssResource);
         cssResource->responseReceived(ResourceResponse(cssURL, "style/css", 0, nullAtom, String()), nullptr);
         cssResource->finish();
 
-        RefPtrWillBeRawPtr<StyleSheetContents> contents = StyleSheetContents::create(CSSParserContext(HTMLStandardMode, nullptr));
-        RefPtrWillBeRawPtr<CSSStyleSheet> sheet = CSSStyleSheet::create(contents, document());
+        StyleSheetContents* contents = StyleSheetContents::create(CSSParserContext(HTMLStandardMode, nullptr));
+        CSSStyleSheet* sheet = CSSStyleSheet::create(contents, document());
         EXPECT_TRUE(sheet);
-        RefPtrWillBeRawPtr<CSSCrossfadeValue> crossfade = CSSCrossfadeValue::create(
+        CSSCrossfadeValue* crossfade = CSSCrossfadeValue::create(
             CSSImageValue::create(String("image"), imageURL),
             CSSImageValue::create(String("image"), imageURL),
             CSSPrimitiveValue::create(1.0, CSSPrimitiveValue::UnitType::Number));
-        Vector<OwnPtr<CSSParserSelector>> selectors;
-        selectors.append(adoptPtr(new CSSParserSelector()));
+        Vector<std::unique_ptr<CSSParserSelector>> selectors;
+        selectors.append(wrapUnique(new CSSParserSelector()));
         selectors[0]->setMatch(CSSSelector::Id);
         selectors[0]->setValue("foo");
-        CSSProperty property(CSSPropertyBackground, crossfade);
+        CSSProperty property(CSSPropertyBackground, *crossfade);
         contents->parserAppendRule(
             StyleRule::create(CSSSelectorList::adoptSelectorVector(selectors), ImmutableStylePropertySet::create(&property, 1, HTMLStandardMode)));
 
         crossfade->loadSubimages(document());
-        RefPtrWillBeRawPtr<Resource> imageResource = memoryCache()->resourceForURL(imageURL, MemoryCache::defaultCacheIdentifier());
+        Resource* imageResource = memoryCache()->resourceForURL(imageURL, MemoryCache::defaultCacheIdentifier());
         ASSERT_TRUE(imageResource);
         ResourceResponse imageResponse;
         imageResponse.setURL(imageURL);
@@ -102,20 +104,54 @@ TEST_F(CSSStyleSheetResourceTest, PruneCanCauseEviction)
         contents->checkLoaded();
         cssResource->saveParsedStyleSheet(contents);
 
-        memoryCache()->update(cssResource.get(), cssResource->size(), cssResource->size(), false);
-        memoryCache()->update(imageResource.get(), imageResource->size(), imageResource->size(), false);
-        if (!memoryCache()->isInSameLRUListForTest(cssResource.get(), imageResource.get())) {
+        memoryCache()->update(cssResource, cssResource->size(), cssResource->size(), false);
+        memoryCache()->update(imageResource, imageResource->size(), imageResource->size(), false);
+        if (!memoryCache()->isInSameLRUListForTest(cssResource, imageResource)) {
             // We assume that the LRU list is determined by |size / accessCount|.
             for (size_t i = 0; i < cssResource->size() + 1; ++i)
-                memoryCache()->update(cssResource.get(), cssResource->size(), cssResource->size(), true);
+                memoryCache()->update(cssResource, cssResource->size(), cssResource->size(), true);
             for (size_t i = 0; i < imageResource->size() + 1; ++i)
-                memoryCache()->update(imageResource.get(), imageResource->size(), imageResource->size(), true);
+                memoryCache()->update(imageResource, imageResource->size(), imageResource->size(), true);
         }
-        ASSERT_TRUE(memoryCache()->isInSameLRUListForTest(cssResource.get(), imageResource.get()));
+        ASSERT_TRUE(memoryCache()->isInSameLRUListForTest(cssResource, imageResource));
     }
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
     // This operation should not lead to crash!
     memoryCache()->pruneAll();
+}
+
+TEST_F(CSSStyleSheetResourceTest, DuplicateResourceNotCached)
+{
+    const char url[] = "https://localhost/style.css";
+    KURL imageURL(KURL(), url);
+    KURL cssURL(KURL(), url);
+
+    // Emulate using <img> to do async stylesheet preloads.
+
+    Resource* imageResource = ImageResource::create(ResourceRequest(imageURL));
+    ASSERT_TRUE(imageResource);
+    memoryCache()->add(imageResource);
+    ASSERT_TRUE(memoryCache()->contains(imageResource));
+
+    CSSStyleSheetResource* cssResource = CSSStyleSheetResource::createForTest(ResourceRequest(cssURL), "utf-8");
+    cssResource->responseReceived(ResourceResponse(cssURL, "style/css", 0, nullAtom, String()), nullptr);
+    cssResource->finish();
+
+    CSSParserContext parserContext(HTMLStandardMode, nullptr);
+    StyleSheetContents* contents = StyleSheetContents::create(parserContext);
+    CSSStyleSheet* sheet = CSSStyleSheet::create(contents, document());
+    EXPECT_TRUE(sheet);
+
+    contents->checkLoaded();
+    cssResource->saveParsedStyleSheet(contents);
+
+    // Verify that the cache will have a mapping for |imageResource| at |url|.
+    // The underlying |contents| for the stylesheet resource must have a
+    // matching reference status.
+    EXPECT_TRUE(memoryCache()->contains(imageResource));
+    EXPECT_FALSE(memoryCache()->contains(cssResource));
+    EXPECT_FALSE(contents->isReferencedFromResource());
+    EXPECT_FALSE(cssResource->restoreParsedStyleSheet(parserContext));
 }
 
 } // namespace

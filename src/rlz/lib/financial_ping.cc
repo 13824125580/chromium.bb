@@ -8,13 +8,17 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/atomicops.h"
+#include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "rlz/lib/assert.h"
 #include "rlz/lib/lib_values.h"
@@ -229,10 +233,8 @@ void ShutdownCheck(base::WeakPtr<base::RunLoop> weak) {
   // How frequently the financial ping thread should check
   // the shutdown condition?
   const base::TimeDelta kInterval = base::TimeDelta::FromMilliseconds(500);
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&ShutdownCheck, weak),
-      kInterval);
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&ShutdownCheck, weak), kInterval);
 }
 #endif
 
@@ -280,7 +282,7 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
     return false;
 
   // Get the response text.
-  scoped_ptr<char[]> buffer(new char[kMaxPingResponseLength]);
+  std::unique_ptr<char[]> buffer(new char[kMaxPingResponseLength]);
   if (buffer.get() == NULL)
     return false;
 
@@ -305,7 +307,7 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
     return false;
 
   // Run a blocking event loop to match the win inet implementation.
-  scoped_ptr<base::MessageLoop> message_loop;
+  std::unique_ptr<base::MessageLoop> message_loop;
   // Ensure that we have a MessageLoop.
   if (!base::MessageLoop::current())
     message_loop.reset(new base::MessageLoop);
@@ -316,7 +318,7 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
                                        kFinancialServer, kFinancialPort,
                                        request);
 
-  scoped_ptr<net::URLFetcher> fetcher =
+  std::unique_ptr<net::URLFetcher> fetcher =
       net::URLFetcher::Create(GURL(url), net::URLFetcher::GET, &delegate);
 
   fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE |
@@ -333,13 +335,12 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
   const base::TimeDelta kTimeout = base::TimeDelta::FromMinutes(5);
   base::MessageLoop::ScopedNestableTaskAllower allow_nested(
       base::MessageLoop::current());
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&ShutdownCheck, weak.GetWeakPtr()));
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&ShutdownCheck, weak.GetWeakPtr()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&net::URLFetcher::Start, base::Unretained(fetcher.get())));
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, loop.QuitClosure(), kTimeout);
 
   loop.Run();

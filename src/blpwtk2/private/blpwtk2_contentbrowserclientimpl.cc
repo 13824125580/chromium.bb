@@ -63,7 +63,8 @@ public:
                                 const content::ResourceRequestInfo::WebContentsGetter& web_contents_getter,
                                 bool is_main_frame,
                                 ui::PageTransition page_transition,
-                                bool has_user_gesture) override;
+                                bool has_user_gesture,
+                                content::ResourceContext* resource_context) override;
 
 private:
     ResourceDispatcherHostDelegate() {}
@@ -81,7 +82,8 @@ bool ResourceDispatcherHostDelegate::HandleExternalProtocol(const GURL& url,
                                                             const content::ResourceRequestInfo::WebContentsGetter& web_contents_getter,
                                                             bool is_main_frame,
                                                             ui::PageTransition page_transition,
-                                                            bool has_user_gesture)
+                                                            bool has_user_gesture,
+                                                            content::ResourceContext* resource_context)
 {
     if (Statics::isInBrowserMainThread()) {
         doHandleExternalProtocol(url, child_id, web_contents_getter);
@@ -169,19 +171,6 @@ content::WebContentsViewDelegate*
 ContentBrowserClientImpl::GetWebContentsViewDelegate(content::WebContents* webContents)
 {
     return new WebContentsViewDelegateImpl(webContents);
-}
-
-net::URLRequestContextGetter* ContentBrowserClientImpl::CreateRequestContext(
-    content::BrowserContext* browserContext,
-    content::ProtocolHandlerMap* protocolHandlers,
-    content::URLRequestInterceptorScopedVector requestInterceptors)
-{
-    BrowserContextImpl* contextImpl
-        = static_cast<BrowserContextImpl*>(browserContext);
-
-    contextImpl->requestContextGetter()->setProtocolHandlers(protocolHandlers,
-                                                             requestInterceptors.Pass());
-    return contextImpl->requestContextGetter();
 }
 
 bool ContentBrowserClientImpl::IsHandledURL(const GURL& url)

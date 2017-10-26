@@ -5,12 +5,12 @@
 #ifndef EXTENSIONS_COMMON_EXTENSION_BUILDER_H_
 #define EXTENSIONS_COMMON_EXTENSION_BUILDER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/value_builder.h"
 
@@ -39,14 +39,13 @@ class ExtensionBuilder {
   // Defaults to Manifest::UNPACKED.
   ExtensionBuilder& SetLocation(Manifest::Location location);
 
-  ExtensionBuilder& SetManifest(scoped_ptr<base::DictionaryValue> manifest);
-  ExtensionBuilder& SetManifest(DictionaryBuilder manifest_builder) {
-    return SetManifest(manifest_builder.Build());
-  }
+  ExtensionBuilder& SetManifest(
+      std::unique_ptr<base::DictionaryValue> manifest);
 
-  // Adds the keys from the DictionaryBuilder to the manifest, with new keys
-  // taking precedence.
-  ExtensionBuilder& MergeManifest(DictionaryBuilder& builder);
+  // Merge another manifest into the current manifest, with new keys taking
+  // precedence.
+  ExtensionBuilder& MergeManifest(
+      std::unique_ptr<base::DictionaryValue> manifest);
 
   ExtensionBuilder& AddFlags(int init_from_value_flags);
 
@@ -56,7 +55,7 @@ class ExtensionBuilder {
  private:
   base::FilePath path_;
   Manifest::Location location_;
-  scoped_ptr<base::DictionaryValue> manifest_;
+  std::unique_ptr<base::DictionaryValue> manifest_;
   int flags_;
   std::string id_;
 

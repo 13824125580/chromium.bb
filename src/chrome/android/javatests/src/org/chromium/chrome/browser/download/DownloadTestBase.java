@@ -15,8 +15,6 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
-import org.chromium.content.browser.DownloadController;
-import org.chromium.content.browser.DownloadInfo;
 import org.chromium.content.browser.test.util.ApplicationUtils;
 import org.chromium.content.browser.test.util.CallbackHelper;
 
@@ -225,10 +223,11 @@ public abstract class DownloadTestBase extends ChromeActivityTestCaseBase<Chrome
 
         @Override
         public void enqueueDownloadManagerRequest(
-                final DownloadInfo info, boolean notifyCompleted) {
+                final DownloadItem item, boolean notifyCompleted) {
             // Intentionally do not call super, since DownloadManager does not work in test
             // environment.
-            mEnqueueHttpGetDownloadCallbackHelper.notifyCalled(info, notifyCompleted);
+            mEnqueueHttpGetDownloadCallbackHelper.notifyCalled(
+                    item.getDownloadInfo(), notifyCompleted);
         }
     }
 
@@ -267,5 +266,15 @@ public abstract class DownloadTestBase extends ChromeActivityTestCaseBase<Chrome
             }
         });
         super.tearDown();
+    }
+
+    protected void deleteFilesInDownloadDirectory(String...filenames) {
+        for (String filename : filenames) {
+            final File fileToDelete = new File(DOWNLOAD_DIRECTORY, filename);
+            if (fileToDelete.exists()) {
+                assertTrue("Could not delete file that would block this test",
+                        fileToDelete.delete());
+            }
+        }
     }
 }

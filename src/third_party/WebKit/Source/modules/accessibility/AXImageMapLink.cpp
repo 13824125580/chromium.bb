@@ -91,7 +91,7 @@ Element* AXImageMapLink::actionElement() const
 
 Element* AXImageMapLink::anchorElement() const
 {
-    return node() ? toElement(node()) : nullptr;
+    return getNode() ? toElement(getNode()) : nullptr;
 }
 
 KURL AXImageMapLink::url() const
@@ -111,14 +111,14 @@ LayoutRect AXImageMapLink::elementRect() const
 
     LayoutObject* layoutObject;
     if (m_parent && m_parent->isAXLayoutObject())
-        layoutObject = toAXLayoutObject(m_parent)->layoutObject();
+        layoutObject = toAXLayoutObject(m_parent)->getLayoutObject();
     else
         layoutObject = map->layoutObject();
 
     if (!layoutObject)
         return LayoutRect();
 
-    return area->computeRect(layoutObject);
+    return area->computeAbsoluteRect(layoutObject);
 }
 
 DEFINE_TRACE(AXImageMapLink)

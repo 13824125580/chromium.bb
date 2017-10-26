@@ -4,13 +4,13 @@
 
 #include "ash/system/chromeos/bluetooth/bluetooth_notification_controller.h"
 
+#include <memory>
 #include <utility>
 
-#include "ash/system/system_notifier.h"
+#include "ash/common/system/system_notifier.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
@@ -65,10 +65,7 @@ class BluetoothPairingNotificationDelegate
 
  private:
   // Buttons that appear in notifications.
-  enum Button {
-    BUTTON_ACCEPT,
-    BUTTON_REJECT
-  };
+  enum Button { BUTTON_ACCEPT, BUTTON_REJECT };
 
   // Reference to the underlying Bluetooth Adapter, holding onto this
   // reference ensures the adapter object doesn't go out of scope while we have
@@ -84,12 +81,9 @@ class BluetoothPairingNotificationDelegate
 BluetoothPairingNotificationDelegate::BluetoothPairingNotificationDelegate(
     scoped_refptr<BluetoothAdapter> adapter,
     const std::string& address)
-    : adapter_(adapter),
-      address_(address) {
-}
+    : adapter_(adapter), address_(address) {}
 
-BluetoothPairingNotificationDelegate::~BluetoothPairingNotificationDelegate() {
-}
+BluetoothPairingNotificationDelegate::~BluetoothPairingNotificationDelegate() {}
 
 void BluetoothPairingNotificationDelegate::Close(bool by_user) {
   VLOG(1) << "Pairing notification closed. by_user = " << by_user;
@@ -126,7 +120,6 @@ void BluetoothPairingNotificationDelegate::ButtonClick(int button_index) {
 
 }  // namespace
 
-
 namespace ash {
 
 BluetoothNotificationController::BluetoothNotificationController()
@@ -143,7 +136,6 @@ BluetoothNotificationController::~BluetoothNotificationController() {
     adapter_ = NULL;
   }
 }
-
 
 void BluetoothNotificationController::AdapterDiscoverableChanged(
     BluetoothAdapter* adapter,
@@ -185,7 +177,6 @@ void BluetoothNotificationController::DeviceRemoved(BluetoothAdapter* adapter,
   paired_devices_.erase(device->GetAddress());
 }
 
-
 void BluetoothNotificationController::RequestPinCode(BluetoothDevice* device) {
   // Cannot provide keyboard entry in a notification; these devices (old car
   // audio systems for the most part) will need pairing to be initiated from
@@ -204,8 +195,8 @@ void BluetoothNotificationController::DisplayPinCode(
     BluetoothDevice* device,
     const std::string& pincode) {
   base::string16 message = l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_BLUETOOTH_DISPLAY_PINCODE,
-          device->GetName(), base::UTF8ToUTF16(pincode));
+      IDS_ASH_STATUS_TRAY_BLUETOOTH_DISPLAY_PINCODE,
+      device->GetNameForDisplay(), base::UTF8ToUTF16(pincode));
 
   NotifyPairing(device, message, false);
 }
@@ -213,9 +204,9 @@ void BluetoothNotificationController::DisplayPinCode(
 void BluetoothNotificationController::DisplayPasskey(BluetoothDevice* device,
                                                      uint32_t passkey) {
   base::string16 message = l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_BLUETOOTH_DISPLAY_PASSKEY,
-          device->GetName(), base::UTF8ToUTF16(
-              base::StringPrintf("%06i", passkey)));
+      IDS_ASH_STATUS_TRAY_BLUETOOTH_DISPLAY_PASSKEY,
+      device->GetNameForDisplay(),
+      base::UTF8ToUTF16(base::StringPrintf("%06i", passkey)));
 
   NotifyPairing(device, message, false);
 }
@@ -228,9 +219,9 @@ void BluetoothNotificationController::KeysEntered(BluetoothDevice* device,
 void BluetoothNotificationController::ConfirmPasskey(BluetoothDevice* device,
                                                      uint32_t passkey) {
   base::string16 message = l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_BLUETOOTH_CONFIRM_PASSKEY,
-          device->GetName(), base::UTF8ToUTF16(
-              base::StringPrintf("%06i", passkey)));
+      IDS_ASH_STATUS_TRAY_BLUETOOTH_CONFIRM_PASSKEY,
+      device->GetNameForDisplay(),
+      base::UTF8ToUTF16(base::StringPrintf("%06i", passkey)));
 
   NotifyPairing(device, message, true);
 }
@@ -238,12 +229,11 @@ void BluetoothNotificationController::ConfirmPasskey(BluetoothDevice* device,
 void BluetoothNotificationController::AuthorizePairing(
     BluetoothDevice* device) {
   base::string16 message = l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_BLUETOOTH_AUTHORIZE_PAIRING,
-          device->GetName());
+      IDS_ASH_STATUS_TRAY_BLUETOOTH_AUTHORIZE_PAIRING,
+      device->GetNameForDisplay());
 
   NotifyPairing(device, message, true);
 }
-
 
 void BluetoothNotificationController::OnGetAdapter(
     scoped_refptr<BluetoothAdapter> adapter) {
@@ -268,13 +258,12 @@ void BluetoothNotificationController::OnGetAdapter(
   }
 }
 
-
 void BluetoothNotificationController::NotifyAdapterDiscoverable() {
   message_center::RichNotificationData optional;
 
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
 
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
       kBluetoothDeviceDiscoverableNotificationId, base::string16() /* title */,
       l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_BLUETOOTH_DISCOVERABLE,
@@ -296,16 +285,14 @@ void BluetoothNotificationController::NotifyPairing(
   message_center::RichNotificationData optional;
   if (with_buttons) {
     optional.buttons.push_back(message_center::ButtonInfo(
-        l10n_util::GetStringUTF16(
-            IDS_ASH_STATUS_TRAY_BLUETOOTH_ACCEPT)));
+        l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_BLUETOOTH_ACCEPT)));
     optional.buttons.push_back(message_center::ButtonInfo(
-        l10n_util::GetStringUTF16(
-            IDS_ASH_STATUS_TRAY_BLUETOOTH_REJECT)));
+        l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_BLUETOOTH_REJECT)));
   }
 
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
 
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
       kBluetoothDevicePairingNotificationId, base::string16() /* title */,
       message, bundle.GetImageNamed(IDR_AURA_NOTIFICATION_BLUETOOTH),
@@ -330,11 +317,11 @@ void BluetoothNotificationController::NotifyPairedDevice(
 
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
 
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
       kBluetoothDevicePairedNotificationId, base::string16() /* title */,
       l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_BLUETOOTH_PAIRED,
-                                 device->GetName()),
+                                 device->GetNameForDisplay()),
       bundle.GetImageNamed(IDR_AURA_NOTIFICATION_BLUETOOTH),
       base::string16() /* display source */, GURL(),
       message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,

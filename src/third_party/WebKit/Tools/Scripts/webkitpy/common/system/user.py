@@ -57,7 +57,7 @@ class User(object):
     @classmethod
     def prompt(cls, message, repeat=1, raw_input=raw_input):
         response = None
-        while (repeat and not response):
+        while repeat and not response:
             repeat -= 1
             response = raw_input(message)
         return response
@@ -83,7 +83,8 @@ class User(object):
     def _wait_on_list_response(cls, list_items, can_choose_multiple, raw_input):
         while True:
             if can_choose_multiple:
-                response = cls.prompt("Enter one or more numbers (comma-separated) or ranges (e.g. 3-7), or \"all\": ", raw_input=raw_input)
+                response = cls.prompt(
+                    "Enter one or more numbers (comma-separated) or ranges (e.g. 3-7), or \"all\": ", raw_input=raw_input)
                 if not response.strip() or response == "all":
                     return list_items
 
@@ -95,14 +96,14 @@ class User(object):
                             indices += range(int(parts[0]) - 1, int(parts[1]))
                         else:
                             indices.append(int(value) - 1)
-                except ValueError, err:
+                except ValueError as err:
                     continue
 
                 return [list_items[i] for i in indices]
             else:
                 try:
                     result = int(cls.prompt("Enter a number: ", raw_input=raw_input)) - 1
-                except ValueError, err:
+                except ValueError as err:
                     continue
                 return list_items[result]
 
@@ -127,7 +128,7 @@ class User(object):
             # Note: Not thread safe: http://bugs.python.org/issue2320
             child_process = subprocess.Popen([pager], stdin=subprocess.PIPE)
             child_process.communicate(input=message)
-        except IOError, e:
+        except IOError as e:
             pass
 
     def confirm(self, message=None, default=DEFAULT_YES, raw_input=raw_input):
@@ -143,7 +144,7 @@ class User(object):
         try:
             webbrowser.get()
             return True
-        except webbrowser.Error, e:
+        except webbrowser.Error as e:
             return False
 
     def open_url(self, url):

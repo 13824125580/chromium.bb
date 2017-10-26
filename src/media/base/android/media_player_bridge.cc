@@ -43,11 +43,13 @@ MediaPlayerBridge::MediaPlayerBridge(
     MediaPlayerManager* manager,
     const OnDecoderResourcesReleasedCB& on_decoder_resources_released_cb,
     const GURL& frame_url,
-    bool allow_credentials)
+    bool allow_credentials,
+    int media_session_id)
     : MediaPlayerAndroid(player_id,
                          manager,
                          on_decoder_resources_released_cb,
-                         frame_url),
+                         frame_url,
+                         media_session_id),
       prepared_(false),
       pending_play_(false),
       should_seek_on_prepare_(false),
@@ -127,7 +129,7 @@ void MediaPlayerBridge::SetDuration(base::TimeDelta duration) {
   duration_ = duration;
 }
 
-void MediaPlayerBridge::SetVideoSurface(gfx::ScopedJavaSurface surface) {
+void MediaPlayerBridge::SetVideoSurface(gl::ScopedJavaSurface surface) {
   surface_ = std::move(surface);
 
   if (j_media_player_bridge_.is_null())
@@ -411,7 +413,7 @@ void MediaPlayerBridge::Release() {
 
   prepared_ = false;
   pending_play_ = false;
-  SetVideoSurface(gfx::ScopedJavaSurface());
+  SetVideoSurface(gl::ScopedJavaSurface());
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_MediaPlayerBridge_release(env, j_media_player_bridge_.obj());
   j_media_player_bridge_.Reset();

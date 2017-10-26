@@ -5,12 +5,14 @@
 #include "content/child/web_data_consumer_handle_impl.h"
 
 #include <stdint.h>
+
 #include <limits>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "mojo/public/c/system/types.h"
 
 namespace content {
@@ -99,8 +101,6 @@ Result WebDataConsumerHandleImpl::ReaderImpl::HandleReadResult(
     case MOJO_RESULT_BUSY:
       return Busy;
     case MOJO_RESULT_SHOULD_WAIT:
-      if (client_)
-        StartWatching();
       return ShouldWait;
     case MOJO_RESULT_RESOURCE_EXHAUSTED:
       return ResourceExhausted;
@@ -112,7 +112,6 @@ Result WebDataConsumerHandleImpl::ReaderImpl::HandleReadResult(
 void WebDataConsumerHandleImpl::ReaderImpl::StartWatching() {
   handle_watcher_.Start(
       context_->handle().get(), MOJO_HANDLE_SIGNAL_READABLE,
-      MOJO_DEADLINE_INDEFINITE,
       base::Bind(&ReaderImpl::OnHandleGotReadable, base::Unretained(this)));
 }
 
@@ -127,9 +126,9 @@ WebDataConsumerHandleImpl::WebDataConsumerHandleImpl(Handle handle)
 WebDataConsumerHandleImpl::~WebDataConsumerHandleImpl() {
 }
 
-scoped_ptr<blink::WebDataConsumerHandle::Reader>
+std::unique_ptr<blink::WebDataConsumerHandle::Reader>
 WebDataConsumerHandleImpl::ObtainReader(Client* client) {
-  return make_scoped_ptr(obtainReaderInternal(client));
+  return base::WrapUnique(obtainReaderInternal(client));
 }
 
 WebDataConsumerHandleImpl::ReaderImpl*

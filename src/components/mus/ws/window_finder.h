@@ -5,10 +5,6 @@
 #ifndef COMPONENTS_MUS_WS_WINDOW_FINDER_H_
 #define COMPONENTS_MUS_WS_WINDOW_FINDER_H_
 
-namespace cc {
-struct SurfaceId;
-}
-
 namespace gfx {
 class Point;
 class Transform;
@@ -25,13 +21,11 @@ class ServerWindow;
 // value.
 ServerWindow* FindDeepestVisibleWindowForEvents(
     ServerWindow* root_window,
-    cc::SurfaceId display_surface_id,
     gfx::Point* location);
 
 // Retrieve the transform to the provided |window|'s coordinate space from the
 // root.
-gfx::Transform GetTransformToWindow(cc::SurfaceId display_surface_id,
-                                    ServerWindow* window);
+gfx::Transform GetTransformToWindow(ServerWindow* window);
 
 }  // namespace ws
 }  // namespace mus

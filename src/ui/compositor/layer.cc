@@ -5,16 +5,15 @@
 #include "ui/compositor/layer.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/layers/nine_patch_layer.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/layers/solid_color_layer.h"
@@ -32,7 +31,6 @@
 #include "ui/compositor/paint_context.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/display.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
@@ -46,9 +44,6 @@ const ui::Layer* GetRoot(const ui::Layer* layer) {
   return layer;
 }
 
-base::LazyInstance<cc::LayerSettings> g_ui_layer_settings =
-    LAZY_INSTANCE_INITIALIZER;
-
 }  // namespace
 
 namespace ui {
@@ -58,7 +53,6 @@ Layer::Layer()
       compositor_(NULL),
       parent_(NULL),
       visible_(true),
-      force_render_surface_(false),
       fills_bounds_opaquely_(true),
       fills_bounds_completely_(false),
       background_blur_radius_(0),
@@ -73,7 +67,9 @@ Layer::Layer()
       delegate_(NULL),
       owner_(NULL),
       cc_layer_(NULL),
-      device_scale_factor_(1.0f) {
+      device_scale_factor_(1.0f),
+      texture_x_scale_(1.0f),
+      texture_y_scale_(1.0f) {
   CreateCcLayer();
 }
 
@@ -82,7 +78,6 @@ Layer::Layer(LayerType type)
       compositor_(NULL),
       parent_(NULL),
       visible_(true),
-      force_render_surface_(false),
       fills_bounds_opaquely_(true),
       fills_bounds_completely_(false),
       background_blur_radius_(0),
@@ -97,7 +92,9 @@ Layer::Layer(LayerType type)
       delegate_(NULL),
       owner_(NULL),
       cc_layer_(NULL),
-      device_scale_factor_(1.0f) {
+      device_scale_factor_(1.0f),
+      texture_x_scale_(1.0f),
+      texture_y_scale_(1.0f) {
   CreateCcLayer();
 }
 
@@ -118,19 +115,8 @@ Layer::~Layer() {
     children_[i]->parent_ = NULL;
 
   cc_layer_->RemoveFromParent();
-}
-
-// static
-const cc::LayerSettings& Layer::UILayerSettings() {
-  return g_ui_layer_settings.Get();
-}
-
-// static
-void Layer::InitializeUILayerSettings() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  g_ui_layer_settings.Get().use_compositor_animation_timelines =
-      !command_line->HasSwitch(
-          switches::kUIDisableCompositorAnimationTimelines);
+  if (mailbox_release_callback_)
+    mailbox_release_callback_->Run(gpu::SyncToken(), false);
 }
 
 const Compositor* Layer::GetCompositor() const {
@@ -155,7 +141,6 @@ void Layer::SetCompositor(Compositor* compositor,
 
   root_layer->AddChild(cc_layer_);
   SetCompositorForAnimatorsInTree(compositor);
-  SendPendingThreadedAnimations();
 }
 
 void Layer::ResetCompositor() {
@@ -175,10 +160,8 @@ void Layer::Add(Layer* child) {
   cc_layer_->AddChild(child->cc_layer_);
   child->OnDeviceScaleFactorChanged(device_scale_factor_);
   Compositor* compositor = GetCompositor();
-  if (compositor) {
+  if (compositor)
     child->SetCompositorForAnimatorsInTree(compositor);
-    child->SendPendingThreadedAnimations();
-  }
 }
 
 void Layer::Remove(Layer* child) {
@@ -373,7 +356,7 @@ void Layer::SetBackgroundZoom(float zoom, int inset) {
   SetLayerBackgroundFilters();
 }
 
-void Layer::SetAlphaShape(scoped_ptr<SkRegion> region) {
+void Layer::SetAlphaShape(std::unique_ptr<SkRegion> region) {
   alpha_shape_ = std::move(region);
 
   SetLayerFilters();
@@ -527,38 +510,34 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   cc_layer_->SetLayerClient(this);
   cc_layer_->SetTransformOrigin(gfx::Point3F());
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely_);
-  cc_layer_->SetForceRenderSurface(force_render_surface_);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->SetHideLayerAndSubtree(!visible_);
+  cc_layer_->SetElementId(cc::ElementId(cc_layer_->id(), 0));
 
   SetLayerFilters();
   SetLayerBackgroundFilters();
 }
 
 bool Layer::HasPendingThreadedAnimationsForTesting() const {
-  if (UILayerSettings().use_compositor_animation_timelines)
     return animator_->HasPendingThreadedAnimationsForTesting();
-  else
-    return !pending_threaded_animations_.empty();
 }
 
 void Layer::SwitchCCLayerForTest() {
-  scoped_refptr<cc::Layer> new_layer =
-      cc::PictureLayer::Create(UILayerSettings(), this);
+  scoped_refptr<cc::Layer> new_layer = cc::PictureLayer::Create(this);
   SwitchToLayer(new_layer);
   content_layer_ = new_layer;
 }
 
 void Layer::SetTextureMailbox(
     const cc::TextureMailbox& mailbox,
-    scoped_ptr<cc::SingleReleaseCallback> release_callback,
+    std::unique_ptr<cc::SingleReleaseCallback> release_callback,
     gfx::Size texture_size_in_dip) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
   DCHECK(mailbox.IsValid());
   DCHECK(release_callback);
   if (!texture_layer_.get()) {
     scoped_refptr<cc::TextureLayer> new_layer =
-        cc::TextureLayer::CreateForMailbox(UILayerSettings(), this);
+        cc::TextureLayer::CreateForMailbox(this);
     new_layer->SetFlipped(true);
     SwitchToLayer(new_layer);
     texture_layer_ = new_layer;
@@ -592,6 +571,24 @@ bool Layer::TextureFlipped() const {
   return texture_layer_->flipped();
 }
 
+void Layer::SetTextureAlpha(float alpha) {
+  DCHECK(texture_layer_.get());
+  texture_layer_->SetVertexOpacity(alpha, alpha, alpha, alpha);
+}
+
+void Layer::SetTextureCrop(const gfx::RectF& crop) {
+  DCHECK(texture_layer_.get());
+  texture_crop_ = crop;
+  RecomputeDrawsContentAndUVRect();
+}
+
+void Layer::SetTextureScale(float x_scale, float y_scale) {
+  DCHECK(texture_layer_.get());
+  texture_x_scale_ = x_scale;
+  texture_y_scale_ = y_scale;
+  RecomputeDrawsContentAndUVRect();
+}
+
 void Layer::SetShowSurface(
     cc::SurfaceId surface_id,
     const cc::SurfaceLayer::SatisfyCallback& satisfy_callback,
@@ -601,8 +598,8 @@ void Layer::SetShowSurface(
     gfx::Size frame_size_in_dip) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
 
-  scoped_refptr<cc::SurfaceLayer> new_layer = cc::SurfaceLayer::Create(
-      UILayerSettings(), satisfy_callback, require_callback);
+  scoped_refptr<cc::SurfaceLayer> new_layer =
+      cc::SurfaceLayer::Create(satisfy_callback, require_callback);
   new_layer->SetSurfaceId(surface_id, scale, surface_size);
   SwitchToLayer(new_layer);
   surface_layer_ = new_layer;
@@ -617,8 +614,7 @@ void Layer::SetShowSolidColorContent() {
   if (solid_color_layer_.get())
     return;
 
-  scoped_refptr<cc::SolidColorLayer> new_layer =
-      cc::SolidColorLayer::Create(UILayerSettings());
+  scoped_refptr<cc::SolidColorLayer> new_layer = cc::SolidColorLayer::Create();
   SwitchToLayer(new_layer);
   solid_color_layer_ = new_layer;
 
@@ -677,6 +673,11 @@ bool Layer::SchedulePaint(const gfx::Rect& invalid_rect) {
 
   damaged_region_.Union(invalid_rect);
   ScheduleDraw();
+
+  if (layer_mask_) {
+    layer_mask_->damaged_region_.Union(invalid_rect);
+    layer_mask_->ScheduleDraw();
+  }
   return true;
 }
 
@@ -694,9 +695,11 @@ void Layer::SendDamagedRects() {
 
   for (cc::Region::Iterator iter(damaged_region_); iter.has_rect(); iter.next())
     cc_layer_->SetNeedsDisplayRect(iter.rect());
-}
+  if (layer_mask_)
+    layer_mask_->SendDamagedRects();
 
-void Layer::ClearDamagedRects() {
+  if (content_layer_)
+    paint_region_.Union(damaged_region_);
   damaged_region_.Clear();
 }
 
@@ -747,7 +750,8 @@ void Layer::OnDelegatedFrameDamage(const gfx::Rect& damage_rect_in_dip) {
   delegate_->OnDelegatedFrameDamage(damage_rect_in_dip);
 }
 
-void Layer::RequestCopyOfOutput(scoped_ptr<cc::CopyOutputRequest> request) {
+void Layer::RequestCopyOfOutput(
+    std::unique_ptr<cc::CopyOutputRequest> request) {
   cc_layer_->RequestCopyOfOutput(std::move(request));
 }
 
@@ -760,8 +764,8 @@ scoped_refptr<cc::DisplayItemList> Layer::PaintContentsToDisplayList(
   TRACE_EVENT1("ui", "Layer::PaintContentsToDisplayList", "name", name_);
   gfx::Rect local_bounds(bounds().size());
   gfx::Rect invalidation(
-      gfx::IntersectRects(damaged_region_.bounds(), local_bounds));
-  ClearDamagedRects();
+      gfx::IntersectRects(paint_region_.bounds(), local_bounds));
+  paint_region_.Clear();
   cc::DisplayItemListSettings settings;
   settings.use_cached_picture = false;
   scoped_refptr<cc::DisplayItemList> display_list =
@@ -784,7 +788,7 @@ size_t Layer::GetApproximateUnsharedMemoryUsage() const {
 
 bool Layer::PrepareTextureMailbox(
     cc::TextureMailbox* mailbox,
-    scoped_ptr<cc::SingleReleaseCallback>* release_callback,
+    std::unique_ptr<cc::SingleReleaseCallback>* release_callback,
     bool use_shared_memory) {
   if (!mailbox_release_callback_)
     return false;
@@ -793,17 +797,10 @@ bool Layer::PrepareTextureMailbox(
   return true;
 }
 
-void Layer::SetForceRenderSurface(bool force) {
-  if (force_render_surface_ == force)
-    return;
-
-  force_render_surface_ = force;
-  cc_layer_->SetForceRenderSurface(force_render_surface_);
-}
-
 class LayerDebugInfo : public base::trace_event::ConvertableToTraceFormat {
  public:
   explicit LayerDebugInfo(const std::string& name) : name_(name) {}
+  ~LayerDebugInfo() override {}
   void AppendAsTraceFormat(std::string* out) const override {
     base::DictionaryValue dictionary;
     dictionary.SetString("layer_name", name_);
@@ -811,13 +808,12 @@ class LayerDebugInfo : public base::trace_event::ConvertableToTraceFormat {
   }
 
  private:
-  ~LayerDebugInfo() override {}
   std::string name_;
 };
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat> Layer::TakeDebugInfo(
-    cc::Layer* layer) {
-  return new LayerDebugInfo(name_);
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
+Layer::TakeDebugInfo(cc::Layer* layer) {
+  return base::WrapUnique(new LayerDebugInfo(name_));
 }
 
 void Layer::CollectAnimators(
@@ -971,36 +967,6 @@ float Layer::GetDeviceScaleFactor() const {
   return device_scale_factor_;
 }
 
-void Layer::AddThreadedAnimation(scoped_ptr<cc::Animation> animation) {
-  DCHECK(cc_layer_);
-  DCHECK(!UILayerSettings().use_compositor_animation_timelines);
-  // Until this layer has a compositor (and hence cc_layer_ has a
-  // LayerTreeHost), addAnimation will fail.
-  if (GetCompositor()) {
-    cc_layer_->AddAnimation(std::move(animation));
-  } else {
-    pending_threaded_animations_.push_back(std::move(animation));
-  }
-}
-
-void Layer::RemoveThreadedAnimation(int animation_id) {
-  DCHECK(cc_layer_);
-  DCHECK(!UILayerSettings().use_compositor_animation_timelines);
-  if (pending_threaded_animations_.size() == 0) {
-    cc_layer_->RemoveAnimation(animation_id);
-    return;
-  }
-
-  pending_threaded_animations_.erase(
-      std::remove_if(
-          pending_threaded_animations_.begin(),
-          pending_threaded_animations_.end(),
-          [animation_id](const scoped_ptr<cc::Animation>& animation) {
-            return animation->id() == animation_id;
-          }),
-      pending_threaded_animations_.end());
-}
-
 LayerAnimatorCollection* Layer::GetLayerAnimatorCollection() {
   Compositor* compositor = GetCompositor();
   return compositor ? compositor->layer_animator_collection() : NULL;
@@ -1011,43 +977,26 @@ cc::Layer* Layer::GetCcLayer() const {
 }
 
 LayerThreadedAnimationDelegate* Layer::GetThreadedAnimationDelegate() {
-  if (UILayerSettings().use_compositor_animation_timelines) {
     DCHECK(animator_);
     return animator_.get();
-  } else {
-    return this;
-  }
-}
-
-void Layer::SendPendingThreadedAnimations() {
-  if (UILayerSettings().use_compositor_animation_timelines) {
-    DCHECK(pending_threaded_animations_.empty());
-    return;
-  }
-
-  for (auto& animation : pending_threaded_animations_)
-    cc_layer_->AddAnimation(std::move(animation));
-  pending_threaded_animations_.clear();
-
-  for (auto* child : children_)
-    child->SendPendingThreadedAnimations();
 }
 
 void Layer::CreateCcLayer() {
   if (type_ == LAYER_SOLID_COLOR || type_ == LAYER_NOT_DRAWN) {
-    solid_color_layer_ = cc::SolidColorLayer::Create(UILayerSettings());
+    solid_color_layer_ = cc::SolidColorLayer::Create();
     cc_layer_ = solid_color_layer_.get();
   } else if (type_ == LAYER_NINE_PATCH) {
-    nine_patch_layer_ = cc::NinePatchLayer::Create(UILayerSettings());
+    nine_patch_layer_ = cc::NinePatchLayer::Create();
     cc_layer_ = nine_patch_layer_.get();
   } else {
-    content_layer_ = cc::PictureLayer::Create(UILayerSettings(), this);
+    content_layer_ = cc::PictureLayer::Create(this);
     cc_layer_ = content_layer_.get();
   }
   cc_layer_->SetTransformOrigin(gfx::Point3F());
   cc_layer_->SetContentsOpaque(true);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->SetLayerClient(this);
+  cc_layer_->SetElementId(cc::ElementId(cc_layer_->id(), 0));
   RecomputePosition();
 }
 
@@ -1061,9 +1010,21 @@ void Layer::RecomputeDrawsContentAndUVRect() {
   if (texture_layer_.get()) {
     size.SetToMin(frame_size_in_dip_);
     gfx::PointF uv_top_left(0.f, 0.f);
-    gfx::PointF uv_bottom_right(
-        static_cast<float>(size.width()) / frame_size_in_dip_.width(),
-        static_cast<float>(size.height()) / frame_size_in_dip_.height());
+    gfx::PointF uv_bottom_right(1.f, 1.f);
+    if (!texture_crop_.IsEmpty()) {
+      uv_top_left = texture_crop_.origin();
+      uv_top_left.Scale(1.f / frame_size_in_dip_.width(),
+                        1.f / frame_size_in_dip_.height());
+      uv_bottom_right = texture_crop_.bottom_right();
+      uv_bottom_right.Scale(1.f / frame_size_in_dip_.width(),
+                            1.f / frame_size_in_dip_.height());
+    }
+    float x_scale = texture_x_scale_ * static_cast<float>(size.width()) /
+                    frame_size_in_dip_.width();
+    float y_scale = texture_y_scale_ * static_cast<float>(size.height()) /
+                    frame_size_in_dip_.height();
+    uv_top_left.Scale(x_scale, y_scale);
+    uv_bottom_right.Scale(x_scale, y_scale);
     texture_layer_->SetUV(uv_top_left, uv_bottom_right);
   } else if (surface_layer_.get()) {
     size.SetToMin(frame_size_in_dip_);

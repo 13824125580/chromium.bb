@@ -5,13 +5,17 @@
 #ifndef EXTENSIONS_BROWSER_UPDATER_UPDATE_SERVICE_H_
 #define EXTENSIONS_BROWSER_UPDATER_UPDATE_SERVICE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
+
+namespace base {
+class Version;
+}
 
 namespace content {
 class BrowserContext;
@@ -35,6 +39,10 @@ class UpdateService : public KeyedService {
   static UpdateService* Get(content::BrowserContext* context);
 
   void Shutdown() override;
+
+  void SendUninstallPing(const std::string& id,
+                         const base::Version& version,
+                         int reason);
 
   // Starts an update check for each of |extension_ids|. If there are any
   // updates available, they will be downloaded, checked for integrity,

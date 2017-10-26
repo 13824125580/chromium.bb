@@ -31,6 +31,7 @@ class URLRequestContextGetter;
 namespace content {
 class BrowserContext;
 class PluginServiceImpl;
+struct Referrer;
 class RenderWidgetHelper;
 class ResourceContext;
 struct WebPluginInfo;
@@ -41,7 +42,7 @@ struct WebPluginInfo;
 // with the routing id for a newly created RenderFrame.
 //
 // This object is created on the UI thread and used on the IO thread.
-class RenderFrameMessageFilter : public BrowserMessageFilter {
+class CONTENT_EXPORT RenderFrameMessageFilter : public BrowserMessageFilter {
  public:
   RenderFrameMessageFilter(int render_process_id,
                            PluginServiceImpl* plugin_service,
@@ -49,14 +50,21 @@ class RenderFrameMessageFilter : public BrowserMessageFilter {
                            net::URLRequestContextGetter* request_context,
                            RenderWidgetHelper* render_widget_helper);
 
-  // IPC::MessageFilter methods:
-  void OnChannelClosing() override;
-
   // BrowserMessageFilter methods:
   bool OnMessageReceived(const IPC::Message& message) override;
 
+ protected:
+  friend class TestSaveImageFromDataURL;
+
+  // This method will be overridden by TestSaveImageFromDataURL class for test.
+  virtual void DownloadUrl(int render_view_id,
+                           int render_frame_id,
+                           const GURL& url,
+                           const Referrer& referrer,
+                           const base::string16& suggested_name,
+                           const bool use_prompt) const;
+
  private:
-  class OpenChannelToNpapiPluginCallback;
   class OpenChannelToPpapiPluginCallback;
   class OpenChannelToPpapiBrokerCallback;
 
@@ -89,13 +97,19 @@ class RenderFrameMessageFilter : public BrowserMessageFilter {
   void SendGetCookiesResponse(IPC::Message* reply_msg,
                               const std::string& cookies);
 
+  void OnDownloadUrl(int render_view_id,
+                     int render_frame_id,
+                     const GURL& url,
+                     const Referrer& referrer,
+                     const base::string16& suggested_name);
+  void OnSaveImageFromDataURL(int render_view_id,
+                              int render_frame_id,
+                              const std::string& url_str);
+
   void OnAre3DAPIsBlocked(int render_frame_id,
                           const GURL& top_origin_url,
                           ThreeDAPIType requester,
                           bool* blocked);
-  void OnDidLose3DContext(const GURL& top_origin_url,
-                          ThreeDAPIType context_type,
-                          int arb_robustness_status_code);
 
   void OnRenderProcessGone();
 
@@ -110,13 +124,6 @@ class RenderFrameMessageFilter : public BrowserMessageFilter {
                        bool* found,
                        WebPluginInfo* info,
                        std::string* actual_mime_type);
-  void OnOpenChannelToPlugin(int render_frame_id,
-                             const GURL& url,
-                             const GURL& policy_url,
-                             const std::string& mime_type,
-                             IPC::Message* reply_msg);
-  void OnCompletedOpenChannelToNpapiPlugin(
-      OpenChannelToNpapiPluginCallback* client);
   void OnOpenChannelToPepperPlugin(const base::FilePath& path,
                                    IPC::Message* reply_msg);
   void OnDidCreateOutOfProcessPepperInstance(
@@ -145,8 +152,6 @@ class RenderFrameMessageFilter : public BrowserMessageFilter {
 
   // Initialized to 0, accessed on FILE thread only.
   base::TimeTicks last_plugin_refresh_time_;
-
-  std::set<OpenChannelToNpapiPluginCallback*> plugin_host_clients_;
 #endif  // ENABLE_PLUGINS
 
   // Contextual information to be used for requests created here.

@@ -4,17 +4,21 @@
 
 #include "chrome/renderer/plugins/chrome_plugin_placeholder.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/prerender_messages.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/renderer_resources.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
+#include "chrome/renderer/content_settings_observer.h"
 #include "chrome/renderer/custom_menu_commands.h"
 #include "chrome/renderer/plugins/plugin_preroller.h"
 #include "chrome/renderer/plugins/plugin_uma.h"
@@ -60,11 +64,8 @@ ChromePluginPlaceholder::ChromePluginPlaceholder(
                                          html_data),
       status_(ChromeViewHostMsg_GetPluginInfo_Status::kAllowed),
       title_(title),
-#if defined(ENABLE_PLUGIN_INSTALLATION)
-      placeholder_routing_id_(MSG_ROUTING_NONE),
-#endif
-      has_host_(false),
-      context_menu_request_id_(0) {
+      context_menu_request_id_(0),
+      did_send_blocked_content_notification_(false) {
   RenderThread::Get()->AddObserver(this);
 }
 
@@ -82,6 +83,11 @@ ChromePluginPlaceholder::~ChromePluginPlaceholder() {
         routing_id(), placeholder_routing_id_));
   }
 #endif
+}
+
+// static
+bool ChromePluginPlaceholder::IsSmallContentFilterEnabled() {
+  return base::FeatureList::IsEnabled(features::kBlockSmallContent);
 }
 
 // static
@@ -260,7 +266,8 @@ void ChromePluginPlaceholder::PluginListChanged() {
 
   ChromeViewHostMsg_GetPluginInfo_Output output;
   std::string mime_type(GetPluginParams().mimeType.utf8());
-  blink::WebString top_origin = GetFrame()->top()->securityOrigin().toString();
+  blink::WebString top_origin =
+      GetFrame()->top()->getSecurityOrigin().toString();
   render_frame()->Send(
       new ChromeViewHostMsg_GetPluginInfo(routing_id(),
                                           GURL(GetPluginParams().url),
@@ -353,7 +360,7 @@ void ChromePluginPlaceholder::ShowContextMenu(
 }
 
 blink::WebPlugin* ChromePluginPlaceholder::CreatePlugin() {
-  scoped_ptr<content::PluginInstanceThrottler> throttler;
+  std::unique_ptr<content::PluginInstanceThrottler> throttler;
   // If the plugin has already been marked essential in its placeholder form,
   // we shouldn't create a new throttler and start the process all over again.
   if (power_saver_enabled()) {
@@ -366,6 +373,15 @@ blink::WebPlugin* ChromePluginPlaceholder::CreatePlugin() {
   }
   return render_frame()->CreatePlugin(GetFrame(), GetPluginInfo(),
                                       GetPluginParams(), std::move(throttler));
+}
+
+void ChromePluginPlaceholder::OnBlockedTinyContent() {
+  if (did_send_blocked_content_notification_)
+    return;
+
+  did_send_blocked_content_notification_ = true;
+  ContentSettingsObserver::Get(render_frame())
+      ->DidBlockContentType(CONTENT_SETTINGS_TYPE_PLUGINS, title_);
 }
 
 gin::ObjectTemplateBuilder ChromePluginPlaceholder::GetObjectTemplateBuilder(

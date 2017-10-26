@@ -7,6 +7,7 @@
 
 #include <map>
 
+#include "base/cancelable_callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -64,13 +65,19 @@ class BattOrAgent : public BattOrConnection::Listener,
   void OnBytesSent(bool success) override;
   void OnMessageRead(bool success,
                      BattOrMessageType type,
-                     scoped_ptr<std::vector<char>> bytes) override;
+                     std::unique_ptr<std::vector<char>> bytes) override;
 
  protected:
   // The connection that knows how to communicate with the BattOr in terms of
   // protocol primitives. This is protected so that it can be replaced with a
   // fake in testing.
-  scoped_ptr<BattOrConnection> connection_;
+  std::unique_ptr<BattOrConnection> connection_;
+
+  // Timeout for when an action isn't completed within the allotted time. This
+  // is virtual and protected so that timeouts can be disabled in testing. The
+  // testing task runner that runs delayed tasks immediately deals poorly with
+  // timeouts posted as future tasks.
+  virtual void OnActionTimeout();
 
  private:
   enum class Command {
@@ -87,7 +94,6 @@ class BattOrAgent : public BattOrConnection::Listener,
     REQUEST_CONNECTION,
 
     // Actions required for starting tracing.
-    SEND_RESET,
     SEND_INIT,
     READ_INIT_ACK,
     SEND_SET_GAIN,
@@ -111,6 +117,8 @@ class BattOrAgent : public BattOrConnection::Listener,
   void PerformAction(Action action);
   // Performs an action after a delay.
   void PerformDelayedAction(Action action, base::TimeDelta delay);
+
+
 
   // Requests a connection to the BattOr.
   void BeginConnect();
@@ -152,7 +160,7 @@ class BattOrAgent : public BattOrConnection::Listener,
   base::ThreadChecker thread_checker_;
 
   // The BattOr's EEPROM (which is required for calibration).
-  scoped_ptr<BattOrEEPROM> battor_eeprom_;
+  std::unique_ptr<BattOrEEPROM> battor_eeprom_;
 
   // The first frame (required for calibration).
   std::vector<RawBattOrSample> calibration_frame_;
@@ -164,8 +172,14 @@ class BattOrAgent : public BattOrConnection::Listener,
   // we receive frames in order.
   uint32_t next_sequence_number_;
 
+  // The number of times we've attempted to init the BattOr.
+  uint8_t num_init_attempts_;
+
   // The number of times that we've attempted to read the last message.
   uint8_t num_read_attempts_;
+
+  // The timeout that's run when an action times out.
+  base::CancelableClosure timeout_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(BattOrAgent);
 };

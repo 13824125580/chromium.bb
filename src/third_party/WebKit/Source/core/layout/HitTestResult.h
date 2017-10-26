@@ -32,7 +32,6 @@
 #include "platform/text/TextDirection.h"
 #include "wtf/Forward.h"
 #include "wtf/ListHashSet.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefPtr.h"
 #include "wtf/VectorTraits.h"
 
@@ -60,7 +59,7 @@ enum ListBasedHitTestBehavior {
 class CORE_EXPORT HitTestResult {
     DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 public:
-    typedef WillBeHeapListHashSet<RefPtrWillBeMember<Node>> NodeSet;
+    typedef HeapListHashSet<Member<Node>> NodeSet;
 
     HitTestResult();
     HitTestResult(const HitTestRequest&, const LayoutPoint&);
@@ -126,7 +125,6 @@ public:
     void setIsOverWidget(bool b) { m_isOverWidget = b; }
 
     bool isSelected() const;
-    String spellingToolTip(TextDirection&) const;
     String title(TextDirection&) const;
     const AtomicString& altDisplayString() const;
     Image* image() const;
@@ -169,17 +167,17 @@ private:
     HitTestRequest m_hitTestRequest;
     bool m_cacheable;
 
-    RefPtrWillBeMember<Node> m_innerNode;
-    RefPtrWillBeMember<Node> m_innerPossiblyPseudoNode;
+    Member<Node> m_innerNode;
+    Member<Node> m_innerPossiblyPseudoNode;
     // FIXME: Nothing changes this to a value different from m_hitTestLocation!
     LayoutPoint m_pointInInnerNodeFrame; // The hit-tested point in innerNode frame coordinates.
     LayoutPoint m_localPoint; // A point in the local coordinate space of m_innerNode's layoutObject. Allows us to efficiently
         // determine where inside the layoutObject we hit on subsequent operations.
-    RefPtrWillBeMember<Element> m_innerURLElement;
-    RefPtrWillBeMember<Scrollbar> m_scrollbar;
+    Member<Element> m_innerURLElement;
+    Member<Scrollbar> m_scrollbar;
     bool m_isOverWidget; // Returns true if we are over a widget (and not in the border/padding area of a LayoutPart for example).
 
-    mutable OwnPtrWillBeMember<NodeSet> m_listBasedTestResult;
+    mutable Member<NodeSet> m_listBasedTestResult;
 };
 
 } // namespace blink

@@ -20,39 +20,7 @@
  * IN THE SOFTWARE.
  */
 
-// IMPLEMENTATION NOTES
-//
-// Our pump has two modes (see blpwtk2_pumpmode.h):
-// * MANUAL
-//   This mode closely resembles the mechanism used in the upstream pump,
-//   however it requires that the application notify us whenever it processes
-//   a message.
-//   When Chromium has work to do, it will post kMsgHaveWork.  In the upstream
-//   pump, this posted message is simply used to "wake up" the message loop.
-//   In our pump, the handler for this message is where we actually do the
-//   work.  We keep doing work until there is no more work, or until
-//   shouldStopDoingWork() returns true (which would typically happen if
-//   Windows has something else to do).
-//   If we still have more work to do, then we ScheduleWork() again *after*
-//   processing a Windows message other than our own kMsgHaveWork message.
-//   This simulates the ProcessPumpReplacementMessage logic in the upstream
-//   message pump.  A couple of exceptions to this is when we are in a modal
-//   loop, or if PeekMessage says there is no Windows message.  In these two
-//   cases, our postHandleMessage() will not be called.  To work around this,
-//   we start an auto-pump timer to do the remaining work.  This timer will
-//   keep firing until we no longer have any work to do, or until
-//   postHandleMessage is eventually called.
-//
-// * AUTOMATIC
-//   This mode is completely new and not available in the upstream pump.  In
-//   this mode, the application will *not* notify us whenever it processes a
-//   message.  This means our postHandleMessage() will never be called, so we
-//   always need an auto-pump timer to do any remaining work that we couldn't
-//   complete the first time round.  The auto-pump timer will keep firing until
-//   we no longer have any work to do.
-
 #include <blpwtk2_mainmessagepump.h>
-
 #include <blpwtk2_statics.h>
 
 #include <base/run_loop.h>
@@ -61,452 +29,474 @@
 #include <base/time/time.h>
 
 namespace blpwtk2 {
+namespace {
 
-static HHOOK s_msgHook;
-static HHOOK s_callWndHook;
-static bool s_isInModal = false;
-static bool s_isMovingOrResizing = false;
+const int kPumpMessage = WM_USER + 2;
 
-static const int kMsgHaveWork = WM_USER + 1;
-
-static bool isModalCode(int code)
+inline
+bool isModalCode(int code)
 {
-    return MSGF_DIALOGBOX == code
-        || MSGF_MENU == code
-        || MSGF_SCROLLBAR == code;
+  return MSGF_DIALOGBOX == code
+      || 3 == code // Window move
+      || 4 == code // Window resize
+      || MSGF_MENU == code
+      || MSGF_SCROLLBAR == code;
 }
-
-static LRESULT CALLBACK MsgFilterHookProc(int code, WPARAM wParam, LPARAM lParam)
-{
-    if (!s_isInModal && isModalCode(code)) {
-        s_isInModal = true;
-        DebugWithTime("ENTERING MODAL LOOP\n");
-        base::MessageLoop::current()->SetNestableTasksAllowed(true);
-        base::MessageLoop::current()->set_os_modal_loop(true);
-        base::MessageLoop::current()->get_pump()->ScheduleWork();
-    }
-    return CallNextHookEx(s_msgHook, code, wParam, lParam);
-}
-
-static LRESULT CALLBACK CallWndHookProc(int code, WPARAM wParam, LPARAM lParam)
-{
-    CWPSTRUCT* cwp = (CWPSTRUCT*)lParam;
-    switch (cwp->message) {
-    case WM_ENTERSIZEMOVE:
-        DebugWithTime("HOOK ENTER SIZEMOVE\n");
-        s_isMovingOrResizing = true;
-        base::MessageLoop::current()->SetNestableTasksAllowed(true);
-        base::MessageLoop::current()->set_os_modal_loop(true);
-        base::MessageLoop::current()->get_pump()->ScheduleWork();
-        break;
-    case WM_EXITSIZEMOVE:
-        DebugWithTime("HOOK EXIT SIZEMOVE\n");
-        s_isMovingOrResizing = false;
-        base::MessageLoop::current()->set_os_modal_loop(false);
-        break;
-    case WM_ENTERMENULOOP:
-        DebugWithTime("HOOK ENTER MENU\n");
-        base::MessageLoop::current()->SetNestableTasksAllowed(true);
-        base::MessageLoop::current()->set_os_modal_loop(true);
-        base::MessageLoop::current()->get_pump()->ScheduleWork();
-        break;
-    case WM_EXITMENULOOP:
-        DebugWithTime("HOOK EXIT MENU\n");
-        base::MessageLoop::current()->set_os_modal_loop(false);
-        break;
-    }
-    return CallNextHookEx(s_callWndHook, code, wParam, lParam);
-}
-
-// Return true if we should stop doing any work.  This is determined based on
-// whether there is any work in the Windows message queue.  This function
-// attempts to flush out any messages that are processed internally by
-// PeekMessage, to increase the likelihood of the next PeekMessage actually
-// returning TRUE.  However, it is not always guaranteed that the next
-// PeekMessage will return TRUE, so this function is just a hint.  If the
-// specified 'stopForTimers' is true, then we will return true if there is a
-// WM_TIMER in the message queue, otherwise WM_TIMERs are ignored.
-static bool shouldStopDoingWork(bool stopForTimers)
-{
-    const int POST_MASK = QS_POSTMESSAGE | QS_ALLPOSTMESSAGE | QS_HOTKEY;
-    const int INPUT_MASK = QS_MOUSE | QS_KEY;
-    const int SENT_MASK = QS_SENDMESSAGE;
-
-    int mask = QS_ALLINPUT;
-    if (!stopForTimers)
-        mask &= ~QS_TIMER;
-
-    DWORD queueStatus = HIWORD(GetQueueStatus(mask));
-    MSG msg;
-
-    while (queueStatus & SENT_MASK) {
-        // flush sent messages
-        if (PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE))
-            return true;
-        queueStatus = HIWORD(GetQueueStatus(mask));
-    }
-
-    // Posted messages should be processed before input messages:
-    //     http://msdn.microsoft.com/en-us/library/windows/desktop/ms644943(v=vs.85).aspx
-    if (queueStatus & POST_MASK)
-        return true;
-
-    while (queueStatus & (INPUT_MASK | SENT_MASK)) {
-        // flush input messages and sent messages (again)
-        if (s_isMovingOrResizing) {
-            // This is a special case!
-            // The Windows move/resize loop seems to handle QS_INPUT
-            // differently.  If we are in this mode, just return true so that
-            // we exit our work loop and relinquish control to Windows.  Note
-            // that if we have more work to do, a WM_TIMER will be scheduled
-            // to handle that work (with a lower priority).
-            DCHECK(base::MessageLoop::current()->os_modal_loop());
-            return true;
-        }
-        if (PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE | PM_QS_INPUT | PM_QS_SENDMESSAGE))
-            return true;
-
-        queueStatus = HIWORD(GetQueueStatus(mask));
-
-        // GetQueueStatus occasionally returns true even if there isn't a
-        // message available for processing.  We make the more expensive
-        // PeekMessage call to double-check whether we really do have an input
-        // message that can be processed.
-        if (queueStatus & INPUT_MASK &&
-            !PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE | PM_QS_INPUT)) {
-
-            queueStatus &= ~INPUT_MASK;
-        }
-    }
-
-    return queueStatus & mask;
 }
 
 // static
 MainMessagePump* MainMessagePump::current()
 {
-    base::MessageLoop* loop = base::MessageLoop::current();
-    DCHECK_EQ(base::MessageLoop::TYPE_UI, loop->type());
-    return static_cast<MainMessagePump*>(loop->get_pump());
+  base::MessageLoop* loop = base::MessageLoop::current();
+  DCHECK_EQ(base::MessageLoop::TYPE_UI, loop->type());
+  return static_cast<MainMessagePump*>(loop->get_pump());
 }
 
 MainMessagePump::MainMessagePump()
-: base::MessagePumpForUI(base::win::WrappedWindowProc<wndProcThunk>)
-, d_hasAutoPumpTimer(false)
-, d_moreWorkIsPlausible(false)
+    : base::MessagePumpForUI()
+    , d_window(0)
+    , d_isInsideModalLoop(false)
+    , d_isInsideMainLoop(0)
+    , d_isPumped(0)
+    , d_needRepost(0)
+    , d_scheduleTime(0)
+    , d_skipIdleWork(false)
+    , d_windowProcedureHook(0)
+    , d_messageFilter(0)
+    , d_minTimer(USER_TIMER_MINIMUM)
+    , d_maxTimer(USER_TIMER_MAXIMUM)
+    , d_maxPumpCountInsideModalLoop(1)
+    , d_traceThreshold(0)
 {
+  d_window = ::CreateWindowW(getClassName(),   // lpClassName
+                             0,                // lpWindowName
+                             0,                // dwStyle
+                             CW_DEFAULT,       // x
+                             CW_DEFAULT,       // y
+                             CW_DEFAULT,       // nWidth
+                             CW_DEFAULT,       // nHeight
+                             HWND_MESSAGE,     // hwndParent
+                             0,                // hMenu
+                             0,                // hInstance
+                             0);               // lpParam
+
+  // Disable processing of non-Chrome message from within MessagePumpForUI.
+  // This will allow for accurate measurement of window message processing time
+  // by the embedder.
+  should_process_pump_replacement_ = false;
+
+  if (Statics::isSingleThreadMode()) {
+    // Timer messages can easily be starved when the renderer runs in the
+    // browser main thread.  In this mode, we reduce the maximum allowable
+    // time to wait for the timer message to fire before resorting to schedule
+    // a pump from within the message filter hook.
+    d_maxTimer = 4 * d_minTimer;
+
+    // Even with a reduced maximum wait time before scheduling a pump, the
+    // large number of window messages in the main thread can starve our pump
+    // message.  When the program counter is inside of the modal loop, this
+    // starvation can be observed when resizing the window and it manifests
+    // itself as a very noticable lag.  To compensate for this starvation, we
+    // perform multiple flushes under a very specific condition: the renderer
+    // is running inside of the browser main thread and the program counter is
+    // inside an OS modal loop.
+    d_maxPumpCountInsideModalLoop = 16;
+  }
 }
 
 MainMessagePump::~MainMessagePump()
 {
+  ::DestroyWindow(d_window);
 }
 
 void MainMessagePump::init()
 {
-    // Setup some Windows hooks.  These hooks are used to detect when we enter
-    // a modal loop, in which case we put Chromium's work in a lower priority
-    // by using WM_TIMER (instead of kMsgHaveWork) to schedule work.
-    s_msgHook = SetWindowsHookEx(WH_MSGFILTER, MsgFilterHookProc, NULL,
-                                 GetCurrentThreadId());
-    s_callWndHook = SetWindowsHookEx(WH_CALLWNDPROC, CallWndHookProc, NULL,
+  // Setup some Windows hooks.  These hooks are used to detect when we enter
+  // a modal loop.
+  d_messageFilter = SetWindowsHookEx(WH_MSGFILTER,
+                                     messageFilter,
+                                     0,
                                      GetCurrentThreadId());
 
-    d_runLoop.reset(new base::RunLoop());
-    d_runLoop->BeforeRun();
-    base::MessageLoop::current()->PrepareRunHandler();
-    PushRunState(&d_runState, base::MessageLoop::current());
+  d_windowProcedureHook = SetWindowsHookEx(WH_CALLWNDPROC,
+                                           windowProcedureHook,
+                                           0,
+                                           GetCurrentThreadId());
+
+  d_runLoop.reset(new base::RunLoop());
+  d_runLoop->BeforeRun();
+  base::MessageLoop::current()->PrepareRunHandler();
+  PushRunState(&d_runState, base::MessageLoop::current());
 }
 
 void MainMessagePump::cleanup()
 {
-    // Before exiting the app, make sure any pending work is done.  This is
-    // necessary because there are ref counted objects (e.g.
-    // content::RenderViewImpl) whose destructors assert that queued work (in
-    // this case, RenderWidget::Close) has been completed.
-    bool moreWorkIsPlausible = true;
-    while (moreWorkIsPlausible) {
-        moreWorkIsPlausible = state_->delegate->DoWork();
-        moreWorkIsPlausible |=
-            state_->delegate->DoDelayedWork(&delayed_work_time_);
-    }
+  PopRunState();
+  d_runLoop->AfterRun();
+  d_runLoop.reset();
 
-    PopRunState();
-    d_runLoop->AfterRun();
-    d_runLoop.reset();
-
-    UnhookWindowsHookEx(s_callWndHook);
-    UnhookWindowsHookEx(s_msgHook);
+  UnhookWindowsHookEx(d_windowProcedureHook);
+  UnhookWindowsHookEx(d_messageFilter);
 }
 
 bool MainMessagePump::preHandleMessage(const MSG& msg)
 {
-    if (CallMsgFilter(const_cast<MSG*>(&msg), kMessageFilterCode)) {
-        return true;
-    }
-    else {
-        // Returning false will make the app perform the default action.
-        return false;
-    }
+  // Keep note on when the program counter is between a preHandleMessage and
+  // postHandleMessage.  We use this information in ScheduleWork() to determine
+  // if we should schedule the pump right away or wait for postHandleMessage
+  // to do it.
+  int wasInsideMainLoop = ::InterlockedExchange(&d_isInsideMainLoop, 1);
+  DCHECK_EQ(0, wasInsideMainLoop);
+
+  return (!!CallMsgFilter(const_cast<MSG*>(&msg), base::kMessageFilterCode));
 }
 
 void MainMessagePump::postHandleMessage(const MSG& msg)
 {
-    // There is no Windows hook that notifies us when exiting a modal dialog
-    // loop.  However, when postHandleMessage is called, we can assume that we
-    // are back in the application's main loop, so turn off the modal loop flag
-    // if it was set.
-    if (s_isInModal) {
-        DebugWithTime("EXITING MODAL LOOP\n");
-        base::MessageLoop::current()->set_os_modal_loop(false);
-        s_isInModal = false;
-    }
+  int wasInsideMainLoop = ::InterlockedExchange(&d_isInsideMainLoop, 0);
+  DCHECK_EQ(1, wasInsideMainLoop);
 
-    // If we have immediate work waiting, then scheduleMoreWorkIfNecessary may
-    // have created an auto-pump timer.  However, since we are in MANUAL pump
-    // mode, let's kill that timer and post kMsgHaveWork instead.  Note that we
-    // only do this if we just processed a message other than our kMsgHaveWork.
-    // This is to prevent the Windows queue from starving, because constantly
-    // posting kMsgHaveWork will prevent input messages and system internal
-    // messages from being processed by PeekMessage:
-    //     http://msdn.microsoft.com/en-us/library/windows/desktop/ms644943(v=vs.85).aspx
-    // This is similar to the ProcessPumpReplacementMessage logic in the
-    // upstream message pump.
-    if (d_moreWorkIsPlausible &&
-        (msg.hwnd != message_hwnd_ || msg.message != kMsgHaveWork)) {
-        if (d_hasAutoPumpTimer) {
-            KillTimer(message_hwnd_, reinterpret_cast<UINT_PTR>(this));
-            d_hasAutoPumpTimer = false;
-        }
-        ScheduleWork();
+  // There is no Windows hook that notifies us when exiting a modal dialog
+  // loop.  However, when postHandleMessage is called, we can assume that we
+  // are back in the application's main loop, so turn off the modal loop flag
+  // if it was set.
+  if (d_isInsideModalLoop) {
+    DebugWithTime("EXITING MODAL LOOP\n");
+    modalLoop(false);
+  }
+
+  LONG workState = work_state_;
+  LONG wasPumped = d_isPumped;
+
+  if (HAVE_WORK == workState && 0 == wasPumped) {
+    MSG msg_ = {};
+
+    // We will unintrusively keep our own message loop pumping without
+    // preempting lower-priority messages.  We do this by first checking
+    // what's on the Windows message queue.
+    if (::PeekMessage(&msg_, nullptr, 0, 0, PM_NOREMOVE)) {
+      // There is a message on the queue.  Now we check if there are high
+      // priority messages in the queue.
+
+      unsigned int flags = PM_NOREMOVE | PM_QS_POSTMESSAGE | PM_QS_SENDMESSAGE;
+      if (::PeekMessage(&msg_, nullptr, 0, 0, flags)) {
+
+        // We should never observe a kPumpMessage here if d_isPumped is false
+        DCHECK(kPumpMessage != msg_.message);
+
+        // Yes! There is a high priority message (other than our pump message)
+        // in the queue.  This means that we can piggyback on the current high
+        // priority message in the queue without introducing preemption of low
+        // priority messages.  Given that there are other messages in the
+        // queue, we won't consider the current state to be idle and so we will
+        // skip idle tasks for now.
+        d_skipIdleWork = true;
+        schedulePump();
+      }
     }
+    else {
+      // No messages are in the queue.  We need to post our pump message to keep
+      // the loop pumping.
+      schedulePump();
+    }
+  }
+}
+
+void MainMessagePump::setTraceThreshold(unsigned int timeoutMS)
+{
+  d_traceThreshold = timeoutMS;
+  LOG(INFO) << "blpwtk2::MainMessagePump::setTraceThreshold: Set traceThreshold to "
+            << timeoutMS
+            << " ms";
+}
+
+void MainMessagePump::ScheduleWork()
+{
+  ::InterlockedExchange(&work_state_, HAVE_WORK);
+
+  // Record the time when the MessageLoop becomes non-empty.  We need this
+  // information when the UI thread is operating inside a modal loop to
+  // determine the best time to schedule a pump.  Even though we need this
+  // only for modal loop, we always record the time because it is possible
+  // for ScheduleWork() to be called right before the UI thread enters the
+  // modal loop.
+  //
+  // Note that ScheduleWork can be called from another thread and so we
+  // must record the schedule time before scheduling the pump.  Doing it in
+  // reverse order may cause the pump message to be processed by the main
+  // thread before the schedule time is set by the current thread.
+  ::InterlockedExchange(&d_scheduleTime, ::GetTickCount());
+
+  LONG isInsideMainLoop = d_isInsideMainLoop;
+  if (0 == isInsideMainLoop) {
+    // We can guage the idleness of the Windows message queue by peeking at
+    // it.  Given that the peek operation is not very cheap, we only do it
+    // in postHandleMessage().  For all other times, we assume a non-idle
+    // state.
+    d_skipIdleWork = true;
+    schedulePump();
+  }
+}
+
+// static
+const wchar_t* MainMessagePump::getClassName()
+{
+  static const wchar_t* className;
+
+  if (nullptr == className) {
+    className = L"blpwtk2::MainMessagePump";
+
+    WNDCLASSW windowClass = {
+      0,                  // style
+      &windowProcedure,   // lpfnWndProc
+      0,                  // cbClsExtra
+      0,                  // cbWndExtra
+      0,                  // hInstance
+      0,                  // hIcon
+      0,                  // hCursor
+      0,                  // hbrBackground
+      0,                  // lpszMenuName
+      className           // lpszClassName
+    };
+
+    ATOM atom = ::RegisterClassW(&windowClass);
+    CHECK(atom);
+  }
+
+  return className;
+}
+
+// static
+LRESULT CALLBACK MainMessagePump::windowProcedure(NativeView window_handle,
+                                                  UINT message,
+                                                  WPARAM wparam,
+                                                  LPARAM lparam)
+{
+  // Note that 'pump' is only valid under specific conditions.
+  MainMessagePump* pump = reinterpret_cast<MainMessagePump*>(wparam);
+
+  if (kPumpMessage == message) {
+    pump->doWork();
+  }
+  else if (WM_TIMER == message) {
+    DCHECK(pump->d_isInsideModalLoop);
+
+    // Inside an OS modal loop, we have the ability to install a
+    // preHandleMessage as a message filter hook but we don't have the
+    // ability to install a postHandleMessage handler.  This prevents us from
+    // unintrusively posting a pump message that is directly triggered by
+    // MessagePumpForUI.
+    //
+    // We use a timer to continuously schedule a pump.  It is possible for
+    // timer messages to be starved, especially when the renderer's UI message
+    // loop and the browser's UI message loop are running in the same thread.
+    // To get around this starvation, we conditionally schedule a pump from
+    // the window procedure hook.
+    DWORD scheduleTime = pump->d_scheduleTime;
+    DWORD currentTime = ::GetTickCount();
+    if (pump->d_minTimer < currentTime - scheduleTime) {
+      pump->d_skipIdleWork = true;
+      pump->schedulePumpIfNecessary();
+    }
+  }
+  else {
+    return DefWindowProc(window_handle, message, wparam, lparam);
+  }
+
+  return S_OK;
+}
+
+// static
+LRESULT CALLBACK MainMessagePump::messageFilter(int code,
+                                                WPARAM wParam,
+                                                LPARAM lParam)
+{
+  MainMessagePump* pump = current();
+
+  if (!pump->d_isInsideModalLoop && isModalCode(code)) {
+    DebugWithTime("ENTERING MODAL LOOP\n");
+    pump->modalLoop(true);
+  }
+  return CallNextHookEx(pump->d_messageFilter, code, wParam, lParam);
+}
+
+// static
+LRESULT CALLBACK MainMessagePump::windowProcedureHook(int code,
+                                                      WPARAM wParam,
+                                                      LPARAM lParam)
+{
+  MainMessagePump* pump = current();
+
+  CWPSTRUCT* cwp = (CWPSTRUCT*)lParam;
+  switch (cwp->message) {
+  case WM_ENTERSIZEMOVE:
+    DebugWithTime("HOOK ENTER SIZEMOVE\n");
+    pump->modalLoop(true);
+    break;
+  case WM_EXITSIZEMOVE:
+    DebugWithTime("HOOK EXIT SIZEMOVE\n");
+    pump->modalLoop(false);
+    break;
+  case WM_ENTERMENULOOP:
+    DebugWithTime("HOOK ENTER MENU\n");
+    pump->modalLoop(true);
+    break;
+  case WM_EXITMENULOOP:
+    DebugWithTime("HOOK EXIT MENU\n");
+    pump->modalLoop(false);
+    break;
+  }
+
+  DWORD needRepost = pump->d_needRepost;
+  if (needRepost) {
+    pump->schedulePumpIfNecessary();
+  }
+  else if (USER_TIMER_MAXIMUM != pump->d_maxTimer &&
+           pump->d_isInsideModalLoop) {
+    // Schedule a pump if the timer message was throttled for too long.
+    DWORD d_scheduleTime = pump->d_scheduleTime;
+    DWORD currentTime = ::GetTickCount();
+
+    if (0 != d_scheduleTime &&
+        pump->d_maxTimer < currentTime - d_scheduleTime) {
+      pump->d_skipIdleWork = true;
+      pump->schedulePumpIfNecessary();
+    }
+  }
+
+  return CallNextHookEx(pump->d_windowProcedureHook, code, wParam, lParam);
+}
+
+void MainMessagePump::schedulePumpIfNecessary()
+{
+  LONG workState = work_state_;
+  if (HAVE_WORK == workState) {
+    schedulePump();
+  }
+}
+
+void MainMessagePump::schedulePump()
+{
+  int wasPumped = ::InterlockedExchange(&d_isPumped, 1);
+  if (0 != wasPumped) {
+    // Already pumped.
+    return;
+  }
+
+  BOOL ret = ::PostMessageW(d_window,
+                            kPumpMessage,
+                            reinterpret_cast<WPARAM>(this),
+                            0);
+
+  // Keep note on whether the pump message was successfully posted.  If it
+  // failed to post, we will try again from the window procedure hook.
+  ::InterlockedExchange(&d_needRepost, 0 == ret? 1 : 0);
+
+  if (ret) {
+    // Successfully pumped.
+    return;
+  }
+
+  // Failed to post pump message.  The message queue may be full.  We'll try
+  // again later
+  ::InterlockedExchange(&d_isPumped, 0);
 }
 
 void MainMessagePump::doWork()
 {
-    // Return immediately if we are called outside the scope of init/cleanup.
-    if (!state_ || state_->should_quit)
-        return;
+  const int kMsgHaveWork = WM_USER + 1;
 
-    // If we are using an auto-pump timer, then we want to ignore WM_TIMER
-    // messages so that our work will not be interrupted by our constant
-    // auto-pump timer.  However, we don't want to let other WM_TIMERs starve.
-    // So we will only do work for 100ms, at which point we will stop and let
-    // the timer fire.
-    // Note that for AUTOMATIC pump mode, we will do this even for the first
-    // time round, when d_hasAutoPumpTimer would be false.
-    const int TIME_LIMIT_MS = 100;
-    bool ignoreTimers = d_hasAutoPumpTimer || PumpMode::AUTOMATIC == Statics::pumpMode;
+  int wasPumped = ::InterlockedExchange(&d_isPumped, 0);
+  DCHECK_EQ(1, wasPumped);
 
-    // startTime is only used if we want to ignore timers, otherwise it will be -1.
-    DWORD startTime = ignoreTimers ? GetTickCount() : -1;
+  unsigned int startTime1 = ::GetTickCount();
 
-    while (true) {
-        d_moreWorkIsPlausible = state_->delegate->DoWork();
-        if (state_->should_quit)
-            break;
+  // Since MessagePumpForUI::DoRunLoop is not called when MainMessagePump is
+  // used, the functions MessagePumpForUI::ProcessNextWindowsMessage,
+  // MessagePumpForUI::ProcessMessageHelper, and
+  // MessagePumpForUI::ProcessPumpReplacementMessage are also not called.
+  // Part of the job for MessagePumpForUI::ProcessMessageHelper was to
+  // dispatch the work message to its own window message handler, which then
+  // calls into MessageLoop to flush the task queue.  We will do the same thing
+  // by sending a synchronous message to the same window message handler.
 
-        d_moreWorkIsPlausible |=
-            state_->delegate->DoDelayedWork(&delayed_work_time_);
+  unsigned int maxPumpCount;
+  
+  if (!d_isInsideModalLoop) {
+    maxPumpCount = 1;
+  }
+  else {
+    maxPumpCount = d_maxPumpCountInsideModalLoop;
+  }
 
-        bool stopForTimers = !ignoreTimers || (GetTickCount() - startTime) > TIME_LIMIT_MS;
-        if (state_->should_quit || shouldStopDoingWork(stopForTimers))
-            break;
+  for (unsigned int i=0; i<maxPumpCount; ++i) {
+    resetWorkState();
+    ::SendMessageW(message_hwnd_,
+                   kMsgHaveWork,
+                   reinterpret_cast<WPARAM>(this),
+                   0);
 
-        if (d_moreWorkIsPlausible)
-            continue;
-
-        d_moreWorkIsPlausible = state_->delegate->DoIdleWork();
-        if (state_->should_quit || !d_moreWorkIsPlausible || shouldStopDoingWork(stopForTimers))
-            break;
+    LONG workState = work_state_;
+    if (READY == workState) {
+      // Break out of the loop if no more work is scheduled.
+      break;
     }
+  }
+
+  if (!d_skipIdleWork) {
+    unsigned int startTime2 = ::GetTickCount();
+    MessagePumpForUI::DoIdleWork();
+    unsigned int endTime2 = ::GetTickCount();
+
+    if (shouldTrace(endTime2 - startTime2)) {
+      LOG(WARNING) << "blpwtk2::MainMessagePump::doWork:  MainMessagePumpForUI::DoIdleWork took "
+                   << (endTime2 - startTime2) << " ms to run";
+    }
+  }
+  else {
+    d_skipIdleWork = false;
+  }
+
+  unsigned int endTime1 = ::GetTickCount();
+  if (shouldTrace(endTime1 - startTime1)) {
+    LOG(WARNING) << "blpwtk2::MainMessagePump::doWork:  MainMessagePumpForUI::HandleWorkMessage took "
+                 << (endTime1 - startTime1) << " ms to run";
+  }
 }
 
-void MainMessagePump::scheduleMoreWorkIfNecessary()
+void MainMessagePump::modalLoop(bool enabled)
 {
-    bool shouldKillTimer = d_hasAutoPumpTimer;
+  if (d_isInsideModalLoop != enabled) {
+    base::MessageLoop* loop = base::MessageLoop::current();
+    d_isInsideModalLoop = enabled;
 
-    if (state_ && !state_->should_quit) {
-        if (PumpMode::AUTOMATIC == Statics::pumpMode) {
-            // If have_work_ is 1, that means ScheduleWork was called while we
-            // were doing work.  In this case, don't kill the timer.  We'll set
-            // have_work_ back to 2 so that we can know if ScheduleWork was
-            // called again the next time round.
-            if (1 == InterlockedCompareExchange(&have_work_, 2, 1)) {
-                d_moreWorkIsPlausible = true;
-            }
-            // However, if we finished all our work, then try setting
-            // have_work_ back to 0, only if it is still 2.  If it has
-            // become 1 between now and the previous switch, that means
-            // ScheduleWork was called (note: this can happen on a separate
-            // thread!), so don't kill the timer.  Also, set have_work_ back
-            // to 2 so that we can know if ScheduleWork was called again the
-            // next time round.
-            else if (!d_moreWorkIsPlausible && 1 == InterlockedCompareExchange(&have_work_, 0, 2)) {
-                d_moreWorkIsPlausible = true;
-                InterlockedExchange(&have_work_, 2);
-            }
-        }
+    if (enabled) {
+      d_scopedNestedTaskAllower =
+          std::make_unique<base::MessageLoop::ScopedNestableTaskAllower>(loop);
 
-        if (d_moreWorkIsPlausible) {
-            shouldKillTimer = false;
-        }
-    }
-
-    if (shouldKillTimer) {
-        KillTimer(message_hwnd_, reinterpret_cast<UINT_PTR>(this));
-        d_hasAutoPumpTimer = false;
-    }
-
-    if (!state_ || state_->should_quit) {
-        // Reset flags so that postHandleMessage will not try to schedule
-        // anything.
-        d_moreWorkIsPlausible = false;
-        delayed_work_time_ = base::TimeTicks();
-        return;
-    }
-
-    if (d_moreWorkIsPlausible) {
-        // If we are in AUTOMATIC mode, then any remaining work should be done
-        // on a lower priority WM_TIMER.  This is necessary so that we give a
-        // chance for Windows input and internal events to be processed.
-        // In MANUAL mode, we will ScheduleWork() in postHandleMessage()
-        // *after* handling a non-kMsgHaveWork message.  However, if we are in
-        // a modal loop or if there are no messages in the Windows message
-        // loop, then postHandleMessage() will not happen.  So in these two
-        // cases, we need to use a timer.
-        MSG msg;
-        bool shouldUseAutoPumpTimer =
-            PumpMode::AUTOMATIC == Statics::pumpMode
-            || base::MessageLoop::current()->os_modal_loop()
-            || FALSE == ::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
-
-        if (shouldUseAutoPumpTimer) {
-            ScheduleDelayedWork(base::TimeTicks::Now());
-            d_hasAutoPumpTimer = true;
-        }
-        else if (Statics::workMessageWhileDoingWorkDisabled) {
-            ScheduleWork();
-        }
-    }
-    else if (!delayed_work_time_.is_null())
-        ScheduleDelayedWork(delayed_work_time_);
-}
-
-void MainMessagePump::handleWorkMessage()
-{
-    if (PumpMode::MANUAL == Statics::pumpMode) {
-        // In MANUAL pump mode, have_work_ alternates between 0 and 1, where 1
-        // indicates that there is a kMsgHaveWork in the queue.  Now that we
-        // are processing the kMsgHaveWork message, set it back to 0.  This is
-        // identical to how have_work_ is used in the upstream pump.
-
-        if (Statics::workMessageWhileDoingWorkDisabled) {
-            // This branch is different from what upstream chromium does.  In
-            // this branch, we will change have_work_ *after* doing work, so
-            // that work messages are not posted to the Windows queue while we
-            // are doing work.
-            // If there is work remaining after doWork(), then we will schedule
-            // it in scheduleMoreWorkIfNecessary(), either as a timer (if there
-            // are other messages waiting), or as a work message (if the queue
-            // is empty).
-            doWork();
-            int old_have_work = InterlockedExchange(&have_work_, 0);
-            DCHECK(1 == old_have_work);
-        }
-        else {
-            // This branch is what upstream chromium does.
-            int old_have_work = InterlockedExchange(&have_work_, 0);
-            DCHECK(1 == old_have_work);
-            doWork();
-        }
+      SetTimer(d_window,
+               reinterpret_cast<WPARAM>(this),
+               d_minTimer,
+               nullptr);
     }
     else {
-        DCHECK(PumpMode::AUTOMATIC == Statics::pumpMode);
-
-        // In AUTOMATIC pump mode, we have 3 values for have_work_:
-        //   0: nothing is scheduled/happening.
-        //   1: ScheduleWork has been called (kMsgHaveWork may or may not be in
-        //      the queue, see below).
-        //   2: work is happening, or we are waiting for the auto-pump timer.
-        // The kMsgHaveWork is only posted if have_work_ is 0.  When
-        // ScheduleWork is called, have_work_ will be set to 1.  This is the
-        // same as what the upstream pump does.
-        // However, when we start handling the kMsgHaveWork message, we set
-        // have_work_ to 2 instead of 0 (which is what upstream does).  This
-        // essentially prevents kMsgHaveWork from being posted again, but lets
-        // us know whether ScheduleWork() has been called (in which case
-        // have_work_ would go back to 1).  Preventing kMsgHaveWork from being
-        // posted is important, because the posted message would preempt the
-        // auto-pump timer, which we use to continue work not completed in the
-        // first doWork().
-        // When we finish doing some work (in doWork), we look at have_work_
-        // again (this happens in scheduleMoreWorkIfNecessary).  If have_work_
-        // has become 1, then we set it back to 2 and use the auto-pump timer
-        // to do the rest of the work.  This timer will continue firing until
-        // we no longer have any immediate work to do.  At this point,
-        // have_work_ will be set back to zero, so everything goes back to the
-        // original state.
-        int old_have_work = InterlockedExchange(&have_work_, 2);
-        DCHECK(1 == old_have_work || 2 == old_have_work);
-        doWork();
+      d_scopedNestedTaskAllower.release();
+      KillTimer(d_window, reinterpret_cast<WPARAM>(this));
     }
-
-    scheduleMoreWorkIfNecessary();
-
-    if (state_ && state_->should_quit) {
-        LOG(INFO) << "MessagePump state should_quit == true";
-    }
+  }
 }
 
-void MainMessagePump::handleTimerMessage()
+void MainMessagePump::resetWorkState()
 {
-    if (!d_hasAutoPumpTimer) {
-        KillTimer(message_hwnd_, reinterpret_cast<UINT_PTR>(this));
-        d_hasAutoPumpTimer = false;
-    }
+  DWORD scheduleTime = ::InterlockedExchange(&d_scheduleTime, 0);
+  DCHECK_NE(scheduleTime, 0U);
 
-    doWork();
-    scheduleMoreWorkIfNecessary();
-
-    if (state_ && state_->should_quit) {
-        LOG(INFO) << "MessagePump state should_quit == true";
-    }
-}
-
-// static
-LRESULT CALLBACK MainMessagePump::wndProcThunk(HWND hwnd,
-                                               UINT message,
-                                               WPARAM wparam,
-                                               LPARAM lparam)
-{
-    switch (message) {
-    case kMsgHaveWork:
-        reinterpret_cast<MainMessagePump*>(wparam)->handleWorkMessage();
-        break;
-    case WM_TIMER:
-        reinterpret_cast<MainMessagePump*>(wparam)->handleTimerMessage();
-        break;
-    }
-    return DefWindowProc(hwnd, message, wparam, lparam);
-}
-
-// MessagePump overrides
-
-void MainMessagePump::ScheduleDelayedWork(const base::TimeTicks& delayed_work_time)
-{
-    // Verify that we never get called outside the main thread.
-    DCHECK(this == base::MessageLoop::current()->get_pump());
-
-    if (!d_hasAutoPumpTimer) {
-        if (PumpMode::AUTOMATIC == Statics::pumpMode) {
-            // If we are in AUTOMATIC mode, and an event is scheduled to be
-            // executed immediately, then just make this our auto-pump timer.
-            int64_t us = (delayed_work_time - base::TimeTicks::Now()).InMicroseconds();
-            if (0 >= us)
-                d_hasAutoPumpTimer = true;
-        }
-        MessagePumpForUI::ScheduleDelayedWork(delayed_work_time);
-    }
+  // The MessagePumpForUI::HandleWorkMessage function relies on
+  // MessagePumpForUI::ProcessPumpReplacementMessage to clear the work_state_
+  // flag.  Because MessagePumpForUI::ProcessPumpReplacementMessage function
+  // is no longer called, we manually reset the work_state_ flag by calling
+  // MessagePumpForUI::ResetWorkState().
+  MessagePumpForUI::ResetWorkState();
 }
 
 }  // close namespace blpwtk2

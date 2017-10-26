@@ -11,7 +11,8 @@ import android.test.suitebuilder.annotation.SmallTest;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.DownloadInfo;
+
+import java.util.UUID;
 
 /**
  * Tests of {@link SystemDownloadNotifier}.
@@ -35,6 +36,12 @@ public class SystemDownloadNotifierTest extends InstrumentationTestCase {
         @Override
         void stopService() {
             mStarted = false;
+        }
+
+        @Override
+        void onSuccessNotificationShown(
+                final SystemDownloadNotifier.PendingNotificationInfo notificationInfo,
+                final int notificationId) {
         }
     }
 
@@ -67,13 +74,13 @@ public class SystemDownloadNotifierTest extends InstrumentationTestCase {
     @SmallTest
     @Feature({"Download"})
     public void testNotificationNotHandledUntilServiceConnection() {
-        DownloadInfo info = new DownloadInfo.Builder().setDownloadId(1).build();
-        mDownloadNotifier.notifyDownloadProgress(info, 1L);
+        DownloadInfo info = new DownloadInfo.Builder()
+                .setDownloadGuid(UUID.randomUUID().toString()).build();
+        mDownloadNotifier.notifyDownloadProgress(info, 1L, true);
         assertTrue(mDownloadNotifier.mStarted);
 
         onServiceConnected();
         assertEquals(1, mService.getNotificationIds().size());
-        assertTrue(mService.getNotificationIds().contains(1));
     }
 
     /**
@@ -83,15 +90,17 @@ public class SystemDownloadNotifierTest extends InstrumentationTestCase {
     @Feature({"Download"})
     public void testServiceStoppedWhenAllDownloadsFinish() {
         onServiceConnected();
-        DownloadInfo info = new DownloadInfo.Builder().setDownloadId(1).build();
-        mDownloadNotifier.notifyDownloadProgress(info, 1L);
+        DownloadInfo info = new DownloadInfo.Builder()
+                .setDownloadGuid(UUID.randomUUID().toString()).build();
+        mDownloadNotifier.notifyDownloadProgress(info, 1L, true);
         assertTrue(mDownloadNotifier.mStarted);
-        DownloadInfo info2 = new DownloadInfo.Builder().setDownloadId(2).build();
-        mDownloadNotifier.notifyDownloadProgress(info2, 1L);
+        DownloadInfo info2 = new DownloadInfo.Builder()
+                .setDownloadGuid(UUID.randomUUID().toString()).build();
+        mDownloadNotifier.notifyDownloadProgress(info2, 1L, true);
 
         mDownloadNotifier.notifyDownloadFailed(info);
         assertTrue(mDownloadNotifier.mStarted);
-        mDownloadNotifier.notifyDownloadSuccessful(info2, null);
+        mDownloadNotifier.notifyDownloadSuccessful(info2, 100L, true, null);
         assertFalse(mDownloadNotifier.mStarted);
     }
 }

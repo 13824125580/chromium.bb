@@ -34,9 +34,9 @@
 
 namespace blink {
 
-PassOwnPtr<ExecutionContextTask> StorageErrorCallback::createSameThreadTask(StorageErrorCallback* callback, ExceptionCode ec)
+std::unique_ptr<ExecutionContextTask> StorageErrorCallback::createSameThreadTask(StorageErrorCallback* callback, ExceptionCode ec)
 {
-    return blink::createSameThreadTask(&StorageErrorCallback::run, callback, ec);
+    return blink::createSameThreadTask(&StorageErrorCallback::run, wrapPersistent(callback), ec);
 }
 
 void StorageErrorCallback::run(StorageErrorCallback* callback, ExceptionCode ec)

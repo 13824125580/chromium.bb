@@ -4,9 +4,11 @@
 
 #include "core/animation/animatable/AnimatablePath.h"
 
+#include "core/style/DataEquivalency.h"
 #include "core/svg/SVGPathBlender.h"
 #include "core/svg/SVGPathByteStreamBuilder.h"
 #include "core/svg/SVGPathByteStreamSource.h"
+#include <memory>
 
 namespace blink {
 
@@ -15,8 +17,11 @@ bool AnimatablePath::usesDefaultInterpolationWith(const AnimatableValue* value) 
     // Default interpolation is used if the paths have different lengths,
     // or the paths have a segment with different types (ignoring "relativeness").
 
+    const StylePath* toPath = toAnimatablePath(value)->path();
+    if (!m_path || !toPath)
+        return true;
     SVGPathByteStreamSource fromSource(path()->byteStream());
-    SVGPathByteStreamSource toSource(toAnimatablePath(value)->path()->byteStream());
+    SVGPathByteStreamSource toSource(toPath->byteStream());
 
     while (fromSource.hasMoreData()) {
         if (!toSource.hasMoreData())
@@ -39,7 +44,7 @@ PassRefPtr<AnimatableValue> AnimatablePath::interpolateTo(const AnimatableValue*
     if (usesDefaultInterpolationWith(value))
         return defaultInterpolateTo(this, value, fraction);
 
-    OwnPtr<SVGPathByteStream> byteStream = SVGPathByteStream::create();
+    std::unique_ptr<SVGPathByteStream> byteStream = SVGPathByteStream::create();
     SVGPathByteStreamBuilder builder(*byteStream);
 
     SVGPathByteStreamSource fromSource(path()->byteStream());
@@ -48,17 +53,12 @@ PassRefPtr<AnimatableValue> AnimatablePath::interpolateTo(const AnimatableValue*
     SVGPathBlender blender(&fromSource, &toSource, &builder);
     bool ok = blender.blendAnimatedPath(fraction);
     ASSERT_UNUSED(ok, ok);
-    return AnimatablePath::create(StylePath::create(byteStream.release()));
-}
-
-StylePath* AnimatablePath::path() const
-{
-    return m_path.get();
+    return AnimatablePath::create(StylePath::create(std::move(byteStream)));
 }
 
 bool AnimatablePath::equalTo(const AnimatableValue* value) const
 {
-    return m_path->equals(*toAnimatablePath(value)->path());
+    return dataEquivalent(m_path.get(), toAnimatablePath(value)->path());
 }
 
 } // namespace blink

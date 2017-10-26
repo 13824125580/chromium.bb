@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -40,24 +42,23 @@ scoped_refptr<extensions::Extension> AddMediaGalleriesApp(
     const std::string& name,
     const std::vector<std::string>& media_galleries_permissions,
     Profile* profile) {
-  scoped_ptr<base::DictionaryValue> manifest(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> manifest(new base::DictionaryValue);
   manifest->SetString(extensions::manifest_keys::kName, name);
   manifest->SetString(extensions::manifest_keys::kVersion, "0.1");
   manifest->SetInteger(extensions::manifest_keys::kManifestVersion, 2);
   base::ListValue* background_script_list = new base::ListValue;
-  background_script_list->Append(new base::StringValue("background.js"));
+  background_script_list->AppendString("background.js");
   manifest->Set(extensions::manifest_keys::kPlatformAppBackgroundScripts,
                 background_script_list);
 
   base::ListValue* permission_detail_list = new base::ListValue;
   for (size_t i = 0; i < media_galleries_permissions.size(); i++)
-    permission_detail_list->Append(
-        new base::StringValue(media_galleries_permissions[i]));
-  base::DictionaryValue* media_galleries_permission =
-      new base::DictionaryValue();
+    permission_detail_list->AppendString(media_galleries_permissions[i]);
+  std::unique_ptr<base::DictionaryValue> media_galleries_permission(
+      new base::DictionaryValue());
   media_galleries_permission->Set("mediaGalleries", permission_detail_list);
   base::ListValue* permission_list = new base::ListValue;
-  permission_list->Append(media_galleries_permission);
+  permission_list->Append(std::move(media_galleries_permission));
   manifest->Set(extensions::manifest_keys::kPermissions, permission_list);
 
   extensions::ExtensionPrefs* extension_prefs =
@@ -172,11 +173,6 @@ base::FilePath EnsureMediaDirectoriesExists::GetFakeITunesRootPath() const {
   DCHECK(fake_dir_.IsValid());
   return fake_dir_.path().AppendASCII("itunes");
 }
-
-base::FilePath EnsureMediaDirectoriesExists::GetFakeIPhotoRootPath() const {
-  DCHECK(fake_dir_.IsValid());
-  return fake_dir_.path().AppendASCII("iphoto");
-}
 #endif  // OS_MACOSX
 
 void EnsureMediaDirectoriesExists::Init() {
@@ -210,14 +206,6 @@ void EnsureMediaDirectoriesExists::Init() {
   mac_preferences_->AddTestItem(
       base::mac::NSToCFCast(iapps::kITunesRecentDatabasePathsKey),
       base::mac::NSToCFCast(iapps::NSArrayFromFilePath(itunes_xml)),
-      false);
-
-  // iPhoto override.
-  base::FilePath iphoto_xml =
-      GetFakeIPhotoRootPath().AppendASCII("AlbumData.xml");
-  mac_preferences_->AddTestItem(
-      base::mac::NSToCFCast(iapps::kIPhotoRecentDatabasesKey),
-      base::mac::NSToCFCast(iapps::NSArrayFromFilePath(iphoto_xml)),
       false);
 
   iapps::SetMacPreferencesForTesting(mac_preferences_.get());

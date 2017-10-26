@@ -31,7 +31,7 @@
 #include "core/editing/FrameSelection.h"
 #include "core/events/MutationEvent.h"
 #include "core/inspector/InspectorInstrumentation.h"
-#include "wtf/CheckedArithmetic.h"
+#include "wtf/CheckedNumeric.h"
 
 namespace blink {
 
@@ -47,8 +47,6 @@ void CharacterData::setData(const String& data)
     const String& nonNullData = !data.isNull() ? data : emptyString();
     if (m_data == nonNullData)
         return;
-
-    RefPtrWillBeRawPtr<CharacterData> protect(this);
 
     unsigned oldLength = length();
 
@@ -89,7 +87,7 @@ void CharacterData::appendData(const String& data)
     // FIXME: Should we call textInserted here?
 }
 
-void CharacterData::insertData(unsigned offset, const String& data, ExceptionState& exceptionState, RecalcStyleBehavior recalcStyleBehavior)
+void CharacterData::insertData(unsigned offset, const String& data, ExceptionState& exceptionState)
 {
     if (offset > length()) {
         exceptionState.throwDOMException(IndexSizeError, "The offset " + String::number(offset) + " is greater than the node's length (" + String::number(length()) + ").");
@@ -99,7 +97,7 @@ void CharacterData::insertData(unsigned offset, const String& data, ExceptionSta
     String newStr = m_data;
     newStr.insert(data, offset);
 
-    setDataAndUpdate(newStr, offset, 0, data.length(), UpdateFromNonParser, recalcStyleBehavior);
+    setDataAndUpdate(newStr, offset, 0, data.length(), UpdateFromNonParser);
 
     document().didInsertText(this, offset, data.length());
 }
@@ -111,10 +109,10 @@ static bool validateOffsetCount(unsigned offset, unsigned count, unsigned length
         return false;
     }
 
-    Checked<unsigned, RecordOverflow> offsetCount = offset;
+    CheckedNumeric<unsigned> offsetCount = offset;
     offsetCount += count;
 
-    if (offsetCount.hasOverflowed() || offset + count > length)
+    if (!offsetCount.IsValid() || offset + count > length)
         realCount = length - offset;
     else
         realCount = count;
@@ -122,7 +120,7 @@ static bool validateOffsetCount(unsigned offset, unsigned count, unsigned length
     return true;
 }
 
-void CharacterData::deleteData(unsigned offset, unsigned count, ExceptionState& exceptionState, RecalcStyleBehavior recalcStyleBehavior)
+void CharacterData::deleteData(unsigned offset, unsigned count, ExceptionState& exceptionState)
 {
     unsigned realCount = 0;
     if (!validateOffsetCount(offset, count, length(), realCount, exceptionState))
@@ -131,7 +129,7 @@ void CharacterData::deleteData(unsigned offset, unsigned count, ExceptionState& 
     String newStr = m_data;
     newStr.remove(offset, realCount);
 
-    setDataAndUpdate(newStr, offset, realCount, 0, UpdateFromNonParser, recalcStyleBehavior);
+    setDataAndUpdate(newStr, offset, realCount, 0, UpdateFromNonParser);
 
     document().didRemoveText(this, offset, realCount);
 }
@@ -168,14 +166,17 @@ void CharacterData::setNodeValue(const String& nodeValue)
     setData(nodeValue);
 }
 
-void CharacterData::setDataAndUpdate(const String& newData, unsigned offsetOfReplacedData, unsigned oldLength, unsigned newLength, UpdateSource source, RecalcStyleBehavior recalcStyleBehavior)
+void CharacterData::setDataAndUpdate(const String& newData, unsigned offsetOfReplacedData, unsigned oldLength, unsigned newLength, UpdateSource source)
 {
+    if (source != UpdateFromParser)
+        document().dataWillChange(*this);
+
     String oldData = m_data;
     m_data = newData;
 
-    ASSERT(!layoutObject() || isTextNode());
+    DCHECK(!layoutObject() || isTextNode());
     if (isTextNode())
-        toText(this)->updateTextLayoutObject(offsetOfReplacedData, oldLength, recalcStyleBehavior);
+        toText(this)->updateTextLayoutObject(offsetOfReplacedData, oldLength);
 
     if (source != UpdateFromParser) {
         if (getNodeType() == PROCESSING_INSTRUCTION_NODE)
@@ -191,11 +192,11 @@ void CharacterData::setDataAndUpdate(const String& newData, unsigned offsetOfRep
 
 void CharacterData::didModifyData(const String& oldData, UpdateSource source)
 {
-    if (OwnPtrWillBeRawPtr<MutationObserverInterestGroup> mutationRecipients = MutationObserverInterestGroup::createForCharacterDataMutation(*this))
+    if (MutationObserverInterestGroup* mutationRecipients = MutationObserverInterestGroup::createForCharacterDataMutation(*this))
         mutationRecipients->enqueueMutationRecord(MutationRecord::createCharacterData(this, oldData));
 
     if (parentNode()) {
-        ContainerNode::ChildrenChange change = {ContainerNode::TextChanged, previousSibling(), nextSibling(), ContainerNode::ChildrenChangeSourceAPI};
+        ContainerNode::ChildrenChange change = {ContainerNode::TextChanged, this, previousSibling(), nextSibling(), ContainerNode::ChildrenChangeSourceAPI};
         parentNode()->childrenChanged(change);
     }
 

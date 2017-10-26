@@ -7,7 +7,6 @@
 #include "core/css/parser/CSSTokenizer.h"
 #include "core/css/parser/MediaQueryParser.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/StringBuilder.h"
 
 namespace blink {
@@ -39,7 +38,7 @@ TEST(MediaConditionParserTest, Basic)
     // FIXME: We should test comma-seperated media conditions
     for (unsigned i = 0; testCases[i].input; ++i) {
         CSSTokenizer::Scope scope(testCases[i].input);
-        RefPtrWillBeRawPtr<MediaQuerySet> mediaConditionQuerySet = MediaQueryParser::parseMediaCondition(scope.tokenRange());
+        MediaQuerySet* mediaConditionQuerySet = MediaQueryParser::parseMediaCondition(scope.tokenRange());
         ASSERT_EQ(mediaConditionQuerySet->queryVector().size(), (unsigned)1);
         String queryText = mediaConditionQuerySet->queryVector()[0]->cssText();
         ASSERT_STREQ(testCases[i].output, queryText.ascii().data());

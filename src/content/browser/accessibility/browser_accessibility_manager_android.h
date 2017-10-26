@@ -74,10 +74,15 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
   }
   bool prune_tree_for_screen_reader() { return prune_tree_for_screen_reader_; }
 
-  // Implementation of BrowserAccessibilityManager.
-  void NotifyAccessibilityEvent(ui::AXEvent event_type,
-                                BrowserAccessibility* node) override;
-  void OnLocationChanges(
+  bool ShouldExposePasswordText();
+
+  // BrowserAccessibilityManager overrides.
+  BrowserAccessibility* GetFocus() override;
+  void NotifyAccessibilityEvent(
+      BrowserAccessibilityEvent::Source source,
+      ui::AXEvent event_type,
+      BrowserAccessibility* node) override;
+  void SendLocationChangeEvents(
       const std::vector<AccessibilityHostMsg_LocationChangeParams>& params)
           override;
 
@@ -218,6 +223,8 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
               jint id,
               int direction);
 
+  JavaObjectWeakGlobalRef& java_ref() { return java_ref_; }
+
  protected:
   // AXTreeDelegate overrides.
   void OnAtomicUpdateFinished(
@@ -228,6 +235,10 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
   bool UseRootScrollOffsetsWhenComputingBounds() override;
 
  private:
+  BrowserAccessibilityAndroid* GetFromUniqueID(int32_t unique_id);
+
+   base::android::ScopedJavaLocalRef<jobject> GetJavaRefFromRootManager();
+
   // This gives BrowserAccessibilityManager::Create access to the class
   // constructor.
   friend class BrowserAccessibilityManager;

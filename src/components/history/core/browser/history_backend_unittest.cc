@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -19,8 +20,8 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
@@ -29,7 +30,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/favicon_base/favicon_usage_data.h"
 #include "components/history/core/browser/history_backend_client.h"
@@ -64,8 +65,6 @@ using base::HistogramBase;
 const int kTinyEdgeSize = 10;
 const int kSmallEdgeSize = 16;
 const int kLargeEdgeSize = 32;
-
-const char kAcceptLanguagesForTest[] = "en-US,en";
 
 const gfx::Size kTinySize = gfx::Size(kTinyEdgeSize, kTinyEdgeSize);
 const gfx::Size kSmallSize = gfx::Size(kSmallEdgeSize, kSmallEdgeSize);
@@ -123,7 +122,8 @@ class HistoryBackendTestDelegate : public HistoryBackend::Delegate {
       : test_(test) {}
 
   void NotifyProfileError(sql::InitStatus init_status) override {}
-  void SetInMemoryBackend(scoped_ptr<InMemoryHistoryBackend> backend) override;
+  void SetInMemoryBackend(
+      std::unique_ptr<InMemoryHistoryBackend> backend) override;
   void NotifyFaviconsChanged(const std::set<GURL>& page_urls,
                              const GURL& icon_url) override;
   void NotifyURLVisited(ui::PageTransition transition,
@@ -243,7 +243,7 @@ class HistoryBackendTestBase : public testing::Test {
 
   history::HistoryClientFakeBookmarks history_client_;
   scoped_refptr<HistoryBackend> backend_;  // Will be NULL on init failure.
-  scoped_ptr<InMemoryHistoryBackend> mem_backend_;
+  std::unique_ptr<InMemoryHistoryBackend> mem_backend_;
   bool loaded_;
 
  private:
@@ -257,8 +257,7 @@ class HistoryBackendTestBase : public testing::Test {
     backend_ = new HistoryBackend(new HistoryBackendTestDelegate(this),
                                   history_client_.CreateBackendClient(),
                                   base::ThreadTaskRunnerHandle::Get());
-    backend_->Init(std::string(), false,
-                   TestHistoryDatabaseParamsForPath(test_dir_));
+    backend_->Init(false, TestHistoryDatabaseParamsForPath(test_dir_));
   }
 
   void TearDown() override {
@@ -271,7 +270,7 @@ class HistoryBackendTestBase : public testing::Test {
     history_client_.ClearAllBookmarks();
   }
 
-  void SetInMemoryBackend(scoped_ptr<InMemoryHistoryBackend> backend) {
+  void SetInMemoryBackend(std::unique_ptr<InMemoryHistoryBackend> backend) {
     mem_backend_.swap(backend);
   }
 
@@ -289,7 +288,7 @@ class HistoryBackendTestBase : public testing::Test {
 };
 
 void HistoryBackendTestDelegate::SetInMemoryBackend(
-    scoped_ptr<InMemoryHistoryBackend> backend) {
+    std::unique_ptr<InMemoryHistoryBackend> backend) {
   test_->SetInMemoryBackend(std::move(backend));
 }
 
@@ -1707,8 +1706,7 @@ TEST_F(HistoryBackendTest, MigrationVisitSource) {
   backend_ = new HistoryBackend(new HistoryBackendTestDelegate(this),
                                 history_client_.CreateBackendClient(),
                                 base::ThreadTaskRunnerHandle::Get());
-  backend_->Init(std::string(), false,
-                 TestHistoryDatabaseParamsForPath(new_history_path));
+  backend_->Init(false, TestHistoryDatabaseParamsForPath(new_history_path));
   backend_->Closing();
   backend_ = NULL;
 
@@ -3104,7 +3102,7 @@ TEST_F(HistoryBackendTest, TopHosts_IgnoreUnusualURLs) {
       GURL("chrome-extension://nghiiepjnjgjeolabmjjceablnkpkjde/options.html"));
   urls.push_back(GURL("file:///home/foobar/tmp/baz.html"));
   urls.push_back(GURL("data:text/plain,Hello%20world%21"));
-  urls.push_back(GURL("chrome://memory"));
+  urls.push_back(GURL("chrome://version"));
   urls.push_back(GURL("about:mammon"));
   for (const GURL& url : urls) {
     backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
@@ -3167,33 +3165,49 @@ TEST_F(HistoryBackendTest, RecordTopHostsMetrics) {
               ElementsAre(base::Bucket(1, 1), base::Bucket(51, 1)));
 }
 
-TEST_F(HistoryBackendTest, GetCountsForOrigins) {
-  std::vector<GURL> urls;
-  urls.push_back(GURL("http://cnn.com/us"));
-  urls.push_back(GURL("http://cnn.com/intl"));
-  urls.push_back(GURL("https://cnn.com/intl"));
-  urls.push_back(GURL("http://cnn.com:8080/path"));
-  urls.push_back(GURL("http://dogtopia.com/pups?q=poods"));
-  for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
-  }
+TEST_F(HistoryBackendTest, GetCountsAndLastVisitForOrigins) {
+  base::Time now = base::Time::Now();
+  base::Time tomorrow = now + base::TimeDelta::FromDays(1);
+  base::Time yesterday = now - base::TimeDelta::FromDays(1);
+  base::Time last_week = now - base::TimeDelta::FromDays(7);
+
+  backend_->AddPageVisit(GURL("http://cnn.com/intl"), yesterday, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://cnn.com/us"), last_week, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://cnn.com/ny"), now, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("https://cnn.com/intl"), yesterday, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://cnn.com:8080/path"), yesterday, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://dogtopia.com/pups?q=poods"), now, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
 
   std::set<GURL> origins;
   origins.insert(GURL("http://cnn.com/"));
-  EXPECT_THAT(backend_->GetCountsForOrigins(origins),
-              ElementsAre(std::make_pair(GURL("http://cnn.com/"), 2)));
+  EXPECT_THAT(backend_->GetCountsAndLastVisitForOrigins(origins),
+              ElementsAre(std::make_pair(GURL("http://cnn.com/"),
+                                         std::make_pair(3, now))));
 
   origins.insert(GURL("http://dogtopia.com/"));
   origins.insert(GURL("http://cnn.com:8080/"));
   origins.insert(GURL("https://cnn.com/"));
   origins.insert(GURL("http://notpresent.com/"));
-  EXPECT_THAT(backend_->GetCountsForOrigins(origins),
-              ElementsAre(std::make_pair(GURL("http://cnn.com/"), 2),
-                          std::make_pair(GURL("http://cnn.com:8080/"), 1),
-                          std::make_pair(GURL("http://dogtopia.com/"), 1),
-                          std::make_pair(GURL("http://notpresent.com/"), 0),
-                          std::make_pair(GURL("https://cnn.com/"), 1)));
+  backend_->AddPageVisit(GURL("http://cnn.com/"), tomorrow, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+
+  EXPECT_THAT(
+      backend_->GetCountsAndLastVisitForOrigins(origins),
+      ElementsAre(
+          std::make_pair(GURL("http://cnn.com/"), std::make_pair(4, tomorrow)),
+          std::make_pair(GURL("http://cnn.com:8080/"),
+                         std::make_pair(1, yesterday)),
+          std::make_pair(GURL("http://dogtopia.com/"), std::make_pair(1, now)),
+          std::make_pair(GURL("http://notpresent.com/"),
+                         std::make_pair(0, base::Time())),
+          std::make_pair(GURL("https://cnn.com/"),
+                         std::make_pair(1, yesterday))));
 }
 
 TEST_F(HistoryBackendTest, UpdateVisitDuration) {
@@ -3266,8 +3280,7 @@ TEST_F(HistoryBackendTest, MigrationVisitDuration) {
   backend_ = new HistoryBackend(new HistoryBackendTestDelegate(this),
                                 history_client_.CreateBackendClient(),
                                 base::ThreadTaskRunnerHandle::Get());
-  backend_->Init(std::string(), false,
-                 TestHistoryDatabaseParamsForPath(new_history_path));
+  backend_->Init(false, TestHistoryDatabaseParamsForPath(new_history_path));
   backend_->Closing();
   backend_ = NULL;
 
@@ -3490,12 +3503,11 @@ TEST_F(HistoryBackendTest, RemoveNotification) {
 
   // Add a URL.
   GURL url("http://www.google.com");
-  scoped_ptr<HistoryService> service(
-      new HistoryService(make_scoped_ptr(new HistoryClientFakeBookmarks),
-                         scoped_ptr<history::VisitDelegate>()));
+  std::unique_ptr<HistoryService> service(
+      new HistoryService(base::WrapUnique(new HistoryClientFakeBookmarks),
+                         std::unique_ptr<history::VisitDelegate>()));
   EXPECT_TRUE(
-      service->Init(kAcceptLanguagesForTest,
-                    TestHistoryDatabaseParamsForPath(scoped_temp_dir.path())));
+      service->Init(TestHistoryDatabaseParamsForPath(scoped_temp_dir.path())));
 
   service->AddPage(
       url, base::Time::Now(), NULL, 1, GURL(), RedirectList(),

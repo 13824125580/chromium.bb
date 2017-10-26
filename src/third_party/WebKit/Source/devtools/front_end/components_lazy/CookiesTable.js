@@ -51,7 +51,7 @@ WebInspector.CookiesTable = function(expandable, refreshCallback, selectedCallba
         {id: "size", title: WebInspector.UIString("Size"), sortable: true, align: WebInspector.DataGrid.Align.Right, weight: 7},
         {id: "httpOnly", title: WebInspector.UIString("HTTP"), sortable: true, align: WebInspector.DataGrid.Align.Center, weight: 7},
         {id: "secure", title: WebInspector.UIString("Secure"), sortable: true, align: WebInspector.DataGrid.Align.Center, weight: 7},
-        {id: "sameSite", title: WebInspector.UIString("Same-Site"), sortable: true, align: WebInspector.DataGrid.Align.Center, weight: 7}
+        {id: "sameSite", title: WebInspector.UIString("SameSite"), sortable: true, align: WebInspector.DataGrid.Align.Center, weight: 7}
     ];
 
     if (readOnly)
@@ -219,16 +219,16 @@ WebInspector.CookiesTable.prototype = {
 
         var comparator;
         switch (this._dataGrid.sortColumnIdentifier()) {
-            case "name": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.name); break;
-            case "value": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.value); break;
-            case "domain": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.domain); break;
-            case "path": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.path); break;
-            case "expires": comparator = expiresCompare; break;
-            case "size": comparator = numberCompare.bind(null, WebInspector.Cookie.prototype.size); break;
-            case "httpOnly": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.httpOnly); break;
-            case "secure": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.secure); break;
-            case "sameSite": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.sameSite); break;
-            default: compareTo.bind(null, WebInspector.Cookie.prototype.name);
+        case "name": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.name); break;
+        case "value": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.value); break;
+        case "domain": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.domain); break;
+        case "path": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.path); break;
+        case "expires": comparator = expiresCompare; break;
+        case "size": comparator = numberCompare.bind(null, WebInspector.Cookie.prototype.size); break;
+        case "httpOnly": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.httpOnly); break;
+        case "secure": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.secure); break;
+        case "sameSite": comparator = compareTo.bind(null, WebInspector.Cookie.prototype.sameSite); break;
+        default: compareTo.bind(null, WebInspector.Cookie.prototype.name);
         }
 
         cookies.sort(comparator);
@@ -261,7 +261,7 @@ WebInspector.CookiesTable.prototype = {
         const checkmark = "\u2713";
         data.httpOnly = (cookie.httpOnly() ? checkmark : "");
         data.secure = (cookie.secure() ? checkmark : "");
-        data.sameSite = (cookie.sameSite() ? checkmark : "");
+        data.sameSite = cookie.sameSite() || "";
 
         var node = new WebInspector.DataGridNode(data);
         node.cookie = cookie;

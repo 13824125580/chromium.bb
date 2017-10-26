@@ -19,12 +19,9 @@
 
 #include "core/layout/svg/SVGTextLayoutEngineBaseline.h"
 
-#include "core/layout/LayoutObject.h"
-#include "core/layout/svg/SVGTextMetrics.h"
 #include "core/style/SVGComputedStyle.h"
 #include "core/svg/SVGLengthContext.h"
 #include "platform/fonts/Font.h"
-#include "platform/text/UnicodeRange.h"
 
 namespace blink {
 
@@ -41,11 +38,11 @@ float SVGTextLayoutEngineBaseline::calculateBaselineShift(const ComputedStyle& s
 
     switch (svgStyle.baselineShift()) {
     case BS_LENGTH:
-        return SVGLengthContext::valueForLength(svgStyle.baselineShiftValue(), style, m_font.fontDescription().computedPixelSize() / m_effectiveZoom);
+        return SVGLengthContext::valueForLength(svgStyle.baselineShiftValue(), style, m_font.getFontDescription().computedPixelSize() / m_effectiveZoom);
     case BS_SUB:
-        return -m_font.fontMetrics().floatHeight() / 2 / m_effectiveZoom;
+        return -m_font.getFontMetrics().floatHeight() / 2 / m_effectiveZoom;
     case BS_SUPER:
-        return m_font.fontMetrics().floatHeight() / 2 / m_effectiveZoom;
+        return m_font.getFontMetrics().floatHeight() / 2 / m_effectiveZoom;
     default:
         ASSERT_NOT_REACHED();
         return 0;
@@ -116,7 +113,7 @@ float SVGTextLayoutEngineBaseline::calculateAlignmentBaselineShift(bool isVertic
         ASSERT(baseline != AB_AUTO && baseline != AB_BASELINE);
     }
 
-    const FontMetrics& fontMetrics = m_font.fontMetrics();
+    const FontMetrics& fontMetrics = m_font.getFontMetrics();
     float ascent = fontMetrics.floatAscent() / m_effectiveZoom;
     float descent = fontMetrics.floatDescent() / m_effectiveZoom;
     float xheight = fontMetrics.xHeight() / m_effectiveZoom;

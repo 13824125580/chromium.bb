@@ -30,8 +30,8 @@
 #include "platform/HTTPNames.h"
 #include "platform/network/ResourceResponse.h"
 #include "wtf/CurrentTime.h"
-#include "wtf/MainThread.h"
 #include "wtf/StdLibExtras.h"
+#include <memory>
 
 namespace blink {
 
@@ -124,7 +124,7 @@ bool CrossOriginPreflightResultCacheItem::allowsCrossOriginHeaders(const HTTPHea
 {
     for (const auto& header : requestHeaders) {
         if (!m_headers.contains(header.key) && !FetchUtils::isSimpleHeader(header.key, header.value) && !FetchUtils::isForbiddenHeaderName(header.key)) {
-            errorDescription = "Request header field " + header.key.string() + " is not allowed by Access-Control-Allow-Headers in preflight response.";
+            errorDescription = "Request header field " + header.key.getString() + " is not allowed by Access-Control-Allow-Headers in preflight response.";
             return false;
         }
     }
@@ -152,10 +152,10 @@ CrossOriginPreflightResultCache& CrossOriginPreflightResultCache::shared()
     return cache;
 }
 
-void CrossOriginPreflightResultCache::appendEntry(const String& origin, const KURL& url, PassOwnPtr<CrossOriginPreflightResultCacheItem> preflightResult)
+void CrossOriginPreflightResultCache::appendEntry(const String& origin, const KURL& url, std::unique_ptr<CrossOriginPreflightResultCacheItem> preflightResult)
 {
     ASSERT(isMainThread());
-    m_preflightHashMap.set(std::make_pair(origin, url), preflightResult);
+    m_preflightHashMap.set(std::make_pair(origin, url), std::move(preflightResult));
 }
 
 bool CrossOriginPreflightResultCache::canSkipPreflight(const String& origin, const KURL& url, StoredCredentials includeCredentials, const String& method, const HTTPHeaderMap& requestHeaders)

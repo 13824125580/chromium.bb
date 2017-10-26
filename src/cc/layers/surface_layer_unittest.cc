@@ -9,7 +9,7 @@
 
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/surface_layer.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
@@ -48,18 +48,17 @@ class SurfaceLayerTest : public testing::Test {
 
   FakeLayerTreeHostClient fake_client_;
   TestTaskGraphRunner task_graph_runner_;
-  scoped_ptr<FakeLayerTreeHost> layer_tree_host_;
-  LayerSettings layer_settings_;
+  std::unique_ptr<FakeLayerTreeHost> layer_tree_host_;
 };
 
-void SatisfyCallback(SurfaceSequence* out, SurfaceSequence in) {
+void SatisfyCallback(SurfaceSequence* out, const SurfaceSequence& in) {
   *out = in;
 }
 
 void RequireCallback(SurfaceId* out_id,
                      std::set<SurfaceSequence>* out,
-                     SurfaceId in_id,
-                     SurfaceSequence in) {
+                     const SurfaceId& in_id,
+                     const SurfaceSequence& in) {
   *out_id = in_id;
   out->insert(in);
 }
@@ -72,18 +71,18 @@ TEST_F(SurfaceLayerTest, MultipleFramesOneSurface) {
   SurfaceId required_id;
   std::set<SurfaceSequence> required_seq;
   scoped_refptr<SurfaceLayer> layer(SurfaceLayer::Create(
-      layer_settings_, base::Bind(&SatisfyCallback, &blank_change),
+      base::Bind(&SatisfyCallback, &blank_change),
       base::Bind(&RequireCallback, &required_id, &required_seq)));
-  layer->SetSurfaceId(SurfaceId(1), 1.f, gfx::Size(1, 1));
+  layer->SetSurfaceId(SurfaceId(0, 1, 0), 1.f, gfx::Size(1, 1));
   layer_tree_host_->set_surface_id_namespace(1);
   layer_tree_host_->SetRootLayer(layer);
 
-  scoped_ptr<FakeLayerTreeHost> layer_tree_host2 =
+  std::unique_ptr<FakeLayerTreeHost> layer_tree_host2 =
       FakeLayerTreeHost::Create(&fake_client_, &task_graph_runner_);
   scoped_refptr<SurfaceLayer> layer2(SurfaceLayer::Create(
-      layer_settings_, base::Bind(&SatisfyCallback, &blank_change),
+      base::Bind(&SatisfyCallback, &blank_change),
       base::Bind(&RequireCallback, &required_id, &required_seq)));
-  layer2->SetSurfaceId(SurfaceId(1), 1.f, gfx::Size(1, 1));
+  layer2->SetSurfaceId(SurfaceId(0, 1, 0), 1.f, gfx::Size(1, 1));
   layer_tree_host2->set_surface_id_namespace(2);
   layer_tree_host2->SetRootLayer(layer2);
 
@@ -102,7 +101,7 @@ TEST_F(SurfaceLayerTest, MultipleFramesOneSurface) {
 
   // Set of sequences that need to be satisfied should include sequences from
   // both trees.
-  EXPECT_TRUE(required_id == SurfaceId(1));
+  EXPECT_TRUE(required_id == SurfaceId(0, 1, 0));
   EXPECT_EQ(2u, required_seq.size());
   EXPECT_TRUE(required_seq.count(expected1));
   EXPECT_TRUE(required_seq.count(expected2));
@@ -128,9 +127,9 @@ class SurfaceLayerSwapPromise : public LayerTreeTest {
   void BeginTest() override {
     layer_tree_host()->set_surface_id_namespace(1);
     layer_ = SurfaceLayer::Create(
-        layer_settings(), base::Bind(&SatisfyCallback, &satisfied_sequence_),
+        base::Bind(&SatisfyCallback, &satisfied_sequence_),
         base::Bind(&RequireCallback, &required_id_, &required_set_));
-    layer_->SetSurfaceId(SurfaceId(1), 1.f, gfx::Size(1, 1));
+    layer_->SetSurfaceId(SurfaceId(0, 1, 0), 1.f, gfx::Size(1, 1));
 
     // Layer hasn't been added to tree so no SurfaceSequence generated yet.
     EXPECT_EQ(0u, required_set_.size());
@@ -139,14 +138,14 @@ class SurfaceLayerSwapPromise : public LayerTreeTest {
 
     // Should have SurfaceSequence from first tree.
     SurfaceSequence expected(1u, 1u);
-    EXPECT_TRUE(required_id_ == SurfaceId(1));
+    EXPECT_TRUE(required_id_ == SurfaceId(0, 1, 0));
     EXPECT_EQ(1u, required_set_.size());
     EXPECT_TRUE(required_set_.count(expected));
 
     gfx::Size bounds(100, 100);
     layer_tree_host()->SetViewportSize(bounds);
 
-    blank_layer_ = SolidColorLayer::Create(layer_settings());
+    blank_layer_ = SolidColorLayer::Create();
     blank_layer_->SetIsDrawable(true);
     blank_layer_->SetBounds(gfx::Size(10, 10));
 
@@ -195,7 +194,7 @@ class SurfaceLayerSwapPromiseWithDraw : public SurfaceLayerSwapPromise {
   void SwapBuffersOnThread(LayerTreeHostImpl* host_impl, bool result) override {
     EXPECT_TRUE(result);
     std::vector<uint32_t>& satisfied =
-        output_surface()->last_sent_frame().metadata.satisfies_sequences;
+        output_surface()->last_sent_frame()->metadata.satisfies_sequences;
     EXPECT_LE(satisfied.size(), 1u);
     if (satisfied.size() == 1) {
       // Eventually the one SurfaceSequence should be satisfied, but only
@@ -209,7 +208,7 @@ class SurfaceLayerSwapPromiseWithDraw : public SurfaceLayerSwapPromise {
   }
 
   void AfterTest() override {
-    EXPECT_TRUE(required_id_ == SurfaceId(1));
+    EXPECT_TRUE(required_id_ == SurfaceId(0, 1, 0));
     EXPECT_EQ(1u, required_set_.size());
     // Sequence should have been satisfied through Swap, not with the
     // callback.
@@ -250,7 +249,7 @@ class SurfaceLayerSwapPromiseWithoutDraw : public SurfaceLayerSwapPromise {
   }
 
   void AfterTest() override {
-    EXPECT_TRUE(required_id_ == SurfaceId(1));
+    EXPECT_TRUE(required_id_ == SurfaceId(0, 1, 0));
     EXPECT_EQ(1u, required_set_.size());
     // Sequence should have been satisfied with the callback.
     EXPECT_TRUE(satisfied_sequence_ == SurfaceSequence(1u, 1u));

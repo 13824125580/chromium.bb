@@ -22,6 +22,7 @@
 
 #include "core/xml/XSLTProcessor.h"
 
+#include "bindings/core/v8/SourceLocation.h"
 #include "core/dom/Document.h"
 #include "core/dom/TransformSource.h"
 #include "core/editing/serializers/Serialization.h"
@@ -43,7 +44,7 @@
 #include "platform/network/ResourceResponse.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "wtf/Assertions.h"
-#include "wtf/Partitions.h"
+#include "wtf/allocator/Partitions.h"
 #include "wtf/text/CString.h"
 #include "wtf/text/StringBuffer.h"
 #include "wtf/text/UTF8.h"
@@ -80,7 +81,7 @@ void XSLTProcessor::parseErrorFunc(void* userData, xmlError* error)
         break;
     }
 
-    console->addMessage(ConsoleMessage::create(XMLMessageSource, level, error->message, error->file, error->line));
+    console->addMessage(ConsoleMessage::create(XMLMessageSource, level, error->message, SourceLocation::create(error->file, error->line, 0, nullptr)));
 }
 
 // FIXME: There seems to be no way to control the ctxt pointer for loading here, thus we have globals.
@@ -103,7 +104,7 @@ static xmlDocPtr docLoaderFunc(
         ResourceLoaderOptions fetchOptions(ResourceFetcher::defaultResourceOptions());
         FetchRequest request(ResourceRequest(url), FetchInitiatorTypeNames::xml, fetchOptions);
         request.setOriginRestriction(FetchRequest::RestrictToSameOrigin);
-        RefPtrWillBeRawPtr<Resource> resource = RawResource::fetchSynchronously(request, globalResourceFetcher);
+        Resource* resource = RawResource::fetchSynchronously(request, globalResourceFetcher);
         if (!resource || !globalProcessor)
             return nullptr;
 
@@ -226,14 +227,14 @@ static void freeXsltParamArray(const char** params)
     WTF::Partitions::fastFree(params);
 }
 
-static xsltStylesheetPtr xsltStylesheetPointer(Document* document, RefPtrWillBeMember<XSLStyleSheet>& cachedStylesheet, Node* stylesheetRootNode)
+static xsltStylesheetPtr xsltStylesheetPointer(Document* document, Member<XSLStyleSheet>& cachedStylesheet, Node* stylesheetRootNode)
 {
     if (!cachedStylesheet && stylesheetRootNode) {
         // When using importStylesheet, we will use the given document as the imported stylesheet's owner.
         cachedStylesheet = XSLStyleSheet::createForXSLTProcessor(
             stylesheetRootNode->parentNode() ? &stylesheetRootNode->parentNode()->document() : document,
             stylesheetRootNode,
-            stylesheetRootNode->document().url().string(),
+            stylesheetRootNode->document().url().getString(),
             stylesheetRootNode->document().url()); // FIXME: Should we use baseURL here?
 
         // According to Mozilla documentation, the node must be a Document node,
@@ -250,15 +251,15 @@ static xsltStylesheetPtr xsltStylesheetPointer(Document* document, RefPtrWillBeM
 
 static inline xmlDocPtr xmlDocPtrFromNode(Node* sourceNode, bool& shouldDelete)
 {
-    RefPtrWillBeRawPtr<Document> ownerDocument(sourceNode->document());
-    bool sourceIsDocument = (sourceNode == ownerDocument.get());
+    Document* ownerDocument = &sourceNode->document();
+    bool sourceIsDocument = (sourceNode == ownerDocument);
 
     xmlDocPtr sourceDoc = nullptr;
     if (sourceIsDocument && ownerDocument->transformSource())
         sourceDoc = (xmlDocPtr)ownerDocument->transformSource()->platformSource();
     if (!sourceDoc) {
-        sourceDoc = (xmlDocPtr)xmlDocPtrForString(ownerDocument.get(), createMarkup(sourceNode),
-            sourceIsDocument ? ownerDocument->url().string() : String());
+        sourceDoc = (xmlDocPtr)xmlDocPtrForString(ownerDocument, createMarkup(sourceNode),
+            sourceIsDocument ? ownerDocument->url().getString() : String());
         shouldDelete = sourceDoc;
     }
     return sourceDoc;
@@ -285,7 +286,7 @@ static inline String resultMIMEType(xmlDocPtr resultDoc, xsltStylesheetPtr sheet
 
 bool XSLTProcessor::transformToString(Node* sourceNode, String& mimeType, String& resultString, String& resultEncoding)
 {
-    RefPtrWillBeRawPtr<Document> ownerDocument(sourceNode->document());
+    Document* ownerDocument = &sourceNode->document();
 
     setXSLTLoadCallBack(docLoaderFunc, this, ownerDocument->fetcher());
     xsltStylesheetPtr sheet = xsltStylesheetPointer(m_document.get(), m_stylesheet, m_stylesheetRootNode.get());

@@ -7,19 +7,16 @@
 
 #include <stdint.h>
 
-#include <map>
-
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/timer/timer.h"
 #include "remoting/base/rate_counter.h"
-#include "remoting/base/running_average.h"
+#include "remoting/base/running_samples.h"
 
 namespace remoting {
-
-class VideoPacket;
-
 namespace protocol {
+
+struct FrameStats;
 
 // PerformanceTracker defines a bundle of performance counters and statistics
 // for chromoting.
@@ -49,21 +46,14 @@ class PerformanceTracker {
   double video_bandwidth() { return video_bandwidth_.Rate(); }
   double video_frame_rate() { return video_frame_rate_.Rate(); }
   double video_packet_rate() { return video_packet_rate_.Rate(); }
-  double video_capture_ms() { return video_capture_ms_.Average(); }
-  double video_encode_ms() { return video_encode_ms_.Average(); }
-  double video_decode_ms() { return video_decode_ms_.Average(); }
-  double video_paint_ms() { return video_paint_ms_.Average(); }
-  double round_trip_ms() { return round_trip_ms_.Average(); }
+  const RunningSamples& video_capture_ms() { return video_capture_ms_; }
+  const RunningSamples& video_encode_ms() { return video_encode_ms_; }
+  const RunningSamples& video_decode_ms() { return video_decode_ms_; }
+  const RunningSamples& video_paint_ms() { return video_paint_ms_; }
+  const RunningSamples& round_trip_ms() { return round_trip_ms_; }
 
   // Record stats for a video-packet.
-  void RecordVideoPacketStats(const VideoPacket& packet);
-
-  // Helpers to track decode and paint time. If the render drops some frames
-  // before they are painted then OnFramePainted() records paint time when the
-  // following frame is rendered. OnFramePainted() may be called multiple times,
-  // in which case all calls after the first one are ignored.
-  void OnFrameDecoded(int32_t frame_id);
-  void OnFramePainted(int32_t frame_id);
+  void RecordVideoFrameStats(const FrameStats& stats);
 
   // Sets callbacks in ChromotingInstance to update a UMA custom counts, custom
   // times or enum histogram.
@@ -75,24 +65,6 @@ class PerformanceTracker {
   void OnPauseStateChanged(bool paused);
 
  private:
-  struct FrameTimestamps {
-    FrameTimestamps();
-    ~FrameTimestamps();
-
-    // Set to null for frames that were not sent after a fresh input event.
-    base::TimeTicks latest_event_timestamp;
-
-    // Set to TimeDelta::Max() when unknown.
-    base::TimeDelta total_host_latency;
-
-    base::TimeTicks time_received;
-    base::TimeTicks time_decoded;
-  };
-  typedef std::map<int32_t, FrameTimestamps> FramesTimestampsMap;
-
-  // Helper to record input roundtrip latency after a frame has been painted.
-  void RecordRoundTripLatency(const FrameTimestamps& timestamps);
-
   // Updates frame-rate, packet-rate and bandwidth UMA statistics.
   void UploadRateStatsToUma();
 
@@ -113,22 +85,16 @@ class PerformanceTracker {
   // The following running-averages are uploaded to UMA per video packet and
   // also used for display to users, averaged over the N most recent samples.
   // N = kLatencySampleSize.
-  RunningAverage video_capture_ms_;
-  RunningAverage video_encode_ms_;
-  RunningAverage video_decode_ms_;
-  RunningAverage video_paint_ms_;
-  RunningAverage round_trip_ms_;
+  RunningSamples video_capture_ms_;
+  RunningSamples video_encode_ms_;
+  RunningSamples video_decode_ms_;
+  RunningSamples video_paint_ms_;
+  RunningSamples round_trip_ms_;
 
   // Used to update UMA stats, if set.
   UpdateUmaCustomHistogramCallback uma_custom_counts_updater_;
   UpdateUmaCustomHistogramCallback uma_custom_times_updater_;
   UpdateUmaEnumHistogramCallback uma_enum_histogram_updater_;
-
-  // The latest event timestamp that a VideoPacket was seen annotated with.
-  base::TimeTicks latest_event_timestamp_;
-
-  // Stores timestamps for the frames that are currently being processed.
-  FramesTimestampsMap frame_timestamps_;
 
   bool is_paused_ = false;
 

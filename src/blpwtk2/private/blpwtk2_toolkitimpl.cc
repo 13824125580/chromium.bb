@@ -58,24 +58,25 @@
 #include <content/public/browser/browser_thread.h>
 #include <content/public/browser/render_process_host.h>
 #include <content/public/common/content_switches.h>
+#include <content/browser/browser_main_loop.h>
 #include <sandbox/win/src/win_utils.h>
 #include <third_party/WebKit/public/platform/WebSecurityOrigin.h>
 #include <third_party/WebKit/public/web/WebKit.h>
 #include <third_party/WebKit/public/web/WebSecurityPolicy.h>
-#include <third_party/WebKit/public/web/WebScriptBindings.h>
 #include <third_party/WebKit/public/web/WebScriptController.h>
+#include <third_party/WebKit/public/web/WebScriptBindings.h>
 
 extern HANDLE g_instDLL;  // set in DllMain
 
 namespace blpwtk2 {
 
-static scoped_ptr<base::MessagePump> messagePumpForUIFactory()
+static std::unique_ptr<base::MessagePump> messagePumpForUIFactory()
 {
     if (Statics::isInApplicationMainThread()) {
-        return scoped_ptr<base::MessagePump>(new MainMessagePump());
+        return std::unique_ptr<base::MessagePump>(new MainMessagePump());
     }
 
-    return scoped_ptr<base::MessagePump>(new base::MessagePumpForUI());
+    return std::unique_ptr<base::MessagePump>(new base::MessagePumpForUI());
 }
 
 static ToolkitImpl* g_instance = 0;
@@ -113,6 +114,10 @@ ToolkitImpl::ToolkitImpl(const StringRef& dictionaryPath,
     blink::WebScriptController::setStackCaptureControlledByInspector(false);
     d_mainDelegate.setRendererInfoMap(&d_rendererInfoMap);
     base::MessageLoop::InitMessagePumpForUIFactory(&messagePumpForUIFactory);
+
+    if (Statics::isSingleThreadMode()) {
+        content::BrowserMainLoop::s_allow_sync_call_in_browser = true;
+    }
 }
 
 ToolkitImpl::~ToolkitImpl()
@@ -181,56 +186,88 @@ void ToolkitImpl::startupThreads()
         d_browserMainRunner.reset(new BrowserMainRunner(&d_sandboxInfo));
     }
 
+    LOG(INFO) << "Initializing MainMessagePump";
+    MainMessagePump::current()->init();
+
+    // Ask the browser for MojoIPC tokens and its backing file descriptor
+    std::string ipcToken, serviceToken;
+    int clientFileDescriptor = 0;
+    
     if (!Statics::isInProcessRendererDisabled) {
+        // Create an IO thread for exchanging Mojo tokens.  Ideally we would
+        // like to use the IO thread that comes with the InProcessRenderer but
+        // we cannot initialize the renderer without first having the Mojo
+        // tokens. It's a chicken-and-egg problem.
+        LOG(INFO) << "Creating ProcessClient for in-process renderer";
+        scoped_refptr<base::SingleThreadTaskRunner> ioTaskRunner;
+
+        d_ioThread.reset(new base::Thread("Blpwtk2IOThread"));
+        CHECK(d_ioThread->StartWithOptions(
+            base::Thread::Options(base::MessageLoop::TYPE_IO, 0)));
+        ioTaskRunner = d_ioThread->task_runner();
+
+        if (Statics::isRendererMainThreadMode()) {
+            base::MessageLoop::current()->set_ipc_sync_messages_should_peek(true);
+
+            std::string channelId;
+
+            // If the specified hostChannel is empty, we will create an in-process
+            // host on the browser-main thread, otherwise, our ProcessClient will
+            // connect to the hostChannel provided by the app.
+            if (d_hostChannel.empty()) {
+                d_browserThread->messageLoop()->PostTask(
+                    FROM_HERE,
+                    base::Bind(&ToolkitImpl::createInProcessHost,
+                    base::Unretained(this)));
+                LOG(INFO) << "Waiting for ProcessHost on the browser thread";
+                d_browserThread->sync();
+                CHECK(d_inProcessHost.get());
+                LOG(INFO) << "ProcessHost on the browser thread has been initialized";
+                channelId = d_inProcessHost->channelId();
+            }
+            else {
+                channelId = hostChannelInfo.d_channelId;
+            }
+
+            // Create a blpwtk2::ProcessClient that is associated with the same
+            // channel ID as the blpwtk2::ProcessHost
+            d_processClient.reset(new ProcessClientImpl(channelId, ioTaskRunner));
+
+            // Get the Mojo tokens from blpwtk2::ProcessHost
+            d_processClient->Send(
+                new BlpControlHostMsg_RequestMojoTokens(GetCurrentProcessId(),
+                &clientFileDescriptor,
+                &ipcToken,
+                &serviceToken));
+        }
+        else {
+            createInProcessHost();
+            CHECK(d_inProcessHost.get());
+            std::string channelId = d_inProcessHost->channelId();
+            LOG(INFO) << "ProcessHost on the browser thread has been initialized";
+
+            // Create a blpwtk2::ProcessClient that is associated with the same
+            // channel ID as the blpwtk2::ProcessHost
+            d_processClient.reset(new ProcessClientImpl(channelId, ioTaskRunner));
+
+            clientFileDescriptor = 0;
+            ipcToken = d_inProcessHost->ipcToken();
+            serviceToken = d_inProcessHost->serviceToken();
+        }
+
         LOG(INFO) << "Initializing InProcessRenderer";
+
         scoped_refptr<base::SingleThreadTaskRunner> browserIOTaskRunner;
         if (d_hostChannel.empty()) {
             browserIOTaskRunner =
                 content::BrowserThread::UnsafeGetMessageLoopForThread(content::BrowserThread::IO)->task_runner();
         }
-        InProcessRenderer::init(browserIOTaskRunner);
-    }
 
-    LOG(INFO) << "Initializing MainMessagePump";
-    MainMessagePump::current()->init();
-
-    if (Statics::isRendererMainThreadMode()) {
-        base::MessageLoop::current()->set_ipc_sync_messages_should_peek(true);
-
-        std::string channelId;
-
-        // If the specified hostChannel is empty, we will create an in-process
-        // host on the browser-main thread, otherwise, our ProcessClient will
-        // connect to the hostChannel provided by the app.
-        if (d_hostChannel.empty()) {
-            d_browserThread->messageLoop()->PostTask(
-                FROM_HERE,
-                base::Bind(&ToolkitImpl::createInProcessHost,
-                           base::Unretained(this)));
-            LOG(INFO) << "Waiting for ProcessHost on the browser thread";
-            d_browserThread->sync();
-            CHECK(d_inProcessHost.get());
-            LOG(INFO) << "ProcessHost on the browser thread has been initialized";
-            channelId = d_inProcessHost->channelId();
-        }
-        else {
-            channelId = hostChannelInfo.d_channelId;
-        }
-
-        LOG(INFO) << "Creating ProcessClient for in-process renderer";
-        scoped_refptr<base::SingleThreadTaskRunner> ioTaskRunner;
-        if (!Statics::isInProcessRendererDisabled) {
-            ioTaskRunner = InProcessRenderer::ioTaskRunner();
-        }
-        else {
-            d_ioThread.reset(new base::Thread("Blpwtk2IOThread"));
-            // We can't recover from failing to start the IO thread.
-            CHECK(d_ioThread->StartWithOptions(
-                base::Thread::Options(base::MessageLoop::TYPE_IO, 0)));
-            ioTaskRunner = d_ioThread->task_runner();
-        }
-
-        d_processClient.reset(new ProcessClientImpl(channelId, ioTaskRunner));
+        InProcessRenderer::init(browserIOTaskRunner,
+            ipcToken,
+            serviceToken,
+            clientFileDescriptor);
+        InProcessRenderer::setChannelName("abc");
     }
 
     d_threadsStarted = true;
@@ -278,6 +315,7 @@ void ToolkitImpl::shutdownThreads()
     }
     else {
         DCHECK(Statics::isOriginalThreadMode() || Statics::isSingleThreadMode());
+        destroyInProcessHost();
         d_browserMainRunner->destroyProcessHostManager();
         Statics::browserContextImplManager->destroyBrowserContexts();
     }
@@ -418,20 +456,8 @@ WebView* ToolkitImpl::createWebView(NativeView parent,
         int hostAffinity;
 
         if (rendererAffinity == Constants::IN_PROCESS_RENDERER) {
-            if (!d_inProcessRendererHost.get()) {
-                DCHECK(-1 == d_inProcessRendererInfo.d_hostId);
-                d_inProcessRendererHost.reset(
-                    new ManagedRenderProcessHost(
-                        base::GetCurrentProcessHandle(),
-                        browserContext));
-                d_inProcessRendererInfo.d_hostId =
-                    d_inProcessRendererHost->id();
-                InProcessRenderer::setChannelName(
-                    d_inProcessRendererHost->channelId());
-            }
-
-            DCHECK(-1 != d_inProcessRendererInfo.d_hostId);
-            hostAffinity = d_inProcessRendererInfo.d_hostId;
+            hostAffinity = d_inProcessHost->hostAffinity();
+            DCHECK(-1 != hostAffinity);
         }
         else {
             hostAffinity =
@@ -450,6 +476,13 @@ WebView* ToolkitImpl::createWebView(NativeView parent,
     return 0;
 }
 
+static void getProfileInfo(std::string* dataDir, bool* diskCacheEnabled, bool* cookiePersistenceEnabled)
+{
+    dataDir->clear();
+    *diskCacheEnabled = false;
+    *cookiePersistenceEnabled = false;
+}
+
 String ToolkitImpl::createHostChannel(int timeoutInMilliseconds)
 {
     DCHECK(Statics::isInApplicationMainThread());
@@ -461,18 +494,32 @@ String ToolkitImpl::createHostChannel(int timeoutInMilliseconds)
         startupThreads();
     }
 
-    std::string channelInfo;
+    std::string channelInfo, dataDir;
+    bool diskCacheEnabled, cookiePersistenceEnabled;
+    getProfileInfo(&dataDir, &diskCacheEnabled, &cookiePersistenceEnabled);
 
     if (Statics::isRendererMainThreadMode()) {
+        // TODO(imran): I can't think of why we would ever need this code path.
+        // None of the use cases should hit this.
+        DCHECK(false);
+
         DCHECK(d_processClient.get());
         d_processClient->Send(
             new BlpControlHostMsg_CreateNewHostChannel(timeoutInMilliseconds,
+                                                       dataDir,
+                                                       diskCacheEnabled,
+                                                       cookiePersistenceEnabled,
                                                        &channelInfo));
     }
     else {
         DCHECK(Statics::processHostManager);
 
-        ProcessHostImpl* processHost = new ProcessHostImpl(&d_rendererInfoMap);
+        ProcessHostImpl* processHost =
+            new ProcessHostImpl(&d_rendererInfoMap,
+                                dataDir,
+                                diskCacheEnabled,
+                                cookiePersistenceEnabled);
+
         channelInfo = processHost->channelInfo();
         Statics::processHostManager->addProcessHost(
             processHost,
@@ -485,7 +532,6 @@ String ToolkitImpl::createHostChannel(int timeoutInMilliseconds)
 bool ToolkitImpl::preHandleMessage(const NativeMsg* msg)
 {
     DCHECK(Statics::isInApplicationMainThread());
-    DCHECK(PumpMode::MANUAL == Statics::pumpMode);
     if (d_threadsStarted) {
         return MainMessagePump::current()->preHandleMessage(*msg);
     }
@@ -495,7 +541,6 @@ bool ToolkitImpl::preHandleMessage(const NativeMsg* msg)
 void ToolkitImpl::postHandleMessage(const NativeMsg* msg)
 {
     DCHECK(Statics::isInApplicationMainThread());
-    DCHECK(PumpMode::MANUAL == Statics::pumpMode);
     if (d_threadsStarted) {
         MainMessagePump::current()->postHandleMessage(*msg);
     }
@@ -504,7 +549,15 @@ void ToolkitImpl::postHandleMessage(const NativeMsg* msg)
 void ToolkitImpl::createInProcessHost()
 {
     DCHECK(Statics::isInBrowserMainThread());
-    d_inProcessHost.reset(new ProcessHostImpl(&d_rendererInfoMap));
+
+    std::string dataDir;
+    bool diskCacheEnabled, cookiePersistenceEnabled;
+    getProfileInfo(&dataDir, &diskCacheEnabled, &cookiePersistenceEnabled);
+
+    d_inProcessHost.reset(new ProcessHostImpl(&d_rendererInfoMap,
+                                              dataDir,
+                                              diskCacheEnabled,
+                                              cookiePersistenceEnabled));
 }
 
 void ToolkitImpl::destroyInProcessHost()
@@ -611,6 +664,11 @@ void ToolkitImpl::setDefaultPrinterName(const StringRef& printerName)
 
     d_processClient->Send(
         new BlpControlHostMsg_SetDefaultPrinterName(printerName2));
+}
+
+void ToolkitImpl::setTraceThreshold(unsigned int timeoutMS)
+{
+    MainMessagePump::current()->setTraceThreshold(timeoutMS);
 }
 
 }  // close namespace blpwtk2

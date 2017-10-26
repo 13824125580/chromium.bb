@@ -6,7 +6,6 @@ import sys
 
 from catapult_base import cloud_storage  # pylint: disable=import-error
 
-from telemetry.core import platform
 from telemetry import decorators
 from telemetry.internal.backends import app_backend
 from telemetry.internal.browser import web_contents
@@ -34,15 +33,17 @@ class BrowserBackend(app_backend.AppBackend):
 
   def SetBrowser(self, browser):
     super(BrowserBackend, self).SetApp(app=browser)
-    if self.browser_options.netsim:
-      host_platform = platform.GetHostPlatform()
-      if not host_platform.CanLaunchApplication('ipfw'):
-        host_platform.InstallApplication('ipfw')
 
   @property
   def log_file_path(self):
     # Specific browser backend is responsible for overriding this properly.
     raise NotImplementedError
+
+  def GetLogFileContents(self):
+    if not self.log_file_path:
+      return 'No log file'
+    with file(self.log_file_path) as f:
+      return f.read()
 
   def UploadLogsToCloudStorage(self):
     """ Uploading log files produce by this browser instance to cloud storage.
@@ -97,7 +98,7 @@ class BrowserBackend(app_backend.AppBackend):
   def supports_system_info(self):
     return False
 
-  def StartTracing(self, trace_options, custom_categories=None,
+  def StartTracing(self, trace_options,
                    timeout=web_contents.DEFAULT_WEB_CONTENTS_TIMEOUT):
     raise NotImplementedError()
 

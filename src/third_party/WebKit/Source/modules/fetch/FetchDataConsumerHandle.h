@@ -11,6 +11,8 @@
 #include "public/platform/WebDataConsumerHandle.h"
 #include "wtf/Forward.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -62,9 +64,9 @@ public:
     };
 
     // TODO(yhirano): obtainReader() is currently non-virtual override, and
-    // will be changed into virtual override when we can use scoped_ptr /
-    // unique_ptr in both Blink and Chromium.
-    PassOwnPtr<Reader> obtainReader(Client* client) { return adoptPtr(obtainReaderInternal(client)); }
+    // will be changed into virtual override when we can use unique_ptr in
+    // Blink.
+    std::unique_ptr<Reader> obtainReader(Client* client) { return wrapUnique(obtainReaderInternal(client)); }
 
 private:
     Reader* obtainReaderInternal(Client*) override = 0;

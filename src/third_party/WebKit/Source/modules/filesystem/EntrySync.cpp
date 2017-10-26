@@ -32,7 +32,6 @@
 
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/ExceptionCode.h"
 #include "modules/filesystem/DOMFilePath.h"
 #include "modules/filesystem/DirectoryEntry.h"
 #include "modules/filesystem/DirectoryEntrySync.h"
@@ -52,28 +51,28 @@ EntrySync* EntrySync::create(EntryBase* entry)
 Metadata* EntrySync::getMetadata(ExceptionState& exceptionState)
 {
     MetadataSyncCallbackHelper* helper = MetadataSyncCallbackHelper::create();
-    m_fileSystem->getMetadata(this, helper->successCallback(), helper->errorCallback(), DOMFileSystemBase::Synchronous);
+    m_fileSystem->getMetadata(this, helper->getSuccessCallback(), helper->getErrorCallback(), DOMFileSystemBase::Synchronous);
     return helper->getResult(exceptionState);
 }
 
 EntrySync* EntrySync::moveTo(DirectoryEntrySync* parent, const String& name, ExceptionState& exceptionState) const
 {
     EntrySyncCallbackHelper* helper = EntrySyncCallbackHelper::create();
-    m_fileSystem->move(this, parent, name, helper->successCallback(), helper->errorCallback(), DOMFileSystemBase::Synchronous);
+    m_fileSystem->move(this, parent, name, helper->getSuccessCallback(), helper->getErrorCallback(), DOMFileSystemBase::Synchronous);
     return helper->getResult(exceptionState);
 }
 
 EntrySync* EntrySync::copyTo(DirectoryEntrySync* parent, const String& name, ExceptionState& exceptionState) const
 {
     EntrySyncCallbackHelper* helper = EntrySyncCallbackHelper::create();
-    m_fileSystem->copy(this, parent, name, helper->successCallback(), helper->errorCallback(), DOMFileSystemBase::Synchronous);
+    m_fileSystem->copy(this, parent, name, helper->getSuccessCallback(), helper->getErrorCallback(), DOMFileSystemBase::Synchronous);
     return helper->getResult(exceptionState);
 }
 
 void EntrySync::remove(ExceptionState& exceptionState) const
 {
     VoidSyncCallbackHelper* helper = VoidSyncCallbackHelper::create();
-    m_fileSystem->remove(this, helper->successCallback(), helper->errorCallback(), DOMFileSystemBase::Synchronous);
+    m_fileSystem->remove(this, helper->getSuccessCallback(), helper->getErrorCallback(), DOMFileSystemBase::Synchronous);
     helper->getResult(exceptionState);
 }
 

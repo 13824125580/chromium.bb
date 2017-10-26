@@ -8,6 +8,7 @@ include_rules = [
   "+components/bookmarks",
   "+components/browser_sync/browser",
   "+components/browser_sync/common",
+  "+components/browsing_data_ui",
   "+components/certificate_reporting",
   "+components/component_updater",
   "+components/content_settings/core",
@@ -25,6 +26,7 @@ include_rules = [
   "+components/google/core/browser",
   "+components/history/core/browser",
   "+components/history/ios/browser",
+  "+components/image_fetcher",
   "+components/infobars/core",
   "+components/invalidation",
   "+components/keyed_service/core",
@@ -34,7 +36,9 @@ include_rules = [
   "+components/metrics",
   "+components/user_prefs",
   "+components/metrics_services_manager",
+  "+components/navigation_metrics",
   "+components/net_log",
+  "+components/network_session_configurator",
   "+components/network_time",
   "+components/ntp_snippets",
   "+components/omnibox/browser",
@@ -83,6 +87,7 @@ include_rules = [
   "+ios/web/public",
   "+net",
   "+sync",
+  "+third_party/brotli",
   "+third_party/google_toolbox_for_mac",
   "+ui",
 
@@ -101,5 +106,6 @@ include_rules = [
   # Strings and resources.
   "+components/grit",
   "+components/strings/grit",
+  "+grit/components_strings.h",
   "+ios/chrome/grit",
 ]

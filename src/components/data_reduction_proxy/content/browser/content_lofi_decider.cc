@@ -11,6 +11,7 @@
 #include "content/public/browser/resource_request_info.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_request_headers.h"
+#include "net/url_request/url_request.h"
 
 namespace data_reduction_proxy {
 
@@ -52,44 +53,52 @@ bool ContentLoFiDecider::MaybeAddLoFiDirectiveToHeaders(
       params::AreLoFiPreviewsEnabledViaFlags() ||
       params::IsIncludedInLoFiPreviewFieldTrial();
 
+  // User is not using Lo-Fi or is part of the "Control" group.
+  if (!request_info->IsUsingLoFi() || !lofi_enabled_via_flag_or_field_trial)
+    return false;
+
   std::string header_value;
 
-  // User is using Lo-Fi and not part of the "Control" group.
-  if (request_info->IsUsingLoFi() && lofi_enabled_via_flag_or_field_trial) {
-    if (headers->HasHeader(chrome_proxy_header())) {
-      headers->GetHeader(chrome_proxy_header(), &header_value);
-      headers->RemoveHeader(chrome_proxy_header());
-      header_value += ", ";
-    }
-
-    // If in the preview field trial or the preview flag is enabled, only add
-    // the "q=preview" directive on main frame requests. Do not add Lo-Fi
-    // directives to other requests when previews are enabled. If previews are
-    // not enabled, add "q=low".
-    if (lofi_preview_via_flag_or_field_trial) {
-      if (request.load_flags() & net::LOAD_MAIN_FRAME)
-        header_value += chrome_proxy_lo_fi_preview_directive();
-    } else {
-      header_value += chrome_proxy_lo_fi_directive();
-    }
-
-    headers->SetHeader(chrome_proxy_header(), header_value);
-    return true;
+  if (headers->HasHeader(chrome_proxy_header())) {
+    headers->GetHeader(chrome_proxy_header(), &header_value);
+    headers->RemoveHeader(chrome_proxy_header());
+    header_value += ", ";
   }
 
-  // User is part of Lo-Fi active control experiment.
-  if (request_info->IsUsingLoFi() &&
-      params::IsIncludedInLoFiControlFieldTrial()) {
-    if (headers->HasHeader(chrome_proxy_header())) {
-      headers->GetHeader(chrome_proxy_header(), &header_value);
-      headers->RemoveHeader(chrome_proxy_header());
-      header_value += ", ";
+  // If in the preview field trial or the preview flag is enabled, only add the
+  // "q=preview" directive on main frame requests. Do not add Lo-Fi directives
+  // to other requests when previews are enabled.
+  if (lofi_preview_via_flag_or_field_trial) {
+    if (request.load_flags() & net::LOAD_MAIN_FRAME) {
+      if (params::AreLoFiPreviewsEnabledViaFlags()) {
+        header_value += chrome_proxy_lo_fi_ignore_preview_blacklist_directive();
+        header_value += ", ";
+      }
+      header_value += chrome_proxy_lo_fi_preview_directive();
     }
-    header_value += chrome_proxy_lo_fi_experiment_directive();
-    headers->SetHeader(chrome_proxy_header(), header_value);
+  } else if (!(request.load_flags() & net::LOAD_MAIN_FRAME)) {
+    // If previews are not enabled, add "q=low" for requests that are not main
+    // frame.
+    header_value += chrome_proxy_lo_fi_directive();
   }
 
-  return false;
+  if (!header_value.empty())
+    headers->SetHeader(chrome_proxy_header(), header_value);
+
+  return true;
+}
+
+bool ContentLoFiDecider::ShouldRecordLoFiUMA(
+    const net::URLRequest& request) const {
+  const content::ResourceRequestInfo* request_info =
+      content::ResourceRequestInfo::ForRequest(&request);
+
+  // User is not using Lo-Fi.
+  if (!request_info || !request_info->IsUsingLoFi())
+    return false;
+
+  return params::IsIncludedInLoFiEnabledFieldTrial() ||
+         params::IsIncludedInLoFiControlFieldTrial();
 }
 
 }  // namespace data_reduction_proxy

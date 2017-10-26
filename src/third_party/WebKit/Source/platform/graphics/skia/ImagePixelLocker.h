@@ -7,7 +7,6 @@
 
 #include "platform/heap/Heap.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
-#include "third_party/skia/include/core/SkPixmap.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/PassRefPtr.h"
@@ -28,7 +27,7 @@ public:
 private:
     const RefPtr<const SkImage> m_image;
     const void* m_pixels;
-    SkAutoPixmapStorage m_pixelStorage;
+    SkAutoMalloc m_pixelStorage;
 };
 
 } // namespace blink

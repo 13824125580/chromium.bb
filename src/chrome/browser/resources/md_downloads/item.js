@@ -3,19 +3,6 @@
 // found in the LICENSE file.
 
 cr.define('downloads', function() {
-  var InkyTextButton = Polymer({
-    is: 'inky-text-button',
-
-    behaviors: [
-      Polymer.PaperInkyFocusBehavior
-    ],
-
-    hostAttributes: {
-      role: 'button',
-      tabindex: 0,
-    },
-  });
-
   var Item = Polymer({
     is: 'downloads-item',
 
@@ -35,23 +22,6 @@ cr.define('downloads', function() {
         computed: 'computeControlledBy_(data.by_ext_id, data.by_ext_name)',
         type: String,
         value: '',
-      },
-
-      i18n_: {
-        readOnly: true,
-        type: Object,
-        value: function() {
-          return {
-            cancel: loadTimeData.getString('controlCancel'),
-            discard: loadTimeData.getString('dangerDiscard'),
-            pause: loadTimeData.getString('controlPause'),
-            remove: loadTimeData.getString('controlRemoveFromList'),
-            resume: loadTimeData.getString('controlResume'),
-            restore: loadTimeData.getString('dangerRestore'),
-            retry: loadTimeData.getString('controlRetry'),
-            save: loadTimeData.getString('dangerSave'),
-          };
-        },
       },
 
       isActive_: {
@@ -96,7 +66,7 @@ cr.define('downloads', function() {
       // TODO(dbeam): this gets called way more when I observe data.by_ext_id
       // and data.by_ext_name directly. Why?
       'observeControlledBy_(controlledBy_)',
-      'observeIsDangerous_(isDangerous_, data.file_path)',
+      'observeIsDangerous_(isDangerous_, data)',
     ],
 
     ready: function() {
@@ -146,9 +116,9 @@ cr.define('downloads', function() {
         case downloads.DangerType.DANGEROUS_URL:
         case downloads.DangerType.POTENTIALLY_UNWANTED:
         case downloads.DangerType.UNCOMMON_CONTENT:
-          return 'remove-circle';
+          return 'downloads:remove-circle';
         default:
-          return 'warning';
+          return 'cr:warning';
       }
     },
 
@@ -263,7 +233,13 @@ cr.define('downloads', function() {
 
     /** @private */
     observeIsDangerous_: function() {
-      if (this.data && !this.isDangerous_) {
+      if (!this.data)
+        return;
+
+      if (this.isDangerous_) {
+        this.$.url.removeAttribute('href');
+      } else {
+        this.$.url.href = assert(this.data.url);
         var filePath = encodeURIComponent(this.data.file_path);
         var scaleFactor = '?scale=' + window.devicePixelRatio + 'x';
         this.$['file-icon'].src = 'chrome://fileicon/' + filePath + scaleFactor;
@@ -329,8 +305,5 @@ cr.define('downloads', function() {
     },
   });
 
-  return {
-    InkyTextButton: InkyTextButton,
-    Item: Item,
-  };
+  return {Item: Item};
 });

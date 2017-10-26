@@ -27,8 +27,9 @@
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/screen.h"
 
 namespace chromeos {
 
@@ -87,7 +88,7 @@ content::StoragePartition* GetPartition(content::WebContents* embedder,
 }  // namespace
 
 gfx::Rect CalculateScreenBounds(const gfx::Size& size) {
-  gfx::Rect bounds = gfx::Screen::GetScreen()->GetPrimaryDisplay().bounds();
+  gfx::Rect bounds = display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   if (!size.IsEmpty()) {
     int horizontal_diff = bounds.width() - size.width();
     int vertical_diff = bounds.height() - size.height();
@@ -100,7 +101,7 @@ int GetCurrentUserImageSize() {
   // The biggest size that the profile picture is displayed at is currently
   // 220px, used for the big preview on OOBE and Change Picture options page.
   static const int kBaseUserImageSize = 220;
-  float scale_factor = gfx::Display::GetForcedDeviceScaleFactor();
+  float scale_factor = display::Display::GetForcedDeviceScaleFactor();
   if (scale_factor > 1.0f)
     return static_cast<int>(scale_factor * kBaseUserImageSize);
   return kBaseUserImageSize * gfx::ImageSkia::GetMaxSupportedScale();
@@ -138,7 +139,7 @@ void NetworkStateHelper::GetConnectedWifiNetwork(std::string* out_onc_spec) {
   if (!network_state)
     return;
 
-  scoped_ptr<base::DictionaryValue> current_onc =
+  std::unique_ptr<base::DictionaryValue> current_onc =
       network_util::TranslateNetworkStateToONC(network_state);
   std::string security;
   current_onc->GetString(
@@ -148,7 +149,8 @@ void NetworkStateHelper::GetConnectedWifiNetwork(std::string* out_onc_spec) {
 
   const std::string hex_ssid = network_state->GetHexSsid();
 
-  scoped_ptr<base::DictionaryValue> copied_onc(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> copied_onc(
+      new base::DictionaryValue());
   copied_onc->Set(onc::toplevel_config::kType,
                   new base::StringValue(onc::network_type::kWiFi));
   copied_onc->Set(onc::network_config::WifiProperty(onc::wifi::kHexSSID),
@@ -163,7 +165,7 @@ void NetworkStateHelper::CreateAndConnectNetworkFromOnc(
     const base::Closure& success_callback,
     const base::Closure& error_callback) const {
   std::string error;
-  scoped_ptr<base::Value> root = base::JSONReader::ReadAndReturnError(
+  std::unique_ptr<base::Value> root = base::JSONReader::ReadAndReturnError(
       onc_spec, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
 
   base::DictionaryValue* toplevel_onc = nullptr;
@@ -200,7 +202,8 @@ bool NetworkStateHelper::IsConnecting() const {
 void NetworkStateHelper::OnCreateConfiguration(
     const base::Closure& success_callback,
     const base::Closure& error_callback,
-    const std::string& service_path) const {
+    const std::string& service_path,
+    const std::string& guid) const {
   // Connect to the network.
   NetworkHandler::Get()->network_connection_handler()->ConnectToNetwork(
       service_path, success_callback,
@@ -212,7 +215,7 @@ void NetworkStateHelper::OnCreateConfiguration(
 void NetworkStateHelper::OnCreateOrConnectNetworkFailed(
     const base::Closure& error_callback,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) const {
+    std::unique_ptr<base::DictionaryValue> error_data) const {
   LOG(ERROR) << "Failed to create or connect to network: " << error_name;
   error_callback.Run();
 }

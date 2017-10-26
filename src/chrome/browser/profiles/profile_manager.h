@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 #include <list>
+#include <memory>
 #include <vector>
 
 #include "base/containers/hash_tables.h"
@@ -17,17 +18,18 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/non_thread_safe.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
 class NewProfileLauncher;
+class ProfileAttributesStorage;
 class ProfileInfoCache;
 
 class ProfileManager : public base::NonThreadSafe,
@@ -35,6 +37,7 @@ class ProfileManager : public base::NonThreadSafe,
                        public Profile::Delegate {
  public:
   typedef base::Callback<void(Profile*, Profile::CreateStatus)> CreateCallback;
+  typedef base::Callback<void(Profile*)> ProfileLoadedCallback;
 
   explicit ProfileManager(const base::FilePath& user_data_dir);
   ~ProfileManager() override;
@@ -56,6 +59,10 @@ class ProfileManager : public base::NonThreadSafe,
   // incognito mode is forced. This should be used if the last used Profile
   // will be used to open new browser windows.
   static Profile* GetLastUsedProfileAllowedByPolicy();
+
+  // Helper function that returns true if incognito mode is forced for |profile|
+  // (normal mode is not available for browsing).
+  static bool IncognitoModeForced(Profile* profile);
 
   // Same as instance method but provides the default user_data_dir as well.
   static std::vector<Profile*> GetLastOpenedProfiles();
@@ -79,13 +86,25 @@ class ProfileManager : public base::NonThreadSafe,
   // otherwise it will create and manage it.
   // Because this method might synchronously create a new profile, it should
   // only be called for the initial profile or in tests, where blocking is
-  // acceptable.
+  // acceptable. Returns null if creation of the new profile fails.
   // TODO(bauerb): Migrate calls from other code to GetProfileByPath(), then
   // make this method private.
   Profile* GetProfile(const base::FilePath& profile_dir);
 
   // Returns total number of profiles available on this machine.
   size_t GetNumberOfProfiles();
+
+  // Asynchronously loads an existing profile given its |profile_name| within
+  // the user data directory, optionally in |incognito| mode. The |callback|
+  // will be called with the Profile when it has been loaded, or with a nullptr
+  // otherwise. Should be called on the UI thread.
+  // Unlike CreateProfileAsync this will not create a profile if one doesn't
+  // already exist on disk
+  // Returns true if the profile exists, but the final loaded profile will come
+  // as part of the callback.
+  bool LoadProfile(const std::string& profile_name,
+                   bool incognito,
+                   const ProfileLoadedCallback& callback);
 
   // Explicit asynchronous creation of a profile located at |profile_path|.
   // If the profile has already been created then callback is called
@@ -117,9 +136,10 @@ class ProfileManager : public base::NonThreadSafe,
   // profile.
   std::string GetLastUsedProfileName();
 
-  // Get the Profiles which are currently open, i.e., have open browsers, or
-  // were open the last time Chrome was running. The Profiles appear in the
-  // order they were opened. The last used profile will be on the list, but its
+  // Get the Profiles which are currently open, i.e. have open browsers or were
+  // open the last time Chrome was running. Profiles that fail to initialize are
+  // skipped. The Profiles appear in the order they were opened. The last used
+  // profile will be on the list if it is initialized successfully, but its
   // index on the list will depend on when it was opened (it is not necessarily
   // the last one).
   std::vector<Profile*> GetLastOpenedProfiles(
@@ -161,11 +181,6 @@ class ProfileManager : public base::NonThreadSafe,
   // system.
   base::FilePath GenerateNextProfileDirectoryPath();
 
-  // Returns a ProfileInfoCache object which can be used to get information
-  // about profiles without having to load them from disk.
-  // Deprecated, use GetProfileAttributesStorage() instead.
-  ProfileInfoCache& GetProfileInfoCache();
-
   // Returns a ProfileAttributesStorage object which can be used to get
   // information about profiles without having to load them from disk.
   ProfileAttributesStorage& GetProfileAttributesStorage();
@@ -175,6 +190,14 @@ class ProfileManager : public base::NonThreadSafe,
   ProfileShortcutManager* profile_shortcut_manager();
 
 #if !defined(OS_ANDROID)
+  // Less strict version of ScheduleProfileForDeletion(), silently fail if
+  // profile already marked for deletion. Returns true if the profile scheduled
+  // for deletion.
+  bool MaybeScheduleProfileForDeletion(
+      const base::FilePath& profile_dir,
+      const CreateCallback& callback,
+      ProfileMetrics::ProfileDelete deletion_source);
+
   // Schedules the profile at the given path to be deleted on shutdown. If we're
   // deleting the last profile, a new one will be created in its place, and in
   // that case the callback will be called when profile creation is complete.
@@ -195,11 +218,11 @@ class ProfileManager : public base::NonThreadSafe,
 
   // Register and add testing profile to the ProfileManager. Use ONLY in tests.
   // This allows the creation of Profiles outside of the standard creation path
-  // for testing. If |addToCache|, adds to ProfileInfoCache as well.
+  // for testing. If |addToStorage|, adds to ProfileAttributesStorage as well.
   // If |start_deferred_task_runners|, starts the deferred task runners.
   // Use ONLY in tests.
   void RegisterTestingProfile(Profile* profile,
-                              bool addToCache,
+                              bool addToStorage,
                               bool start_deferred_task_runners);
 
   const base::FilePath& user_data_dir() const { return user_data_dir_; }
@@ -225,7 +248,7 @@ class ProfileManager : public base::NonThreadSafe,
 
   // Creates a new profile by calling into the profile's profile creation
   // method. Virtual so that unittests can return a TestingProfile instead
-  // of the Profile's result.
+  // of the Profile's result. Returns null if creation fails.
   virtual Profile* CreateProfileHelper(const base::FilePath& path);
 
   // Creates a new profile asynchronously by calling into the profile's
@@ -246,7 +269,7 @@ class ProfileManager : public base::NonThreadSafe,
 
     ~ProfileInfo();
 
-    scoped_ptr<Profile> profile;
+    std::unique_ptr<Profile> profile;
     // Whether profile has been fully loaded (created and initialized).
     bool created;
     // List of callbacks to run when profile initialization is done. Note, when
@@ -272,7 +295,8 @@ class ProfileManager : public base::NonThreadSafe,
   bool AddProfile(Profile* profile);
 
   // Synchronously creates and returns a profile. This handles both the full
-  // creation and adds it to the set managed by this ProfileManager.
+  // creation and adds it to the set managed by this ProfileManager. Returns
+  // null if creation fails.
   Profile* CreateAndInitializeProfile(const base::FilePath& profile_dir);
 
 #if !defined(OS_ANDROID)
@@ -295,8 +319,14 @@ class ProfileManager : public base::NonThreadSafe,
   // should be used carefully.
   Profile* GetProfileByPathInternal(const base::FilePath& path) const;
 
-  // Adds |profile| to the profile info cache if it hasn't been added yet.
-  void AddProfileToCache(Profile* profile);
+  // Returns a ProfileInfoCache object which can be used to get information
+  // about profiles without having to load them from disk.
+  // Deprecated, use GetProfileAttributesStorage() instead.
+  ProfileInfoCache& GetProfileInfoCache();
+
+  // Adds |profile| to the profile attributes storage if it hasn't been added
+  // yet.
+  void AddProfileToStorage(Profile* profile);
 
   // Apply settings for profiles created by the system rather than users: The
   // (desktop) Guest User profile and (desktop) System Profile.
@@ -349,7 +379,7 @@ class ProfileManager : public base::NonThreadSafe,
   // if it has not been explicitly deleted. It must be destroyed after
   // |profiles_info_| because ~ProfileInfo can trigger a chain of events leading
   // to an access to this member.
-  scoped_ptr<ProfileInfoCache> profile_info_cache_;
+  std::unique_ptr<ProfileInfoCache> profile_info_cache_;
 
   content::NotificationRegistrar registrar_;
 
@@ -372,7 +402,7 @@ class ProfileManager : public base::NonThreadSafe,
   ProfilesInfoMap profiles_info_;
 
   // Manages the process of creating, deleteing and updating Desktop shortcuts.
-  scoped_ptr<ProfileShortcutManager> profile_shortcut_manager_;
+  std::unique_ptr<ProfileShortcutManager> profile_shortcut_manager_;
 
   // For keeping track of the last active profiles.
   std::map<Profile*, int> browser_counts_;

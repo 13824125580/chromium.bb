@@ -41,6 +41,8 @@
 #include "src/regexp/arm/regexp-macro-assembler-arm.h"
 #elif V8_TARGET_ARCH_PPC
 #include "src/regexp/ppc/regexp-macro-assembler-ppc.h"
+#elif V8_TARGET_ARCH_S390
+#include "src/regexp/s390/regexp-macro-assembler-s390.h"
 #elif V8_TARGET_ARCH_MIPS
 #include "src/regexp/mips/regexp-macro-assembler-mips.h"
 #elif V8_TARGET_ARCH_MIPS64
@@ -133,7 +135,7 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
                                         Handle<String> pattern,
                                         JSRegExp::Flags flags) {
   Isolate* isolate = re->GetIsolate();
-  Zone zone;
+  Zone zone(isolate->allocator());
   CompilationCache* compilation_cache = isolate->compilation_cache();
   MaybeHandle<FixedArray> maybe_cached =
       compilation_cache->LookupRegExp(pattern, flags);
@@ -344,7 +346,7 @@ bool RegExpImpl::CompileIrregexp(Handle<JSRegExp> re,
                                  bool is_one_byte) {
   // Compile the RegExp.
   Isolate* isolate = re->GetIsolate();
-  Zone zone;
+  Zone zone(isolate->allocator());
   PostponeInterruptsScope postpone(isolate);
   // If we had a compilation error the last time this is saved at the
   // saved code index.
@@ -395,6 +397,7 @@ bool RegExpImpl::CompileIrregexp(Handle<JSRegExp> re,
 
   Handle<FixedArray> data = Handle<FixedArray>(FixedArray::cast(re->data()));
   data->set(JSRegExp::code_index(is_one_byte), result.code);
+  SetIrregexpCaptureNameMap(*data, compile_data.capture_name_map);
   int register_max = IrregexpMaxRegisterCount(*data);
   if (result.num_registers > register_max) {
     SetIrregexpMaxRegisterCount(*data, result.num_registers);
@@ -414,6 +417,14 @@ void RegExpImpl::SetIrregexpMaxRegisterCount(FixedArray* re, int value) {
   re->set(JSRegExp::kIrregexpMaxRegisterCountIndex, Smi::FromInt(value));
 }
 
+void RegExpImpl::SetIrregexpCaptureNameMap(FixedArray* re,
+                                           Handle<FixedArray> value) {
+  if (value.is_null()) {
+    re->set(JSRegExp::kIrregexpCaptureNameMapIndex, Smi::FromInt(0));
+  } else {
+    re->set(JSRegExp::kIrregexpCaptureNameMapIndex, *value);
+  }
+}
 
 int RegExpImpl::IrregexpNumberOfCaptures(FixedArray* re) {
   return Smi::cast(re->get(JSRegExp::kIrregexpCaptureCountIndex))->value();
@@ -5157,8 +5168,10 @@ RegExpNode* RegExpCharacterClass::ToNode(RegExpCompiler* compiler,
       ranges = negated;
     }
     if (ranges->length() == 0) {
-      // No matches possible.
-      return new (zone) EndNode(EndNode::BACKTRACK, zone);
+      ranges->Add(CharacterRange::Everything(), zone);
+      RegExpCharacterClass* fail =
+          new (zone) RegExpCharacterClass(ranges, true);
+      return new (zone) TextNode(fail, compiler->read_backward(), on_success);
     }
     if (standard_type() == '*') {
       return UnanchoredAdvance(compiler, on_success);
@@ -5877,6 +5890,7 @@ Vector<const int> CharacterRange::GetWordBounds() {
 void CharacterRange::AddCaseEquivalents(Isolate* isolate, Zone* zone,
                                         ZoneList<CharacterRange>* ranges,
                                         bool is_one_byte) {
+  CharacterRange::Canonicalize(ranges);
   int range_count = ranges->length();
   for (int i = 0; i < range_count; i++) {
     CharacterRange range = ranges->at(i);
@@ -6703,6 +6717,9 @@ RegExpEngine::CompilationResult RegExpEngine::Compile(
 #elif V8_TARGET_ARCH_ARM64
   RegExpMacroAssemblerARM64 macro_assembler(isolate, zone, mode,
                                             (data->capture_count + 1) * 2);
+#elif V8_TARGET_ARCH_S390
+  RegExpMacroAssemblerS390 macro_assembler(isolate, zone, mode,
+                                           (data->capture_count + 1) * 2);
 #elif V8_TARGET_ARCH_PPC
   RegExpMacroAssemblerPPC macro_assembler(isolate, zone, mode,
                                           (data->capture_count + 1) * 2);
@@ -6757,7 +6774,7 @@ bool RegExpEngine::TooMuchRegExpCode(Handle<String> pattern) {
   Heap* heap = pattern->GetHeap();
   bool too_much = pattern->length() > RegExpImpl::kRegExpTooLargeToOptimize;
   if (heap->total_regexp_code_generated() > RegExpImpl::kRegExpCompiledLimit &&
-      heap->isolate()->memory_allocator()->SizeExecutable() >
+      heap->memory_allocator()->SizeExecutable() >
           RegExpImpl::kRegExpExecutableMemoryLimit) {
     too_much = true;
   }

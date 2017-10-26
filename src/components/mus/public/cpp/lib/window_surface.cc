@@ -4,14 +4,14 @@
 
 #include "components/mus/public/cpp/window_surface.h"
 
+#include "base/memory/ptr_util.h"
 #include "components/mus/public/cpp/window_surface_client.h"
-#include "mojo/converters/surfaces/surfaces_type_converters.h"
 
 namespace mus {
 
 // static
-scoped_ptr<WindowSurface> WindowSurface::Create(
-    scoped_ptr<WindowSurfaceBinding>* surface_binding) {
+std::unique_ptr<WindowSurface> WindowSurface::Create(
+    std::unique_ptr<WindowSurfaceBinding>* surface_binding) {
   mojom::SurfacePtr surface;
   mojom::SurfaceClientPtr surface_client;
   mojo::InterfaceRequest<mojom::SurfaceClient> surface_client_request =
@@ -19,8 +19,8 @@ scoped_ptr<WindowSurface> WindowSurface::Create(
 
   surface_binding->reset(new WindowSurfaceBinding(
       GetProxy(&surface), surface_client.PassInterface()));
-  return make_scoped_ptr(new WindowSurface(surface.PassInterface(),
-                                           std::move(surface_client_request)));
+  return base::WrapUnique(new WindowSurface(surface.PassInterface(),
+                                            std::move(surface_client_request)));
 }
 
 WindowSurface::~WindowSurface() {}
@@ -33,8 +33,8 @@ void WindowSurface::BindToThread() {
       this, std::move(client_request_)));
 }
 
-void WindowSurface::SubmitCompositorFrame(mojom::CompositorFramePtr frame,
-                                          const mojo::Closure& callback) {
+void WindowSurface::SubmitCompositorFrame(cc::CompositorFrame frame,
+                                          const base::Closure& callback) {
   DCHECK(thread_checker_);
   DCHECK(thread_checker_->CalledOnValidThread());
   if (!surface_)
@@ -50,7 +50,7 @@ WindowSurface::WindowSurface(
       client_request_(std::move(client_request)) {}
 
 void WindowSurface::ReturnResources(
-    mojo::Array<mojom::ReturnedResourcePtr> resources) {
+    mojo::Array<cc::ReturnedResource> resources) {
   DCHECK(thread_checker_);
   DCHECK(thread_checker_->CalledOnValidThread());
   if (!client_)

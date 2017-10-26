@@ -17,10 +17,12 @@ namespace media {
 
 class MEDIA_EXPORT AudioManagerPulse : public AudioManagerBase {
  public:
-  AudioManagerPulse(AudioLogFactory* audio_log_factory);
-  ~AudioManagerPulse() override;
+  AudioManagerPulse(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      AudioLogFactory* audio_log_factory);
 
-  static AudioManager* Create(AudioLogFactory* audio_log_factory);
+  bool Init();
 
   // Implementation of AudioManager.
   bool HasAudioOutputDevices() override;
@@ -33,24 +35,30 @@ class MEDIA_EXPORT AudioManagerPulse : public AudioManagerBase {
 
   // Implementation of AudioManagerBase.
   AudioOutputStream* MakeLinearOutputStream(
-      const AudioParameters& params) override;
+      const AudioParameters& params,
+      const LogCallback& log_callback) override;
   AudioOutputStream* MakeLowLatencyOutputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLinearInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLowLatencyInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
 
  protected:
+  ~AudioManagerPulse() override;
+
   AudioParameters GetPreferredOutputStreamParameters(
       const std::string& output_device_id,
       const AudioParameters& input_params) override;
 
  private:
-  bool Init();
+  bool InitPulse();
   void DestroyPulse();
 
   void GetAudioDeviceNames(bool input, media::AudioDeviceNames* device_names);

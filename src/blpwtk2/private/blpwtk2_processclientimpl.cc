@@ -25,6 +25,7 @@
 #include <blpwtk2_control_messages.h>
 #include <blpwtk2_inprocessrenderer.h>
 #include <blpwtk2_statics.h>
+#include <content/public/renderer/render_thread.h>
 
 #include <ipc/ipc_sync_channel.h>
 
@@ -33,7 +34,8 @@ namespace blpwtk2 {
 ProcessClientImpl::ProcessClientImpl(
     const std::string& channelId,
     const scoped_refptr<base::SingleThreadTaskRunner>& ioTaskRunner)
-: d_shutdownEvent(true, false)
+: d_shutdownEvent(base::WaitableEvent::ResetPolicy::MANUAL,
+                  base::WaitableEvent::InitialState::NOT_SIGNALED)
 {
     d_channel = IPC::SyncChannel::Create(channelId,
                                          IPC::Channel::MODE_CLIENT,
@@ -79,16 +81,6 @@ bool ProcessClientImpl::Send(IPC::Message* message)
 
 bool ProcessClientImpl::OnMessageReceived(const IPC::Message& message)
 {
-    if (message.routing_id() == MSG_ROUTING_CONTROL) {
-        // Dispatch control messages
-        IPC_BEGIN_MESSAGE_MAP(ProcessClientImpl, message)
-            IPC_MESSAGE_HANDLER(BlpControlMsg_SetInProcessRendererChannelName, onSetInProcessRendererChannelName)
-            IPC_MESSAGE_UNHANDLED_ERROR()
-        IPC_END_MESSAGE_MAP()
-
-        return true;
-    }
-
     // Dispatch incoming messages to the appropriate IPC::Listener.
     IPC::Listener* listener = d_routes.Lookup(message.routing_id());
     if (!listener) {
@@ -125,15 +117,6 @@ void ProcessClientImpl::OnChannelError()
 void ProcessClientImpl::OnBadMessageReceived(const IPC::Message& message)
 {
     LOG(ERROR) << "bad message " << message.type();
-}
-
-// Control message handlers
-
-void ProcessClientImpl::onSetInProcessRendererChannelName(
-    const std::string& channelName)
-{
-    LOG(INFO) << "onSetInProcessRendererChannelName(" << channelName << ")";
-    InProcessRenderer::setChannelName(channelName);
 }
 
 }  // close namespace blpwtk2

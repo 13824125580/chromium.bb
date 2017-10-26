@@ -13,11 +13,11 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/request_priority.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/x509_certificate.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -27,7 +27,8 @@ using ::testing::StrictMock;
 using content::BrowserThread;
 
 SSLClientCertificateSelectorTestBase::SSLClientCertificateSelectorTestBase()
-    : io_loop_finished_event_(false, false) {
+    : io_loop_finished_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED) {
 }
 
 SSLClientCertificateSelectorTestBase::~SSLClientCertificateSelectorTestBase() {
@@ -93,10 +94,10 @@ void SSLClientCertificateSelectorTestBase::TearDownOnIOThread() {
   io_loop_finished_event_.Signal();
 }
 
-scoped_ptr<net::URLRequest>
+std::unique_ptr<net::URLRequest>
 SSLClientCertificateSelectorTestBase::MakeURLRequest(
     net::URLRequestContextGetter* context_getter) {
-  scoped_ptr<net::URLRequest> request =
+  std::unique_ptr<net::URLRequest> request =
       context_getter->GetURLRequestContext()->CreateRequest(
           GURL("https://example"), net::DEFAULT_PRIORITY, NULL);
   return request;

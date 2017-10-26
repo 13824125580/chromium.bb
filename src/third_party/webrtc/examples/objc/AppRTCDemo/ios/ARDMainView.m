@@ -10,8 +10,6 @@
 
 #import "ARDMainView.h"
 
-#import <AVFoundation/AVFoundation.h>
-
 #import "UIImage+ARDUtilities.h"
 
 // TODO(tkchin): retrieve status bar height dynamically.
@@ -124,24 +122,17 @@ static CGFloat const kAppLabelHeight = 20;
   UILabel *_audioOnlyLabel;
   UISwitch *_loopbackSwitch;
   UILabel *_loopbackLabel;
+  UISwitch *_useManualAudioSwitch;
+  UILabel *_useManualAudioLabel;
   UIButton *_startCallButton;
   UIButton *_audioLoopButton;
-  AVAudioPlayer *_audioPlayer;
 }
 
 @synthesize delegate = _delegate;
+@synthesize isAudioLoopPlaying = _isAudioLoopPlaying;
 
 - (instancetype)initWithFrame:(CGRect)frame {
   if (self = [super initWithFrame:frame]) {
-    NSString *audioFilePath =
-        [[NSBundle mainBundle] pathForResource:@"mozart" ofType:@"mp3"];
-    NSURL *audioFileURL = [NSURL URLWithString:audioFilePath];
-    _audioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:audioFileURL
-                                                          error:nil];
-    _audioPlayer.numberOfLoops = -1;
-    _audioPlayer.volume = 1.0;
-    [_audioPlayer prepareToPlay];
-
     _appLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _appLabel.text = @"AppRTCDemo";
     _appLabel.font = [UIFont fontWithName:@"Roboto" size:34];
@@ -184,6 +175,18 @@ static CGFloat const kAppLabelHeight = 20;
     [_loopbackLabel sizeToFit];
     [self addSubview:_loopbackLabel];
 
+    _useManualAudioSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    [_useManualAudioSwitch sizeToFit];
+    _useManualAudioSwitch.on = YES;
+    [self addSubview:_useManualAudioSwitch];
+
+    _useManualAudioLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _useManualAudioLabel.text = @"Use manual audio config";
+    _useManualAudioLabel.font = controlFont;
+    _useManualAudioLabel.textColor = controlFontColor;
+    [_useManualAudioLabel sizeToFit];
+    [self addSubview:_useManualAudioLabel];
+
     _startCallButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _startCallButton.backgroundColor = [UIColor blueColor];
     _startCallButton.layer.cornerRadius = 10;
@@ -221,6 +224,14 @@ static CGFloat const kAppLabelHeight = 20;
     self.backgroundColor = [UIColor whiteColor];
   }
   return self;
+}
+
+- (void)setIsAudioLoopPlaying:(BOOL)isAudioLoopPlaying {
+  if (_isAudioLoopPlaying == isAudioLoopPlaying) {
+    return;
+  }
+  _isAudioLoopPlaying = isAudioLoopPlaying;
+  [self updateAudioLoopButton];
 }
 
 - (void)layoutSubviews {
@@ -264,8 +275,22 @@ static CGFloat const kAppLabelHeight = 20;
   _loopbackLabel.center = CGPointMake(loopbackModeLabelCenterX,
                                       CGRectGetMidY(loopbackModeRect));
 
+  CGFloat useManualAudioTop =
+      CGRectGetMaxY(_loopbackSwitch.frame) + kCallControlMargin;
+  CGRect useManualAudioRect =
+      CGRectMake(kCallControlMargin * 3,
+                 useManualAudioTop,
+                 _useManualAudioSwitch.frame.size.width,
+                 _useManualAudioSwitch.frame.size.height);
+  _useManualAudioSwitch.frame = useManualAudioRect;
+  CGFloat useManualAudioLabelCenterX = CGRectGetMaxX(useManualAudioRect) +
+      kCallControlMargin + _useManualAudioLabel.frame.size.width / 2;
+  _useManualAudioLabel.center =
+      CGPointMake(useManualAudioLabelCenterX,
+                  CGRectGetMidY(useManualAudioRect));
+
   CGFloat audioLoopTop =
-     CGRectGetMaxY(loopbackModeRect) + kCallControlMargin * 3;
+     CGRectGetMaxY(useManualAudioRect) + kCallControlMargin * 3;
   _audioLoopButton.frame = CGRectMake(kCallControlMargin,
                                       audioLoopTop,
                                       _audioLoopButton.frame.size.width,
@@ -282,7 +307,7 @@ static CGFloat const kAppLabelHeight = 20;
 #pragma mark - Private
 
 - (void)updateAudioLoopButton {
-  if (_audioPlayer.playing) {
+  if (_isAudioLoopPlaying) {
     _audioLoopButton.backgroundColor = [UIColor redColor];
     [_audioLoopButton setTitle:@"Stop sound"
                       forState:UIControlStateNormal];
@@ -296,12 +321,7 @@ static CGFloat const kAppLabelHeight = 20;
 }
 
 - (void)onToggleAudioLoop:(id)sender {
-  if (_audioPlayer.playing) {
-    [_audioPlayer stop];
-  } else {
-    [_audioPlayer play];
-  }
-  [self updateAudioLoopButton];
+  [_delegate mainViewDidToggleAudioLoop:self];
 }
 
 - (void)onStartCall:(id)sender {
@@ -312,9 +332,10 @@ static CGFloat const kAppLabelHeight = 20;
   }
   room = [room stringByReplacingOccurrencesOfString:@"-" withString:@""];
   [_delegate mainView:self
-         didInputRoom:room
-           isLoopback:_loopbackSwitch.isOn
-          isAudioOnly:_audioOnlySwitch.isOn];
+                didInputRoom:room
+                  isLoopback:_loopbackSwitch.isOn
+                 isAudioOnly:_audioOnlySwitch.isOn
+              useManualAudio:_useManualAudioSwitch.isOn];
 }
 
 @end

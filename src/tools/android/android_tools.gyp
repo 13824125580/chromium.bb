@@ -21,15 +21,6 @@
       ],
     },
     {
-      # GN: //tools/android:heap_profiler
-      'target_name': 'heap_profiler',
-      'type': 'none',
-      'dependencies': [
-        'heap_profiler/heap_profiler.gyp:heap_dump',
-        'heap_profiler/heap_profiler.gyp:heap_profiler',
-      ],
-    },
-    {
       # GN: //tools/android:memdump
       'target_name': 'memdump',
       'type': 'none',
@@ -83,6 +74,14 @@
       'type': 'none',
       'dependencies': [
         'audio_focus_grabber/audio_focus_grabber.gyp:audio_focus_grabber_apk',
+      ],
+    },
+    {
+      # GN: //tools/android:push_apps_to_background
+      'target_name': 'push_apps_to_background',
+      'type': 'none',
+      'dependencies': [
+        'push_apps_to_background/push_apps_to_background.gyp:push_apps_to_background_apk',
       ],
     },
   ],

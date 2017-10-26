@@ -7,19 +7,21 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 namespace {
 
-PassRefPtrWillBeRawPtr<ScrollState> CreateScrollState(double deltaX, double deltaY, bool beginning, bool ending)
+ScrollState* CreateScrollState(double deltaX, double deltaY, bool beginning, bool ending)
 {
-    OwnPtr<ScrollStateData> scrollStateData = adoptPtr(new ScrollStateData());
+    std::unique_ptr<ScrollStateData> scrollStateData = wrapUnique(new ScrollStateData());
     scrollStateData->delta_x = deltaX;
     scrollStateData->delta_y = deltaY;
     scrollStateData->is_beginning = beginning;
     scrollStateData->is_ending = ending;
-    return ScrollState::create(scrollStateData.release());
+    return ScrollState::create(std::move(scrollStateData));
 }
 
 class ScrollStateTest : public testing::Test {
@@ -33,7 +35,7 @@ TEST_F(ScrollStateTest, ConsumeDeltaNative)
     const float deltaXToConsume = 1.2;
     const float deltaYToConsume = 2.3;
 
-    RefPtrWillBeRawPtr<ScrollState> scrollState = CreateScrollState(deltaX, deltaY, false, false);
+    ScrollState* scrollState = CreateScrollState(deltaX, deltaY, false, false);
     EXPECT_FLOAT_EQ(deltaX, scrollState->deltaX());
     EXPECT_FLOAT_EQ(deltaY, scrollState->deltaY());
     EXPECT_FALSE(scrollState->deltaConsumedForScrollSequence());
@@ -64,19 +66,19 @@ TEST_F(ScrollStateTest, ConsumeDeltaNative)
 
 TEST_F(ScrollStateTest, CurrentNativeScrollingElement)
 {
-    RefPtrWillBeRawPtr<ScrollState> scrollState = CreateScrollState(0, 0, false, false);
-    RefPtrWillBeRawPtr<Element> element = Element::create(
-        QualifiedName::null(), Document::create().get());
-    scrollState->setCurrentNativeScrollingElement(element.get());
+    ScrollState* scrollState = CreateScrollState(0, 0, false, false);
+    Element* element = Element::create(
+        QualifiedName::null(), Document::create());
+    scrollState->setCurrentNativeScrollingElement(element);
 
     EXPECT_EQ(element, scrollState->currentNativeScrollingElement());
 }
 
 TEST_F(ScrollStateTest, FullyConsumed)
 {
-    RefPtrWillBeRawPtr<ScrollState> scrollStateBegin = CreateScrollState(0, 0, true, false);
-    RefPtrWillBeRawPtr<ScrollState> scrollState = CreateScrollState(0, 0, false, false);
-    RefPtrWillBeRawPtr<ScrollState> scrollStateEnd = CreateScrollState(0, 0, false, true);
+    ScrollState* scrollStateBegin = CreateScrollState(0, 0, true, false);
+    ScrollState* scrollState = CreateScrollState(0, 0, false, false);
+    ScrollState* scrollStateEnd = CreateScrollState(0, 0, false, true);
     EXPECT_FALSE(scrollStateBegin->fullyConsumed());
     EXPECT_TRUE(scrollState->fullyConsumed());
     EXPECT_FALSE(scrollStateEnd->fullyConsumed());

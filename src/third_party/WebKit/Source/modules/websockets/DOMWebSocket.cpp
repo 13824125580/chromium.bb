@@ -32,7 +32,8 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/modules/v8/UnionTypesModules.h"
+#include "bindings/core/v8/SourceLocation.h"
+#include "bindings/modules/v8/StringOrStringSequence.h"
 #include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/DOMArrayBufferView.h"
 #include "core/dom/Document.h"
@@ -41,7 +42,6 @@
 #include "core/dom/SecurityContext.h"
 #include "core/events/MessageEvent.h"
 #include "core/fileapi/Blob.h"
-#include "core/frame/ConsoleTypes.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
@@ -52,15 +52,17 @@
 #include "platform/Logging.h"
 #include "platform/blob/BlobData.h"
 #include "platform/heap/Handle.h"
+#include "platform/weborigin/KnownPorts.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebInsecureRequestPolicy.h"
 #include "wtf/Assertions.h"
 #include "wtf/HashSet.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/CString.h"
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -71,12 +73,12 @@ DOMWebSocket::EventQueue::EventQueue(EventTarget* target)
 
 DOMWebSocket::EventQueue::~EventQueue() { stop(); }
 
-void DOMWebSocket::EventQueue::dispatch(PassRefPtrWillBeRawPtr<Event> event)
+void DOMWebSocket::EventQueue::dispatch(Event* event)
 {
     switch (m_state) {
     case Active:
         ASSERT(m_events.isEmpty());
-        ASSERT(m_target->executionContext());
+        ASSERT(m_target->getExecutionContext());
         m_target->dispatchEvent(event);
         break;
     case Suspended:
@@ -126,13 +128,13 @@ void DOMWebSocket::EventQueue::dispatchQueuedEvents()
     if (m_state != Active)
         return;
 
-    WillBeHeapDeque<RefPtrWillBeMember<Event>> events;
+    HeapDeque<Member<Event>> events;
     events.swap(m_events);
     while (!events.isEmpty()) {
         if (m_state == Stopped || m_state == Suspended)
             break;
         ASSERT(m_state == Active);
-        ASSERT(m_target->executionContext());
+        ASSERT(m_target->getExecutionContext());
         m_target->dispatchEvent(events.takeFirst());
         // |this| can be stopped here.
     }
@@ -189,7 +191,7 @@ static String encodeSubprotocolString(const String& protocol)
         if (protocol[i] < 0x20 || protocol[i] > 0x7E)
             builder.append(String::format("\\u%04X", protocol[i]));
         else if (protocol[i] == 0x5c)
-            builder.appendLiteral("\\\\");
+            builder.append("\\\\");
         else
             builder.append(protocol[i]);
     }
@@ -218,7 +220,8 @@ const char* DOMWebSocket::subprotocolSeperator()
 }
 
 DOMWebSocket::DOMWebSocket(ExecutionContext* context)
-    : ActiveDOMObject(context)
+    : ActiveScriptWrappable(this)
+    , ActiveDOMObject(context)
     , m_state(CONNECTING)
     , m_bufferedAmount(0)
     , m_consumedBufferedAmount(0)
@@ -238,7 +241,7 @@ DOMWebSocket::~DOMWebSocket()
 
 void DOMWebSocket::logError(const String& message)
 {
-    executionContext()->addConsoleMessage(ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, message));
+    getExecutionContext()->addConsoleMessage(ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, message));
 }
 
 DOMWebSocket* DOMWebSocket::create(ExecutionContext* context, const String& url, ExceptionState& exceptionState)
@@ -277,13 +280,13 @@ DOMWebSocket* DOMWebSocket::create(ExecutionContext* context, const String& url,
 
 void DOMWebSocket::connect(const String& url, const Vector<String>& protocols, ExceptionState& exceptionState)
 {
-    UseCounter::count(executionContext(), UseCounter::WebSocket);
+    UseCounter::count(getExecutionContext(), UseCounter::WebSocket);
 
     WTF_LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
     m_url = KURL(KURL(), url);
 
-    if (executionContext()->securityContext().getInsecureRequestsPolicy() == SecurityContext::InsecureRequestsUpgrade && m_url.protocol() == "ws") {
-        UseCounter::count(executionContext(), UseCounter::UpgradeInsecureRequestsUpgradedRequest);
+    if (getExecutionContext()->securityContext().getInsecureRequestPolicy() & kUpgradeInsecureRequests && m_url.protocol() == "ws") {
+        UseCounter::count(getExecutionContext(), UseCounter::UpgradeInsecureRequestsUpgradedRequest);
         m_url.setProtocol("wss");
         if (m_url.port() == 80)
             m_url.setPort(443);
@@ -306,14 +309,14 @@ void DOMWebSocket::connect(const String& url, const Vector<String>& protocols, E
         return;
     }
 
-    if (!Platform::current()->portAllowed(m_url)) {
+    if (!isPortAllowedForScheme(m_url)) {
         m_state = CLOSED;
         exceptionState.throwSecurityError("The port " + String::number(m_url.port()) + " is not allowed.");
         return;
     }
 
     // FIXME: Convert this to check the isolated world's Content Security Policy once webkit.org/b/104520 is solved.
-    if (!ContentSecurityPolicy::shouldBypassMainWorld(executionContext()) && !executionContext()->contentSecurityPolicy()->allowConnectToSource(m_url)) {
+    if (!ContentSecurityPolicy::shouldBypassMainWorld(getExecutionContext()) && !getExecutionContext()->contentSecurityPolicy()->allowConnectToSource(m_url)) {
         m_state = CLOSED;
         // The URL is safe to expose to JavaScript, as this check happens synchronously before redirection.
         exceptionState.throwSecurityError("Refused to connect to '" + m_url.elidedString() + "' because it violates the document's Content Security Policy.");
@@ -343,7 +346,7 @@ void DOMWebSocket::connect(const String& url, const Vector<String>& protocols, E
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeperator());
 
-    m_channel = createChannel(executionContext(), this);
+    m_channel = createChannel(getExecutionContext(), this);
 
     if (!m_channel->connect(m_url, protocolString)) {
         m_state = CLOSED;
@@ -509,7 +512,7 @@ void DOMWebSocket::closeInternal(int code, const String& reason, ExceptionState&
         return;
     if (m_state == CONNECTING) {
         m_state = CLOSING;
-        m_channel->fail("WebSocket is closed before the connection is established.", WarningMessageLevel, String(), 0);
+        m_channel->fail("WebSocket is closed before the connection is established.", WarningMessageLevel, SourceLocation::create(String(), 0, 0, nullptr));
         return;
     }
     m_state = CLOSING;
@@ -576,9 +579,9 @@ const AtomicString& DOMWebSocket::interfaceName() const
     return EventTargetNames::DOMWebSocket;
 }
 
-ExecutionContext* DOMWebSocket::executionContext() const
+ExecutionContext* DOMWebSocket::getExecutionContext() const
 {
-    return ActiveDOMObject::executionContext();
+    return ActiveDOMObject::getExecutionContext();
 }
 
 void DOMWebSocket::contextDestroyed()
@@ -635,7 +638,7 @@ void DOMWebSocket::didReceiveTextMessage(const String& msg)
     m_eventQueue->dispatch(MessageEvent::create(msg, SecurityOrigin::create(m_url)->toString()));
 }
 
-void DOMWebSocket::didReceiveBinaryMessage(PassOwnPtr<Vector<char>> binaryData)
+void DOMWebSocket::didReceiveBinaryMessage(std::unique_ptr<Vector<char>> binaryData)
 {
     WTF_LOG(Network, "WebSocket %p didReceiveBinaryMessage() %lu byte binary message", this, static_cast<unsigned long>(binaryData->size()));
     switch (m_binaryType) {
@@ -643,18 +646,18 @@ void DOMWebSocket::didReceiveBinaryMessage(PassOwnPtr<Vector<char>> binaryData)
         size_t size = binaryData->size();
         RefPtr<RawData> rawData = RawData::create();
         binaryData->swap(*rawData->mutableData());
-        OwnPtr<BlobData> blobData = BlobData::create();
+        std::unique_ptr<BlobData> blobData = BlobData::create();
         blobData->appendData(rawData.release(), 0, BlobDataItem::toEndOfFile);
-        Blob* blob = Blob::create(BlobDataHandle::create(blobData.release(), size));
+        Blob* blob = Blob::create(BlobDataHandle::create(std::move(blobData), size));
         recordReceiveTypeHistogram(WebSocketReceiveTypeBlob);
         m_eventQueue->dispatch(MessageEvent::create(blob, SecurityOrigin::create(m_url)->toString()));
         break;
     }
 
     case BinaryTypeArrayBuffer:
-        RefPtr<DOMArrayBuffer> arrayBuffer = DOMArrayBuffer::create(binaryData->data(), binaryData->size());
+        DOMArrayBuffer* arrayBuffer = DOMArrayBuffer::create(binaryData->data(), binaryData->size());
         recordReceiveTypeHistogram(WebSocketReceiveTypeArrayBuffer);
-        m_eventQueue->dispatch(MessageEvent::create(arrayBuffer.release(), SecurityOrigin::create(m_url)->toString()));
+        m_eventQueue->dispatch(MessageEvent::create(arrayBuffer, SecurityOrigin::create(m_url)->toString()));
         break;
     }
 }
@@ -715,7 +718,7 @@ DEFINE_TRACE(DOMWebSocket)
     visitor->trace(m_channel);
     visitor->trace(m_eventQueue);
     WebSocketChannelClient::trace(visitor);
-    RefCountedGarbageCollectedEventTargetWithInlineData<DOMWebSocket>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     ActiveDOMObject::trace(visitor);
 }
 

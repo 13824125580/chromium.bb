@@ -30,7 +30,6 @@
 
 #include <base/compiler_specific.h>
 #include <base/id_map.h>
-#include <base/memory/scoped_ptr.h>
 #include <base/process/process_handle.h>
 #include <ipc/ipc_listener.h>
 
@@ -40,7 +39,7 @@ struct BlpWebViewHostMsg_NewParams;
 
 namespace IPC {
 class ChannelProxy;
-}  // close namespace blpwtk2
+}  // close namespace IPC
 
 namespace blpwtk2 {
 
@@ -51,11 +50,19 @@ class ManagedRenderProcessHost;
 class ProcessHostImpl : public ProcessHost,
                         private IPC::Listener {
   public:
-    ProcessHostImpl(RendererInfoMap* rendererInfoMap);
+    ProcessHostImpl(RendererInfoMap* rendererInfoMap, 
+                    const std::string& dataDir,
+                    bool diskCacheEnabled,
+                    bool cookiePersistenceEnabled);
     ~ProcessHostImpl();
 
     const std::string& channelId() const;
+
+    const std::string& ipcToken() const;
+    std::string serviceToken() const;
     std::string channelInfo() const;
+
+    int hostAffinity() const;
 
     // ProcessHost overrides
     void addRoute(int routingId, ProcessHostListener* listener) override;
@@ -77,7 +84,16 @@ class ProcessHostImpl : public ProcessHost,
     // Control message handlers
     void onSync(bool isFinalSync);
     void onCreateNewHostChannel(int timeoutInMilliseconds,
+                                std::string dataDir,
+                                bool diskCacheEnabled,
+                                bool cookiePersistenceEnabled,
                                 std::string* channelInfo);
+
+    void onRequestMojoTokens(int rendererPid,
+                             int* clientFileDescriptor,
+                             std::string* ipcToken,
+                             std::string* serviceToken);
+
     void onClearWebCache();
     void onRegisterNativeViewForStreaming(NativeViewForTransit view,
                                           std::string* result);
@@ -92,13 +108,17 @@ class ProcessHostImpl : public ProcessHost,
     void onSetDefaultPrinterName(const std::string& printerName);
 
     base::ProcessHandle d_processHandle;
-    scoped_ptr<ManagedRenderProcessHost> d_renderProcessHost;
-    scoped_ptr<IPC::ChannelProxy> d_channel;
+    std::unique_ptr<ManagedRenderProcessHost> d_renderProcessHost;
+    std::unique_ptr<IPC::ChannelProxy> d_channel;
     RendererInfoMap* d_rendererInfoMap;
     RendererInfo d_inProcessRendererInfo;
     IDMap<ProcessHostListener> d_routes;
     int d_lastRoutingId;
     bool d_receivedFinalSync;
+
+    // File descriptor used for Mojo IPC
+    // This descriptor is with respect to renderer process control block.
+    int d_clientFileDescriptor;
 
     DISALLOW_COPY_AND_ASSIGN(ProcessHostImpl);
 };

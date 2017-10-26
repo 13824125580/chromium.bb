@@ -23,10 +23,11 @@ import time
 import urllib2
 import zipfile
 
+
 # Do NOT CHANGE this if you don't know what you're doing -- see
 # https://chromium.googlesource.com/chromium/src/+/master/docs/updating_clang.md
 # Reverting problematic clang rolls is safe, though.
-CLANG_REVISION = '261368'
+CLANG_REVISION = '274142'
 
 use_head_revision = 'LLVM_FORCE_HEAD_REVISION' in os.environ
 if use_head_revision:
@@ -45,6 +46,7 @@ LLVM_DIR = os.path.join(THIRD_PARTY_DIR, 'llvm')
 LLVM_BOOTSTRAP_DIR = os.path.join(THIRD_PARTY_DIR, 'llvm-bootstrap')
 LLVM_BOOTSTRAP_INSTALL_DIR = os.path.join(THIRD_PARTY_DIR,
                                           'llvm-bootstrap-install')
+LLVM_LTO_GOLD_PLUGIN_DIR = os.path.join(THIRD_PARTY_DIR, 'llvm-lto-gold-plugin')
 CHROME_TOOLS_SHIM_DIR = os.path.join(LLVM_DIR, 'tools', 'chrometools')
 LLVM_BUILD_DIR = os.path.join(CHROMIUM_DIR, 'third_party', 'llvm-build',
                               'Release+Asserts')
@@ -65,6 +67,10 @@ LLVM_BUILD_TOOLS_DIR = os.path.abspath(
 STAMP_FILE = os.path.normpath(
     os.path.join(LLVM_DIR, '..', 'llvm-build', 'cr_build_revision'))
 BINUTILS_DIR = os.path.join(THIRD_PARTY_DIR, 'binutils')
+BINUTILS_BIN_DIR = os.path.join(BINUTILS_DIR, BINUTILS_DIR,
+                                'Linux_x64', 'Release', 'bin')
+BFD_PLUGINS_DIR = os.path.join(BINUTILS_DIR, 'Linux_x64', 'Release',
+                               'lib', 'bfd-plugins')
 VERSION = '3.9.0'
 ANDROID_NDK_DIR = os.path.join(
     CHROMIUM_DIR, 'third_party', 'android_tools', 'ndk')
@@ -76,6 +82,12 @@ CDS_URL = os.environ.get('CDS_CLANG_BUCKET_OVERRIDE',
 LLVM_REPO_URL='https://llvm.org/svn/llvm-project'
 if 'LLVM_REPO_URL' in os.environ:
   LLVM_REPO_URL = os.environ['LLVM_REPO_URL']
+
+# Bump after VC updates.
+DIA_DLL = {
+  '2013': 'msdia120.dll',
+  '2015': 'msdia140.dll',
+}
 
 
 def DownloadUrl(url, output_file):
@@ -136,25 +148,33 @@ def DownloadAndUnpack(url, output_dir):
       tarfile.open(mode='r:gz', fileobj=f).extractall(path=output_dir)
 
 
-def ReadStampFile():
+def ReadStampFile(path=STAMP_FILE):
   """Return the contents of the stamp file, or '' if it doesn't exist."""
   try:
-    with open(STAMP_FILE, 'r') as f:
+    with open(path, 'r') as f:
       return f.read().rstrip()
   except IOError:
     return ''
 
 
-def WriteStampFile(s):
+def WriteStampFile(s, path=STAMP_FILE):
   """Write s to the stamp file."""
-  EnsureDirExists(os.path.dirname(STAMP_FILE))
-  with open(STAMP_FILE, 'w') as f:
+  EnsureDirExists(os.path.dirname(path))
+  with open(path, 'w') as f:
     f.write(s)
     f.write('\n')
 
 
 def GetSvnRevision(svn_repo):
   """Returns current revision of the svn repo at svn_repo."""
+  if sys.platform == 'darwin':
+    # mac_files toolchain must be set for hermetic builds.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(__file__))))
+    sys.path.append(os.path.join(root, 'build'))
+    import mac_toolchain
+
+    mac_toolchain.SetToolchainEnvironment()
   svn_info = subprocess.check_output('svn info ' + svn_repo, shell=True)
   m = re.search(r'Revision: (\d+)', svn_info)
   return m.group(1)
@@ -173,10 +193,12 @@ def RmTree(dir):
 
 
 def RmCmakeCache(dir):
-  """Delete CMakeCache.txt files under dir recursively."""
-  for dirpath, _, files in os.walk(dir):
+  """Delete CMake cache related files from dir."""
+  for dirpath, dirs, files in os.walk(dir):
     if 'CMakeCache.txt' in files:
       os.remove(os.path.join(dirpath, 'CMakeCache.txt'))
+    if 'CMakeFiles' in dirs:
+      RmTree(os.path.join(dirpath, 'CMakeFiles'))
 
 
 def RunCommand(command, msvc_arch=None, env=None, fail_hard=True):
@@ -213,8 +235,8 @@ def RunCommand(command, msvc_arch=None, env=None, fail_hard=True):
 
 def CopyFile(src, dst):
   """Copy a file from src to dst."""
-  shutil.copy(src, dst)
   print "Copying %s to %s" % (src, dst)
+  shutil.copy(src, dst)
 
 
 def CopyDirectoryContents(src, dst, filename_filter=None):
@@ -293,16 +315,34 @@ def DownloadHostGcc(args):
 def AddCMakeToPath():
   """Download CMake and add it to PATH."""
   if sys.platform == 'win32':
-    zip_name = 'cmake-3.2.2-win32-x86.zip'
+    zip_name = 'cmake-3.4.3-win32-x86.zip'
     cmake_dir = os.path.join(LLVM_BUILD_TOOLS_DIR,
-                             'cmake-3.2.2-win32-x86', 'bin')
+                             'cmake-3.4.3-win32-x86', 'bin')
   else:
     suffix = 'Darwin' if sys.platform == 'darwin' else 'Linux'
-    zip_name = 'cmake322_%s.tgz' % suffix
-    cmake_dir = os.path.join(LLVM_BUILD_TOOLS_DIR, 'cmake322', 'bin')
+    zip_name = 'cmake343_%s.tgz' % suffix
+    cmake_dir = os.path.join(LLVM_BUILD_TOOLS_DIR, 'cmake343', 'bin')
   if not os.path.exists(cmake_dir):
     DownloadAndUnpack(CDS_URL + '/tools/' + zip_name, LLVM_BUILD_TOOLS_DIR)
   os.environ['PATH'] = cmake_dir + os.pathsep + os.environ.get('PATH', '')
+
+
+def AddGnuWinToPath():
+  """Download some GNU win tools and add them to PATH."""
+  if sys.platform != 'win32':
+    return
+
+  gnuwin_dir = os.path.join(LLVM_BUILD_TOOLS_DIR, 'gnuwin')
+  GNUWIN_VERSION = '4'
+  GNUWIN_STAMP = os.path.join(gnuwin_dir, 'stamp')
+  if ReadStampFile(GNUWIN_STAMP) == GNUWIN_VERSION:
+    print 'GNU Win tools already up to date.'
+  else:
+    zip_name = 'gnuwin-%s.zip' % GNUWIN_VERSION
+    DownloadAndUnpack(CDS_URL + '/tools/' + zip_name, LLVM_BUILD_TOOLS_DIR)
+    WriteStampFile(GNUWIN_VERSION, GNUWIN_STAMP)
+
+  os.environ['PATH'] = gnuwin_dir + os.pathsep + os.environ.get('PATH', '')
 
 
 vs_version = None
@@ -321,8 +361,16 @@ def GetVSVersion():
   # or a system-wide installation otherwise.
   sys.path.append(os.path.join(CHROMIUM_DIR, 'tools', 'gyp', 'pylib'))
   import gyp.MSVSVersion
-  vs_version = gyp.MSVSVersion.SelectVisualStudioVersion('2013')
+  vs_version = gyp.MSVSVersion.SelectVisualStudioVersion(
+      vs_toolchain.GetVisualStudioVersion())
   return vs_version
+
+
+def CopyDiaDllTo(target_dir):
+  # This script always wants to use the 64-bit msdia*.dll.
+  dia_path = os.path.join(GetVSVersion().Path(), 'DIA SDK', 'bin', 'amd64')
+  dia_dll = os.path.join(dia_path, DIA_DLL[GetVSVersion().ShortName()])
+  CopyFile(dia_dll, target_dir)
 
 
 def UpdateClang(args):
@@ -358,6 +406,8 @@ def UpdateClang(args):
     try:
       DownloadAndUnpack(cds_full_url, LLVM_BUILD_DIR)
       print 'clang %s unpacked' % PACKAGE_VERSION
+      if sys.platform == 'win32':
+        CopyDiaDllTo(os.path.join(LLVM_BUILD_DIR, 'bin'))
       # Download the gold plugin if requested to by an environment variable.
       # This is used by the CFI ClusterFuzz bot, and it's required for official
       # builds on linux.
@@ -381,12 +431,13 @@ def UpdateClang(args):
 
   DownloadHostGcc(args)
   AddCMakeToPath()
+  AddGnuWinToPath()
 
   DeleteChromeToolsShim()
 
   Checkout('LLVM', LLVM_REPO_URL + '/llvm/trunk', LLVM_DIR)
   Checkout('Clang', LLVM_REPO_URL + '/cfe/trunk', CLANG_DIR)
-  if sys.platform == 'win32':
+  if sys.platform == 'win32' or use_head_revision:
     Checkout('LLD', LLVM_REPO_URL + '/lld/trunk', LLD_DIR)
   Checkout('compiler-rt', LLVM_REPO_URL + '/compiler-rt/trunk', COMPILER_RT_DIR)
   if sys.platform == 'darwin':
@@ -415,20 +466,29 @@ def UpdateClang(args):
         [cxx, '-print-file-name=libstdc++.so.6']).rstrip()
     os.environ['LD_LIBRARY_PATH'] = os.path.dirname(libstdcpp)
 
-  cflags = cxxflags = ldflags = []
+  cflags = []
+  cxxflags = []
+  ldflags = []
 
   base_cmake_args = ['-GNinja',
                      '-DCMAKE_BUILD_TYPE=Release',
                      '-DLLVM_ENABLE_ASSERTIONS=ON',
                      '-DLLVM_ENABLE_THREADS=OFF',
                      '-DLLVM_ENABLE_TIMESTAMPS=OFF',
+                     # Statically link MSVCRT to avoid DLL dependencies.
+                     '-DLLVM_USE_CRT_RELEASE=MT',
                      ]
+
+  binutils_incdir = ''
+  if sys.platform.startswith('linux'):
+    binutils_incdir = os.path.join(BINUTILS_DIR, 'Linux_x64/Release/include')
 
   if args.bootstrap:
     print 'Building bootstrap compiler'
     EnsureDirExists(LLVM_BOOTSTRAP_DIR)
     os.chdir(LLVM_BOOTSTRAP_DIR)
     bootstrap_args = base_cmake_args + [
+        '-DLLVM_BINUTILS_INCDIR=' + binutils_incdir,
         '-DLLVM_TARGETS_TO_BUILD=host',
         '-DCMAKE_INSTALL_PREFIX=' + LLVM_BOOTSTRAP_INSTALL_DIR,
         '-DCMAKE_C_FLAGS=' + ' '.join(cflags),
@@ -440,6 +500,8 @@ def UpdateClang(args):
     RunCommand(['cmake'] + bootstrap_args + [LLVM_DIR], msvc_arch='x64')
     RunCommand(['ninja'], msvc_arch='x64')
     if args.run_tests:
+      if sys.platform == 'win32':
+        CopyDiaDllTo(os.path.join(LLVM_BOOTSTRAP_DIR, 'bin'))
       RunCommand(['ninja', 'check-all'], msvc_arch='x64')
     RunCommand(['ninja', 'install'], msvc_arch='x64')
     if args.gcc_toolchain:
@@ -465,6 +527,47 @@ def UpdateClang(args):
       cxxflags = ['--gcc-toolchain=' + args.gcc_toolchain]
     print 'Building final compiler'
 
+  # Build LLVM gold plugin with LTO. That speeds up the linker by ~10%.
+  # We only use LTO for Linux now.
+  if args.bootstrap and args.lto_gold_plugin:
+    print 'Building LTO LLVM Gold plugin'
+    if os.path.exists(LLVM_LTO_GOLD_PLUGIN_DIR):
+      RmTree(LLVM_LTO_GOLD_PLUGIN_DIR)
+    EnsureDirExists(LLVM_LTO_GOLD_PLUGIN_DIR)
+    os.chdir(LLVM_LTO_GOLD_PLUGIN_DIR)
+
+    # Create a symlink to LLVMgold.so build in the previous step so that ar
+    # and ranlib could find it while linking LLVMgold.so with LTO.
+    EnsureDirExists(BFD_PLUGINS_DIR)
+    RunCommand(['ln', '-sf',
+                os.path.join(LLVM_BOOTSTRAP_INSTALL_DIR, 'lib', 'LLVMgold.so'),
+                os.path.join(BFD_PLUGINS_DIR, 'LLVMgold.so')])
+
+    lto_cflags = ['-flto']
+    lto_ldflags = ['-fuse-ld=gold']
+    if args.gcc_toolchain:
+      # Tell the bootstrap compiler to use a specific gcc prefix to search
+      # for standard library headers and shared object files.
+      lto_cflags += ['--gcc-toolchain=' + args.gcc_toolchain]
+    lto_cmake_args = base_cmake_args + [
+        '-DLLVM_BINUTILS_INCDIR=' + binutils_incdir,
+        '-DCMAKE_C_COMPILER=' + cc,
+        '-DCMAKE_CXX_COMPILER=' + cxx,
+        '-DCMAKE_C_FLAGS=' + ' '.join(lto_cflags),
+        '-DCMAKE_CXX_FLAGS=' + ' '.join(lto_cflags),
+        '-DCMAKE_EXE_LINKER_FLAGS=' + ' '.join(lto_ldflags),
+        '-DCMAKE_SHARED_LINKER_FLAGS=' + ' '.join(lto_ldflags),
+        '-DCMAKE_MODULE_LINKER_FLAGS=' + ' '.join(lto_ldflags)]
+
+    # We need to use the proper binutils which support LLVM Gold plugin.
+    lto_env = os.environ.copy()
+    lto_env['PATH'] = BINUTILS_BIN_DIR + os.pathsep + lto_env.get('PATH', '')
+
+    RmCmakeCache('.')
+    RunCommand(['cmake'] + lto_cmake_args + [LLVM_DIR], env=lto_env)
+    RunCommand(['ninja', 'LLVMgold'], env=lto_env)
+
+
   # LLVM uses C++11 starting in llvm 3.5. On Linux, this means libstdc++4.7+ is
   # needed, on OS X it requires libc++. clang only automatically links to libc++
   # when targeting OS X 10.9+, so add stdlib=libc++ explicitly so clang can run
@@ -485,9 +588,6 @@ def UpdateClang(args):
     RmTree(LIBCXX_DIR)
 
   # Build clang.
-  binutils_incdir = ''
-  if sys.platform.startswith('linux'):
-    binutils_incdir = os.path.join(BINUTILS_DIR, 'Linux_x64/Release/include')
 
   # If building at head, define a macro that plugins can use for #ifdefing
   # out code that builds at head, but not at CLANG_REVISION or vice versa.
@@ -510,13 +610,15 @@ def UpdateClang(args):
   if cxx is not None: cc_args.append('-DCMAKE_CXX_COMPILER=' + cxx)
   cmake_args += base_cmake_args + [
       '-DLLVM_BINUTILS_INCDIR=' + binutils_incdir,
-      '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=WebAssembly',
       '-DCMAKE_C_FLAGS=' + ' '.join(cflags),
       '-DCMAKE_CXX_FLAGS=' + ' '.join(cxxflags),
       '-DCMAKE_EXE_LINKER_FLAGS=' + ' '.join(ldflags),
       '-DCMAKE_SHARED_LINKER_FLAGS=' + ' '.join(ldflags),
       '-DCMAKE_MODULE_LINKER_FLAGS=' + ' '.join(ldflags),
       '-DCMAKE_INSTALL_PREFIX=' + LLVM_BUILD_DIR,
+      # TODO(thakis): Remove this once official builds pass -Wl,--build-id
+      # explicitly, https://crbug.com/622775
+      '-DENABLE_LINKER_BUILD_ID=ON',
       '-DCHROMIUM_TOOLS_SRC=%s' % os.path.join(CHROMIUM_DIR, 'tools', 'clang'),
       '-DCHROMIUM_TOOLS=%s' % ';'.join(args.tools)]
 
@@ -534,8 +636,7 @@ def UpdateClang(args):
         [cxx] + cxxflags + ['-print-file-name=libstdc++.so.6']).rstrip()
     CopyFile(libstdcpp, os.path.join(LLVM_BUILD_DIR, 'lib'))
 
-  # TODO(thakis): Remove "-d explain" once http://crbug.com/569337 is fixed.
-  RunCommand(['ninja', '-d', 'explain'], msvc_arch='x64')
+  RunCommand(['ninja'], msvc_arch='x64')
 
   if args.tools:
     # If any Chromium tools were built, install those now.
@@ -686,6 +787,8 @@ def UpdateClang(args):
     os.chdir(LLVM_BUILD_DIR)
     RunCommand(['ninja', 'cr-check-all'], msvc_arch='x64')
   if args.run_tests:
+    if sys.platform == 'win32':
+      CopyDiaDllTo(os.path.join(LLVM_BUILD_DIR, 'bin'))
     os.chdir(LLVM_BUILD_DIR)
     RunCommand(['ninja', 'check-all'], msvc_arch='x64')
 
@@ -705,6 +808,11 @@ def main():
   parser.add_argument('--gcc-toolchain', help='set the version for which gcc '
                       'version be used for building; --gcc-toolchain=/opt/foo '
                       'picks /opt/foo/bin/gcc')
+  parser.add_argument('--lto-gold-plugin', action='store_true',
+                      help='build LLVM Gold plugin with LTO')
+  parser.add_argument('--llvm-force-head-revision', action='store_true',
+                      help=('use the revision in the repo when printing '
+                            'the revision'))
   parser.add_argument('--print-revision', action='store_true',
                       help='print current clang revision and exit.')
   parser.add_argument('--print-clang-version', action='store_true',
@@ -720,6 +828,13 @@ def main():
                       default=sys.platform.startswith('linux'))
   args = parser.parse_args()
 
+  if args.lto_gold_plugin and not args.bootstrap:
+    print '--lto-gold-plugin requires --bootstrap'
+    return 1
+  if args.lto_gold_plugin and not sys.platform.startswith('linux'):
+    print '--lto-gold-plugin is only effective on Linux. Ignoring the option.'
+    args.lto_gold_plugin = False
+
   if args.if_needed:
     is_clang_required = False
     # clang is always used on Mac and Linux.
@@ -729,7 +844,7 @@ def main():
     if re.search(r'\b(clang|asan|lsan|msan|tsan)=1',
                  os.environ.get('GYP_DEFINES', '')):
       is_clang_required = True
-    # clang previously downloaded, keep it up-to-date.
+    # clang previously downloaded, keep it up to date.
     # If you don't want this, delete third_party/llvm-build on your machine.
     if os.path.isdir(LLVM_BUILD_DIR):
       is_clang_required = True
@@ -741,7 +856,7 @@ def main():
 
   global CLANG_REVISION, PACKAGE_VERSION
   if args.print_revision:
-    if use_head_revision:
+    if use_head_revision or args.llvm_force_head_revision:
       print GetSvnRevision(LLVM_DIR)
     else:
       print PACKAGE_VERSION

@@ -81,6 +81,10 @@ public:
     virtual void remoteRouteAvailabilityChanged(bool) = 0;
     virtual void connectedToRemoteDevice() = 0;
     virtual void disconnectedFromRemoteDevice() = 0;
+    virtual void cancelledRemotePlaybackRequest() = 0;
+
+    // Warning: This method will destruct the caller.
+    virtual void requestReload(const WebURL& newUrl) = 0;
 
 protected:
     ~WebMediaPlayerClient() { }

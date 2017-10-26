@@ -10,12 +10,15 @@
 
 #include "base/bind.h"
 #include "base/files/scoped_file.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 
 namespace wl {
 namespace {
 
 const uint32_t kCompositorVersion = 4;
+const uint32_t kSeatVersion = 4;
 const uint32_t kXdgShellVersion = 1;
 
 void DestroyResource(wl_client* client, wl_resource* resource) {
@@ -33,7 +36,7 @@ void CreateSurface(wl_client* client, wl_resource* resource, uint32_t id) {
     wl_client_post_no_memory(client);
     return;
   }
-  compositor->AddSurface(make_scoped_ptr(new MockSurface(surface_resource)));
+  compositor->AddSurface(base::WrapUnique(new MockSurface(surface_resource)));
 }
 
 const struct wl_compositor_interface compositor_impl = {
@@ -118,6 +121,33 @@ const struct xdg_shell_interface xdg_shell_impl = {
     &GetXdgSurface,       // get_xdg_surface
     nullptr,              // get_xdg_popup
     &Pong,                // pong
+};
+
+// wl_seat
+
+void GetPointer(wl_client* client, wl_resource* resource, uint32_t id) {
+  auto seat = static_cast<MockSeat*>(wl_resource_get_user_data(resource));
+  wl_resource* pointer_resource = wl_resource_create(
+      client, &wl_pointer_interface, wl_resource_get_version(resource), id);
+  if (!pointer_resource) {
+    wl_client_post_no_memory(client);
+    return;
+  }
+  seat->pointer.reset(new MockPointer(pointer_resource));
+}
+
+const struct wl_seat_interface seat_impl = {
+    &GetPointer,       // get_pointer
+    nullptr,           // get_keyboard
+    nullptr,           // get_touch,
+    &DestroyResource,  // release
+};
+
+// wl_pointer
+
+const struct wl_pointer_interface pointer_impl = {
+    nullptr,           // set_cursor
+    &DestroyResource,  // release
 };
 
 // xdg_surface
@@ -207,6 +237,13 @@ MockSurface* MockSurface::FromResource(wl_resource* resource) {
   return static_cast<MockSurface*>(wl_resource_get_user_data(resource));
 }
 
+MockPointer::MockPointer(wl_resource* resource) : ServerObject(resource) {
+  wl_resource_set_implementation(resource, &pointer_impl, this,
+                                 &ServerObject::OnResourceDestroyed);
+}
+
+MockPointer::~MockPointer() {}
+
 void GlobalDeleter::operator()(wl_global* global) {
   wl_global_destroy(global);
 }
@@ -222,7 +259,7 @@ Global::~Global() {}
 
 bool Global::Initialize(wl_display* display) {
   global_.reset(wl_global_create(display, interface_, version_, this, &Bind));
-  return global_;
+  return global_ != nullptr;
 }
 
 // static
@@ -255,9 +292,13 @@ MockCompositor::MockCompositor()
 
 MockCompositor::~MockCompositor() {}
 
-void MockCompositor::AddSurface(scoped_ptr<MockSurface> surface) {
+void MockCompositor::AddSurface(std::unique_ptr<MockSurface> surface) {
   surfaces_.push_back(std::move(surface));
 }
+
+MockSeat::MockSeat() : Global(&wl_seat_interface, &seat_impl, kSeatVersion) {}
+
+MockSeat::~MockSeat() {}
 
 MockXdgShell::MockXdgShell()
     : Global(&xdg_shell_interface, &xdg_shell_impl, kXdgShellVersion) {}
@@ -270,10 +311,13 @@ void DisplayDeleter::operator()(wl_display* display) {
 
 FakeServer::FakeServer()
     : Thread("fake_wayland_server"),
-      pause_event_(false, false),
-      resume_event_(false, false) {}
+      pause_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                   base::WaitableEvent::InitialState::NOT_SIGNALED),
+      resume_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                    base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
 FakeServer::~FakeServer() {
+  Resume();
   Stop();
 }
 
@@ -292,6 +336,8 @@ bool FakeServer::Start() {
   if (wl_display_init_shm(display_.get()) < 0)
     return false;
   if (!compositor_.Initialize(display_.get()))
+    return false;
+  if (!seat_.Initialize(display_.get()))
     return false;
   if (!xdg_shell_.Initialize(display_.get()))
     return false;
@@ -312,10 +358,6 @@ bool FakeServer::Start() {
   return true;
 }
 
-void FakeServer::Flush() {
-  wl_display_flush_clients(display_.get());
-}
-
 void FakeServer::Pause() {
   task_runner()->PostTask(
       FROM_HERE, base::Bind(&FakeServer::DoPause, base::Unretained(this)));
@@ -323,16 +365,19 @@ void FakeServer::Pause() {
 }
 
 void FakeServer::Resume() {
+  if (display_)
+    wl_display_flush_clients(display_.get());
   resume_event_.Signal();
 }
 
 void FakeServer::DoPause() {
+  base::RunLoop().RunUntilIdle();
   pause_event_.Signal();
   resume_event_.Wait();
 }
 
-scoped_ptr<base::MessagePump> FakeServer::CreateMessagePump() {
-  auto pump = make_scoped_ptr(new base::MessagePumpLibevent);
+std::unique_ptr<base::MessagePump> FakeServer::CreateMessagePump() {
+  auto pump = base::WrapUnique(new base::MessagePumpLibevent);
   pump->WatchFileDescriptor(wl_event_loop_get_fd(event_loop_), true,
                             base::MessagePumpLibevent::WATCH_READ, &controller_,
                             this);

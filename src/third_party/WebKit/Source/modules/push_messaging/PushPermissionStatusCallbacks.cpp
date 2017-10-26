@@ -6,6 +6,7 @@
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "modules/push_messaging/PushError.h"
+#include "wtf/Assertions.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -26,7 +27,7 @@ void PushPermissionStatusCallbacks::onSuccess(WebPushPermissionStatus status)
 
 void PushPermissionStatusCallbacks::onError(const WebPushError& error)
 {
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+    if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
         return;
     m_resolver->reject(PushError::take(m_resolver.get(), error));
 }
@@ -43,7 +44,7 @@ String PushPermissionStatusCallbacks::permissionString(WebPushPermissionStatus s
         return "prompt";
     }
 
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return "denied";
 }
 

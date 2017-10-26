@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -13,6 +14,7 @@
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -247,11 +249,12 @@ void IdentityAPI::OnAccountSignInChanged(const gaia::AccountIds& ids,
   api::identity::AccountInfo account_info;
   account_info.id = ids.gaia;
 
-  scoped_ptr<base::ListValue> args =
+  std::unique_ptr<base::ListValue> args =
       api::identity::OnSignInChanged::Create(account_info, is_signed_in);
-  scoped_ptr<Event> event(new Event(events::IDENTITY_ON_SIGN_IN_CHANGED,
-                                    api::identity::OnSignInChanged::kEventName,
-                                    std::move(args), browser_context_));
+  std::unique_ptr<Event> event(
+      new Event(events::IDENTITY_ON_SIGN_IN_CHANGED,
+                api::identity::OnSignInChanged::kEventName, std::move(args),
+                browser_context_));
 
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
 }
@@ -290,17 +293,17 @@ ExtensionFunction::ResponseAction IdentityGetAccountsFunction::Run() {
       IdentityAPI::GetFactoryInstance()->Get(GetProfile())->GetAccounts();
   DCHECK(gaia_ids.size() < 2 || switches::IsExtensionsMultiAccount());
 
-  base::ListValue* infos = new base::ListValue();
+  std::unique_ptr<base::ListValue> infos(new base::ListValue());
 
   for (std::vector<std::string>::const_iterator it = gaia_ids.begin();
        it != gaia_ids.end();
        ++it) {
     api::identity::AccountInfo account_info;
     account_info.id = *it;
-    infos->Append(account_info.ToValue().release());
+    infos->Append(account_info.ToValue());
   }
 
-  return RespondNow(OneArgument(infos));
+  return RespondNow(OneArgument(std::move(infos)));
 }
 
 IdentityGetAuthTokenFunction::IdentityGetAuthTokenFunction()
@@ -326,7 +329,7 @@ bool IdentityGetAuthTokenFunction::RunAsync() {
     return false;
   }
 
-  scoped_ptr<identity::GetAuthToken::Params> params(
+  std::unique_ptr<identity::GetAuthToken::Params> params(
       identity::GetAuthToken::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   interactive_ = params->details.get() &&
@@ -436,8 +439,7 @@ void IdentityGetAuthTokenFunction::CompleteAsyncRun(bool success) {
 
 void IdentityGetAuthTokenFunction::CompleteFunctionWithResult(
     const std::string& access_token) {
-
-  SetResult(new base::StringValue(access_token));
+  SetResult(base::MakeUnique<base::StringValue>(access_token));
   CompleteAsyncRun(true);
 }
 
@@ -916,7 +918,7 @@ ExtensionFunction::ResponseAction IdentityGetProfileUserInfoFunction::Run() {
     profile_user_info.id = account.gaia;
   }
 
-  return RespondNow(OneArgument(profile_user_info.ToValue().release()));
+  return RespondNow(OneArgument(profile_user_info.ToValue()));
 }
 
 IdentityRemoveCachedAuthTokenFunction::IdentityRemoveCachedAuthTokenFunction() {
@@ -932,7 +934,7 @@ bool IdentityRemoveCachedAuthTokenFunction::RunSync() {
     return false;
   }
 
-  scoped_ptr<identity::RemoveCachedAuthToken::Params> params(
+  std::unique_ptr<identity::RemoveCachedAuthToken::Params> params(
       identity::RemoveCachedAuthToken::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   IdentityAPI::GetFactoryInstance()->Get(GetProfile())->EraseCachedToken(
@@ -953,7 +955,7 @@ bool IdentityLaunchWebAuthFlowFunction::RunAsync() {
     return false;
   }
 
-  scoped_ptr<identity::LaunchWebAuthFlow::Params> params(
+  std::unique_ptr<identity::LaunchWebAuthFlow::Params> params(
       identity::LaunchWebAuthFlow::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -1012,7 +1014,7 @@ void IdentityLaunchWebAuthFlowFunction::OnAuthFlowFailure(
 void IdentityLaunchWebAuthFlowFunction::OnAuthFlowURLChange(
     const GURL& redirect_url) {
   if (redirect_url.GetWithEmptyPath() == final_url_prefix_) {
-    SetResult(new base::StringValue(redirect_url.spec()));
+    SetResult(base::MakeUnique<base::StringValue>(redirect_url.spec()));
     SendResponse(true);
     if (auth_flow_)
       auth_flow_.release()->DetachDelegateAndDelete();

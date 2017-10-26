@@ -7,8 +7,9 @@
 
 #include <set>
 
-#include "ash/session/session_state_observer.h"
-#include "ash/shell_observer.h"
+#include "ash/common/accessibility_types.h"
+#include "ash/common/session/session_state_observer.h"
+#include "ash/common/shell_observer.h"
 #include "base/callback_forward.h"
 #include "base/callback_list.h"
 #include "base/macros.h"
@@ -24,7 +25,6 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_system.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
-#include "ui/chromeos/accessibility_types.h"
 
 namespace content {
 class RenderViewHost;
@@ -34,6 +34,8 @@ class Profile;
 
 namespace chromeos {
 
+class AccessibilityHighlightManager;
+
 enum AccessibilityNotificationType {
   ACCESSIBILITY_MANAGER_SHUTDOWN,
   ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE,
@@ -41,6 +43,7 @@ enum AccessibilityNotificationType {
   ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER,
   ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK,
   ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD,
+  ACCESSIBILITY_TOGGLE_MONO_AUDIO,
   ACCESSIBILITY_BRAILLE_DISPLAY_CONNECTION_STATE_CHANGED
 };
 
@@ -48,18 +51,18 @@ struct AccessibilityStatusEventDetails {
   AccessibilityStatusEventDetails(
       AccessibilityNotificationType notification_type,
       bool enabled,
-      ui::AccessibilityNotificationVisibility notify);
+      ash::AccessibilityNotificationVisibility notify);
 
   AccessibilityStatusEventDetails(
       AccessibilityNotificationType notification_type,
       bool enabled,
-      ui::MagnifierType magnifier_type,
-      ui::AccessibilityNotificationVisibility notify);
+      ash::MagnifierType magnifier_type,
+      ash::AccessibilityNotificationVisibility notify);
 
   AccessibilityNotificationType notification_type;
   bool enabled;
-  ui::MagnifierType magnifier_type;
-  ui::AccessibilityNotificationVisibility notify;
+  ash::MagnifierType magnifier_type;
+  ash::AccessibilityNotificationVisibility notify;
 };
 
 typedef base::Callback<void(const AccessibilityStatusEventDetails&)>
@@ -134,13 +137,13 @@ class AccessibilityManager
   // Enables or disables spoken feedback. Enabling spoken feedback installs the
   // ChromeVox component extension.
   void EnableSpokenFeedback(bool enabled,
-                            ui::AccessibilityNotificationVisibility notify);
+                            ash::AccessibilityNotificationVisibility notify);
 
   // Returns true if spoken feedback is enabled, or false if not.
   bool IsSpokenFeedbackEnabled();
 
   // Toggles whether Chrome OS spoken feedback is on or off.
-  void ToggleSpokenFeedback(ui::AccessibilityNotificationVisibility notify);
+  void ToggleSpokenFeedback(ash::AccessibilityNotificationVisibility notify);
 
   // Enables or disables the high contrast mode for Chrome.
   void EnableHighContrast(bool enabled);
@@ -165,6 +168,41 @@ class AccessibilityManager
   // Returns true if the virtual keyboard is enabled, otherwise false.
   bool IsVirtualKeyboardEnabled();
 
+  // Enables or disables mono audio output.
+  void EnableMonoAudio(bool enabled);
+  // Returns true if mono audio output is enabled, otherwise false.
+  bool IsMonoAudioEnabled();
+
+  // Invoked to enable or disable caret highlighting.
+  void SetCaretHighlightEnabled(bool enabled);
+
+  // Returns if caret highlighting is enabled.
+  bool IsCaretHighlightEnabled() const;
+
+  // Invoked to enable or disable cursor highlighting.
+  void SetCursorHighlightEnabled(bool enabled);
+
+  // Returns if cursor highlighting is enabled.
+  bool IsCursorHighlightEnabled() const;
+
+  // Invoked to enable or disable focus highlighting.
+  void SetFocusHighlightEnabled(bool enabled);
+
+  // Returns if focus highlighting is enabled.
+  bool IsFocusHighlightEnabled() const;
+
+  // Invoked to enable or disable select-to-speak.
+  void SetSelectToSpeakEnabled(bool enabled);
+
+  // Returns if select-to-speak is enabled.
+  bool IsSelectToSpeakEnabled() const;
+
+  // Invoked to enable or disable switch access.
+  void SetSwitchAccessEnabled(bool enabled);
+
+  // Returns if switch access is enabled.
+  bool IsSwitchAccessEnabled() const;
+
   // Returns true if a braille display is connected to the system, otherwise
   // false.
   bool IsBrailleDisplayConnected() const;
@@ -174,6 +212,8 @@ class AccessibilityManager
 
   // ShellObserver overrides:
   void OnAppTerminating() override;
+  void OnFullscreenStateChanged(bool is_fullscreen,
+                                ash::WmWindow* root_window) override;
 
   void SetProfileForTest(Profile* profile);
 
@@ -191,7 +231,7 @@ class AccessibilityManager
 
   // Register a callback to be notified when the status of an accessibility
   // option changes.
-  scoped_ptr<AccessibilityStatusSubscription> RegisterCallback(
+  std::unique_ptr<AccessibilityStatusSubscription> RegisterCallback(
       const AccessibilityStatusCallback& cb);
 
   // Notify registered callbacks of a status change in an accessibility setting.
@@ -205,6 +245,14 @@ class AccessibilityManager
   // when their mapped event has occurred. The sound key enums can be found in
   // chromeos/audio/chromeos_sounds.h.
   void PlayEarcon(int sound_key);
+
+  // Forward an accessibility gesture from the touch exploration controller
+  // to ChromeVox.
+  void HandleAccessibilityGesture(ui::AXGesture gesture);
+
+  // Update the touch exploration controller so that synthesized
+  // touch events are anchored at this point.
+  void SetTouchAccessibilityAnchorPoint(const gfx::Point& anchor_point);
 
   // Called by our widget observer when the ChromeVoxPanel is closing.
   void OnChromeVoxPanelClosing();
@@ -246,10 +294,18 @@ class AccessibilityManager
   void UpdateAutoclickFromPref();
   void UpdateAutoclickDelayFromPref();
   void UpdateVirtualKeyboardFromPref();
+  void UpdateMonoAudioFromPref();
+  void UpdateCaretHighlightFromPref();
+  void UpdateCursorHighlightFromPref();
+  void UpdateFocusHighlightFromPref();
+  void UpdateSelectToSpeakFromPref();
+  void UpdateSwitchAccessFromPref();
+  void UpdateAccessibilityHighlightingFromPrefs();
 
   void CheckBrailleState();
   void ReceiveBrailleDisplayState(
-      scoped_ptr<extensions::api::braille_display_private::DisplayState> state);
+      std::unique_ptr<extensions::api::braille_display_private::DisplayState>
+          state);
   void UpdateBrailleImeState();
 
   void SetProfile(Profile* profile);
@@ -290,9 +346,9 @@ class AccessibilityManager
   bool chrome_vox_loaded_on_user_screen_;
 
   content::NotificationRegistrar notification_registrar_;
-  scoped_ptr<PrefChangeRegistrar> pref_change_registrar_;
-  scoped_ptr<PrefChangeRegistrar> local_state_pref_change_registrar_;
-  scoped_ptr<ash::ScopedSessionStateObserver> session_state_observer_;
+  std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
+  std::unique_ptr<PrefChangeRegistrar> local_state_pref_change_registrar_;
+  std::unique_ptr<ash::ScopedSessionStateObserver> session_state_observer_;
 
   PrefHandler large_cursor_pref_handler_;
   PrefHandler spoken_feedback_pref_handler_;
@@ -300,16 +356,28 @@ class AccessibilityManager
   PrefHandler autoclick_pref_handler_;
   PrefHandler autoclick_delay_pref_handler_;
   PrefHandler virtual_keyboard_pref_handler_;
+  PrefHandler mono_audio_pref_handler_;
+  PrefHandler caret_highlight_pref_handler_;
+  PrefHandler cursor_highlight_pref_handler_;
+  PrefHandler focus_highlight_pref_handler_;
+  PrefHandler select_to_speak_pref_handler_;
+  PrefHandler switch_access_pref_handler_;
 
   bool large_cursor_enabled_;
   bool sticky_keys_enabled_;
   bool spoken_feedback_enabled_;
   bool high_contrast_enabled_;
   bool autoclick_enabled_;
-  int autoclick_delay_ms_;
+  base::TimeDelta autoclick_delay_ms_;
   bool virtual_keyboard_enabled_;
+  bool mono_audio_enabled_;
+  bool caret_highlight_enabled_;
+  bool cursor_highlight_enabled_;
+  bool focus_highlight_enabled_;
+  bool select_to_speak_enabled_;
+  bool switch_access_enabled_;
 
-  ui::AccessibilityNotificationVisibility spoken_feedback_notification_;
+  ash::AccessibilityNotificationVisibility spoken_feedback_notification_;
 
   bool should_speak_chrome_vox_announcements_on_user_screen_;
 
@@ -324,7 +392,8 @@ class AccessibilityManager
   bool braille_ime_current_;
 
   ChromeVoxPanel* chromevox_panel_;
-  scoped_ptr<ChromeVoxPanelWidgetObserver> chromevox_panel_widget_observer_;
+  std::unique_ptr<ChromeVoxPanelWidgetObserver>
+      chromevox_panel_widget_observer_;
 
   std::string keyboard_listener_extension_id_;
   bool keyboard_listener_capture_;
@@ -333,6 +402,9 @@ class AccessibilityManager
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
       extension_registry_observer_;
+
+  std::unique_ptr<AccessibilityHighlightManager>
+      accessibility_highlight_manager_;
 
   base::WeakPtrFactory<AccessibilityManager> weak_ptr_factory_;
 

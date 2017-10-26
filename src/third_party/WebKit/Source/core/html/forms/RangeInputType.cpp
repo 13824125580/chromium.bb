@@ -56,7 +56,6 @@
 #include "platform/PlatformMouseEvent.h"
 #include "wtf/MathExtras.h"
 #include "wtf/NonCopyingSort.h"
-#include "wtf/PassOwnPtr.h"
 #include <limits>
 
 namespace blink {
@@ -74,15 +73,27 @@ static Decimal ensureMaximum(const Decimal& proposedValue, const Decimal& minimu
     return proposedValue >= minimum ? proposedValue : std::max(minimum, fallbackValue);
 }
 
-PassRefPtrWillBeRawPtr<InputType> RangeInputType::create(HTMLInputElement& element)
+InputType* RangeInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new RangeInputType(element));
+    return new RangeInputType(element);
 }
 
 RangeInputType::RangeInputType(HTMLInputElement& element)
     : InputType(element)
+    , InputTypeView(element)
     , m_tickMarkValuesDirty(true)
 {
+}
+
+DEFINE_TRACE(RangeInputType)
+{
+    InputTypeView::trace(visitor);
+    InputType::trace(visitor);
+}
+
+InputTypeView* RangeInputType::createView()
+{
+    return this;
 }
 
 void RangeInputType::countUsage()
@@ -128,7 +139,11 @@ StepRange RangeInputType::createStepRange(AnyStepHandling anyStepHandling) const
     const Decimal maximum = ensureMaximum(parseToNumber(element().fastGetAttribute(maxAttr), rangeDefaultMaximum), minimum, rangeDefaultMaximum);
 
     const Decimal step = StepRange::parseStep(anyStepHandling, stepDescription, element().fastGetAttribute(stepAttr));
-    return StepRange(stepBase, minimum, maximum, step, stepDescription);
+    // Range type always has range limitations because it has default
+    // minimum/maximum.
+    // https://html.spec.whatwg.org/multipage/forms.html#range-state-(type=range):concept-input-min-default
+    const bool hasRangeLimitations = true;
+    return StepRange(stepBase, minimum, maximum, hasRangeLimitations, step, stepDescription);
 }
 
 bool RangeInputType::isSteppable() const
@@ -144,7 +159,7 @@ void RangeInputType::handleMouseDownEvent(MouseEvent* event)
     Node* targetNode = event->target()->toNode();
     if (event->button() != LeftButton || !targetNode)
         return;
-    ASSERT(element().shadow());
+    DCHECK(element().shadow());
     if (targetNode != element() && !targetNode->isDescendantOf(element().userAgentShadowRoot()))
         return;
     SliderThumbElement* thumb = sliderThumbElement();
@@ -181,10 +196,10 @@ void RangeInputType::handleKeydownEvent(KeyboardEvent* event)
     if (element().isDisabledOrReadOnly())
         return;
 
-    const String& key = event->keyIdentifier();
+    const String& key = event->key();
 
     const Decimal current = parseToNumberOrNaN(element().value());
-    ASSERT(current.isFinite());
+    DCHECK(current.isFinite());
 
     StepRange stepRange(createStepRange(RejectAny));
 
@@ -203,13 +218,13 @@ void RangeInputType::handleKeydownEvent(KeyboardEvent* event)
     }
 
     Decimal newValue;
-    if (key == "Up")
+    if (key == "ArrowUp")
         newValue = current + step;
-    else if (key == "Down")
+    else if (key == "ArrowDown")
         newValue = current - step;
-    else if (key == "Left")
+    else if (key == "ArrowLeft")
         newValue = (isVertical || dir == RTL) ? current + step : current - step;
-    else if (key == "Right")
+    else if (key == "ArrowRight")
         newValue = (isVertical || dir == RTL) ? current - step : current + step;
     else if (key == "PageUp")
         newValue = current + bigStep;
@@ -238,16 +253,16 @@ void RangeInputType::handleKeydownEvent(KeyboardEvent* event)
 
 void RangeInputType::createShadowSubtree()
 {
-    ASSERT(element().shadow());
+    DCHECK(element().shadow());
 
     Document& document = element().document();
-    RefPtrWillBeRawPtr<HTMLDivElement> track = HTMLDivElement::create(document);
-    track->setShadowPseudoId(AtomicString("-webkit-slider-runnable-track", AtomicString::ConstructFromLiteral));
+    HTMLDivElement* track = HTMLDivElement::create(document);
+    track->setShadowPseudoId(AtomicString("-webkit-slider-runnable-track"));
     track->setAttribute(idAttr, ShadowElementNames::sliderTrack());
     track->appendChild(SliderThumbElement::create(document));
-    RefPtrWillBeRawPtr<HTMLElement> container = SliderContainerElement::create(document);
-    container->appendChild(track.release());
-    element().userAgentShadowRoot()->appendChild(container.release());
+    HTMLElement* container = SliderContainerElement::create(document);
+    container->appendChild(track);
+    element().userAgentShadowRoot()->appendChild(container);
 }
 
 LayoutObject* RangeInputType::createLayoutObject(const ComputedStyle&) const
@@ -267,10 +282,11 @@ String RangeInputType::serialize(const Decimal& value) const
     return serializeForNumberType(value);
 }
 
-// FIXME: Could share this with BaseClickableWithKeyInputType and BaseCheckableInputType if we had a common base class.
+// FIXME: Could share this with KeyboardClickableInputTypeView and
+// BaseCheckableInputType if we had a common base class.
 void RangeInputType::accessKeyAction(bool sendMouseEvents)
 {
-    InputType::accessKeyAction(sendMouseEvents);
+    InputTypeView::accessKeyAction(sendMouseEvents);
 
     element().dispatchSimulatedClick(0, sendMouseEvents ? SendMouseUpDownEvents : SendNoEvents);
 }
@@ -338,9 +354,11 @@ inline Element* RangeInputType::sliderTrackElement() const
 void RangeInputType::listAttributeTargetChanged()
 {
     m_tickMarkValuesDirty = true;
+    if (element().layoutObject())
+        element().layoutObject()->setShouldDoFullPaintInvalidationIncludingNonCompositingDescendants();
     Element* sliderTrackElement = this->sliderTrackElement();
     if (sliderTrackElement->layoutObject())
-        sliderTrackElement->layoutObject()->setNeedsLayoutAndFullPaintInvalidation(LayoutInvalidationReason::AttributeChanged);
+        sliderTrackElement->layoutObject()->setNeedsLayout(LayoutInvalidationReason::AttributeChanged);
 }
 
 static bool decimalCompare(const Decimal& a, const Decimal& b)
@@ -357,7 +375,7 @@ void RangeInputType::updateTickMarkValues()
     HTMLDataListElement* dataList = element().dataList();
     if (!dataList)
         return;
-    RefPtrWillBeRawPtr<HTMLDataListOptionsCollection> options = dataList->options();
+    HTMLDataListOptionsCollection* options = dataList->options();
     m_tickMarkValues.reserveCapacity(options->length());
     for (unsigned i = 0; i < options->length(); ++i) {
         HTMLOptionElement* optionElement = options->item(i);
@@ -380,7 +398,7 @@ Decimal RangeInputType::findClosestTickMarkValue(const Decimal& value)
     size_t right = m_tickMarkValues.size();
     size_t middle;
     while (true) {
-        ASSERT(left <= right);
+        DCHECK_LE(left, right);
         middle = left + (right - left) / 2;
         if (!middle)
             break;

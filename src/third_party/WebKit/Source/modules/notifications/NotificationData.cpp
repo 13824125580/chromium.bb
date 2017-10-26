@@ -10,8 +10,8 @@
 #include "core/dom/ExecutionContext.h"
 #include "modules/notifications/Notification.h"
 #include "modules/notifications/NotificationOptions.h"
-#include "modules/vibration/NavigatorVibration.h"
-#include "platform/weborigin/KURL.h"
+#include "modules/vibration/VibrationController.h"
+#include "public/platform/WebURL.h"
 #include "wtf/CurrentTime.h"
 
 namespace blink {
@@ -25,6 +25,14 @@ WebNotificationData::Direction toDirectionEnumValue(const String& direction)
         return WebNotificationData::DirectionRightToLeft;
 
     return WebNotificationData::DirectionAuto;
+}
+
+WebURL completeURL(ExecutionContext* executionContext, const String& stringUrl)
+{
+    WebURL url = executionContext->completeURL(stringUrl);
+    if (url.isValid())
+        return url;
+    return WebURL();
 }
 
 } // namespace
@@ -51,23 +59,23 @@ WebNotificationData createWebNotificationData(ExecutionContext* executionContext
     webData.body = options.body();
     webData.tag = options.tag();
 
-    KURL iconUrl;
+    if (options.hasIcon() && !options.icon().isEmpty())
+        webData.icon = completeURL(executionContext, options.icon());
 
-    if (options.hasIcon() && !options.icon().isEmpty()) {
-        iconUrl = executionContext->completeURL(options.icon());
-        if (!iconUrl.isValid())
-            iconUrl = KURL();
-    }
+    if (options.hasBadge() && !options.badge().isEmpty())
+        webData.badge = completeURL(executionContext, options.badge());
 
-    webData.icon = iconUrl;
-    webData.vibrate = NavigatorVibration::sanitizeVibrationPattern(options.vibrate());
+    webData.vibrate = VibrationController::sanitizeVibrationPattern(options.vibrate());
     webData.timestamp = options.hasTimestamp() ? static_cast<double>(options.timestamp()) : WTF::currentTimeMS();
     webData.renotify = options.renotify();
     webData.silent = options.silent();
     webData.requireInteraction = options.requireInteraction();
 
     if (options.hasData()) {
-        RefPtr<SerializedScriptValue> serializedScriptValue = SerializedScriptValueFactory::instance().create(options.data().isolate(), options.data(), nullptr, exceptionState);
+        const ScriptValue& data = options.data();
+        v8::Isolate* isolate = data.isolate();
+        DCHECK(isolate->InContext());
+        RefPtr<SerializedScriptValue> serializedScriptValue = SerializedScriptValue::serialize(isolate, data.v8Value(), nullptr, nullptr, exceptionState);
         if (exceptionState.hadException())
             return WebNotificationData();
 
@@ -88,13 +96,22 @@ WebNotificationData createWebNotificationData(ExecutionContext* executionContext
         webAction.action = action.action();
         webAction.title = action.title();
 
-        KURL iconUrl;
-        if (action.hasIcon() && !action.icon().isEmpty()) {
-            iconUrl = executionContext->completeURL(action.icon());
-            if (!iconUrl.isValid())
-                iconUrl = KURL();
+        if (action.type() == "button")
+            webAction.type = WebNotificationAction::Button;
+        else if (action.type() == "text")
+            webAction.type = WebNotificationAction::Text;
+        else
+            NOTREACHED() << "Unknown action type: " << action.type();
+
+        if (action.hasPlaceholder() && webAction.type == WebNotificationAction::Button) {
+            exceptionState.throwTypeError("Notifications of type \"button\" cannot specify a placeholder.");
+            return WebNotificationData();
         }
-        webAction.icon = iconUrl;
+
+        webAction.placeholder = action.placeholder();
+
+        if (action.hasIcon() && !action.icon().isEmpty())
+            webAction.icon = completeURL(executionContext, action.icon());
 
         actions.append(webAction);
     }

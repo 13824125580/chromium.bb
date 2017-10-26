@@ -7,12 +7,13 @@
 
 #include <stdint.h>
 
+#include <iterator>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/common/content_export.h"
 
@@ -41,9 +42,9 @@ class RenderWidgetHostDelegate;
 class CONTENT_EXPORT FrameTree {
  public:
   class NodeRange;
-  class ConstNodeRange;
 
-  class CONTENT_EXPORT NodeIterator {
+  class CONTENT_EXPORT NodeIterator
+      : public std::iterator<std::forward_iterator_tag, FrameTreeNode> {
    public:
     NodeIterator(const NodeIterator& other);
     ~NodeIterator();
@@ -73,45 +74,10 @@ class CONTENT_EXPORT FrameTree {
    private:
     friend class FrameTree;
 
-    NodeRange(FrameTree* tree, FrameTreeNode* node_to_skip);
+    NodeRange(FrameTreeNode* root, FrameTreeNode* node_to_skip);
 
-    FrameTree* const tree_;
+    FrameTreeNode* const root_;
     FrameTreeNode* const node_to_skip_;
-  };
-
-  class CONTENT_EXPORT ConstNodeIterator {
-   public:
-    ~ConstNodeIterator();
-
-    ConstNodeIterator& operator++();
-
-    bool operator==(const ConstNodeIterator& rhs) const;
-    bool operator!=(const ConstNodeIterator& rhs) const {
-      return !(*this == rhs);
-    }
-
-    const FrameTreeNode* operator*() { return current_node_; }
-
-   private:
-    friend class ConstNodeRange;
-
-    ConstNodeIterator(const FrameTreeNode* starting_node);
-
-    const FrameTreeNode* current_node_;
-    std::queue<const FrameTreeNode*> queue_;
-  };
-
-  class CONTENT_EXPORT ConstNodeRange {
-   public:
-    ConstNodeIterator begin();
-    ConstNodeIterator end();
-
-   private:
-    friend class FrameTree;
-
-    ConstNodeRange(const FrameTree* tree);
-
-    const FrameTree* const tree_;
   };
 
   // Each FrameTreeNode will default to using the given |navigator| for
@@ -147,9 +113,9 @@ class CONTENT_EXPORT FrameTree {
   // breadth-first traversal order.
   NodeRange Nodes();
 
-  // Returns a range to iterate over all FrameTreeNodes in the frame tree in
-  // breadth-first traversal order. All FrameTreeNodes returned will be const.
-  ConstNodeRange ConstNodes() const;
+  // Returns a range to iterate over all FrameTreeNodes in a subtree of the
+  // frame tree, starting from |subtree_root|.
+  NodeRange SubtreeNodes(FrameTreeNode* subtree_root);
 
   // Adds a new child frame to the frame tree. |process_id| is required to
   // disambiguate |new_routing_id|, and it must match the process of the
@@ -250,7 +216,6 @@ class CONTENT_EXPORT FrameTree {
   friend class FrameTreeTest;
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest, RemoveFocusedFrame);
   typedef base::hash_map<int, RenderViewHostImpl*> RenderViewHostMap;
-  typedef std::multimap<int, RenderViewHostImpl*> RenderViewHostMultiMap;
 
   // Returns a range to iterate over all FrameTreeNodes in the frame tree in
   // breadth-first traversal order, skipping the subtree rooted at
@@ -273,13 +238,6 @@ class CONTENT_EXPORT FrameTree {
   // Must be declared before |root_| so that it is deleted afterward.  Otherwise
   // the map will be cleared before we delete the RenderFrameHosts in the tree.
   RenderViewHostMap render_view_host_map_;
-
-  // Map of SiteInstance ID to RenderViewHosts that are pending shutdown. The
-  // renderers of these RVH are currently executing the unload event in
-  // background. When the SwapOutACK is received, they will be deleted. In the
-  // meantime, they are kept in this map, as they should not be reused (part of
-  // their state is already gone away).
-  RenderViewHostMultiMap render_view_host_pending_shutdown_map_;
 
   // Render process affinity, or SiteInstance::kNoProcessAffinity if there is
   // no affinity.

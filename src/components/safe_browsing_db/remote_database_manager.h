@@ -43,7 +43,7 @@ class RemoteSafeBrowsingDatabaseManager : public SafeBrowsingDatabaseManager {
   bool ChecksAreAlwaysAsync() const override;
   bool CanCheckResourceType(content::ResourceType resource_type) const override;
   bool CanCheckUrl(const GURL& url) const override;
-  bool download_protection_enabled() const override;
+  bool IsDownloadProtectionEnabled() const override;
   bool CheckBrowseUrl(const GURL& url, Client* client) override;
   void CancelCheck(Client* client) override;
   void StartOnIOThread(
@@ -61,7 +61,6 @@ class RemoteSafeBrowsingDatabaseManager : public SafeBrowsingDatabaseManager {
   bool MatchMalwareIP(const std::string& ip_address) override;
   bool MatchDownloadWhitelistUrl(const GURL& url) override;
   bool MatchDownloadWhitelistString(const std::string& str) override;
-  bool MatchInclusionWhitelistUrl(const GURL& url) override;
   bool MatchModuleWhitelistString(const std::string& str) override;
   bool CheckResourceUrl(const GURL& url, Client* client) override;
   bool IsMalwareKillSwitchOn() override;

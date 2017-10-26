@@ -7,22 +7,14 @@
 #include <stddef.h>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ui/shell_dialogs/select_file_dialog_factory.h"
 #include "ui/shell_dialogs/select_file_policy.h"
 #include "ui/shell_dialogs/selected_file_info.h"
-
-#if defined(OS_WIN)
-#include "ui/shell_dialogs/select_file_dialog_win.h"
-#elif defined(OS_MACOSX)
-#include "ui/shell_dialogs/select_file_dialog_mac.h"
-#elif defined(OS_ANDROID)
-#include "ui/shell_dialogs/select_file_dialog_android.h"
-#elif defined(USE_AURA) && defined(OS_LINUX) && !defined(OS_CHROMEOS)
-#include "ui/shell_dialogs/linux_shell_dialog.h"
-#endif
 
 namespace {
 
@@ -79,22 +71,7 @@ scoped_refptr<SelectFileDialog> SelectFileDialog::Create(
       return dialog;
   }
 
-#if defined(USE_AURA) && defined(OS_LINUX) && !defined(OS_CHROMEOS)
-  const ui::LinuxShellDialog* shell_dialogs = ui::LinuxShellDialog::instance();
-  if (shell_dialogs)
-    return shell_dialogs->CreateSelectFileDialog(listener, policy);
-#endif
-
-#if defined(OS_WIN)
-  return CreateDefaultWinSelectFileDialog(listener, policy);
-#elif defined(OS_MACOSX) && !defined(USE_AURA)
-  return CreateMacSelectFileDialog(listener, policy);
-#elif defined(OS_ANDROID)
-  return CreateAndroidSelectFileDialog(listener, policy);
-#else
-  NOTIMPLEMENTED();
-  return NULL;
-#endif
+  return CreateSelectFileDialog(listener, policy);
 }
 
 void SelectFileDialog::SelectFile(
@@ -115,7 +92,7 @@ void SelectFileDialog::SelectFile(
     // Inform the listener that no file was selected.
     // Post a task rather than calling FileSelectionCanceled directly to ensure
     // that the listener is called asynchronously.
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&SelectFileDialog::CancelFileSelection, this, params));
     return;

@@ -46,8 +46,9 @@ class MEDIA_EXPORT GpuVideoDecoder
     : public VideoDecoder,
       public VideoDecodeAccelerator::Client {
  public:
-  explicit GpuVideoDecoder(GpuVideoAcceleratorFactories* factories,
-                           const RequestSurfaceCB& request_surface_cb);
+  GpuVideoDecoder(GpuVideoAcceleratorFactories* factories,
+                  const RequestSurfaceCB& request_surface_cb,
+                  scoped_refptr<MediaLog> media_log);
 
   // VideoDecoder implementation.
   std::string GetDisplayName() const override;
@@ -65,8 +66,10 @@ class MEDIA_EXPORT GpuVideoDecoder
   int GetMaxDecodeRequests() const override;
 
   // VideoDecodeAccelerator::Client implementation.
-  void NotifyCdmAttached(bool success) override;
+  void NotifyInitializationComplete(bool success) override;
   void ProvidePictureBuffers(uint32_t count,
+                             VideoPixelFormat format,
+                             uint32_t textures_per_buffer,
                              const gfx::Size& size,
                              uint32_t texture_target) override;
   void DismissPictureBuffer(int32_t id) override;
@@ -91,9 +94,9 @@ class MEDIA_EXPORT GpuVideoDecoder
 
   // A shared memory segment and its allocated size.
   struct SHMBuffer {
-    SHMBuffer(scoped_ptr<base::SharedMemory> m, size_t s);
+    SHMBuffer(std::unique_ptr<base::SharedMemory> m, size_t s);
     ~SHMBuffer();
-    scoped_ptr<base::SharedMemory> shm;
+    std::unique_ptr<base::SharedMemory> shm;
     size_t size;
   };
 
@@ -117,7 +120,7 @@ class MEDIA_EXPORT GpuVideoDecoder
   static void ReleaseMailbox(base::WeakPtr<GpuVideoDecoder> decoder,
                              media::GpuVideoAcceleratorFactories* factories,
                              int64_t picture_buffer_id,
-                             uint32_t texture_id,
+                             PictureBuffer::TextureIds ids,
                              const gpu::SyncToken& release_sync_token);
   // Indicate the picture buffer can be reused by the decoder.
   void ReusePictureBuffer(int64_t picture_buffer_id);
@@ -133,20 +136,21 @@ class MEDIA_EXPORT GpuVideoDecoder
 
   // Request a shared-memory segment of at least |min_size| bytes.  Will
   // allocate as necessary.
-  scoped_ptr<SHMBuffer> GetSHM(size_t min_size);
+  std::unique_ptr<SHMBuffer> GetSHM(size_t min_size);
 
   // Return a shared-memory segment to the available pool.
-  void PutSHM(scoped_ptr<SHMBuffer> shm_buffer);
+  void PutSHM(std::unique_ptr<SHMBuffer> shm_buffer);
 
   // Destroy all PictureBuffers in |buffers|, and delete their textures.
   void DestroyPictureBuffers(PictureBufferMap* buffers);
 
   // Returns true if the video decoder with |capabilities| can support
-  // |profile| and |coded_size|.
+  // |profile|, |coded_size|, and |is_encrypted|.
   bool IsProfileSupported(
       const VideoDecodeAccelerator::Capabilities& capabilities,
       VideoCodecProfile profile,
-      const gfx::Size& coded_size);
+      const gfx::Size& coded_size,
+      bool is_encrypted);
 
   // Assert the contract that this class is operated on the right thread.
   void DCheckGpuVideoAcceleratorFactoriesTaskRunnerIsCurrent() const;
@@ -155,9 +159,15 @@ class MEDIA_EXPORT GpuVideoDecoder
 
   GpuVideoAcceleratorFactories* factories_;
 
+  // For requesting a suface to render to. If this is null the VDA will return
+  // normal video frames and not render them to a surface.
+  RequestSurfaceCB request_surface_cb_;
+
+  scoped_refptr<MediaLog> media_log_;
+
   // Populated during Initialize() (on success) and unchanged until an error
   // occurs.
-  scoped_ptr<VideoDecodeAccelerator> vda_;
+  std::unique_ptr<VideoDecodeAccelerator> vda_;
 
   InitCB init_cb_;
   OutputCB output_cb_;
@@ -171,10 +181,6 @@ class MEDIA_EXPORT GpuVideoDecoder
 
   VideoDecoderConfig config_;
 
-  // For requesting a suface to render to. If this is null the VDA will return
-  // normal video frames and not render them to a surface.
-  RequestSurfaceCB request_surface_cb_;
-
   // Shared-memory buffer pool.  Since allocating SHM segments requires a
   // round-trip to the browser process, we keep allocation out of the
   // steady-state of the decoder.
@@ -185,12 +191,16 @@ class MEDIA_EXPORT GpuVideoDecoder
   // PictureBuffers given to us by VDA via PictureReady, which we sent forward
   // as VideoFrames to be rendered via decode_cb_, and which will be returned
   // to us via ReusePictureBuffer.
-  typedef std::map<int32_t /* picture_buffer_id */, uint32_t /* texture_id */>
+  typedef std::map<int32_t /* picture_buffer_id */,
+                   PictureBuffer::TextureIds /* texture_id */>
       PictureBufferTextureMap;
   PictureBufferTextureMap picture_buffers_at_display_;
 
   // The texture target used for decoded pictures.
   uint32_t decoder_texture_target_;
+
+  // The pixel format used for decoded pictures.
+  VideoPixelFormat pixel_format_;
 
   struct BufferData {
     BufferData(int32_t bbid,
@@ -219,6 +229,14 @@ class MEDIA_EXPORT GpuVideoDecoder
   // VDA. In other words, the VDA may require all PictureBuffers to be able to
   // proceed with decoding the next frame.
   bool needs_all_picture_buffers_to_decode_;
+
+  // If true, then the VDA supports deferred initialization via
+  // NotifyInitializationComplete.  Otherwise, it will return initialization
+  // status synchronously from VDA::Initialize.
+  bool supports_deferred_initialization_;
+
+  // This flag translates to COPY_REQUIRED flag for each frame.
+  bool requires_texture_copy_;
 
   // Bound to factories_->GetMessageLoop().
   // NOTE: Weak pointers must be invalidated before all other member variables.

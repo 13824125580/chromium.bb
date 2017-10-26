@@ -54,7 +54,7 @@ public:
 
     const char* name() const override { return "GrStrokeRectBatch"; }
 
-    void computePipelineOptimizations(GrInitInvariantOutput* color, 
+    void computePipelineOptimizations(GrInitInvariantOutput* color,
                                       GrInitInvariantOutput* coverage,
                                       GrBatchToXPOverrides* overrides) const override {
         // When this is called on a batch, there is only one geometry bundle
@@ -105,7 +105,7 @@ private:
     }
 
     void onPrepareDraws(Target* target) const override {
-        SkAutoTUnref<const GrGeometryProcessor> gp;
+        sk_sp<GrGeometryProcessor> gp;
         {
             using namespace GrDefaultGeoProcFactory;
             Color color(this->color());
@@ -113,11 +113,8 @@ private:
                                                         Coverage::kNone_Type);
             LocalCoords localCoords(this->usesLocalCoords() ? LocalCoords::kUsePosition_Type :
                                                               LocalCoords::kUnused_Type);
-            gp.reset(GrDefaultGeoProcFactory::Create(color, coverage, localCoords,
-                                                     this->viewMatrix()));
+            gp = GrDefaultGeoProcFactory::Make(color, coverage, localCoords, this->viewMatrix());
         }
-
-        target->initDraw(gp, this->pipeline());
 
         size_t vertexStride = gp->getVertexStride();
 
@@ -130,7 +127,7 @@ private:
             vertexCount = kVertsPerStrokeRect;
         }
 
-        const GrVertexBuffer* vertexBuffer;
+        const GrBuffer* vertexBuffer;
         int firstVertex;
 
         void* verts = target->makeVertexSpace(vertexStride, vertexCount, &vertexBuffer,
@@ -144,7 +141,7 @@ private:
         SkPoint* vertex = reinterpret_cast<SkPoint*>(verts);
 
         GrPrimitiveType primType;
-        if (args.fStrokeWidth > 0) {;
+        if (args.fStrokeWidth > 0) {
             primType = kTriangleStrip_GrPrimitiveType;
             init_stroke_rect_strip(vertex, args.fRect, args.fStrokeWidth);
         } else {
@@ -157,9 +154,9 @@ private:
             vertex[4].set(args.fRect.fLeft, args.fRect.fTop);
         }
 
-        GrVertices vertices;
-        vertices.init(primType, vertexBuffer, firstVertex, vertexCount);
-        target->draw(vertices);
+        GrMesh mesh;
+        mesh.init(primType, vertexBuffer, firstVertex, vertexCount);
+        target->draw(gp.get(), mesh);
     }
 
     void initBatchTracker(const GrXPOverridesForBatch& overrides) override {

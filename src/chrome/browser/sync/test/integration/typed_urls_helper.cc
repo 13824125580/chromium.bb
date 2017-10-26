@@ -147,11 +147,12 @@ void WaitForHistoryDBThread(int index) {
   history::HistoryService* service =
       HistoryServiceFactory::GetForProfileWithoutCreating(
           test()->GetProfile(index));
-  base::WaitableEvent wait_event(true, false);
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new FlushHistoryDBQueueTask(&wait_event)),
-      &tracker);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new FlushHistoryDBQueueTask(&wait_event)),
+                          &tracker);
   wait_event.Wait();
 }
 
@@ -177,11 +178,12 @@ history::URLRows GetTypedUrlsFromHistoryService(
     history::HistoryService* service) {
   base::CancelableTaskTracker tracker;
   history::URLRows rows;
-  base::WaitableEvent wait_event(true, false);
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new GetTypedUrlsTask(&rows, &wait_event)),
-      &tracker);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new GetTypedUrlsTask(&rows, &wait_event)),
+                          &tracker);
   wait_event.Wait();
   return rows;
 }
@@ -190,12 +192,13 @@ bool GetUrlFromHistoryService(history::HistoryService* service,
                               const GURL& url,
                               history::URLRow* row) {
   base::CancelableTaskTracker tracker;
-  base::WaitableEvent wait_event(true, false);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   bool found = false;
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new GetUrlTask(url, row, &found, &wait_event)),
-      &tracker);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new GetUrlTask(url, row, &found, &wait_event)),
+                          &tracker);
   wait_event.Wait();
   return found;
 }
@@ -204,12 +207,13 @@ history::VisitVector GetVisitsFromHistoryService(
     history::HistoryService* service,
     history::URLID id) {
   base::CancelableTaskTracker tracker;
-  base::WaitableEvent wait_event(true, false);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   history::VisitVector visits;
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new GetVisitsTask(id, &visits, &wait_event)),
-      &tracker);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new GetVisitsTask(id, &visits, &wait_event)),
+                          &tracker);
   wait_event.Wait();
   return visits;
 }
@@ -217,11 +221,12 @@ history::VisitVector GetVisitsFromHistoryService(
 void RemoveVisitsFromHistoryService(history::HistoryService* service,
                                     const history::VisitVector& visits) {
   base::CancelableTaskTracker tracker;
-  base::WaitableEvent wait_event(true, false);
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new RemoveVisitsTask(visits, &wait_event)),
-      &tracker);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new RemoveVisitsTask(visits, &wait_event)),
+                          &tracker);
   wait_event.Wait();
 }
 
@@ -370,7 +375,8 @@ bool AreVisitsEqual(const history::VisitVector& visit1,
   if (visit1.size() != visit2.size())
     return false;
   for (size_t i = 0; i < visit1.size(); ++i) {
-    if (visit1[i].transition != visit2[i].transition)
+    if (!ui::PageTransitionTypeIncludingQualifiersIs(visit1[i].transition,
+                                                     visit2[i].transition))
       return false;
     if (visit1[i].visit_time != visit2[i].visit_time)
       return false;

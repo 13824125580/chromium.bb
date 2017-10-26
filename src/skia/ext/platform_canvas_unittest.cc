@@ -9,7 +9,6 @@
 #include <stdint.h>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "skia/ext/platform_device.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -214,7 +213,7 @@ const int kInnerH = 3;
 // regular skia primitives.
 TEST(PlatformCanvas, SkLayer) {
   // Create the canvas initialized to opaque white.
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  sk_sp<SkCanvas> canvas(CreatePlatformCanvas(16, 16, true));
   canvas->drawColor(SK_ColorWHITE);
 
   // Make a layer and fill it completely to make sure that the bounds are
@@ -230,7 +229,7 @@ TEST(PlatformCanvas, SkLayer) {
 // Test native clipping.
 TEST(PlatformCanvas, ClipRegion) {
   // Initialize a white canvas
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  sk_sp<SkCanvas> canvas(CreatePlatformCanvas(16, 16, true));
   canvas->drawColor(SK_ColorWHITE);
   EXPECT_TRUE(VerifyCanvasColor(*canvas, SK_ColorWHITE));
 
@@ -256,7 +255,7 @@ TEST(PlatformCanvas, ClipRegion) {
 // Test the layers get filled properly by native rendering.
 TEST(PlatformCanvas, FillLayer) {
   // Create the canvas initialized to opaque white.
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  sk_sp<SkCanvas> canvas(CreatePlatformCanvas(16, 16, true));
 
   // Make a layer and fill it completely to make sure that the bounds are
   // correct.
@@ -315,7 +314,7 @@ TEST(PlatformCanvas, FillLayer) {
 // Test that translation + make layer works properly.
 TEST(PlatformCanvas, TranslateLayer) {
   // Create the canvas initialized to opaque white.
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  sk_sp<SkCanvas> canvas(CreatePlatformCanvas(16, 16, true));
 
   // Make a layer and fill it completely to make sure that the bounds are
   // correct.

@@ -7,10 +7,10 @@
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/extensions/active_script_controller.h"
 #include "chrome/browser/extensions/context_menu_matcher.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
+#include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -142,7 +142,7 @@ class UninstallDialogHelper : public ExtensionUninstallDialog::Delegate {
     delete this;
   }
 
-  scoped_ptr<ExtensionUninstallDialog> uninstall_dialog_;
+  std::unique_ptr<ExtensionUninstallDialog> uninstall_dialog_;
 
   DISALLOW_COPY_AND_ASSIGN(UninstallDialogHelper);
 };
@@ -242,7 +242,7 @@ void ExtensionContextMenuModel::ExecuteCommand(int command_id,
       command_id <= IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST) {
     DCHECK(extension_items_);
     extension_items_->ExecuteCommand(command_id, GetActiveWebContents(),
-                                     content::ContextMenuParams());
+                                     nullptr, content::ContextMenuParams());
     return;
   }
 
@@ -348,8 +348,11 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension,
     AddItemWithStringId(MANAGE, IDS_MANAGE_EXTENSION);
   }
 
+  const ActionInfo* action_info = ActionInfo::GetPageActionInfo(extension);
+  if (!action_info)
+    action_info = ActionInfo::GetBrowserActionInfo(extension);
   if (profile_->GetPrefs()->GetBoolean(prefs::kExtensionsUIDeveloperMode) &&
-      delegate_ && !is_component_) {
+      delegate_ && !is_component_ && action_info && !action_info->synthesized) {
     AddSeparator(ui::NORMAL_SEPARATOR);
     AddItemWithStringId(INSPECT_POPUP, IDS_EXTENSION_ACTION_INSPECT_POPUP);
   }
@@ -452,10 +455,10 @@ void ExtensionContextMenuModel::HandlePageAccessCommand(
 
   if (command_id == PAGE_ACCESS_RUN_ON_SITE ||
       command_id == PAGE_ACCESS_RUN_ON_ALL_SITES) {
-    ActiveScriptController* controller =
-        ActiveScriptController::GetForWebContents(web_contents);
-    if (controller && controller->WantsToRun(extension))
-      controller->OnClicked(extension);
+    ExtensionActionRunner* runner =
+        ExtensionActionRunner::GetForWebContents(web_contents);
+    if (runner && runner->WantsToRun(extension))
+      runner->RunBlockedActions(extension);
   }
 }
 

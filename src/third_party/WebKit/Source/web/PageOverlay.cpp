@@ -29,7 +29,7 @@
 #include "web/PageOverlay.h"
 
 #include "core/frame/FrameHost.h"
-#include "core/frame/Settings.h"
+#include "core/frame/VisualViewport.h"
 #include "core/page/Page.h"
 #include "core/page/scrolling/ScrollingCoordinator.h"
 #include "platform/graphics/GraphicsContext.h"
@@ -40,12 +40,14 @@
 #include "public/web/WebViewClient.h"
 #include "web/WebDevToolsAgentImpl.h"
 #include "web/WebViewImpl.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<PageOverlay> PageOverlay::create(WebViewImpl* viewImpl, PageOverlay::Delegate* delegate)
+std::unique_ptr<PageOverlay> PageOverlay::create(WebViewImpl* viewImpl, PageOverlay::Delegate* delegate)
 {
-    return adoptPtr(new PageOverlay(viewImpl, delegate));
+    return wrapUnique(new PageOverlay(viewImpl, delegate));
 }
 
 PageOverlay::PageOverlay(WebViewImpl* viewImpl, PageOverlay::Delegate* delegate)
@@ -78,7 +80,7 @@ void PageOverlay::update()
         return;
 
     if (!m_layer) {
-        m_layer = GraphicsLayer::create(m_viewImpl->graphicsLayerFactory(), this);
+        m_layer = GraphicsLayer::create(this);
         m_layer->setDrawsContent(true);
 
         if (WebDevToolsAgentImpl* devTools = m_viewImpl->mainFrameDevToolsAgentImpl())
@@ -97,6 +99,12 @@ void PageOverlay::update()
     m_layer->setNeedsDisplay();
 }
 
+LayoutRect PageOverlay::visualRect() const
+{
+    DCHECK(m_layer.get());
+    return LayoutRect(FloatPoint(), m_layer->size());
+}
+
 IntRect PageOverlay::computeInterestRect(const GraphicsLayer* graphicsLayer, const IntRect&) const
 {
     return IntRect(IntPoint(), expandedIntSize(m_layer->size()));
@@ -104,7 +112,7 @@ IntRect PageOverlay::computeInterestRect(const GraphicsLayer* graphicsLayer, con
 
 void PageOverlay::paintContents(const GraphicsLayer* graphicsLayer, GraphicsContext& gc, GraphicsLayerPaintingPhase phase, const IntRect& interestRect) const
 {
-    ASSERT(m_layer);
+    DCHECK(m_layer);
     m_delegate->paintPageOverlay(*this, gc, interestRect.size());
 }
 

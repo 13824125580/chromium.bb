@@ -27,12 +27,14 @@
 #include "wtf/text/TextCodecICU.h"
 
 #include "wtf/Assertions.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/StringExtras.h"
 #include "wtf/Threading.h"
 #include "wtf/WTFThreadData.h"
 #include "wtf/text/CString.h"
 #include "wtf/text/CharacterNames.h"
 #include "wtf/text/StringBuilder.h"
+#include <memory>
 #include <unicode/ucnv.h>
 #include <unicode/ucnv_cb.h>
 
@@ -51,9 +53,9 @@ static UConverter*& cachedConverterICU()
     return wtfThreadData().cachedConverterICU().converter;
 }
 
-PassOwnPtr<TextCodec> TextCodecICU::create(const TextEncoding& encoding, const void*)
+std::unique_ptr<TextCodec> TextCodecICU::create(const TextEncoding& encoding, const void*)
 {
-    return adoptPtr(new TextCodecICU(encoding));
+    return wrapUnique(new TextCodecICU(encoding));
 }
 
 void TextCodecICU::registerEncodingNames(EncodingNameRegistrar registrar)
@@ -289,10 +291,7 @@ void TextCodecICU::createICUConverter() const
 
     err = U_ZERO_ERROR;
     m_converterICU = ucnv_open(m_encoding.name(), &err);
-#if !LOG_DISABLED
-    if (err == U_AMBIGUOUS_ALIAS_WARNING)
-        WTF_LOG_ERROR("ICU ambiguous alias warning for encoding: %s", m_encoding.name());
-#endif
+    DLOG_IF(ERROR, err == U_AMBIGUOUS_ALIAS_WARNING) << "ICU ambiguous alias warning for encoding: " << m_encoding.name();
     if (m_converterICU)
         ucnv_setFallback(m_converterICU, TRUE);
 }
@@ -347,7 +346,7 @@ String TextCodecICU::decode(const char* bytes, size_t length, FlushBehavior flus
         createICUConverter();
         ASSERT(m_converterICU);
         if (!m_converterICU) {
-            WTF_LOG_ERROR("error creating ICU encoder even though encoding was in table");
+            DLOG(ERROR) << "error creating ICU encoder even though encoding was in table";
             return String();
         }
     }
@@ -412,20 +411,35 @@ static UChar fallbackForGBK(UChar32 character)
 }
 #endif
 
-// Invalid character handler when writing escaped entities for unrepresentable
-// characters. See the declaration of TextCodec::encode for more.
-static void urlEscapedEntityCallback(const void* context, UConverterFromUnicodeArgs* fromUArgs, const UChar* codeUnits, int32_t length,
-    UChar32 codePoint, UConverterCallbackReason reason, UErrorCode* err)
+// Generic helper for writing escaped entities using the specfied UnencodableHandling.
+static void formatEscapedEntityCallback(const void* context, UConverterFromUnicodeArgs* fromUArgs, const UChar* codeUnits, int32_t length,
+    UChar32 codePoint, UConverterCallbackReason reason, UErrorCode* err, UnencodableHandling handling)
 {
     if (reason == UCNV_UNASSIGNED) {
         *err = U_ZERO_ERROR;
 
         UnencodableReplacementArray entity;
-        int entityLen = TextCodec::getUnencodableReplacement(codePoint, URLEncodedEntitiesForUnencodables, entity);
+        int entityLen = TextCodec::getUnencodableReplacement(codePoint, handling, entity);
         ucnv_cbFromUWriteBytes(fromUArgs, entity, entityLen, 0, err);
     } else {
         UCNV_FROM_U_CALLBACK_ESCAPE(context, fromUArgs, codeUnits, length, codePoint, reason, err);
     }
+}
+
+// Invalid character handler when writing escaped entities in CSS encoding for
+// unrepresentable characters. See the declaration of TextCodec::encode for more.
+static void cssEscapedEntityCallback(const void* context, UConverterFromUnicodeArgs* fromUArgs, const UChar* codeUnits, int32_t length,
+    UChar32 codePoint, UConverterCallbackReason reason, UErrorCode* err)
+{
+    formatEscapedEntityCallback(context, fromUArgs, codeUnits, length, codePoint, reason, err, CSSEncodedEntitiesForUnencodables);
+}
+
+// Invalid character handler when writing escaped entities in HTML/XML encoding for
+// unrepresentable characters. See the declaration of TextCodec::encode for more.
+static void urlEscapedEntityCallback(const void* context, UConverterFromUnicodeArgs* fromUArgs, const UChar* codeUnits, int32_t length,
+    UChar32 codePoint, UConverterCallbackReason reason, UErrorCode* err)
+{
+    formatEscapedEntityCallback(context, fromUArgs, codeUnits, length, codePoint, reason, err, URLEncodedEntitiesForUnencodables);
 }
 
 #if defined(USING_SYSTEM_ICU)
@@ -438,6 +452,23 @@ static void gbkCallbackEscape(const void* context, UConverterFromUnicodeArgs* fr
         const UChar* source = &outChar;
         *err = U_ZERO_ERROR;
         ucnv_cbFromUWriteUChars(fromUArgs, &source, source + 1, 0, err);
+        return;
+    }
+    UCNV_FROM_U_CALLBACK_ESCAPE(context, fromUArgs, codeUnits, length, codePoint, reason, err);
+}
+
+// Combines both gbkCssEscapedEntityCallback and GBK character substitution.
+static void gbkCssEscapedEntityCallack(const void* context, UConverterFromUnicodeArgs* fromUArgs, const UChar* codeUnits, int32_t length,
+    UChar32 codePoint, UConverterCallbackReason reason, UErrorCode* err)
+{
+    if (reason == UCNV_UNASSIGNED) {
+        if (UChar outChar = fallbackForGBK(codePoint)) {
+            const UChar* source = &outChar;
+            *err = U_ZERO_ERROR;
+            ucnv_cbFromUWriteUChars(fromUArgs, &source, source + 1, 0, err);
+            return;
+        }
+        cssEscapedEntityCallback(context, fromUArgs, codeUnits, length, codePoint, reason, err);
         return;
     }
     UCNV_FROM_U_CALLBACK_ESCAPE(context, fromUArgs, codeUnits, length, codePoint, reason, err);
@@ -528,6 +559,13 @@ CString TextCodecICU::encodeInternal(const TextCodecInput& input, UnencodableHan
         ucnv_setFromUCallBack(m_converterICU, urlEscapedEntityCallback, 0, 0, 0, &err);
 #else
         ucnv_setFromUCallBack(m_converterICU, m_needsGBKFallbacks ? gbkUrlEscapedEntityCallack : urlEscapedEntityCallback, 0, 0, 0, &err);
+#endif
+        break;
+    case CSSEncodedEntitiesForUnencodables:
+#if !defined(USING_SYSTEM_ICU)
+        ucnv_setFromUCallBack(m_converterICU, cssEscapedEntityCallback, 0, 0, 0, &err);
+#else
+        ucnv_setFromUCallBack(m_converterICU, m_needsGBKFallbacks ? gbkCssEscapedEntityCallack : cssEscapedEntityCallback, 0, 0, 0, &err);
 #endif
         break;
     }

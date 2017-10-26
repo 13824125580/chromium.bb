@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/json/string_escape.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -18,6 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/shell/browser/shell.h"
@@ -76,15 +78,18 @@ int ResponseWriter::Initialize(const net::CompletionCallback& callback) {
 int ResponseWriter::Write(net::IOBuffer* buffer,
                           int num_bytes,
                           const net::CompletionCallback& callback) {
+  std::string chunk = std::string(buffer->data(), num_bytes);
+  if (!base::IsStringUTF8(chunk))
+    return num_bytes;
+
   base::FundamentalValue* id = new base::FundamentalValue(stream_id_);
-  base::StringValue* chunk =
-      new base::StringValue(std::string(buffer->data(), num_bytes));
+  base::StringValue* chunkValue = new base::StringValue(chunk);
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
       base::Bind(&ShellDevToolsFrontend::CallClientFunction,
                  shell_devtools_, "DevToolsAPI.streamWrite",
-                 base::Owned(id), base::Owned(chunk), nullptr));
+                 base::Owned(id), base::Owned(chunkValue), nullptr));
   return num_bytes;
 }
 
@@ -138,7 +143,7 @@ void ShellDevToolsFrontend::Close() {
 void ShellDevToolsFrontend::DisconnectFromTarget() {
   if (!agent_host_)
     return;
-  agent_host_->DetachClient();
+  agent_host_->DetachClient(this);
   agent_host_ = NULL;
 }
 
@@ -172,8 +177,23 @@ void ShellDevToolsFrontend::DocumentAvailableInMainFrame() {
 
 void ShellDevToolsFrontend::WebContentsDestroyed() {
   if (agent_host_)
-    agent_host_->DetachClient();
+    agent_host_->DetachClient(this);
   delete this;
+}
+
+void ShellDevToolsFrontend::SetPreferences(const std::string& json) {
+  preferences_.Clear();
+  if (json.empty())
+    return;
+  base::DictionaryValue* dict = nullptr;
+  std::unique_ptr<base::Value> parsed = base::JSONReader::Read(json);
+  if (!parsed || !parsed->GetAsDictionary(&dict))
+    return;
+  for (base::DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
+    if (!it.value().IsType(base::Value::TYPE_STRING))
+      continue;
+    preferences_.SetWithoutPathExpansion(it.key(), it.value().CreateDeepCopy());
+  }
 }
 
 void ShellDevToolsFrontend::HandleMessageFromDevToolsFrontend(
@@ -183,7 +203,7 @@ void ShellDevToolsFrontend::HandleMessageFromDevToolsFrontend(
   std::string method;
   base::ListValue* params = NULL;
   base::DictionaryValue* dict = NULL;
-  scoped_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
   if (!parsed_message ||
       !parsed_message->GetAsDictionary(&dict) ||
       !dict->GetString("method", &method)) {
@@ -194,11 +214,12 @@ void ShellDevToolsFrontend::HandleMessageFromDevToolsFrontend(
   dict->GetList("params", &params);
 
   if (method == "dispatchProtocolMessage" && params && params->GetSize() == 1) {
+    if (!agent_host_ || !agent_host_->IsAttached())
+      return;
     std::string protocol_message;
     if (!params->GetString(0, &protocol_message))
       return;
-    if (agent_host_)
-      agent_host_->DispatchProtocolMessage(protocol_message);
+    agent_host_->DispatchProtocolMessage(this, protocol_message);
   } else if (method == "loadCompleted") {
     web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
         base::ASCIIToUTF16("DevToolsAPI.setUseSoftMenu(true);"));
@@ -224,11 +245,14 @@ void ShellDevToolsFrontend::HandleMessageFromDevToolsFrontend(
     net::URLFetcher* fetcher =
         net::URLFetcher::Create(gurl, net::URLFetcher::GET, this).release();
     pending_requests_[fetcher] = request_id;
-    fetcher->SetRequestContext(web_contents()->GetBrowserContext()->
-        GetRequestContext());
+    fetcher->SetRequestContext(
+        BrowserContext::GetDefaultStoragePartition(
+            web_contents()->GetBrowserContext())->
+                GetURLRequestContext());
     fetcher->SetExtraRequestHeaders(headers);
-    fetcher->SaveResponseWithWriter(scoped_ptr<net::URLFetcherResponseWriter>(
-        new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
+    fetcher->SaveResponseWithWriter(
+        std::unique_ptr<net::URLFetcherResponseWriter>(
+            new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
     fetcher->Start();
     return;
   } else if (method == "getPreferences") {
@@ -262,18 +286,21 @@ void ShellDevToolsFrontend::DispatchProtocolMessage(
     DevToolsAgentHost* agent_host, const std::string& message) {
 
   if (message.length() < kMaxMessageChunkSize) {
-    base::string16 javascript = base::UTF8ToUTF16(
-        "DevToolsAPI.dispatchMessage(" + message + ");");
+    std::string param;
+    base::EscapeJSONString(message, true, &param);
+    std::string code = "DevToolsAPI.dispatchMessage(" + param + ");";
+    base::string16 javascript = base::UTF8ToUTF16(code);
     web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(javascript);
     return;
   }
 
-  base::FundamentalValue total_size(static_cast<int>(message.length()));
+  size_t total_size = message.length();
   for (size_t pos = 0; pos < message.length(); pos += kMaxMessageChunkSize) {
     std::string param;
-    base::JSONWriter::Write(
-        base::StringValue(message.substr(pos, kMaxMessageChunkSize)), &param);
-    std::string code = "DevToolsAPI.dispatchMessageChunk(" + param + ");";
+    base::EscapeJSONString(message.substr(pos, kMaxMessageChunkSize), true,
+                           &param);
+    std::string code = "DevToolsAPI.dispatchMessageChunk(" + param + "," +
+                       std::to_string(pos ? 0 : total_size) + ");";
     base::string16 javascript = base::UTF8ToUTF16(code);
     web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(javascript);
   }

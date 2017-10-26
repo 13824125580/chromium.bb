@@ -38,12 +38,17 @@
 #include "core/frame/VisualViewport.h"
 #include "core/html/HTMLTextAreaElement.h"
 #include "core/layout/LayoutBlock.h"
+#include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutListItem.h"
 #include "core/layout/LayoutListMarker.h"
+#include "core/layout/LayoutTable.h"
 #include "core/layout/LayoutTableCell.h"
 #include "core/layout/LayoutView.h"
-#include "core/layout/line/InlineIterator.h"
+#include "core/layout/api/LayoutAPIShim.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/page/Page.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 #ifdef AUTOSIZING_DOM_DEBUG_INFO
 #include "core/dom/ExecutionContextTask.h"
@@ -54,7 +59,7 @@ namespace blink {
 #ifdef AUTOSIZING_DOM_DEBUG_INFO
 class WriteDebugInfoTask : public ExecutionContextTask {
 public:
-    WriteDebugInfoTask(PassRefPtrWillBeRawPtr<Element> element, AtomicString value)
+    WriteDebugInfoTask(Element* element, AtomicString value)
         : m_element(element)
         , m_value(value)
     {
@@ -66,7 +71,7 @@ public:
     }
 
 private:
-    RefPtrWillBePersistent<Element> m_element;
+    Persistent<Element> m_element;
     AtomicString m_value;
 };
 
@@ -79,7 +84,7 @@ static void writeDebugInfo(LayoutObject* layoutObject, const AtomicString& outpu
         node = toDocument(node)->documentElement();
     if (!node->isElementNode())
         return;
-    node->document().postTask(adoptPtr(new WriteDebugInfoTask(toElement(node), output)));
+    node->document().postTask(wrapUnique(new WriteDebugInfoTask(toElement(node), output)));
 }
 
 void TextAutosizer::writeClusterDebugInfo(Cluster* cluster)
@@ -225,7 +230,7 @@ static bool blockHeightConstrained(const LayoutBlock* block)
     // FIXME: Consider additional heuristics, such as ignoring fixed heights if the content is already overflowing before autosizing kicks in.
     for (; block; block = block->containingBlock()) {
         const ComputedStyle& style = block->styleRef();
-        if (style.overflowY() >= OSCROLL)
+        if (style.overflowY() >= OverflowScroll)
             return false;
         if (style.height().isSpecified() || style.maxHeight().isSpecified() || block->isOutOfFlowPositioned()) {
             // Some sites (e.g. wikipedia) set their html and/or body elements to height:100%,
@@ -293,6 +298,10 @@ TextAutosizer::TextAutosizer(const Document* document)
 {
 }
 
+TextAutosizer::~TextAutosizer()
+{
+}
+
 void TextAutosizer::record(const LayoutBlock* block)
 {
     if (!m_pageInfo.m_settingEnabled)
@@ -354,11 +363,11 @@ void TextAutosizer::prepareClusterStack(const LayoutObject* layoutObject)
         m_blocksThatHaveBegunLayout.add(block);
 #endif
         if (Cluster* cluster = maybeCreateCluster(block))
-            m_clusterStack.append(adoptPtr(cluster));
+            m_clusterStack.append(wrapUnique(cluster));
     }
 }
 
-void TextAutosizer::beginLayout(LayoutBlock* block)
+void TextAutosizer::beginLayout(LayoutBlock* block, SubtreeLayoutScope* layouter)
 {
     ASSERT(shouldHandleLayout());
 
@@ -368,14 +377,14 @@ void TextAutosizer::beginLayout(LayoutBlock* block)
     ASSERT(!m_clusterStack.isEmpty() || block->isLayoutView());
 
     if (Cluster* cluster = maybeCreateCluster(block))
-        m_clusterStack.append(adoptPtr(cluster));
+        m_clusterStack.append(wrapUnique(cluster));
 
     ASSERT(!m_clusterStack.isEmpty());
 
     // Cells in auto-layout tables are handled separately by inflateAutoTable.
     bool isAutoTableCell = block->isTableCell() && !toLayoutTableCell(block)->table()->style()->isFixedTableLayout();
     if (!isAutoTableCell && !m_clusterStack.isEmpty())
-        inflate(block);
+        inflate(block, layouter);
 }
 
 void TextAutosizer::inflateAutoTable(LayoutTable* table)
@@ -398,8 +407,8 @@ void TextAutosizer::inflateAutoTable(LayoutTable* table)
                 if (!cell->needsLayout())
                     continue;
 
-                beginLayout(cell);
-                inflate(cell, DescendToInnerBlocks);
+                beginLayout(cell, nullptr);
+                inflate(cell, nullptr, DescendToInnerBlocks);
                 endLayout(cell);
             }
         }
@@ -425,7 +434,7 @@ void TextAutosizer::endLayout(LayoutBlock* block)
     }
 }
 
-float TextAutosizer::inflate(LayoutObject* parent, InflateBehavior behavior, float multiplier)
+float TextAutosizer::inflate(LayoutObject* parent, SubtreeLayoutScope* layouter, InflateBehavior behavior, float multiplier)
 {
     Cluster* cluster = currentCluster();
     bool hasTextChild = false;
@@ -443,31 +452,31 @@ float TextAutosizer::inflate(LayoutObject* parent, InflateBehavior behavior, flo
             // has entered layout.
             if (!multiplier)
                 multiplier = cluster->m_flags & SUPPRESSING ? 1.0f : clusterMultiplier(cluster);
-            applyMultiplier(child, multiplier);
+            applyMultiplier(child, multiplier, layouter);
 
             // FIXME: Investigate why MarkOnlyThis is sufficient.
             if (parent->isLayoutInline())
                 child->setPreferredLogicalWidthsDirty(MarkOnlyThis);
         } else if (child->isLayoutInline()) {
-            multiplier = inflate(child, behavior, multiplier);
+            multiplier = inflate(child, layouter, behavior, multiplier);
         } else if (child->isLayoutBlock() && behavior == DescendToInnerBlocks
             && !classifyBlock(child, INDEPENDENT | EXPLICIT_WIDTH | SUPPRESSING)) {
-            multiplier = inflate(child, behavior, multiplier);
+            multiplier = inflate(child, layouter, behavior, multiplier);
         }
         child = child->nextSibling();
     }
 
     if (hasTextChild) {
-        applyMultiplier(parent, multiplier); // Parent handles line spacing.
+        applyMultiplier(parent, multiplier, layouter); // Parent handles line spacing.
     } else if (!parent->isListItem()) {
         // For consistency, a block with no immediate text child should always have a
         // multiplier of 1.
-        applyMultiplier(parent, 1);
+        applyMultiplier(parent, 1, layouter);
     }
 
     if (parent->isListItem()) {
         float multiplier = clusterMultiplier(cluster);
-        applyMultiplier(parent, multiplier);
+        applyMultiplier(parent, multiplier, layouter);
 
         // The list item has to be treated special because we can have a tree such that you have
         // a list item for a form inside it. The list marker then ends up inside the form and when
@@ -475,10 +484,13 @@ float TextAutosizer::inflate(LayoutObject* parent, InflateBehavior behavior, flo
         // the wrong value.
         LayoutListItem* item = toLayoutListItem(parent);
         if (LayoutListMarker* marker = item->marker()) {
-            applyMultiplier(marker, multiplier);
+            applyMultiplier(marker, multiplier, layouter);
             marker->setPreferredLogicalWidthsDirty(MarkOnlyThis);
         }
     }
+
+    if (m_pageInfo.m_hasAutosized)
+        UseCounter::count(*m_document, UseCounter::TextAutosizing);
 
     return multiplier;
 }
@@ -521,8 +533,8 @@ void TextAutosizer::updatePageInfo()
     if (!m_pageInfo.m_settingEnabled || m_document->printing()) {
         m_pageInfo.m_pageNeedsAutosizing = false;
     } else {
-        LayoutView* layoutView = m_document->layoutView();
-        bool horizontalWritingMode = isHorizontalWritingMode(layoutView->style()->writingMode());
+        LayoutViewItem layoutViewItem = m_document->layoutViewItem();
+        bool horizontalWritingMode = isHorizontalWritingMode(layoutViewItem.style()->getWritingMode());
 
         // FIXME: With out-of-process iframes, the top frame can be remote and
         // doesn't have sizing information. Just return if this is the case.
@@ -577,11 +589,11 @@ IntSize TextAutosizer::windowSize() const
 
 void TextAutosizer::resetMultipliers()
 {
-    LayoutObject* layoutObject = m_document->layoutView();
+    LayoutObject* layoutObject = LayoutAPIShim::layoutObjectFrom(m_document->layoutViewItem());
     while (layoutObject) {
         if (const ComputedStyle* style = layoutObject->style()) {
             if (style->textAutosizingMultiplier() != 1)
-                applyMultiplier(layoutObject, 1, LayoutNeeded);
+                applyMultiplier(layoutObject, 1, nullptr, LayoutNeeded);
         }
         layoutObject = layoutObject->nextInPreOrder();
     }
@@ -589,11 +601,11 @@ void TextAutosizer::resetMultipliers()
 
 void TextAutosizer::setAllTextNeedsLayout()
 {
-    LayoutObject* layoutObject = m_document->layoutView();
-    while (layoutObject) {
-        if (layoutObject->isText())
-            layoutObject->setNeedsLayoutAndFullPaintInvalidation(LayoutInvalidationReason::TextAutosizing);
-        layoutObject = layoutObject->nextInPreOrder();
+    LayoutItem layoutItem = m_document->layoutViewItem();
+    while (!layoutItem.isNull()) {
+        if (layoutItem.isText())
+            layoutItem.setNeedsLayoutAndFullPaintInvalidation(LayoutInvalidationReason::TextAutosizing);
+        layoutItem = layoutItem.nextInPreOrder();
     }
 }
 
@@ -755,12 +767,12 @@ TextAutosizer::Supercluster* TextAutosizer::getSupercluster(const LayoutBlock* b
     if (!roots || roots->size() < 2 || !roots->contains(block))
         return nullptr;
 
-    SuperclusterMap::AddResult addResult = m_superclusters.add(fingerprint, PassOwnPtr<Supercluster>());
+    SuperclusterMap::AddResult addResult = m_superclusters.add(fingerprint, std::unique_ptr<Supercluster>());
     if (!addResult.isNewEntry)
         return addResult.storedValue->value.get();
 
     Supercluster* supercluster = new Supercluster(roots);
-    addResult.storedValue->value = adoptPtr(supercluster);
+    addResult.storedValue->value = wrapUnique(supercluster);
     return supercluster;
 }
 
@@ -972,10 +984,19 @@ const LayoutObject* TextAutosizer::findTextLeaf(const LayoutObject* parent, size
     return nullptr;
 }
 
-void TextAutosizer::applyMultiplier(LayoutObject* layoutObject, float multiplier, RelayoutBehavior relayoutBehavior)
+void TextAutosizer::applyMultiplier(LayoutObject* layoutObject, float multiplier, SubtreeLayoutScope* layouter, RelayoutBehavior relayoutBehavior)
 {
     ASSERT(layoutObject);
     ComputedStyle& currentStyle = layoutObject->mutableStyleRef();
+    // TODO(pdr): text-size-adjust is temporarily not honored due to
+    // breaking accessibility settings. See: https://645269.
+    if (false && !currentStyle.getTextSizeAdjust().isAuto()) {
+        multiplier = currentStyle.getTextSizeAdjust().multiplier();
+    } else if (multiplier < 1) {
+        // Unlike text-size-adjust, the text autosizer should only inflate fonts.
+        multiplier = 1;
+    }
+
     if (currentStyle.textAutosizingMultiplier() == multiplier)
         return;
 
@@ -991,16 +1012,20 @@ void TextAutosizer::applyMultiplier(LayoutObject* layoutObject, float multiplier
         m_stylesRetainedDuringLayout.append(&currentStyle);
 
         layoutObject->setStyleInternal(style.release());
-        layoutObject->setNeedsLayoutAndFullPaintInvalidation(LayoutInvalidationReason::TextAutosizing);
+        DCHECK(!layouter || layoutObject->isDescendantOf(&layouter->root()));
+        layoutObject->setNeedsLayoutAndFullPaintInvalidation(LayoutInvalidationReason::TextAutosizing, MarkContainerChain, layouter);
         break;
 
     case LayoutNeeded:
+        DCHECK(!layouter);
         layoutObject->setStyle(style.release());
         break;
     }
 
     if (multiplier != 1)
         m_pageInfo.m_hasAutosized = true;
+
+    layoutObject->clearBaseComputedStyle();
 }
 
 bool TextAutosizer::isWiderOrNarrowerDescendant(Cluster* cluster)
@@ -1036,6 +1061,18 @@ TextAutosizer::Cluster* TextAutosizer::currentCluster() const
     return m_clusterStack.last().get();
 }
 
+TextAutosizer::Cluster::Cluster(const LayoutBlock* root, BlockFlags flags, Cluster* parent, Supercluster* supercluster)
+    : m_root(root)
+    , m_flags(flags)
+    , m_deepestBlockContainingAllText(nullptr)
+    , m_parent(parent)
+    , m_multiplier(0)
+    , m_hasEnoughTextToAutosize(UnknownAmountOfText)
+    , m_supercluster(supercluster)
+    , m_hasTableAncestor(root->isTableCell() || (m_parent && m_parent->m_hasTableAncestor))
+{
+}
+
 #if ENABLE(ASSERT)
 void TextAutosizer::FingerprintMapper::assertMapsAreConsistent()
 {
@@ -1067,9 +1104,9 @@ void TextAutosizer::FingerprintMapper::addTentativeClusterRoot(const LayoutBlock
 {
     add(block, fingerprint);
 
-    ReverseFingerprintMap::AddResult addResult = m_blocksForFingerprint.add(fingerprint, PassOwnPtr<BlockSet>());
+    ReverseFingerprintMap::AddResult addResult = m_blocksForFingerprint.add(fingerprint, std::unique_ptr<BlockSet>());
     if (addResult.isNewEntry)
-        addResult.storedValue->value = adoptPtr(new BlockSet);
+        addResult.storedValue->value = wrapUnique(new BlockSet);
     addResult.storedValue->value->add(block);
 #if ENABLE(ASSERT)
     assertMapsAreConsistent();
@@ -1106,7 +1143,7 @@ TextAutosizer::BlockSet* TextAutosizer::FingerprintMapper::getTentativeClusterRo
     return m_blocksForFingerprint.get(fingerprint);
 }
 
-TextAutosizer::LayoutScope::LayoutScope(LayoutBlock* block)
+TextAutosizer::LayoutScope::LayoutScope(LayoutBlock* block, SubtreeLayoutScope* layouter)
     : m_textAutosizer(block->document().textAutosizer())
     , m_block(block)
 {
@@ -1114,7 +1151,7 @@ TextAutosizer::LayoutScope::LayoutScope(LayoutBlock* block)
         return;
 
     if (m_textAutosizer->shouldHandleLayout())
-        m_textAutosizer->beginLayout(m_block);
+        m_textAutosizer->beginLayout(m_block, layouter);
     else
         m_textAutosizer = nullptr;
 }
@@ -1155,6 +1192,8 @@ TextAutosizer::DeferUpdatePageInfo::~DeferUpdatePageInfo()
 
 float TextAutosizer::computeAutosizedFontSize(float specifiedSize, float multiplier)
 {
+    DCHECK_GE(multiplier, 0);
+
     // Somewhat arbitrary "pleasant" font size.
     const float pleasantSize = 16;
 
@@ -1171,7 +1210,8 @@ float TextAutosizer::computeAutosizedFontSize(float specifiedSize, float multipl
     const float gradientAfterPleasantSize = 0.5;
 
     float computedSize;
-    if (specifiedSize <= pleasantSize) {
+    // Skip linear backoff for multipliers that shrink the size or when the font sizes are small.
+    if (multiplier <= 1 || specifiedSize <= pleasantSize) {
         computedSize = multiplier * specifiedSize;
     } else {
         computedSize = multiplier * pleasantSize + gradientAfterPleasantSize * (specifiedSize - pleasantSize);

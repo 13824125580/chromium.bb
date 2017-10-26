@@ -121,14 +121,14 @@ class GetBaseUploadURITest(cros_test_lib.TestCase):
   def testRemoteTrybotTrue(self):
     """Test GetBaseUploadURI with no archive base but remote_trybot is True."""
     expected_result = ('%s/trybot-%s' %
-                       (archive_lib.constants.DEFAULT_ARCHIVE_BUCKET,
+                       (config_lib.GetConfig().params.ARCHIVE_URL,
                         DEFAULT_BOT_NAME))
     result = self._GetBaseUploadURI(remote_trybot=True)
     self.assertEqual(expected_result, result)
 
   def testBotIdRemoteTrybotTrue(self):
     expected_result = ('%s/%s' %
-                       (archive_lib.constants.DEFAULT_ARCHIVE_BUCKET,
+                       (config_lib.GetConfig().params.ARCHIVE_URL,
                         self.BOT_ID))
     result = self._GetBaseUploadURI(bot_id=self.BOT_ID, remote_trybot=True)
     self.assertEqual(expected_result, result)
@@ -139,14 +139,14 @@ class GetBaseUploadURITest(cros_test_lib.TestCase):
 
     # Test without bot_id.
     expected_result = ('%s/%s' %
-                       (archive_lib.constants.DEFAULT_ARCHIVE_BUCKET,
+                       (config_lib.GetConfig().params.ARCHIVE_URL,
                         DEFAULT_BOT_NAME))
     result = self._GetBaseUploadURI(remote_trybot=False)
     self.assertEqual(expected_result, result)
 
     # Test with bot_id.
     expected_result = ('%s/%s' %
-                       (archive_lib.constants.DEFAULT_ARCHIVE_BUCKET,
+                       (config_lib.GetConfig().params.ARCHIVE_URL,
                         self.BOT_ID))
     result = self._GetBaseUploadURI(bot_id=self.BOT_ID, remote_trybot=False)
     self.assertEqual(expected_result, result)
@@ -214,7 +214,7 @@ class ArchiveTest(cros_test_lib.TestCase):
   def testDownloadURLBuildbot(self):
     value = self._GetAttributeValue('download_url')
     expected_value = ('%s%s/%s/%s' %
-                      (archive_lib.gs.PRIVATE_BASE_HTTPS_URL,
+                      (archive_lib.gs.PRIVATE_BASE_HTTPS_DOWNLOAD_URL,
                        DEFAULT_ARCHIVE_PREFIX,
                        DEFAULT_BOT_NAME,
                        self._VERSION))

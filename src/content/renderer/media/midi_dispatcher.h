@@ -7,8 +7,8 @@
 
 #include "base/id_map.h"
 #include "base/macros.h"
-#include "content/common/permission_service.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
+#include "third_party/WebKit/public/platform/modules/permissions/permission.mojom.h"
 #include "third_party/WebKit/public/web/modules/webmidi/WebMIDIClient.h"
 
 namespace blink {
@@ -28,6 +28,9 @@ class MidiDispatcher : public RenderFrameObserver,
   ~MidiDispatcher() override;
 
  private:
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   // blink::WebMIDIClient implementation.
   void requestPermission(const blink::WebMIDIPermissionRequest& request,
                          const blink::WebMIDIOptions& options) override;
@@ -35,7 +38,7 @@ class MidiDispatcher : public RenderFrameObserver,
       const blink::WebMIDIPermissionRequest& request) override;
 
   // Permission for using MIDI system has been set.
-  void OnPermissionSet(int request_id, PermissionStatus status);
+  void OnPermissionSet(int request_id, blink::mojom::PermissionStatus status);
 
   // Each WebMIDIPermissionRequest object is valid until
   // cancelSysexPermissionRequest() is called with the object, or used to call
@@ -43,7 +46,7 @@ class MidiDispatcher : public RenderFrameObserver,
   typedef IDMap<blink::WebMIDIPermissionRequest, IDMapOwnPointer> Requests;
   Requests requests_;
 
-  PermissionServicePtr permission_service_;
+  blink::mojom::PermissionServicePtr permission_service_;
 
   DISALLOW_COPY_AND_ASSIGN(MidiDispatcher);
 };

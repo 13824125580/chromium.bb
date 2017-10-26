@@ -51,12 +51,12 @@ inline SpinButtonElement::SpinButtonElement(Document& document, SpinButtonOwner&
 {
 }
 
-PassRefPtrWillBeRawPtr<SpinButtonElement> SpinButtonElement::create(Document& document, SpinButtonOwner& spinButtonOwner)
+SpinButtonElement* SpinButtonElement::create(Document& document, SpinButtonOwner& spinButtonOwner)
 {
-    RefPtrWillBeRawPtr<SpinButtonElement> element = adoptRefWillBeNoop(new SpinButtonElement(document, spinButtonOwner));
-    element->setShadowPseudoId(AtomicString("-webkit-inner-spin-button", AtomicString::ConstructFromLiteral));
+    SpinButtonElement* element = new SpinButtonElement(document, spinButtonOwner);
+    element->setShadowPseudoId(AtomicString("-webkit-inner-spin-button"));
     element->setAttribute(idAttr, ShadowElementNames::spinButton());
-    return element.release();
+    return element;
 }
 
 void SpinButtonElement::detach(const AttachContext& context)
@@ -90,10 +90,6 @@ void SpinButtonElement::defaultEventHandler(Event* event)
     IntPoint local = roundedIntPoint(box->absoluteToLocal(FloatPoint(mouseEvent->absoluteLocation()), UseTransforms));
     if (mouseEvent->type() == EventTypeNames::mousedown && mouseEvent->button() == LeftButton) {
         if (box->pixelSnappedBorderBoxRect().contains(local)) {
-            // The following functions of HTMLInputElement may run JavaScript
-            // code which detaches this shadow node. We need to take a reference
-            // and check layoutObject() after such function calls.
-            RefPtrWillBeRawPtr<Node> protector(this);
             if (m_spinButtonOwner)
                 m_spinButtonOwner->focusAndSelectSpinButtonOwner();
             if (layoutObject()) {

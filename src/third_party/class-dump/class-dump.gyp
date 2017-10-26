@@ -9,6 +9,7 @@
   },
   'targets': [
     {
+      # GN version //third_party/class-dump(//build/toolchain/mac:clang_x64)
       'target_name': 'class-dump',
       'toolsets': ['host'],
       'type': 'executable',
@@ -180,11 +181,6 @@
         'libraries': [
           '$(SDKROOT)/System/Library/Frameworks/Foundation.framework',
         ],
-        'xcode_settings': {
-          'OTHER_LDFLAGS': [
-            '-lcrypto',
-          ],
-        },
       },
       'include_dirs': [
         'src/Source',

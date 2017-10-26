@@ -28,7 +28,7 @@ namespace {
 base::LazyInstance<base::Lock> g_lock = LAZY_INSTANCE_INITIALIZER;
 
 #if !defined(OS_MACOSX)
-typedef std::map<SyncToken, linked_ptr<gfx::GLFence>> SyncTokenToFenceMap;
+typedef std::map<SyncToken, linked_ptr<gl::GLFence>> SyncTokenToFenceMap;
 base::LazyInstance<SyncTokenToFenceMap> g_sync_point_to_fence =
     LAZY_INSTANCE_INITIALIZER;
 base::LazyInstance<std::queue<SyncTokenToFenceMap::iterator>> g_sync_points =
@@ -38,7 +38,7 @@ base::LazyInstance<std::queue<SyncTokenToFenceMap::iterator>> g_sync_points =
 void CreateFenceLocked(const SyncToken& sync_token) {
 #if !defined(OS_MACOSX)
   g_lock.Get().AssertAcquired();
-  if (gfx::GetGLImplementation() == gfx::kGLImplementationMockGL)
+  if (gl::GetGLImplementation() == gl::kGLImplementationMockGL)
     return;
 
   std::queue<SyncTokenToFenceMap::iterator>& sync_points = g_sync_points.Get();
@@ -50,7 +50,7 @@ void CreateFenceLocked(const SyncToken& sync_token) {
       sync_points.pop();
     }
     // Need to use EGL fences since we are likely not in a single share group.
-    linked_ptr<gfx::GLFence> fence(make_linked_ptr(new gfx::GLFenceEGL));
+    linked_ptr<gl::GLFence> fence(make_linked_ptr(new gl::GLFenceEGL));
     if (fence.get()) {
       std::pair<SyncTokenToFenceMap::iterator, bool> result =
           sync_point_to_fence.insert(std::make_pair(sync_token, fence));
@@ -165,6 +165,9 @@ MailboxManagerSync::TextureGroupRef::TextureGroupRef(unsigned version,
                                                      TextureGroup* group)
     : version(version), group(group) {
 }
+
+MailboxManagerSync::TextureGroupRef::TextureGroupRef(
+    const TextureGroupRef& other) = default;
 
 MailboxManagerSync::TextureGroupRef::~TextureGroupRef() {
 }
@@ -289,8 +292,7 @@ void MailboxManagerSync::UpdateDefinitionLocked(
   if (definition.Matches(texture))
     return;
 
-  DCHECK(!image || image_buffer.get());
-  if (image && !image_buffer->IsClient(image)) {
+  if (image && (!image_buffer || !image_buffer->IsClient(image))) {
     LOG(ERROR) << "MailboxSync: Incompatible attachment";
     return;
   }

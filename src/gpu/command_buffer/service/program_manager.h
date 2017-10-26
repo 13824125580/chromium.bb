@@ -9,8 +9,10 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
+
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -21,6 +23,9 @@
 #include "gpu/gpu_export.h"
 
 namespace gpu {
+
+struct GpuPreferences;
+
 namespace gles2 {
 
 class FeatureInfo;
@@ -28,7 +33,6 @@ class ProgramCache;
 class ProgramManager;
 class Shader;
 class ShaderManager;
-class FeatureInfo;
 
 // This is used to track which attributes a particular program needs
 // so we can verify at glDrawXXX time that every attribute is either disabled
@@ -86,6 +90,7 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
 
   struct UniformInfo {
     UniformInfo();
+    UniformInfo(const UniformInfo& other);
     UniformInfo(const std::string& client_name,
                 GLint client_location_base,
                 GLenum _type,
@@ -274,8 +279,9 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
     return valid_;
   }
 
+  bool IsShaderAttached(Shader* shader);
   bool AttachShader(ShaderManager* manager, Shader* shader);
-  bool DetachShader(ShaderManager* manager, Shader* shader);
+  void DetachShader(ShaderManager* manager, Shader* shader);
 
   void CompileAttachedShaders();
   bool AttachedShadersExist() const;
@@ -423,18 +429,6 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   // Updates the program log info from GL
   void UpdateLogInfo();
 
-  template <typename VarT>
-  void GetUniformBlockMembers(
-      Shader* shader, const std::vector<VarT>& fields,
-      const std::string& prefix);
-
-  // Get UniformBlock from InterfaceBlock
-  void GetUniformBlockFromInterfaceBlock(
-      Shader* shader, const sh::InterfaceBlock& interface_block);
-
-  // Get UniformBlocks info
-  void GatherInterfaceBlockInfo();
-
   // Clears all the uniforms.
   void ClearUniforms(std::vector<uint8_t>* zero_buffer);
 
@@ -515,7 +509,7 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   bool uniforms_cleared_;
 
   // Log info
-  scoped_ptr<std::string> log_info_;
+  std::unique_ptr<std::string> log_info_;
 
   // attribute-location binding map from glBindAttribLocation() calls.
   LocationMap bind_attrib_location_map_;
@@ -542,10 +536,11 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
 // need to be shared by multiple GLES2Decoders.
 class GPU_EXPORT ProgramManager {
  public:
-  explicit ProgramManager(ProgramCache* program_cache,
-                          uint32_t max_varying_vectors,
-                          uint32_t max_dual_source_draw_buffers,
-                          FeatureInfo* feature_info);
+  ProgramManager(ProgramCache* program_cache,
+                 uint32_t max_varying_vectors,
+                 uint32_t max_dual_source_draw_buffers,
+                 const GpuPreferences& gpu_preferences,
+                 FeatureInfo* feature_info);
   ~ProgramManager();
 
   // Must call before destruction.
@@ -618,6 +613,7 @@ class GPU_EXPORT ProgramManager {
   uint32_t max_varying_vectors_;
   uint32_t max_dual_source_draw_buffers_;
 
+  const GpuPreferences& gpu_preferences_;
   scoped_refptr<FeatureInfo> feature_info_;
 
   DISALLOW_COPY_AND_ASSIGN(ProgramManager);

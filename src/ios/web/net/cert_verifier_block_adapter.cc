@@ -35,7 +35,7 @@ struct VerificationContext
   // verification request is not cancelled. CertVerifierBlockAdapter::Verify
   // guarantees its completion handler to be called, which will not happen if
   // verification request is cancelled.
-  scoped_ptr<net::CertVerifier::Request> request;
+  std::unique_ptr<net::CertVerifier::Request> request;
   // The result of certificate verification.
   net::CertVerifyResult result;
   // Certificate being verified.
@@ -66,6 +66,8 @@ CertVerifierBlockAdapter::Params::Params(
     const std::string& hostname)
     : cert(cert), hostname(hostname), flags(0) {}
 
+CertVerifierBlockAdapter::Params::Params(const Params& other) = default;
+
 CertVerifierBlockAdapter::Params::~Params() {
 }
 
@@ -84,11 +86,13 @@ void CertVerifierBlockAdapter::Verify(
   net::CompletionCallback callback = base::BindBlock(^(int error) {
     completion_handler(context->result, error);
   });
-  scoped_ptr<net::CertVerifier::Request> request;
-  int error = cert_verifier_->Verify(params.cert.get(), params.hostname,
-                                     params.ocsp_response, params.flags,
-                                     params.crl_set.get(), &(context->result),
-                                     callback, &request, context->net_log);
+  std::unique_ptr<net::CertVerifier::Request> request;
+  int error = cert_verifier_->Verify(
+      net::CertVerifier::RequestParams(params.cert.get(), params.hostname,
+                                       params.flags, params.ocsp_response,
+                                       net::CertificateList()),
+      params.crl_set.get(), &(context->result), callback, &request,
+      context->net_log);
   if (error == net::ERR_IO_PENDING) {
     // Keep the |net::CertVerifier::Request| alive until verification completes.
     // Because |context| is kept alive by |callback| (through base::BindBlock),

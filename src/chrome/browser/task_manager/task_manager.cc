@@ -16,12 +16,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/private_working_set_snapshot.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
+#include "chrome/browser/task_management/task_manager_interface.h"
 #include "chrome/browser/task_manager/background_information.h"
 #include "chrome/browser/task_manager/browser_process_resource_provider.h"
 #include "chrome/browser/task_manager/child_process_resource_provider.h"
@@ -35,6 +35,7 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/user_manager.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -59,6 +60,10 @@
 
 #if defined(OS_MACOSX)
 #include "content/public/browser/browser_child_process_host.h"
+#endif
+
+#if defined(OS_WIN)
+#include "chrome/browser/win/private_working_set_snapshot.h"
 #endif
 
 using content::BrowserThread;
@@ -180,13 +185,13 @@ class TaskManagerModelGpuDataManagerObserver
   }
 
   static void NotifyVideoMemoryUsageStats(
-      const content::GPUVideoMemoryUsageStats& video_memory_usage_stats) {
+      const gpu::VideoMemoryUsageStats& video_memory_usage_stats) {
     TaskManager::GetInstance()->model()->NotifyVideoMemoryUsageStats(
         video_memory_usage_stats);
   }
 
-  void OnVideoMemoryUsageStatsUpdate(const content::GPUVideoMemoryUsageStats&
-                                         video_memory_usage_stats) override {
+  void OnVideoMemoryUsageStatsUpdate(
+      const gpu::VideoMemoryUsageStats& video_memory_usage_stats) override {
     if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
       NotifyVideoMemoryUsageStats(video_memory_usage_stats);
     } else {
@@ -257,33 +262,27 @@ TaskManagerModel::TaskManagerModel(TaskManager* task_manager)
   AddResourceProvider(
       new task_manager::BrowserProcessResourceProvider(task_manager));
   AddResourceProvider(new task_manager::WebContentsResourceProvider(
-      task_manager,
-      scoped_ptr<WebContentsInformation>(
-          new task_manager::BackgroundInformation())));
+      task_manager, std::unique_ptr<WebContentsInformation>(
+                        new task_manager::BackgroundInformation())));
   AddResourceProvider(new task_manager::WebContentsResourceProvider(
-      task_manager,
-      scoped_ptr<WebContentsInformation>(
-          new task_manager::TabContentsInformation())));
+      task_manager, std::unique_ptr<WebContentsInformation>(
+                        new task_manager::TabContentsInformation())));
 #if defined(ENABLE_PRINT_PREVIEW)
   AddResourceProvider(new task_manager::WebContentsResourceProvider(
-      task_manager,
-      scoped_ptr<WebContentsInformation>(
-          new task_manager::PrintingInformation())));
+      task_manager, std::unique_ptr<WebContentsInformation>(
+                        new task_manager::PrintingInformation())));
 #endif  // ENABLE_PRINT_PREVIEW
   AddResourceProvider(new task_manager::WebContentsResourceProvider(
-      task_manager,
-      scoped_ptr<WebContentsInformation>(
-          new task_manager::PanelInformation())));
+      task_manager, std::unique_ptr<WebContentsInformation>(
+                        new task_manager::PanelInformation())));
   AddResourceProvider(
       new task_manager::ChildProcessResourceProvider(task_manager));
   AddResourceProvider(new task_manager::WebContentsResourceProvider(
-      task_manager,
-      scoped_ptr<WebContentsInformation>(
-          new task_manager::ExtensionInformation())));
+      task_manager, std::unique_ptr<WebContentsInformation>(
+                        new task_manager::ExtensionInformation())));
   AddResourceProvider(new task_manager::WebContentsResourceProvider(
-      task_manager,
-      scoped_ptr<WebContentsInformation>(
-          new task_manager::GuestInformation())));
+      task_manager, std::unique_ptr<WebContentsInformation>(
+                        new task_manager::GuestInformation())));
 #if defined(OS_WIN)
   working_set_snapshot_.reset(new PrivateWorkingSetSnapshot);
   working_set_snapshot_->AddToMonitorList("chrome");
@@ -668,7 +667,7 @@ bool TaskManagerModel::GetVideoMemory(int index,
   PerProcessValues& values(
       per_process_cache_[GetResource(index)->GetProcess()]);
   if (!values.is_video_memory_valid) {
-    content::GPUVideoMemoryUsageStats::ProcessMap::const_iterator i =
+    gpu::VideoMemoryUsageStats::ProcessMap::const_iterator i =
         video_memory_usage_stats_.process_map.find(pid);
     if (i == video_memory_usage_stats_.process_map.end())
       return false;
@@ -1254,7 +1253,7 @@ void TaskManagerModel::Refresh() {
 }
 
 void TaskManagerModel::NotifyVideoMemoryUsageStats(
-    const content::GPUVideoMemoryUsageStats& video_memory_usage_stats) {
+    const gpu::VideoMemoryUsageStats& video_memory_usage_stats) {
   DCHECK(pending_video_memory_usage_stats_update_);
   video_memory_usage_stats_ = video_memory_usage_stats;
   pending_video_memory_usage_stats_update_ = false;
@@ -1509,11 +1508,6 @@ Resource* TaskManagerModel::GetResource(int index) const {
 ////////////////////////////////////////////////////////////////////////////////
 // TaskManager class
 ////////////////////////////////////////////////////////////////////////////////
-// static
-void TaskManager::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterDictionaryPref(prefs::kTaskManagerWindowPlacement);
-  registry->RegisterDictionaryPref(prefs::kTaskManagerColumnVisibility);
-}
 
 bool TaskManager::IsBrowserProcess(int index) const {
   // If some of the selection is out of bounds, ignore. This may happen when
@@ -1560,23 +1554,8 @@ void TaskManager::ModelChanged() {
 
 // static
 TaskManager* TaskManager::GetInstance() {
+  CHECK(!task_management::TaskManagerInterface::IsNewTaskManagerEnabled());
   return base::Singleton<TaskManager>::get();
-}
-
-void TaskManager::OpenAboutMemory() {
-  Profile* profile = ProfileManager::GetLastUsedProfileAllowedByPolicy();
-  if (profile->IsGuestSession() && !g_browser_process->local_state()->
-      GetBoolean(prefs::kBrowserGuestModeEnabled)) {
-    UserManager::Show(base::FilePath(),
-                      profiles::USER_MANAGER_NO_TUTORIAL,
-                      profiles::USER_MANAGER_SELECT_PROFILE_CHROME_MEMORY);
-    return;
-  }
-
-  chrome::NavigateParams params(
-      profile, GURL(chrome::kChromeUIMemoryURL), ui::PAGE_TRANSITION_LINK);
-  params.disposition = NEW_FOREGROUND_TAB;
-  chrome::Navigate(&params);
 }
 
 TaskManager::TaskManager()

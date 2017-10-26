@@ -40,6 +40,7 @@
   'variables': {
     'feature_defines': [
       'ENABLE_LAYOUT_UNIT_IN_INLINE_BOXES=0',
+      'ENABLE_OILPAN=1',
       # WTF_USE_DYNAMIC_ANNOTATIONS=1 may be defined in build/common.gypi
       # We can't define it here because it should be present only
       # in Debug or release_valgrind_build=1 builds.
@@ -47,12 +48,7 @@
     # We have to nest variables inside variables so that they can be overridden
     # through GYP_DEFINES.
     'variables': {
-      # Enables the Oilpan garbage-collection infrastructure.
-      # If you update the default value below, be sure to update the one in
-      # ../config.gyp, too!
-      'enable_oilpan%': 1,
       'blink_logging_always_on%': 0,
-      'link_core_modules_separately%': 1,
     },
     'conditions': [
       ['use_concatenated_impulse_responses==1', {
@@ -65,7 +61,6 @@
         ],
       }, { # OS!=android
         'feature_defines': [
-          'ENABLE_INPUT_MULTIPLE_FIELDS_UI=1',
           'WTF_USE_ICCJPEG=1',
           'WTF_USE_QCMSLIB=1'
         ],
@@ -86,24 +81,11 @@
           'WTF_USE_DEFAULT_RENDER_THEME=1',
         ],
       }],
-      ['enable_oilpan==1', {
-        'feature_defines': [
-          'ENABLE_OILPAN=1',
-        ],
-      }],
       ['blink_logging_always_on==1', {
         'feature_defines': [
           'LOG_DISABLED=0',
         ],
       }],
-      ['link_core_modules_separately==1 and component=="shared_library"', {
-        'feature_defines': [
-          'LINK_CORE_MODULES_SEPARATELY',
-        ],
-      }],
     ],
-
-    # shared build only. If set to 1, link web, core and modules separately.
-    'link_core_modules_separately%': '<(link_core_modules_separately)',
   },
 }

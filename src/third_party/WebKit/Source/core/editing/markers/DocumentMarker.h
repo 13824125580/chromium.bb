@@ -37,7 +37,7 @@ class DocumentMarkerDetails;
 // It optionally includes a description that could be displayed in the user interface.
 // It also optionally includes a flag specifying whether the match is active, which is ignored
 // for all types other than type TextMatch.
-class CORE_EXPORT DocumentMarker : public NoBaseWillBeGarbageCollected<DocumentMarker> {
+class CORE_EXPORT DocumentMarker : public GarbageCollected<DocumentMarker> {
 public:
     enum MarkerTypeIndex {
         SpellingMarkerIndex = 0,
@@ -45,6 +45,7 @@ public:
         TextMatchMarkerIndex,
         InvisibleSpellcheckMarkerIndex,
         CompositionMarkerIndex,
+        HighlightMarkerIndex,
         MarkerTypeIndexesCount
     };
 
@@ -54,6 +55,7 @@ public:
         TextMatch = 1 << TextMatchMarkerIndex,
         InvisibleSpellcheck = 1 << InvisibleSpellcheckMarkerIndex,
         Composition = 1 << CompositionMarkerIndex,
+        Highlight = 1 << HighlightMarkerIndex
     };
 
     class MarkerTypes {
@@ -75,7 +77,7 @@ public:
     class AllMarkers : public MarkerTypes {
     public:
         AllMarkers()
-            : MarkerTypes(Spelling | Grammar | TextMatch | InvisibleSpellcheck | Composition)
+            : MarkerTypes(Spelling | Grammar | TextMatch | InvisibleSpellcheck | Composition | Highlight)
         {
         }
     };
@@ -99,6 +101,7 @@ public:
     DocumentMarker(MarkerType, unsigned startOffset, unsigned endOffset, const String& description, uint32_t hash);
     DocumentMarker(unsigned startOffset, unsigned endOffset, bool activeMatch);
     DocumentMarker(unsigned startOffset, unsigned endOffset, Color underlineColor, bool thick, Color backgroundColor);
+    DocumentMarker(unsigned startOffset, unsigned endOffset, Color foregroundColor, Color backgroundColor);
 
     DocumentMarker(const DocumentMarker&);
 
@@ -112,6 +115,7 @@ public:
     Color underlineColor() const;
     bool thick() const;
     Color backgroundColor() const;
+    Color foregroundColor() const;
     DocumentMarkerDetails* details() const;
 
     void setActiveMatch(bool);
@@ -139,24 +143,25 @@ private:
     MarkerType m_type;
     unsigned m_startOffset;
     unsigned m_endOffset;
-    RefPtrWillBeMember<DocumentMarkerDetails> m_details;
+    Member<DocumentMarkerDetails> m_details;
     uint32_t m_hash;
 };
 
-using DocumentMarkerVector = WillBeHeapVector<RawPtrWillBeMember<DocumentMarker>>;
+using DocumentMarkerVector = HeapVector<Member<DocumentMarker>>;
 
 inline DocumentMarkerDetails* DocumentMarker::details() const
 {
     return m_details.get();
 }
 
-class DocumentMarkerDetails : public RefCountedWillBeGarbageCollectedFinalized<DocumentMarkerDetails> {
+class DocumentMarkerDetails : public GarbageCollectedFinalized<DocumentMarkerDetails> {
 public:
     DocumentMarkerDetails() { }
     virtual ~DocumentMarkerDetails();
     virtual bool isDescription() const { return false; }
     virtual bool isTextMatch() const { return false; }
     virtual bool isComposition() const { return false; }
+    virtual bool isHighlightMarker() const { return false; }
 
     DEFINE_INLINE_VIRTUAL_TRACE() { }
 };

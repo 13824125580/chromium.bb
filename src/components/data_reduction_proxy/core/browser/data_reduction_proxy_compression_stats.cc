@@ -11,7 +11,7 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -19,6 +19,7 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/browser/data_usage_store.h"
+#include "components/data_reduction_proxy/core/browser/data_use_group.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/prefs/pref_service.h"
@@ -180,21 +181,23 @@ void RecordDailyContentLengthHistograms(
   UMA_HISTOGRAM_COUNTS(
       "Net.DailyContentLength_ViaDataReductionProxy",
       received_length_via_data_reduction_proxy >> 10);
+  UMA_HISTOGRAM_PERCENTAGE(
+      "Net.DailyContentPercent_ViaDataReductionProxy",
+      (100 * received_length_via_data_reduction_proxy) / received_length);
 
-  int percent_via_data_reduction_proxy = 0;
+  if (original_length_via_data_reduction_proxy <= 0)
+    return;
+  int percent_savings_via_data_reduction_proxy = 0;
   if (original_length_via_data_reduction_proxy >
       received_length_via_data_reduction_proxy) {
-    percent_via_data_reduction_proxy =
+    percent_savings_via_data_reduction_proxy =
         100 * (original_length_via_data_reduction_proxy -
                received_length_via_data_reduction_proxy) /
         original_length_via_data_reduction_proxy;
   }
   UMA_HISTOGRAM_PERCENTAGE(
       "Net.DailyContentSavingPercent_ViaDataReductionProxy",
-      percent_via_data_reduction_proxy);
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_ViaDataReductionProxy",
-      (100 * received_length_via_data_reduction_proxy) / received_length);
+      percent_savings_via_data_reduction_proxy);
 }
 
 // Given a |net::NetworkChangeNotifier::ConnectionType|, returns the
@@ -372,7 +375,6 @@ DataReductionProxyCompressionStats::~DataReductionProxyCompressionStats() {
   net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
 
   WritePrefs();
-  pref_change_registrar_.RemoveAll();
 }
 
 void DataReductionProxyCompressionStats::Init() {
@@ -394,7 +396,7 @@ void DataReductionProxyCompressionStats::Init() {
   connection_type_ =
       StoredConnectionType(net::NetworkChangeNotifier::GetConnectionType());
 
-  if (delay_ == base::TimeDelta())
+  if (delay_.is_zero())
     return;
 
   // Init all int64_t prefs.
@@ -447,21 +449,6 @@ void DataReductionProxyCompressionStats::Init() {
       switches::kClearDataReductionProxyDataSavings)) {
     ClearDataSavingStatistics();
   }
-
-  pref_change_registrar_.Init(pref_service_);
-  pref_change_registrar_.Add(
-      prefs::kUpdateDailyReceivedContentLengths,
-      base::Bind(&DataReductionProxyCompressionStats::OnUpdateContentLengths,
-                 weak_factory_.GetWeakPtr()));
-}
-
-void DataReductionProxyCompressionStats::OnUpdateContentLengths() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!pref_service_->GetBoolean(prefs::kUpdateDailyReceivedContentLengths))
-    return;
-
-  WritePrefs();
-  pref_service_->SetBoolean(prefs::kUpdateDailyReceivedContentLengths, false);
 }
 
 void DataReductionProxyCompressionStats::UpdateContentLengths(
@@ -469,7 +456,7 @@ void DataReductionProxyCompressionStats::UpdateContentLengths(
     int64_t original_size,
     bool data_reduction_proxy_enabled,
     DataReductionProxyRequestType request_type,
-    const std::string& data_usage_host,
+    const scoped_refptr<DataUseGroup>& data_use_group,
     const std::string& mime_type) {
   DCHECK(thread_checker_.CalledOnValidThread());
   TRACE_EVENT0("loader",
@@ -480,7 +467,11 @@ void DataReductionProxyCompressionStats::UpdateContentLengths(
   IncreaseInt64Pref(data_reduction_proxy::prefs::kHttpOriginalContentLength,
                     original_size);
 
-  RecordDataUsage(data_usage_host, data_used, original_size, base::Time::Now());
+  std::string data_use_host;
+  if (data_use_group) {
+    data_use_host = data_use_group->GetHostname();
+  }
+  RecordDataUsage(data_use_host, data_used, original_size, base::Time::Now());
   RecordRequestSizePrefs(data_used, original_size, data_reduction_proxy_enabled,
                          request_type, mime_type, base::Time::Now());
 }
@@ -491,13 +482,14 @@ void DataReductionProxyCompressionStats::InitInt64Pref(const char* pref) {
 }
 
 void DataReductionProxyCompressionStats::InitListPref(const char* pref) {
-  scoped_ptr<base::ListValue> pref_value = scoped_ptr<base::ListValue>(
-      pref_service_->GetList(pref)->DeepCopy());
+  std::unique_ptr<base::ListValue> pref_value =
+      std::unique_ptr<base::ListValue>(
+          pref_service_->GetList(pref)->DeepCopy());
   list_pref_map_.add(pref, std::move(pref_value));
 }
 
 int64_t DataReductionProxyCompressionStats::GetInt64(const char* pref_path) {
-  if (delay_ == base::TimeDelta())
+  if (delay_.is_zero())
     return pref_service_->GetInt64(pref_path);
 
   DataReductionProxyPrefMap::iterator iter = pref_map_.find(pref_path);
@@ -506,7 +498,7 @@ int64_t DataReductionProxyCompressionStats::GetInt64(const char* pref_path) {
 
 void DataReductionProxyCompressionStats::SetInt64(const char* pref_path,
                                                   int64_t pref_value) {
-  if (delay_ == base::TimeDelta()) {
+  if (delay_.is_zero()) {
     pref_service_->SetInt64(pref_path, pref_value);
     return;
   }
@@ -523,7 +515,7 @@ void DataReductionProxyCompressionStats::IncreaseInt64Pref(
 
 base::ListValue* DataReductionProxyCompressionStats::GetList(
     const char* pref_path) {
-  if (delay_ == base::TimeDelta())
+  if (delay_.is_zero())
     return ListPrefUpdate(pref_service_, pref_path).Get();
 
   DelayedWritePrefs();
@@ -532,7 +524,7 @@ base::ListValue* DataReductionProxyCompressionStats::GetList(
 
 void DataReductionProxyCompressionStats::WritePrefs() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (delay_ == base::TimeDelta())
+  if (delay_.is_zero())
     return;
 
   for (DataReductionProxyPrefMap::iterator iter = pref_map_.begin();
@@ -653,7 +645,7 @@ void DataReductionProxyCompressionStats::OnConnectionTypeChanged(
 }
 
 void DataReductionProxyCompressionStats::OnCurrentDataUsageLoaded(
-    scoped_ptr<DataUsageBucket> data_usage) {
+    std::unique_ptr<DataUsageBucket> data_usage) {
   DCHECK(current_data_usage_load_status_ == LOADING);
 
   // Exit early if the pref was turned off before loading from storage
@@ -674,7 +666,7 @@ void DataReductionProxyCompressionStats::OnCurrentDataUsageLoaded(
   for (const auto& connection_usage : data_usage->connection_usage()) {
     for (const auto& site_usage : connection_usage.site_usage()) {
       data_usage_map_.set(site_usage.hostname(),
-                          make_scoped_ptr(new PerSiteDataUsage(site_usage)));
+                          base::WrapUnique(new PerSiteDataUsage(site_usage)));
     }
   }
 
@@ -846,6 +838,30 @@ void DataReductionProxyCompressionStats::RecordRequestSizePrefs(
           data_reduction_proxy::prefs::
               kDailyContentLengthWithDataReductionProxyEnabledVideo,
           "Net.DailyContentLength_DataReductionProxyEnabled_Video");
+      int64_t original_length_with_data_reduction_enabled_video = GetInt64(
+          data_reduction_proxy::prefs::
+              kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo);
+      if (original_length_with_data_reduction_enabled_video > 0) {
+        int64_t received_length_with_data_reduction_enabled_video =
+            GetInt64(data_reduction_proxy::prefs::
+                         kDailyContentLengthWithDataReductionProxyEnabledVideo);
+        int percent_data_reduction_proxy_enabled_video = 0;
+        // UMA percentage cannot be negative.
+        // The DataReductionProxy server will only serve optimized video content
+        // if the optimized content is smaller than the original content.
+        // TODO(ryansturm): Track daily data inflation percents here and
+        // elsewhere. http://crbug.com/595818
+        if (original_length_with_data_reduction_enabled_video >
+            received_length_with_data_reduction_enabled_video) {
+          percent_data_reduction_proxy_enabled_video =
+              100 * (original_length_with_data_reduction_enabled_video -
+                     received_length_with_data_reduction_enabled_video) /
+              original_length_with_data_reduction_enabled_video;
+        }
+        UMA_HISTOGRAM_PERCENTAGE(
+            "Net.DailyContentSavingPercent_DataReductionProxyEnabled_Video",
+            percent_data_reduction_proxy_enabled_video);
+      }
 
       RECORD_INT64PREF_TO_HISTOGRAM(
           data_reduction_proxy::prefs::
@@ -874,6 +890,30 @@ void DataReductionProxyCompressionStats::RecordRequestSizePrefs(
           data_reduction_proxy::prefs::
               kDailyContentLengthViaDataReductionProxyVideo,
           "Net.DailyContentLength_ViaDataReductionProxy_Video");
+      int64_t original_length_via_data_reduction_proxy_video =
+          GetInt64(data_reduction_proxy::prefs::
+                       kDailyOriginalContentLengthViaDataReductionProxyVideo);
+      if (original_length_via_data_reduction_proxy_video > 0) {
+        int64_t received_length_via_data_reduction_proxy_video =
+            GetInt64(data_reduction_proxy::prefs::
+                         kDailyContentLengthViaDataReductionProxyVideo);
+        int percent_via_data_reduction_proxy_video = 0;
+        // UMA percentage cannot be negative.
+        // The DataReductionProxy server will only serve optimized video content
+        // if the optimized content is smaller than the original content.
+        // TODO(ryansturm): Track daily data inflation percents here and
+        // elsewhere. http://crbug.com/595818
+        if (original_length_via_data_reduction_proxy_video >
+            received_length_via_data_reduction_proxy_video) {
+          percent_via_data_reduction_proxy_video =
+              100 * (original_length_via_data_reduction_proxy_video -
+                     received_length_via_data_reduction_proxy_video) /
+              original_length_via_data_reduction_proxy_video;
+        }
+        UMA_HISTOGRAM_PERCENTAGE(
+            "Net.DailyContentSavingPercent_ViaDataReductionProxy_Video",
+            percent_via_data_reduction_proxy_video);
+      }
 
       RECORD_INT64PREF_TO_HISTOGRAM(
           data_reduction_proxy::prefs::
@@ -1108,9 +1148,8 @@ void DataReductionProxyCompressionStats::RecordDataUsage(
   }
 
   std::string normalized_host = NormalizeHostname(data_usage_host);
-
   auto j = data_usage_map_.add(normalized_host,
-                               make_scoped_ptr(new PerSiteDataUsage()));
+                               base::WrapUnique(new PerSiteDataUsage()));
   PerSiteDataUsage* per_site_usage = j.first->second;
   per_site_usage->set_hostname(normalized_host);
   per_site_usage->set_original_size(per_site_usage->original_size() +
@@ -1125,7 +1164,7 @@ void DataReductionProxyCompressionStats::PersistDataUsage() {
   DCHECK(current_data_usage_load_status_ == LOADED);
 
   if (data_usage_map_is_dirty_) {
-    scoped_ptr<DataUsageBucket> data_usage_bucket(new DataUsageBucket());
+    std::unique_ptr<DataUsageBucket> data_usage_bucket(new DataUsageBucket());
     data_usage_bucket->set_last_updated_timestamp(
         data_usage_map_last_updated_.ToInternalValue());
     PerConnectionDataUsage* connection_usage =
@@ -1167,7 +1206,7 @@ void DataReductionProxyCompressionStats::GetHistoricalDataUsageImpl(
     // This use case is unlikely to occur in practice since current data usage
     // should have sufficient time to load before user tries to view data usage.
     get_data_usage_callback.Run(
-        make_scoped_ptr(new std::vector<DataUsageBucket>()));
+        base::WrapUnique(new std::vector<DataUsageBucket>()));
     return;
   }
 
@@ -1178,7 +1217,7 @@ void DataReductionProxyCompressionStats::GetHistoricalDataUsageImpl(
     data_usage_map_last_updated_ = base::Time();
 
     // Force the last bucket to be for the current interval.
-    scoped_ptr<DataUsageBucket> data_usage_bucket(new DataUsageBucket());
+    std::unique_ptr<DataUsageBucket> data_usage_bucket(new DataUsageBucket());
     data_usage_bucket->set_last_updated_timestamp(now.ToInternalValue());
     service_->StoreCurrentDataUsageBucket(std::move(data_usage_bucket));
   }

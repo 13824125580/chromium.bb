@@ -92,6 +92,15 @@ class AutofillField : public FormFieldData {
     return generation_type_;
   }
 
+  void set_form_classifier_outcome(
+      AutofillUploadContents::Field::FormClassifierOutcome outcome) {
+    form_classifier_outcome_ = outcome;
+  }
+  AutofillUploadContents::Field::FormClassifierOutcome form_classifier_outcome()
+      const {
+    return form_classifier_outcome_;
+  }
+
   // Set |field_data|'s value to |value|. Uses |field|, |address_language_code|,
   // and |app_locale| as hints when filling exceptional cases like phone number
   // values and <select> fields. Returns |true| if the field has been filled,
@@ -109,12 +118,11 @@ class AutofillField : public FormFieldData {
                                             const base::string16& number,
                                             const FormFieldData& field_data);
 
-  // Returns true if the select |field| contains an option that matches |value|.
-  // If the return value is true and |index| is non-NULL, write the index of the
-  // matching option into |index|.
-  static bool FindValueInSelectControl(const FormFieldData& field,
-                                       const base::string16& value,
-                                       size_t* index);
+  // Returns the index of the shortest entry in the given select field of which
+  // |value| is a substring. Returns -1 if no such entry exists.
+  static int FindShortestSubstringMatchInSelect(const base::string16& value,
+                                                bool ignore_whitespace,
+                                                const FormFieldData* field);
 
  private:
   // Whether the heuristics or server predict a credit card field.
@@ -163,6 +171,12 @@ class AutofillField : public FormFieldData {
 
   // The type of password generation event, if it happened.
   AutofillUploadContents::Field::PasswordGenerationType generation_type_;
+
+  // The outcome of HTML parsing based form classifier.
+  AutofillUploadContents::Field::FormClassifierOutcome form_classifier_outcome_;
+
+  // The value of the class attribute on the field, if present.
+  base::string16 css_classes_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillField);
 };

@@ -5,11 +5,12 @@
 #ifndef REMOTING_HOST_DESKTOP_ENVIRONMENT_H_
 #define REMOTING_HOST_DESKTOP_ENVIRONMENT_H_
 
+#include <cstdint>
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 
 namespace base {
@@ -40,11 +41,12 @@ class DesktopEnvironment {
 
   // Factory methods used to create audio/video capturers, event executor, and
   // screen controls object for a particular desktop environment.
-  virtual scoped_ptr<AudioCapturer> CreateAudioCapturer() = 0;
-  virtual scoped_ptr<InputInjector> CreateInputInjector() = 0;
-  virtual scoped_ptr<ScreenControls> CreateScreenControls() = 0;
-  virtual scoped_ptr<webrtc::DesktopCapturer> CreateVideoCapturer() = 0;
-  virtual scoped_ptr<webrtc::MouseCursorMonitor> CreateMouseCursorMonitor() = 0;
+  virtual std::unique_ptr<AudioCapturer> CreateAudioCapturer() = 0;
+  virtual std::unique_ptr<InputInjector> CreateInputInjector() = 0;
+  virtual std::unique_ptr<ScreenControls> CreateScreenControls() = 0;
+  virtual std::unique_ptr<webrtc::DesktopCapturer> CreateVideoCapturer() = 0;
+  virtual std::unique_ptr<webrtc::MouseCursorMonitor>
+  CreateMouseCursorMonitor() = 0;
 
   // Returns the set of all capabilities supported by |this|.
   virtual std::string GetCapabilities() const = 0;
@@ -52,6 +54,10 @@ class DesktopEnvironment {
   // Passes the final set of capabilities negotiated between the client and host
   // to |this|.
   virtual void SetCapabilities(const std::string& capabilities) = 0;
+
+  // Returns an id which identifies the current desktop session on Windows.
+  // Other platforms will always return the default value (UINT32_MAX).
+  virtual uint32_t GetDesktopSessionId() const = 0;
 };
 
 // Used to create |DesktopEnvironment| instances.
@@ -63,7 +69,7 @@ class DesktopEnvironmentFactory {
   // the desktop environment could not be created for any reason (if the curtain
   // failed to active for instance). |client_session_control| must outlive
   // the created desktop environment.
-  virtual scoped_ptr<DesktopEnvironment> Create(
+  virtual std::unique_ptr<DesktopEnvironment> Create(
       base::WeakPtr<ClientSessionControl> client_session_control) = 0;
 
   // Enables or disables the curtain mode.

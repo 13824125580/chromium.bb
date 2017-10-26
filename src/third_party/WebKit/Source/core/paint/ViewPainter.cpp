@@ -49,21 +49,21 @@ void ViewPainter::paintBoxDecorationBackground(const PaintInfo& paintInfo)
     //    culling and pre-blending optimization when possible.
 
     GraphicsContext& context = paintInfo.context;
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutView, DisplayItem::DocumentBackground, LayoutPoint()))
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutView, DisplayItem::DocumentBackground))
         return;
 
     // The background fill rect is the size of the LayoutView's main GraphicsLayer.
     IntRect backgroundRect = pixelSnappedIntRect(m_layoutView.layer()->boundingBoxForCompositing());
     const Document& document = m_layoutView.document();
     const FrameView& frameView = *m_layoutView.frameView();
-    bool isMainFrame = !document.ownerElement();
+    bool isMainFrame = document.isInMainFrame();
     bool paintsBaseBackground = isMainFrame && !frameView.isTransparent();
     bool shouldClearCanvas = paintsBaseBackground && (document.settings() && document.settings()->shouldClearDocumentBackground());
     Color baseBackgroundColor = paintsBaseBackground ? frameView.baseBackgroundColor() : Color();
     Color rootBackgroundColor = m_layoutView.style()->visitedDependentColor(CSSPropertyBackgroundColor);
     const LayoutObject* rootObject = document.documentElement() ? document.documentElement()->layoutObject() : nullptr;
 
-    LayoutObjectDrawingRecorder recorder(context, m_layoutView, DisplayItem::DocumentBackground, backgroundRect, LayoutPoint());
+    LayoutObjectDrawingRecorder recorder(context, m_layoutView, DisplayItem::DocumentBackground, backgroundRect);
 
     // Special handling for print economy mode.
     bool forceBackgroundToWhite = BoxPainter::shouldForceWhiteBackgroundForPrintEconomy(m_layoutView.styleRef(), document);
@@ -90,7 +90,7 @@ void ViewPainter::paintBoxDecorationBackground(const PaintInfo& paintInfo)
         LayoutPoint offset;
         rootLayer.convertToLayerCoords(nullptr, offset);
         transform.translate(offset.x(), offset.y());
-        transform.multiply(rootLayer.renderableTransform(paintInfo.globalPaintFlags()));
+        transform.multiply(rootLayer.renderableTransform(paintInfo.getGlobalPaintFlags()));
 
         if (!transform.isInvertible()) {
             backgroundRenderable = false;

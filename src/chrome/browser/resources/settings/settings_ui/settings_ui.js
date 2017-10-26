@@ -9,9 +9,6 @@
  * Example:
  *
  *    <settings-ui prefs="{{prefs}}"></settings-ui>
- *
- * @group Chrome Settings Elements
- * @element settings-ui
  */
 Polymer({
   is: 'settings-ui',
@@ -28,10 +25,41 @@ Polymer({
       observer: 'directionDelegateChanged_',
       type: Object,
     },
+
+    appealClosed_: {
+      type: Boolean,
+      value: function() {
+        return !!(sessionStorage.appealClosed_ || localStorage.appealClosed_);
+      },
+    },
+  },
+
+  listeners: {
+    'sideNav.iron-activate': 'onIronActivate_',
+  },
+
+  /** @private */
+  onCloseAppealTap_: function() {
+    sessionStorage.appealClosed_ = this.appealClosed_ = true;
+  },
+
+  /**
+   * @param {Event} event
+   * @private
+   */
+  onIronActivate_: function(event) {
+    if (event.detail.item.id != 'advancedPage')
+      this.$$('app-drawer').close();
+  },
+
+  /** @private */
+  onMenuButtonTap_: function() {
+    this.$$('app-drawer').toggle();
   },
 
   /** @private */
   directionDelegateChanged_: function() {
-    this.$.panel.rightDrawer = this.directionDelegate.isRtl();
+    this.$$('app-drawer').align = this.directionDelegate.isRtl() ?
+        'right' : 'left';
   },
 });

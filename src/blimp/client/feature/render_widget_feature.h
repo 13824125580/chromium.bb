@@ -8,11 +8,10 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 
 #include "base/containers/small_map.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "blimp/client/blimp_client_export.h"
 #include "blimp/net/blimp_message_processor.h"
 #include "blimp/net/input_message_generator.h"
 
@@ -38,11 +37,12 @@ namespace client {
 // notified of incoming messages. This class automatically attaches a specific
 // id so that the engine can drop stale RenderWidget related messages after it
 // sends a RenderWidgetMessage::INITIALIZE message.
-class BLIMP_CLIENT_EXPORT RenderWidgetFeature : public BlimpMessageProcessor {
+class RenderWidgetFeature : public BlimpMessageProcessor {
  public:
   // A delegate to be notified of specific RenderWidget related incoming events.
   class RenderWidgetFeatureDelegate {
    public:
+    virtual ~RenderWidgetFeatureDelegate() {}
     virtual void OnRenderWidgetCreated(int render_widget_id) = 0;
 
     // Called when the engine's RenderWidget has changed for a particular
@@ -56,7 +56,7 @@ class BLIMP_CLIENT_EXPORT RenderWidgetFeature : public BlimpMessageProcessor {
     // be sent to the client's RemoteChannel of the compositor.
     virtual void OnCompositorMessageReceived(
         int render_widget_id,
-        scoped_ptr<cc::proto::CompositorMessage> message) = 0;
+        std::unique_ptr<cc::proto::CompositorMessage> message) = 0;
   };
 
   RenderWidgetFeature();
@@ -65,12 +65,12 @@ class BLIMP_CLIENT_EXPORT RenderWidgetFeature : public BlimpMessageProcessor {
   // Set the BlimpMessageProcessor that will be used to send BlimpMessage::INPUT
   // messages to the engine.
   void set_outgoing_input_message_processor(
-      scoped_ptr<BlimpMessageProcessor> processor);
+      std::unique_ptr<BlimpMessageProcessor> processor);
 
   // Set the BlimpMessageProcessor that will be used to send
   // BlimpMessage::COMPOSITOR messages to the engine.
   void set_outgoing_compositor_message_processor(
-      scoped_ptr<BlimpMessageProcessor> processor);
+      std::unique_ptr<BlimpMessageProcessor> processor);
 
   // Sends a WebGestureEvent for |tab_id| to the engine.
   void SendWebGestureEvent(const int tab_id,
@@ -89,11 +89,11 @@ class BLIMP_CLIENT_EXPORT RenderWidgetFeature : public BlimpMessageProcessor {
   virtual void SetDelegate(int tab_id, RenderWidgetFeatureDelegate* delegate);
   virtual void RemoveDelegate(const int tab_id);
 
- private:
   // BlimpMessageProcessor implementation.
-  void ProcessMessage(scoped_ptr<BlimpMessage> message,
+  void ProcessMessage(std::unique_ptr<BlimpMessage> message,
                       const net::CompletionCallback& callback) override;
 
+ private:
   void ProcessRenderWidgetMessage(
       RenderWidgetFeatureDelegate* delegate,
       const RenderWidgetMessage& message);
@@ -112,10 +112,10 @@ class BLIMP_CLIENT_EXPORT RenderWidgetFeature : public BlimpMessageProcessor {
   InputMessageGenerator input_message_generator_;
 
   // Used to send BlimpMessage::INPUT type messages to the engine.
-  scoped_ptr<BlimpMessageProcessor> outgoing_input_message_processor_;
+  std::unique_ptr<BlimpMessageProcessor> outgoing_input_message_processor_;
 
   // Used to send BlimpMessage::COMPOSITOR messages to the engine.
-  scoped_ptr<BlimpMessageProcessor> outgoing_compositor_message_processor_;
+  std::unique_ptr<BlimpMessageProcessor> outgoing_compositor_message_processor_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetFeature);
 };

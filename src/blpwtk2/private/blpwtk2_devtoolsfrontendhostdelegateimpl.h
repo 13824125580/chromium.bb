@@ -25,7 +25,6 @@
 
 #include <blpwtk2_config.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <base/memory/weak_ptr.h>
 #include <base/values.h>
 #include <content/public/browser/web_contents_observer.h>
@@ -82,7 +81,7 @@ class DevToolsFrontendHostDelegateImpl
   private:
     content::WebContents* d_inspectedContents;
     scoped_refptr<content::DevToolsAgentHost> d_agentHost;
-    scoped_ptr<content::DevToolsFrontendHost> d_frontendHost;
+    std::unique_ptr<content::DevToolsFrontendHost> d_frontendHost;
     using PendingRequestsMap = std::map<const net::URLFetcher*, int>;
     PendingRequestsMap d_pendingRequests;
     base::DictionaryValue d_preferences;

@@ -2,21 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/extension_install_prompt.h"
+
 #include <stddef.h>
 
 #include <utility>
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 #include "chrome/browser/extensions/extension_service_test_with_install.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/test/base/testing_profile.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_web_contents_factory.h"
+#include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/image_loader.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -42,7 +46,7 @@ void VerifyPromptIconCallback(
     const SkBitmap& expected_bitmap,
     ExtensionInstallPromptShowParams* params,
     const ExtensionInstallPrompt::DoneCallback& done_callback,
-    scoped_ptr<ExtensionInstallPrompt::Prompt> prompt) {
+    std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt) {
   EXPECT_TRUE(gfx::BitmapsAreEqual(prompt->icon().AsBitmap(), expected_bitmap));
   quit_closure.Run();
 }
@@ -53,7 +57,7 @@ void VerifyPromptPermissionsCallback(
     size_t withheld_permissions_count,
     ExtensionInstallPromptShowParams* params,
     const ExtensionInstallPrompt::DoneCallback& done_callback,
-    scoped_ptr<ExtensionInstallPrompt::Prompt> install_prompt) {
+    std::unique_ptr<ExtensionInstallPrompt::Prompt> install_prompt) {
   ASSERT_TRUE(install_prompt.get());
   EXPECT_EQ(regular_permissions_count,
             install_prompt->GetPermissionCount(
@@ -88,7 +92,7 @@ class ExtensionInstallPromptUnitTest : public testing::Test {
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstallPromptUnitTest);
 };
@@ -98,16 +102,17 @@ class ExtensionInstallPromptUnitTest : public testing::Test {
 TEST_F(ExtensionInstallPromptUnitTest, PromptShowsPermissionWarnings) {
   APIPermissionSet api_permissions;
   api_permissions.insert(APIPermission::kTab);
-  scoped_ptr<const PermissionSet> permission_set(
+  std::unique_ptr<const PermissionSet> permission_set(
       new PermissionSet(api_permissions, ManifestPermissionSet(),
                         URLPatternSet(), URLPatternSet()));
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "foo")
-                                     .Set("version", "1.0")
-                                     .Set("manifest_version", 2)
-                                     .Set("description", "Random Ext")))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "foo")
+                           .Set("version", "1.0")
+                           .Set("manifest_version", 2)
+                           .Set("description", "Random Ext")
+                           .Build())
           .Build();
 
   content::TestWebContentsFactory factory;
@@ -115,7 +120,7 @@ TEST_F(ExtensionInstallPromptUnitTest, PromptShowsPermissionWarnings) {
   base::RunLoop run_loop;
   prompt.ShowDialog(
       ExtensionInstallPrompt::DoneCallback(), extension.get(), nullptr,
-      make_scoped_ptr(new ExtensionInstallPrompt::Prompt(
+      base::WrapUnique(new ExtensionInstallPrompt::Prompt(
           ExtensionInstallPrompt::PERMISSIONS_PROMPT)),
       std::move(permission_set),
       base::Bind(&VerifyPromptPermissionsCallback, run_loop.QuitClosure(),
@@ -132,16 +137,17 @@ TEST_F(ExtensionInstallPromptUnitTest, PromptShowsWithheldPermissions) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
           .SetManifest(
-              std::move(DictionaryBuilder()
-                            .Set("name", "foo")
-                            .Set("version", "1.0")
-                            .Set("manifest_version", 2)
-                            .Set("description", "Random Ext")
-                            .Set("permissions",
-                                 std::move(ListBuilder()
-                                               .Append("http://*/*")
-                                               .Append("http://www.google.com/")
-                                               .Append("tabs")))))
+              DictionaryBuilder()
+                  .Set("name", "foo")
+                  .Set("version", "1.0")
+                  .Set("manifest_version", 2)
+                  .Set("description", "Random Ext")
+                  .Set("permissions", ListBuilder()
+                                          .Append("http://*/*")
+                                          .Append("http://www.google.com/")
+                                          .Append("tabs")
+                                          .Build())
+                  .Build())
           .Build();
 
   content::TestWebContentsFactory factory;
@@ -162,23 +168,23 @@ TEST_F(ExtensionInstallPromptUnitTest,
        DelegatedPromptShowsOptionalPermissions) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(
-              DictionaryBuilder()
-                  .Set("name", "foo")
-                  .Set("version", "1.0")
-                  .Set("manifest_version", 2)
-                  .Set("description", "Random Ext")
-                  .Set("permissions",
-                       std::move(ListBuilder().Append("clipboardRead")))
-                  .Set("optional_permissions",
-                       std::move(ListBuilder().Append("tabs")))))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "foo")
+                           .Set("version", "1.0")
+                           .Set("manifest_version", 2)
+                           .Set("description", "Random Ext")
+                           .Set("permissions",
+                                ListBuilder().Append("clipboardRead").Build())
+                           .Set("optional_permissions",
+                                ListBuilder().Append("tabs").Build())
+                           .Build())
           .Build();
 
   content::TestWebContentsFactory factory;
   ExtensionInstallPrompt prompt(factory.CreateWebContents(profile()));
   base::RunLoop run_loop;
 
-  scoped_ptr<ExtensionInstallPrompt::Prompt> sub_prompt(
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> sub_prompt(
       new ExtensionInstallPrompt::Prompt(
           ExtensionInstallPrompt::DELEGATED_PERMISSIONS_PROMPT));
   sub_prompt->set_delegated_username("Username");
@@ -215,14 +221,13 @@ TEST_F(ExtensionInstallPromptTestWithService, ExtensionInstallPromptIconsTest) {
           base::Bind(&SetImage, &image, image_loop.QuitClosure()));
   image_loop.Run();
   ASSERT_FALSE(image.IsEmpty());
-  content::TestWebContentsFactory factory;
-  content::WebContents* web_contents =
-      factory.CreateWebContents(browser_context());
+  std::unique_ptr<content::WebContents> web_contents(
+      content::WebContentsTester::CreateTestWebContents(browser_context(),
+                                                        nullptr));
   {
-    ExtensionInstallPrompt prompt(web_contents);
+    ExtensionInstallPrompt prompt(web_contents.get());
     base::RunLoop run_loop;
-    prompt.ShowDialog(ExtensionInstallPrompt::DoneCallback(),
-                      extension,
+    prompt.ShowDialog(ExtensionInstallPrompt::DoneCallback(), extension,
                       nullptr,  // Force an icon fetch.
                       base::Bind(&VerifyPromptIconCallback,
                                  run_loop.QuitClosure(), image.AsBitmap()));
@@ -230,7 +235,7 @@ TEST_F(ExtensionInstallPromptTestWithService, ExtensionInstallPromptIconsTest) {
   }
 
   {
-    ExtensionInstallPrompt prompt(web_contents);
+    ExtensionInstallPrompt prompt(web_contents.get());
     base::RunLoop run_loop;
     gfx::ImageSkia app_icon = util::GetDefaultAppIcon();
     prompt.ShowDialog(ExtensionInstallPrompt::DoneCallback(),

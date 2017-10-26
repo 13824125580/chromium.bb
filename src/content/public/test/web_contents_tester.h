@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "content/public/browser/site_instance.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
@@ -14,9 +15,10 @@ class GURL;
 namespace content {
 
 class BrowserContext;
+class NavigationData;
+class NavigationHandle;
 class RenderFrameHost;
 class RenderViewHost;
-class SiteInstance;
 class WebContents;
 struct Referrer;
 
@@ -55,7 +57,7 @@ class WebContentsTester {
   // Creates a WebContents enabled for testing.
   static WebContents* CreateTestWebContents(
       BrowserContext* browser_context,
-      SiteInstance* instance);
+      scoped_refptr<SiteInstance> instance);
 
   // Simulates the appropriate RenderView (pending if any, current otherwise)
   // sending a navigate notification for the NavigationController pending entry.
@@ -116,6 +118,11 @@ class WebContentsTester {
                                            const GURL& url,
                                            const Referrer& referrer,
                                            ui::PageTransition transition) = 0;
+
+  // Sets NavgationData on |navigation_handle|.
+  virtual void SetNavigationData(
+      NavigationHandle* navigation_handle,
+      std::unique_ptr<NavigationData> navigation_data) = 0;
 
   // Returns headers that were passed in the previous SaveFrameWithHeaders(...)
   // call.

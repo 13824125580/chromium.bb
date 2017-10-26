@@ -32,16 +32,16 @@ UIEvent::UIEvent()
 }
 
 // TODO(lanwei): Will add sourceCapabilities to all the subclass of UIEvent later, see https://crbug.com/476530.
-UIEvent::UIEvent(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, PassRefPtrWillBeRawPtr<AbstractView> viewArg, int detailArg, InputDeviceCapabilities* sourceCapabilitiesArg)
-    : Event(eventType, canBubbleArg, cancelableArg)
+UIEvent::UIEvent(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, ComposedMode composedMode, AbstractView* viewArg, int detailArg, InputDeviceCapabilities* sourceCapabilitiesArg)
+    : Event(eventType, canBubbleArg, cancelableArg, composedMode)
     , m_view(viewArg)
     , m_detail(detailArg)
     , m_sourceCapabilities(sourceCapabilitiesArg)
 {
 }
 
-UIEvent::UIEvent(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, double platformTimeStamp, PassRefPtrWillBeRawPtr<AbstractView> viewArg, int detailArg, InputDeviceCapabilities* sourceCapabilitiesArg)
-    : Event(eventType, canBubbleArg, cancelableArg, platformTimeStamp)
+UIEvent::UIEvent(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, ComposedMode composedMode, double platformTimeStamp, AbstractView* viewArg, int detailArg, InputDeviceCapabilities* sourceCapabilitiesArg)
+    : Event(eventType, canBubbleArg, cancelableArg, composedMode, platformTimeStamp)
     , m_view(viewArg)
     , m_detail(detailArg)
     , m_sourceCapabilities(sourceCapabilitiesArg)
@@ -60,17 +60,17 @@ UIEvent::~UIEvent()
 {
 }
 
-void UIEvent::initUIEvent(const AtomicString& typeArg, bool canBubbleArg, bool cancelableArg, PassRefPtrWillBeRawPtr<AbstractView> viewArg, int detailArg)
+void UIEvent::initUIEvent(const AtomicString& typeArg, bool canBubbleArg, bool cancelableArg, AbstractView* viewArg, int detailArg)
 {
-    initUIEventInternal(typeArg, canBubbleArg, cancelableArg, viewArg, detailArg, nullptr);
+    initUIEventInternal(typeArg, canBubbleArg, cancelableArg, nullptr, viewArg, detailArg, nullptr);
 }
 
-void UIEvent::initUIEventInternal(const AtomicString& typeArg, bool canBubbleArg, bool cancelableArg, PassRefPtrWillBeRawPtr<AbstractView> viewArg, int detailArg, InputDeviceCapabilities* sourceCapabilitiesArg)
+void UIEvent::initUIEventInternal(const AtomicString& typeArg, bool canBubbleArg, bool cancelableArg, EventTarget* relatedTarget, AbstractView* viewArg, int detailArg, InputDeviceCapabilities* sourceCapabilitiesArg)
 {
-    if (dispatched())
+    if (isBeingDispatched())
         return;
 
-    initEvent(typeArg, canBubbleArg, cancelableArg);
+    initEvent(typeArg, canBubbleArg, cancelableArg, relatedTarget);
 
     m_view = viewArg;
     m_detail = detailArg;

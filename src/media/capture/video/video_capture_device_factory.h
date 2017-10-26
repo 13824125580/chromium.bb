@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
-#define MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
+#ifndef MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_FACTORY_H_
+#define MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_FACTORY_H_
 
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
@@ -15,21 +15,22 @@ namespace media {
 // devices in the different platforms. VCDFs are created by MediaStreamManager
 // on IO thread and plugged into VideoCaptureManager, who owns and operates them
 // in Device Thread (a.k.a. Audio Thread).
-class MEDIA_EXPORT VideoCaptureDeviceFactory {
+class CAPTURE_EXPORT VideoCaptureDeviceFactory {
  public:
-  static scoped_ptr<VideoCaptureDeviceFactory> CreateFactory(
+  static std::unique_ptr<VideoCaptureDeviceFactory> CreateFactory(
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
 
   VideoCaptureDeviceFactory();
   virtual ~VideoCaptureDeviceFactory();
 
   // Creates a VideoCaptureDevice object. Returns NULL if something goes wrong.
-  virtual scoped_ptr<VideoCaptureDevice> Create(
+  virtual std::unique_ptr<VideoCaptureDevice> Create(
       const VideoCaptureDevice::Name& device_name) = 0;
 
   // Asynchronous version of GetDeviceNames calling back to |callback|.
-  virtual void EnumerateDeviceNames(const base::Callback<
-      void(scoped_ptr<media::VideoCaptureDevice::Names>)>& callback);
+  virtual void EnumerateDeviceNames(
+      const base::Callback<
+          void(std::unique_ptr<media::VideoCaptureDevice::Names>)>& callback);
 
   // Gets the supported formats of a particular device attached to the system.
   // This method should be called before allocating or starting a device. In
@@ -55,4 +56,4 @@ class MEDIA_EXPORT VideoCaptureDeviceFactory {
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
+#endif  // MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_FACTORY_H_

@@ -28,8 +28,8 @@ source_set("browser") {
     "translate_manager.h",
     "translate_prefs.cc",
     "translate_prefs.h",
-    "translate_script.cc",
-    "translate_script.h",
+#    "translate_script.cc",
+#    "translate_script.h",
     "translate_step.h",
     "translate_ui_delegate.cc",
     "translate_ui_delegate.h",
@@ -49,6 +49,7 @@ source_set("browser") {
     "//components/resources:components_resources",
     "//components/strings",
     "//components/translate/core/common",
+    "//components/variations",
     "//google_apis",
     "//net",
     "//third_party/icu",
@@ -72,6 +73,7 @@ source_set("browser") {
   }
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -80,20 +82,22 @@ source_set("unit_tests") {
     "mock_translate_driver.h",
     "translate_browser_metrics_unittest.cc",
     "translate_language_list_unittest.cc",
+    "translate_manager_unittest.cc",
     "translate_prefs_unittest.cc",
     "translate_script_unittest.cc",
+    "translate_ui_delegate_unittest.cc",
   ]
   deps = [
     ":browser",
     "//base",
+    "//components/infobars/core",
     "//components/pref_registry:test_support",
     "//components/prefs",
     "//components/translate/core/common",
+    "//components/variations",
     "//net:test_support",
     "//testing/gtest",
   ]
-  if (!use_aura) {
-    sources += [ "translate_ui_delegate_unittest.cc" ]
-    deps += [ "//components/infobars/core" ]
-  }
 }
+}
+

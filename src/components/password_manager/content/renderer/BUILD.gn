@@ -10,16 +10,18 @@ static_library("renderer") {
 
   deps = [
     "//base",
-    "//components/password_manager/content/common",
+    "//components/password_manager/content/public/cpp",
     "//components/password_manager/core/common",
     "//components/strings",
+    "//content/public/common",
     "//content/public/renderer",
-    "//ipc",
+    "//services/shell/public/cpp",
     "//third_party/WebKit/public:blink",
     "//url",
   ]
 }
 
+if (false) {
 source_set("browser_tests") {
   testonly = true
   sources = [
@@ -28,11 +30,13 @@ source_set("browser_tests") {
 
   deps = [
     ":renderer",
-    "//components/password_manager/content/common",
+    "//content/public/renderer",
     "//content/test:test_support",
-    "//ipc:test_support",
+    "//services/shell/public/cpp",
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/WebKit/public:blink",
   ]
 }
+}
+

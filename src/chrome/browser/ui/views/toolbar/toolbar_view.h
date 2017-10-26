@@ -5,11 +5,12 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TOOLBAR_TOOLBAR_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_TOOLBAR_TOOLBAR_VIEW_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "chrome/browser/command_observer.h"
-#include "chrome/browser/ui/toolbar/app_menu_badge_controller.h"
+#include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
 #include "chrome/browser/ui/toolbar/back_forward_menu_model.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "components/prefs/pref_member.h"
@@ -41,7 +42,7 @@ class ToolbarView : public views::AccessiblePaneView,
                     public CommandObserver,
                     public views::ButtonListener,
                     public views::ViewTargeterDelegate,
-                    public AppMenuBadgeController::Delegate {
+                    public AppMenuIconController::Delegate {
  public:
   // The view class name.
   static const char kViewClassName[];
@@ -95,8 +96,8 @@ class ToolbarView : public views::AccessiblePaneView,
   LocationBarView* location_bar() const { return location_bar_; }
   AppMenuButton* app_menu_button() const { return app_menu_button_; }
   HomeButton* home_button() const { return home_; }
-  AppMenuBadgeController* app_menu_badge_controller() {
-    return &badge_controller_;
+  AppMenuIconController* app_menu_icon_controller() {
+    return &app_menu_icon_controller_;
   }
 
   // AccessiblePaneView:
@@ -112,8 +113,6 @@ class ToolbarView : public views::AccessiblePaneView,
   content::WebContents* GetWebContents() override;
   ToolbarModel* GetToolbarModel() override;
   const ToolbarModel* GetToolbarModel() const override;
-  views::Widget* CreateViewsBubble(
-      views::BubbleDelegateView* bubble_delegate) override;
   PageActionImageView* CreatePageActionImageView(
       LocationBarView* owner,
       ExtensionAction* action) override;
@@ -121,7 +120,7 @@ class ToolbarView : public views::AccessiblePaneView,
       override;
   void ShowWebsiteSettings(
       content::WebContents* web_contents,
-      const GURL& url,
+      const GURL& virtual_url,
       const security_state::SecurityStateModel::SecurityInfo& security_info)
       override;
 
@@ -165,10 +164,10 @@ class ToolbarView : public views::AccessiblePaneView,
   bool DoesIntersectRect(const views::View* target,
                          const gfx::Rect& rect) const override;
 
-  // AppMenuBadgeController::Delegate:
-  void UpdateBadgeSeverity(AppMenuBadgeController::BadgeType type,
-                           AppMenuIconPainter::Severity severity,
-                           bool animate) override;
+  // AppMenuIconController::Delegate:
+  void UpdateSeverity(AppMenuIconController::IconType type,
+                      AppMenuIconPainter::Severity severity,
+                      bool animate) override;
 
   // Used to avoid duplicating the near-identical logic of
   // ToolbarView::GetPreferredSize() and ToolbarView::GetMinimumSize(). These
@@ -209,7 +208,7 @@ class ToolbarView : public views::AccessiblePaneView,
 
   Browser* browser_;
 
-  AppMenuBadgeController badge_controller_;
+  AppMenuIconController app_menu_icon_controller_;
 
   // Controls whether or not a home button should be shown on the toolbar.
   BooleanPrefMember show_home_button_;

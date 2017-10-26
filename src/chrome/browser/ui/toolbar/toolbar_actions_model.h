@@ -29,6 +29,7 @@ class ToolbarActionViewController;
 
 namespace extensions {
 class ExtensionActionManager;
+class ExtensionMessageBubbleController;
 class ExtensionRegistry;
 class ExtensionSet;
 }
@@ -156,7 +157,7 @@ class ToolbarActionsModel
   ScopedVector<ToolbarActionViewController> CreateActions(
       Browser* browser,
       ToolbarActionsBar* bar);
-  scoped_ptr<ToolbarActionViewController> CreateActionForItem(
+  std::unique_ptr<ToolbarActionViewController> CreateActionForItem(
       Browser* browser,
       ToolbarActionsBar* bar,
       const ToolbarItem& item);
@@ -171,8 +172,10 @@ class ToolbarActionsModel
 
   bool is_highlighting() const { return highlight_type_ != HIGHLIGHT_NONE; }
   HighlightType highlight_type() const { return highlight_type_; }
-  bool highlighting_for_toolbar_redesign() const {
-    return highlighting_for_toolbar_redesign_;
+
+  bool has_active_bubble() const { return has_active_bubble_; }
+  void set_has_active_bubble(bool has_active_bubble) {
+    has_active_bubble_ = has_active_bubble;
   }
 
   void SetActionVisibility(const std::string& action_id, bool visible);
@@ -196,9 +199,10 @@ class ToolbarActionsModel
   // number of visible icons will be reset to what it was before highlighting.
   void StopHighlighting();
 
-  // Returns true if the toolbar model is running with the redesign and is
-  // showing new icons as a result.
-  bool RedesignIsShowingNewIcons() const;
+  // Gets the ExtensionMessageBubbleController that should be shown for this
+  // profile, if any.
+  std::unique_ptr<extensions::ExtensionMessageBubbleController>
+  GetExtensionMessageBubbleController(Browser* browser);
 
  private:
   // Callback when actions are ready.
@@ -288,7 +292,8 @@ class ToolbarActionsModel
   extensions::ExtensionActionManager* extension_action_manager_;
 
   // The ComponentMigrationHelper.
-  scoped_ptr<extensions::ComponentMigrationHelper> component_migration_helper_;
+  std::unique_ptr<extensions::ComponentMigrationHelper>
+      component_migration_helper_;
 
   // True if we've handled the initial EXTENSIONS_READY notification.
   bool actions_initialized_;
@@ -306,10 +311,6 @@ class ToolbarActionsModel
   // highlight).
   HighlightType highlight_type_;
 
-  // Whether or not the toolbar model is actively highlighting for the toolbar
-  // redesign.
-  bool highlighting_for_toolbar_redesign_;
-
   // A list of action ids ordered to correspond with their last known
   // positions.
   std::vector<std::string> last_known_positions_;
@@ -321,6 +322,10 @@ class ToolbarActionsModel
   // TODO(devlin): Make a new variable to indicate that all icons should be
   // visible, instead of overloading this one.
   int visible_icon_count_;
+
+  // Whether or not there is an active ExtensionMessageBubbleController
+  // associated with the profile. There should only be one at a time.
+  bool has_active_bubble_;
 
   ScopedObserver<extensions::ExtensionActionAPI,
                  extensions::ExtensionActionAPI::Observer>

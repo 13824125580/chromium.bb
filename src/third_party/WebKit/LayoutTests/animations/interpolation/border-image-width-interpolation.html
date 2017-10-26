@@ -23,7 +23,7 @@
 <script>
 assertInterpolation({
   property: 'border-image-width',
-  from: '',
+  from: neutralKeyframe,
   to: '20px',
 }, [
   {at: -0.3, is:   '7px'},
@@ -142,6 +142,24 @@ assertInterpolation({
   {at: 1.5,  is: 'calc(-5px + 30%)'}, // Should be parsed as -5px + 36px = 31px
 ]);
 
+assertInterpolation({
+  property: 'border-image-width',
+  from: '10px auto auto 20',
+  to: '110px auto auto 120'
+}, [
+  {at: -0.3, is: '  0px auto auto   0'},
+  {at: 0,    is: ' 10px auto auto  20'},
+  {at: 0.3,  is: ' 40px auto auto  50'},
+  {at: 0.6,  is: ' 70px auto auto  80'},
+  {at: 1,    is: '110px auto auto 120'},
+  {at: 1.5,  is: '160px auto auto 170'},
+]);
+
+assertNoInterpolation({
+  property: 'border-image-width',
+  from: '10px auto auto 20',
+  to: '110px auto 120 auto'
+});
 assertNoInterpolation({
   property: 'border-image-width',
   from: '10px',
@@ -158,8 +176,8 @@ assertNoInterpolation({
   to: '20'
 });
 assertNoInterpolation({
-  property: 'border-image-width'
- , from: '10',
+  property: 'border-image-width',
+  from: '10',
   to: '20%'
 });
 </script>

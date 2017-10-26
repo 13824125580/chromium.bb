@@ -3,14 +3,17 @@
 // found in the LICENSE file.
 
 #include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -88,18 +91,18 @@ class MockTranslateBubbleFactory : public TranslateBubbleFactory {
         translate::TranslateDownloadManager::GetLanguageCode(
             g_browser_process->GetApplicationLocale());
 
-    scoped_ptr<translate::TranslateUIDelegate> ui_delegate(
+    std::unique_ptr<translate::TranslateUIDelegate> ui_delegate(
         new translate::TranslateUIDelegate(
             chrome_translate_client->GetTranslateManager()->GetWeakPtr(),
-            source_language,
-            target_language));
+            source_language, target_language));
     model_.reset(new TranslateBubbleModelImpl(step, std::move(ui_delegate)));
   }
 
-  bool DismissBubble(bool explicitly_closed) {
+  bool DismissBubble() {
     if (!model_)
       return false;
-    model_->TranslationDeclined(explicitly_closed);
+    model_->DeclineTranslation();
+    model_->OnBubbleClosing();
     model_.reset();
     return true;
   }
@@ -107,7 +110,7 @@ class MockTranslateBubbleFactory : public TranslateBubbleFactory {
   TranslateBubbleModel* model() { return model_.get(); }
 
  private:
-  scoped_ptr<TranslateBubbleModel> model_;
+  std::unique_ptr<TranslateBubbleModel> model_;
 
   DISALLOW_COPY_AND_ASSIGN(MockTranslateBubbleFactory);
 };
@@ -176,7 +179,7 @@ class TranslateManagerRenderViewHostTest
 
   bool CloseTranslateUi() {
     if (bubble_factory_) {
-      return bubble_factory_->DismissBubble(true);
+      return bubble_factory_->DismissBubble();
     } else {
       return CloseTranslateInfoBar();
     }
@@ -260,14 +263,14 @@ class TranslateManagerRenderViewHostTest
         ChromeFrameMsg_TranslatePage::ID);
     if (!message)
       return false;
-    base::Tuple<int, std::string, std::string, std::string> translate_param;
+    std::tuple<int, std::string, std::string, std::string> translate_param;
     ChromeFrameMsg_TranslatePage::Read(message, &translate_param);
     // Ignore get<0>(translate_param) which is the page seq no.
     // Ignore get<1>(translate_param) which is the script injected in the page.
     if (original_lang)
-      *original_lang = base::get<2>(translate_param);
+      *original_lang = std::get<2>(translate_param);
     if (target_lang)
-      *target_lang = base::get<3>(translate_param);
+      *target_lang = std::get<3>(translate_param);
     return true;
   }
 
@@ -313,7 +316,7 @@ class TranslateManagerRenderViewHostTest
   // returns true.  Returns false otherwise.
   bool DenyTranslation() {
     if (bubble_factory_.get()) {
-      return bubble_factory_->DismissBubble(true);
+      return bubble_factory_->DismissBubble();
     } else {
       translate::TranslateInfoBarDelegate* infobar = GetTranslateInfoBar();
       if (!infobar)
@@ -340,7 +343,7 @@ class TranslateManagerRenderViewHostTest
 
     // The TranslateManager class processes the navigation entry committed
     // notification in a posted task; process that task.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   TestRenderViewContextMenu* CreateContextMenu() {
@@ -488,7 +491,7 @@ class TranslateManagerRenderViewHostTest
   // WARNING: the pointers point to deleted objects, use only for comparison.
   std::set<infobars::InfoBarDelegate*> removed_infobars_;
 
-  scoped_ptr<MockTranslateBubbleFactory> bubble_factory_;
+  std::unique_ptr<MockTranslateBubbleFactory> bubble_factory_;
   DISALLOW_COPY_AND_ASSIGN(TranslateManagerRenderViewHostTest);
 };
 
@@ -730,7 +733,7 @@ TEST_F(TranslateManagerRenderViewHostTest, TranslateUnknownLanguage) {
   ASSERT_TRUE(GetTranslateInfoBar() == NULL);
 
   // Translate the page anyway throught the context menu.
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
   menu->Init();
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_TRANSLATE, 0);
 
@@ -938,7 +941,7 @@ TEST_F(TranslateManagerRenderViewHostTest, ReloadFromLocationBar) {
 
   // The TranslateManager class processes the navigation entry committed
   // notification in a posted task; process that task.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(CloseTranslateUi());
 }
 
@@ -1149,7 +1152,7 @@ TEST_F(TranslateManagerRenderViewHostTest, UnsupportedUILanguage) {
   EXPECT_TRUE(GetTranslateInfoBar() == NULL);
 
   // And the context menu option should be disabled too.
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
   menu->Init();
   EXPECT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_TRANSLATE));
   EXPECT_FALSE(menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_TRANSLATE));
@@ -1245,7 +1248,7 @@ TEST_F(TranslateManagerRenderViewHostTest, NeverTranslateLanguagePref) {
   registrar.Init(prefs);
   registrar.Add(translate::TranslatePrefs::kPrefTranslateBlockedLanguages,
                 pref_callback_);
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(prefs));
   EXPECT_FALSE(translate_prefs->IsBlockedLanguage("fr"));
   translate::TranslateAcceptLanguages* accept_languages =
@@ -1302,7 +1305,7 @@ TEST_F(TranslateManagerRenderViewHostTest, NeverTranslateSitePref) {
   registrar.Init(prefs);
   registrar.Add(translate::TranslatePrefs::kPrefTranslateSiteBlacklist,
                 pref_callback_);
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(prefs));
   EXPECT_FALSE(translate_prefs->IsSiteBlacklisted(host));
   translate::TranslateAcceptLanguages* accept_languages =
@@ -1350,7 +1353,7 @@ TEST_F(TranslateManagerRenderViewHostTest, AlwaysTranslateLanguagePref) {
   registrar.Init(prefs);
   registrar.Add(translate::TranslatePrefs::kPrefTranslateWhitelists,
                 pref_callback_);
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(prefs));
   SetPrefObserverExpectation(
       translate::TranslatePrefs::kPrefTranslateWhitelists);
@@ -1412,7 +1415,7 @@ TEST_F(TranslateManagerRenderViewHostTest, ContextMenu) {
   GURL url("http://www.google.fr");
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(profile->GetPrefs()));
   translate_prefs->BlockLanguage("fr");
   translate_prefs->BlacklistSite(url.host());
@@ -1422,7 +1425,7 @@ TEST_F(TranslateManagerRenderViewHostTest, ContextMenu) {
   // Simulate navigating to a page in French. The translate menu should show but
   // should only be enabled when the page language has been received.
   NavigateAndCommit(url);
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
   menu->Init();
   EXPECT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_TRANSLATE));
   EXPECT_FALSE(menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_TRANSLATE));
@@ -1521,7 +1524,7 @@ TEST_F(TranslateManagerRenderViewHostTest, BeforeTranslateExtraButtons) {
 
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(profile->GetPrefs()));
   translate_prefs->ResetTranslationAcceptedCount("fr");
   translate_prefs->ResetTranslationDeniedCount("fr");
@@ -1605,7 +1608,7 @@ TEST_F(TranslateManagerRenderViewHostTest, NonTranslatablePage) {
   EXPECT_TRUE(GetTranslateInfoBar() == NULL);
 
   // The context menu is enabled to allow users to force translation.
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
   menu->Init();
   EXPECT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_TRANSLATE));
   EXPECT_TRUE(menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_TRANSLATE));
@@ -1628,7 +1631,7 @@ TEST_F(TranslateManagerRenderViewHostTest, ScriptExpires) {
   SimulateOnPageTranslated("fr", "en");
 
   // A task should have been posted to clear the script, run it.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Do another navigation and translation.
   SimulateNavigation(GURL("http://www.google.es"), "es", true);
@@ -1662,7 +1665,7 @@ TEST_F(TranslateManagerRenderViewHostTest, BubbleNormalTranslate) {
     return;
 
   MockTranslateBubbleFactory* factory = new MockTranslateBubbleFactory;
-  scoped_ptr<TranslateBubbleFactory> factory_ptr(factory);
+  std::unique_ptr<TranslateBubbleFactory> factory_ptr(factory);
   TranslateBubbleFactory::SetFactory(factory);
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
@@ -1705,7 +1708,7 @@ TEST_F(TranslateManagerRenderViewHostTest, BubbleTranslateScriptNotAvailable) {
     return;
 
   MockTranslateBubbleFactory* factory = new MockTranslateBubbleFactory;
-  scoped_ptr<TranslateBubbleFactory> factory_ptr(factory);
+  std::unique_ptr<TranslateBubbleFactory> factory_ptr(factory);
   TranslateBubbleFactory::SetFactory(factory);
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
@@ -1738,7 +1741,7 @@ TEST_F(TranslateManagerRenderViewHostTest, BubbleUnknownLanguage) {
     return;
 
   MockTranslateBubbleFactory* factory = new MockTranslateBubbleFactory;
-  scoped_ptr<TranslateBubbleFactory> factory_ptr(factory);
+  std::unique_ptr<TranslateBubbleFactory> factory_ptr(factory);
   TranslateBubbleFactory::SetFactory(factory);
 
   // Simulate navigating to a page ("und" is the string returned by the CLD for
@@ -1749,7 +1752,7 @@ TEST_F(TranslateManagerRenderViewHostTest, BubbleUnknownLanguage) {
   ASSERT_TRUE(factory->model() == NULL);
 
   // Translate the page anyway throught the context menu.
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
   menu->Init();
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_TRANSLATE, 0);
 

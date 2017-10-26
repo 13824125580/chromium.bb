@@ -4,9 +4,14 @@
 
 #include "device/bluetooth/bluetooth_discovery_filter.h"
 
+#include <memory>
+
+#include "device/bluetooth/bluetooth_common.h"
+
 namespace device {
 
-BluetoothDiscoveryFilter::BluetoothDiscoveryFilter(TransportMask transport) {
+BluetoothDiscoveryFilter::BluetoothDiscoveryFilter(
+    BluetoothTransport transport) {
   SetTransport(transport);
 }
 
@@ -45,13 +50,12 @@ void BluetoothDiscoveryFilter::SetPathloss(uint16_t pathloss) {
   *pathloss_ = pathloss;
 }
 
-BluetoothDiscoveryFilter::TransportMask BluetoothDiscoveryFilter::GetTransport()
-    const {
+BluetoothTransport BluetoothDiscoveryFilter::GetTransport() const {
   return transport_;
 }
 
-void BluetoothDiscoveryFilter::SetTransport(TransportMask transport) {
-  DCHECK(transport > 0 && transport < 4);
+void BluetoothDiscoveryFilter::SetTransport(BluetoothTransport transport) {
+  DCHECK(transport != BLUETOOTH_TRANSPORT_INVALID);
   transport_ = transport;
 }
 
@@ -94,16 +98,17 @@ void BluetoothDiscoveryFilter::CopyFrom(
     pathloss_.reset();
 }
 
-scoped_ptr<device::BluetoothDiscoveryFilter> BluetoothDiscoveryFilter::Merge(
+std::unique_ptr<device::BluetoothDiscoveryFilter>
+BluetoothDiscoveryFilter::Merge(
     const device::BluetoothDiscoveryFilter* filter_a,
     const device::BluetoothDiscoveryFilter* filter_b) {
-  scoped_ptr<BluetoothDiscoveryFilter> result;
+  std::unique_ptr<BluetoothDiscoveryFilter> result;
 
   if (!filter_a && !filter_b) {
     return result;
   }
 
-  result.reset(new BluetoothDiscoveryFilter(Transport::TRANSPORT_DUAL));
+  result.reset(new BluetoothDiscoveryFilter(BLUETOOTH_TRANSPORT_DUAL));
 
   if (!filter_a || !filter_b || filter_a->IsDefault() ||
       filter_b->IsDefault()) {
@@ -111,7 +116,8 @@ scoped_ptr<device::BluetoothDiscoveryFilter> BluetoothDiscoveryFilter::Merge(
   }
 
   // both filters are not empty, so they must have transport set.
-  result->SetTransport(filter_a->transport_ | filter_b->transport_);
+  result->SetTransport(static_cast<BluetoothTransport>(filter_a->transport_ |
+                                                       filter_b->transport_));
 
   // if both filters have uuids, them merge them. Otherwise uuids filter should
   // be left empty
@@ -170,7 +176,7 @@ bool BluetoothDiscoveryFilter::Equals(
 
 bool BluetoothDiscoveryFilter::IsDefault() const {
   return !(rssi_.get() || pathloss_.get() || uuids_.size() ||
-           transport_ != Transport::TRANSPORT_DUAL);
+           transport_ != BLUETOOTH_TRANSPORT_DUAL);
 }
 
 }  // namespace device

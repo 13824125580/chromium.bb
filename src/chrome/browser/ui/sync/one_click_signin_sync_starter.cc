@@ -9,16 +9,11 @@
 #include "base/metrics/histogram.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "components/prefs/pref_service.h"
-
-#if defined(ENABLE_CONFIGURATION_POLICY)
 #include "chrome/browser/policy/cloud/user_policy_signin_service.h"
 #include "chrome/browser/policy/cloud/user_policy_signin_service_factory.h"
-#endif
-
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_io_data.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
@@ -39,6 +34,7 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/signin/core/common/profile_management_switches.h"
@@ -88,12 +84,13 @@ OneClickSigninSyncStarter::OneClickSigninSyncStarter(
     const GURL& continue_url,
     Callback sync_setup_completed_callback)
     : content::WebContentsObserver(web_contents),
-      profile_(NULL),
+      profile_(nullptr),
       start_mode_(start_mode),
       confirmation_required_(confirmation_required),
       current_url_(current_url),
       continue_url_(continue_url),
       sync_setup_completed_callback_(sync_setup_completed_callback),
+      first_account_added_to_cookie_(false),
       weak_pointer_factory_(this) {
   DCHECK(profile);
   DCHECK(web_contents || continue_url.is_empty());
@@ -111,7 +108,7 @@ OneClickSigninSyncStarter::OneClickSigninSyncStarter(
 
 void OneClickSigninSyncStarter::OnBrowserRemoved(Browser* browser) {
   if (browser == browser_)
-    browser_ = NULL;
+    browser_ = nullptr;
 }
 
 OneClickSigninSyncStarter::~OneClickSigninSyncStarter() {
@@ -136,7 +133,7 @@ void OneClickSigninSyncStarter::Initialize(Profile* profile, Browser* browser) {
   // syncing until the user has finished any configuration.
   ProfileSyncService* profile_sync_service = GetProfileSyncService();
   if (profile_sync_service)
-    profile_sync_service->SetSetupInProgress(true);
+    sync_blocker_ = profile_sync_service->GetSetupInProgressHandle();
 
   // Make sure the syncing is requested, otherwise the SigninManager
   // will not be able to complete successfully.
@@ -150,7 +147,6 @@ void OneClickSigninSyncStarter::ConfirmSignin(const std::string& oauth_token) {
   // If this is a new signin (no account authenticated yet) try loading
   // policy for this user now, before any signed in services are initialized.
   if (!signin->IsAuthenticated()) {
-#if defined(ENABLE_CONFIGURATION_POLICY)
     policy::UserPolicySigninService* policy_service =
         policy::UserPolicySigninServiceFactory::GetForProfile(profile_);
     policy_service->RegisterForPolicy(
@@ -159,9 +155,6 @@ void OneClickSigninSyncStarter::ConfirmSignin(const std::string& oauth_token) {
         base::Bind(&OneClickSigninSyncStarter::OnRegisteredForPolicy,
                    weak_pointer_factory_.GetWeakPtr()));
     return;
-#else
-    ConfirmAndSignin();
-#endif
   } else {
     // The user is already signed in - just tell SigninManager to continue
     // with its re-auth flow.
@@ -169,10 +162,9 @@ void OneClickSigninSyncStarter::ConfirmSignin(const std::string& oauth_token) {
   }
 }
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
 OneClickSigninSyncStarter::SigninDialogDelegate::SigninDialogDelegate(
     base::WeakPtr<OneClickSigninSyncStarter> sync_starter)
-  : sync_starter_(sync_starter) {
+    : sync_starter_(sync_starter) {
 }
 
 OneClickSigninSyncStarter::SigninDialogDelegate::~SigninDialogDelegate() {
@@ -182,7 +174,7 @@ void OneClickSigninSyncStarter::SigninDialogDelegate::OnCancelSignin() {
   SetUserChoiceHistogram(SIGNIN_CHOICE_CANCEL);
   content::RecordAction(
       base::UserMetricsAction("Signin_EnterpriseAccountPrompt_Cancel"));
-  if (sync_starter_ != NULL)
+  if (sync_starter_)
     sync_starter_->CancelSigninAndDelete();
 }
 
@@ -191,7 +183,7 @@ void OneClickSigninSyncStarter::SigninDialogDelegate::OnContinueSignin() {
   content::RecordAction(
       base::UserMetricsAction("Signin_EnterpriseAccountPrompt_ImportData"));
 
-  if (sync_starter_ != NULL)
+  if (sync_starter_)
     sync_starter_->LoadPolicyWithCachedCredentials();
 }
 
@@ -200,7 +192,7 @@ void OneClickSigninSyncStarter::SigninDialogDelegate::OnSigninWithNewProfile() {
   content::RecordAction(
       base::UserMetricsAction("Signin_EnterpriseAccountPrompt_DontImportData"));
 
-  if (sync_starter_ != NULL)
+  if (sync_starter_)
     sync_starter_->CreateNewSignedInProfile();
 }
 
@@ -273,7 +265,7 @@ void OneClickSigninSyncStarter::CreateNewSignedInProfile() {
   // Create a new profile and have it call back when done so we can inject our
   // signin credentials.
   size_t icon_index = g_browser_process->profile_manager()->
-      GetProfileInfoCache().ChooseAvatarIconIndexForNewProfile();
+      GetProfileAttributesStorage().ChooseAvatarIconIndexForNewProfile();
   ProfileManager::CreateMultiProfileAsync(
       base::UTF8ToUTF16(signin->GetUsernameForAuthInProgress()),
       profiles::GetDefaultAvatarIconUrl(icon_index),
@@ -314,7 +306,7 @@ void OneClickSigninSyncStarter::CompleteInitForNewProfile(
       // and switch over to tracking that profile.
       new_signin_manager->CopyCredentialsFrom(*old_signin_manager);
       FinishProfileSyncServiceSetup();
-      Initialize(new_profile, NULL);
+      Initialize(new_profile, nullptr);
       DCHECK_EQ(profile_, new_profile);
 
       // We've transferred our credentials to the new profile - notify that
@@ -345,7 +337,6 @@ void OneClickSigninSyncStarter::CompleteInitForNewProfile(
     }
   }
 }
-#endif
 
 void OneClickSigninSyncStarter::CancelSigninAndDelete() {
   SigninManagerFactory::GetForProfile(profile_)
@@ -363,13 +354,10 @@ void OneClickSigninSyncStarter::ConfirmAndSignin() {
     content::RecordAction(
         base::UserMetricsAction("Signin_Show_UntrustedSigninPrompt"));
     // Display a confirmation dialog to the user.
-    browser_->window()->ShowOneClickSigninBubble(
-        BrowserWindow::ONE_CLICK_SIGNIN_BUBBLE_TYPE_SAML_MODAL_DIALOG,
+    browser_->window()->ShowOneClickSigninConfirmation(
         base::UTF8ToUTF16(signin->GetUsernameForAuthInProgress()),
-        base::string16(),  // No error message to display.
         base::Bind(&OneClickSigninSyncStarter::UntrustedSigninConfirmed,
                    weak_pointer_factory_.GetWeakPtr()));
-    LoginUIServiceFactory::GetForProfile(profile_)->UntrustedLoginUIShown();
   } else {
     // No confirmation required - just sign in the user.
     signin->CompletePendingSignin();
@@ -401,8 +389,15 @@ void OneClickSigninSyncStarter::UntrustedSigninConfirmed(
 }
 
 void OneClickSigninSyncStarter::OnSyncConfirmationUIClosed(
-    LoginUIService::SyncConfirmationUIClosedResults results) {
-  switch (results) {
+    LoginUIService::SyncConfirmationUIClosedResult result) {
+
+  if (switches::UsePasswordSeparatedSigninFlow()) {
+    // We didn't run this callback in AccountAddedToCookie so do it now.
+    if (!sync_setup_completed_callback_.is_null())
+      sync_setup_completed_callback_.Run(SYNC_SETUP_SUCCESS);
+  }
+
+  switch (result) {
     case LoginUIService::CONFIGURE_SYNC_FIRST:
       content::RecordAction(
           base::UserMetricsAction("Signin_Signin_WithAdvancedSyncSettings"));
@@ -461,8 +456,21 @@ void OneClickSigninSyncStarter::SigninSuccess() {
 
 void OneClickSigninSyncStarter::AccountAddedToCookie(
     const GoogleServiceAuthError& error) {
+  if (first_account_added_to_cookie_)
+    return;
+
+  first_account_added_to_cookie_ = true;
+
   // Regardless of whether the account was successfully added or not,
   // continue with sync starting.
+
+  if (switches::UsePasswordSeparatedSigninFlow()) {
+    // Under the new signin flow, the sync confirmation dialog should always be
+    // shown regardless of |start_mode_|. |sync_setup_completed_callback_| will
+    // be run after the modal is closed.
+    DisplayModalSyncConfirmationWindow();
+    return;
+  }
 
   if (!sync_setup_completed_callback_.is_null())
     sync_setup_completed_callback_.Run(SYNC_SETUP_SUCCESS);
@@ -486,12 +494,8 @@ void OneClickSigninSyncStarter::AccountAddedToCookie(
       break;
     }
     case CONFIRM_SYNC_SETTINGS_FIRST:
-      if (switches::UsePasswordSeparatedSigninFlow()) {
-        DisplayModalSyncConfirmationWindow();
-      } else {
-        // Blocks sync until the sync settings confirmation UI is closed.
-        DisplayFinalConfirmationBubble(base::string16());
-      }
+      // Blocks sync until the sync settings confirmation UI is closed.
+      DisplayFinalConfirmationBubble(base::string16());
       return;
     case CONFIGURE_SYNC_FIRST:
       ShowSettingsPage(true);  // Show sync config UI.
@@ -603,17 +607,14 @@ void OneClickSigninSyncStarter::ShowSettingsPage(bool configure_sync) {
 }
 
 ProfileSyncService* OneClickSigninSyncStarter::GetProfileSyncService() {
-  ProfileSyncService* service = NULL;
+  ProfileSyncService* service = nullptr;
   if (profile_->IsSyncAllowed())
     service = ProfileSyncServiceFactory::GetForProfile(profile_);
   return service;
 }
 
 void OneClickSigninSyncStarter::FinishProfileSyncServiceSetup() {
-  ProfileSyncService* service =
-      ProfileSyncServiceFactory::GetForProfile(profile_);
-  if (service)
-    service->SetSetupInProgress(false);
+  sync_blocker_.reset();
 }
 
 void OneClickSigninSyncStarter::ShowSettingsPageInWebContents(

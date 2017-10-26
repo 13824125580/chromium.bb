@@ -42,7 +42,7 @@ class CONTENT_EXPORT WebUIDataSourceImpl
   void DisableReplaceExistingSource() override;
   void DisableContentSecurityPolicy() override;
   void OverrideContentSecurityPolicyObjectSrc(const std::string& data) override;
-  void OverrideContentSecurityPolicyFrameSrc(const std::string& data) override;
+  void OverrideContentSecurityPolicyChildSrc(const std::string& data) override;
   void DisableDenyXFrameOptions() override;
 
  protected:
@@ -70,8 +70,9 @@ class CONTENT_EXPORT WebUIDataSourceImpl
       int render_frame_id,
       const URLDataSource::GotDataCallback& callback);
 
-  void disable_set_font_strings_for_testing() {
-    disable_set_font_strings_ = true;
+  // Note: this must be called before StartDataRequest() to have an effect.
+  void disable_load_time_data_defaults_for_testing() {
+    add_load_time_data_defaults_ = false;
   }
 
   // The name of this source.
@@ -93,7 +94,7 @@ class CONTENT_EXPORT WebUIDataSourceImpl
   bool frame_src_set_;
   std::string frame_src_;
   bool deny_xframe_options_;
-  bool disable_set_font_strings_;
+  bool add_load_time_data_defaults_;
   bool replace_existing_source_;
 
   DISALLOW_COPY_AND_ASSIGN(WebUIDataSourceImpl);

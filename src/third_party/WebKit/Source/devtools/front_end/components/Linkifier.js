@@ -52,8 +52,10 @@ WebInspector.LinkifierFormatter.prototype = {
 WebInspector.Linkifier = function(formatter)
 {
     this._formatter = formatter || new WebInspector.Linkifier.DefaultFormatter(WebInspector.Linkifier.MaxLengthForDisplayedURLs);
-    /** @type {!Map.<!WebInspector.Target, !Map.<!Element, !WebInspector.LiveLocation>>}*/
-    this._liveLocationsByTarget = new Map();
+    /** @type {!Map<!WebInspector.Target, !Array<!Element>>} */
+    this._anchorsByTarget = new Map();
+    /** @type {!Map<!WebInspector.Target, !WebInspector.LiveLocationPool>} */
+    this._locationPoolByTarget = new Map();
     WebInspector.targetManager.observeTargets(this);
 }
 
@@ -115,6 +117,7 @@ WebInspector.Linkifier.linkifyUsingRevealer = function(revealable, text, fallbac
 
 WebInspector.Linkifier._uiLocationSymbol = Symbol("uiLocation");
 WebInspector.Linkifier._fallbackAnchorSymbol = Symbol("fallbackAnchor");
+WebInspector.Linkifier._liveLocationSymbol = Symbol("liveLocation");
 
 WebInspector.Linkifier.prototype = {
     /**
@@ -123,7 +126,8 @@ WebInspector.Linkifier.prototype = {
      */
     targetAdded: function(target)
     {
-        this._liveLocationsByTarget.set(target, new Map());
+        this._anchorsByTarget.set(target, []);
+        this._locationPoolByTarget.set(target, new WebInspector.LiveLocationPool());
     },
 
     /**
@@ -132,12 +136,11 @@ WebInspector.Linkifier.prototype = {
      */
     targetRemoved: function(target)
     {
-        var liveLocations = this._liveLocationsByTarget.remove(target);
-        var anchors = liveLocations.keysArray();
-        for (var i = 0; i < anchors.length; ++i) {
-            var anchor = anchors[i];
-            var location = liveLocations.get(anchor);
-            delete anchor[WebInspector.Linkifier._uiLocationSymbol];
+        var locationPool = /** @type {!WebInspector.LiveLocationPool} */(this._locationPoolByTarget.remove(target));
+        locationPool.disposeAll();
+        var anchors = this._anchorsByTarget.remove(target);
+        for (var anchor of anchors) {
+            delete anchor[WebInspector.Linkifier._liveLocationSymbol];
             var fallbackAnchor = anchor[WebInspector.Linkifier._fallbackAnchorSymbol];
             if (fallbackAnchor) {
                 anchor.href = fallbackAnchor.href;
@@ -147,7 +150,6 @@ WebInspector.Linkifier.prototype = {
                 anchor.textContent = fallbackAnchor.textContent;
                 delete anchor[WebInspector.Linkifier._fallbackAnchorSymbol];
             }
-            location.dispose();
         }
     },
 
@@ -175,8 +177,10 @@ WebInspector.Linkifier.prototype = {
             return fallbackAnchor;
 
         var anchor = this._createAnchor(classes);
-        var liveLocation = WebInspector.debuggerWorkspaceBinding.createLiveLocation(rawLocation, this._updateAnchor.bind(this, anchor));
-        this._liveLocationsByTarget.get(rawLocation.target()).set(anchor, liveLocation);
+        var liveLocation = WebInspector.debuggerWorkspaceBinding.createLiveLocation(rawLocation, this._updateAnchor.bind(this, anchor), /** @type {!WebInspector.LiveLocationPool} */(this._locationPoolByTarget.get(rawLocation.target())));
+        var anchors = /** @type {!Array<!Element>} */(this._anchorsByTarget.get(rawLocation.target()));
+        anchors.push(anchor);
+        anchor[WebInspector.Linkifier._liveLocationSymbol] = liveLocation;
         anchor[WebInspector.Linkifier._fallbackAnchorSymbol] = fallbackAnchor;
         return anchor;
     },
@@ -224,8 +228,10 @@ WebInspector.Linkifier.prototype = {
             return fallbackAnchor;
 
         var anchor = this._createAnchor(classes);
-        var liveLocation = WebInspector.debuggerWorkspaceBinding.createStackTraceTopFrameLiveLocation(rawLocations, this._updateAnchor.bind(this, anchor));
-        this._liveLocationsByTarget.get(target).set(anchor, liveLocation);
+        var liveLocation = WebInspector.debuggerWorkspaceBinding.createStackTraceTopFrameLiveLocation(rawLocations, this._updateAnchor.bind(this, anchor), /** @type {!WebInspector.LiveLocationPool} */(this._locationPoolByTarget.get(target)));
+        var anchors = /** @type {!Array<!Element>} */(this._anchorsByTarget.get(target));
+        anchors.push(anchor);
+        anchor[WebInspector.Linkifier._liveLocationSymbol] = liveLocation;
         anchor[WebInspector.Linkifier._fallbackAnchorSymbol] = fallbackAnchor;
         return anchor;
     },
@@ -238,8 +244,10 @@ WebInspector.Linkifier.prototype = {
     linkifyCSSLocation: function(rawLocation, classes)
     {
         var anchor = this._createAnchor(classes);
-        var liveLocation = WebInspector.cssWorkspaceBinding.createLiveLocation(rawLocation, this._updateAnchor.bind(this, anchor));
-        this._liveLocationsByTarget.get(rawLocation.target()).set(anchor, liveLocation);
+        var liveLocation = WebInspector.cssWorkspaceBinding.createLiveLocation(rawLocation, this._updateAnchor.bind(this, anchor), /** @type {!WebInspector.LiveLocationPool} */(this._locationPoolByTarget.get(rawLocation.target())));
+        var anchors = /** @type {!Array<!Element>} */(this._anchorsByTarget.get(rawLocation.target()));
+        anchors.push(anchor);
+        anchor[WebInspector.Linkifier._liveLocationSymbol] = liveLocation;
         return anchor;
     },
 
@@ -251,12 +259,10 @@ WebInspector.Linkifier.prototype = {
     {
         delete anchor[WebInspector.Linkifier._uiLocationSymbol];
         delete anchor[WebInspector.Linkifier._fallbackAnchorSymbol];
-        var liveLocations = this._liveLocationsByTarget.get(target);
-        if (!liveLocations)
-            return;
-        var location = liveLocations.remove(anchor);
-        if (location)
-            location.dispose();
+        var liveLocation = anchor[WebInspector.Linkifier._liveLocationSymbol];
+        if (liveLocation)
+            liveLocation.dispose();
+        delete anchor[WebInspector.Linkifier._liveLocationSymbol];
     },
 
     /**
@@ -289,9 +295,7 @@ WebInspector.Linkifier.prototype = {
 
     reset: function()
     {
-        var targets = this._liveLocationsByTarget.keysArray();
-        for (var i = 0; i < targets.length; ++i) {
-            var target = targets[i];
+        for (var target of this._anchorsByTarget.keysArray()) {
             this.targetRemoved(target);
             this.targetAdded(target);
         }
@@ -299,9 +303,9 @@ WebInspector.Linkifier.prototype = {
 
     dispose: function()
     {
-        this.reset();
+        for (var target of this._anchorsByTarget.keysArray())
+            this.targetRemoved(target);
         WebInspector.targetManager.unobserveTargets(this);
-        this._liveLocationsByTarget.clear();
     },
 
     /**
@@ -397,6 +401,13 @@ WebInspector.Linkifier.DefaultCSSFormatter.prototype = {
 WebInspector.Linkifier.MaxLengthForDisplayedURLs = 150;
 
 /**
+ * The maximum length before strings are considered too long for finding URLs.
+ * @const
+ * @type {number}
+ */
+WebInspector.Linkifier.MaxLengthToIgnoreLinkifier = 10000;
+
+/**
  * @interface
  */
 WebInspector.Linkifier.LinkHandler = function()
@@ -442,7 +453,7 @@ WebInspector.linkifyStringAsFragmentWithCustomLinkifier = function(string, linki
     var container = createDocumentFragment();
     var linkStringRegEx = /(?:[a-zA-Z][a-zA-Z0-9+.-]{2,}:\/\/|data:|www\.)[\w$\-_+*'=\|\/\\(){}[\]^%@&#~,:;.!?]{2,}[\w$\-_+*=\|\/\\({^%@&#~]/;
 
-    while (string && string.length < 10000) {
+    while (string && string.length < WebInspector.Linkifier.MaxLengthToIgnoreLinkifier) {
         var linkString = linkStringRegEx.exec(string);
         if (!linkString)
             break;
@@ -498,47 +509,6 @@ WebInspector.linkifyStringAsFragment = function(string)
     }
 
     return WebInspector.linkifyStringAsFragmentWithCustomLinkifier(string, linkifier);
-}
-
-/**
- * @param {string} url
- * @param {string=} linkText
- * @param {string=} classes
- * @param {boolean=} isExternal
- * @param {string=} tooltipText
- * @return {!Element}
- */
-WebInspector.linkifyURLAsNode = function(url, linkText, classes, isExternal, tooltipText)
-{
-    if (!linkText)
-        linkText = url;
-    classes = (classes ? classes + " " : "");
-    classes += isExternal ? "webkit-html-external-link" : "webkit-html-resource-link";
-
-    var a = createElement("a");
-    var href = sanitizeHref(url);
-    if (href !== null)
-        a.href = href;
-    a.className = classes;
-    if (!tooltipText && linkText !== url)
-        a.title = url;
-    else if (tooltipText)
-        a.title = tooltipText;
-    a.textContent = linkText.trimMiddle(WebInspector.Linkifier.MaxLengthForDisplayedURLs);
-    if (isExternal)
-        a.setAttribute("target", "_blank");
-
-    return a;
-}
-
-/**
- * @param {string} article
- * @param {string} title
- * @return {!Element}
- */
-WebInspector.linkifyDocumentationURLAsNode = function(article, title)
-{
-    return WebInspector.linkifyURLAsNode("https://developers.google.com/web/tools/chrome-devtools/" + article, title, undefined, true);
 }
 
 /**

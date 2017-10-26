@@ -161,6 +161,10 @@ TEST(BoringSSL, ByteString) {
   TestSimple("bytestring_test");
 }
 
+TEST(BoringSSL, ChaCha) {
+  TestSimple("chacha_test");
+}
+
 TEST(BoringSSL, Cipher) {
   base::FilePath data_file;
   ASSERT_TRUE(CryptoCipherTestPath(&data_file));
@@ -261,6 +265,23 @@ TEST(BoringSSL, HMAC) {
 
 TEST(BoringSSL, LH) {
   TestSimple("lhash_test");
+}
+
+TEST(BoringSSL, NewHope) {
+  TestSimple("newhope_test");
+}
+
+TEST(BoringSSL, NewHopeVectors) {
+  base::FilePath data_file;
+  ASSERT_TRUE(BoringSSLPath(&data_file));
+  data_file = data_file.Append(FILE_PATH_LITERAL("crypto"));
+  data_file = data_file.Append(FILE_PATH_LITERAL("newhope"));
+  data_file = data_file.Append(FILE_PATH_LITERAL("newhope_test.txt"));
+
+  std::vector<base::CommandLine::StringType> args;
+  args.push_back(data_file.value());
+
+  TestProcess("newhope_vectors_test", args);
 }
 
 TEST(BoringSSL, PBKDF) {

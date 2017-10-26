@@ -4,6 +4,8 @@
 
 #include "net/quic/quic_sent_packet_manager.h"
 
+#include <memory>
+
 #include "base/stl_util.h"
 #include "net/quic/quic_flags.h"
 #include "net/quic/test_tools/quic_config_peer.h"
@@ -20,6 +22,7 @@ using testing::Not;
 using testing::Pair;
 using testing::Pointwise;
 using testing::Return;
+using testing::SetArgPointee;
 using testing::StrictMock;
 using testing::_;
 
@@ -42,7 +45,7 @@ MATCHER(KeyEq, "") {
   return std::tr1::get<0>(arg).first == std::tr1::get<1>(arg);
 }
 
-class MockDebugDelegate : public QuicSentPacketManager::DebugDelegate {
+class MockDebugDelegate : public QuicSentPacketManagerInterface::DebugDelegate {
  public:
   MOCK_METHOD2(OnSpuriousPacketRetransmission,
                void(TransmissionType transmission_type,
@@ -53,7 +56,27 @@ class MockDebugDelegate : public QuicSentPacketManager::DebugDelegate {
                     QuicTime detection_time));
 };
 
-class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
+// Run tests with different ack frame packets set mode.
+struct TestParams {
+  explicit TestParams(bool missing) : missing(missing) {}
+
+  friend std::ostream& operator<<(std::ostream& os, const TestParams& p) {
+    os << "{ ack frame packets set mode: " << p.missing << " }";
+    return os;
+  }
+
+  bool missing;
+};
+
+vector<TestParams> GetTestParams() {
+  vector<TestParams> params;
+  for (bool missing : {true, false}) {
+    params.push_back(TestParams(missing));
+  }
+  return params;
+}
+
+class QuicSentPacketManagerTest : public ::testing::TestWithParam<TestParams> {
  protected:
   QuicSentPacketManagerTest()
       : manager_(Perspective::IS_SERVER,
@@ -65,16 +88,12 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
                  /*delegate=*/nullptr),
         send_algorithm_(new StrictMock<MockSendAlgorithm>),
         network_change_visitor_(new StrictMock<MockNetworkChangeVisitor>) {
-    // These tests only work with pacing enabled.
-    saved_FLAGS_quic_disable_pacing_ = FLAGS_quic_disable_pacing;
-    FLAGS_quic_disable_pacing = false;
-
     QuicSentPacketManagerPeer::SetSendAlgorithm(&manager_, send_algorithm_);
     // Disable tail loss probes for most tests.
     QuicSentPacketManagerPeer::SetMaxTailLossProbes(&manager_, 0);
     // Advance the time 1s so the send times are never QuicTime::Zero.
     clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(1000));
-    manager_.set_network_change_visitor(network_change_visitor_.get());
+    manager_.SetNetworkChangeVisitor(network_change_visitor_.get());
 
     EXPECT_CALL(*send_algorithm_, HasReliableBandwidthEstimate())
         .Times(AnyNumber());
@@ -83,11 +102,12 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
         .WillRepeatedly(Return(QuicBandwidth::Zero()));
     EXPECT_CALL(*send_algorithm_, InSlowStart()).Times(AnyNumber());
     EXPECT_CALL(*send_algorithm_, InRecovery()).Times(AnyNumber());
+    EXPECT_CALL(*network_change_visitor_, OnPathMtuIncreased(1000))
+        .Times(AnyNumber());
   }
 
   ~QuicSentPacketManagerTest() override {
     STLDeleteElements(&packets_);
-    FLAGS_quic_disable_pacing = saved_FLAGS_quic_disable_pacing_;
   }
 
   QuicByteCount BytesInFlight() {
@@ -102,9 +122,9 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
     }
 
     EXPECT_TRUE(manager_.HasUnackedPackets());
-    EXPECT_EQ(packets[0], manager_.GetLeastUnacked());
+    EXPECT_EQ(packets[0], manager_.GetLeastUnacked(kDefaultPathId));
     for (size_t i = 0; i < num_packets; ++i) {
-      EXPECT_TRUE(manager_.IsUnacked(packets[i])) << packets[i];
+      EXPECT_TRUE(manager_.IsUnacked(kDefaultPathId, packets[i])) << packets[i];
     }
   }
 
@@ -114,7 +134,7 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
         num_packets,
         QuicSentPacketManagerPeer::GetNumRetransmittablePackets(&manager_));
     for (size_t i = 0; i < num_packets; ++i) {
-      EXPECT_TRUE(manager_.HasRetransmittableFrames(packets[i]))
+      EXPECT_TRUE(manager_.HasRetransmittableFrames(kDefaultPathId, packets[i]))
           << " packets[" << i << "]:" << packets[i];
     }
   }
@@ -124,15 +144,13 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
         *send_algorithm_,
         OnCongestionEvent(true, _, ElementsAre(Pair(largest_observed, _)),
                           IsEmpty()));
-    EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-    EXPECT_CALL(*network_change_visitor_, OnRttChange());
+    EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   }
 
   void ExpectUpdatedRtt(QuicPacketNumber largest_observed) {
     EXPECT_CALL(*send_algorithm_,
                 OnCongestionEvent(true, _, IsEmpty(), IsEmpty()));
-    EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-    EXPECT_CALL(*network_change_visitor_, OnRttChange());
+    EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   }
 
   void ExpectAckAndLoss(bool rtt_updated,
@@ -142,8 +160,7 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
                 OnCongestionEvent(rtt_updated, _,
                                   ElementsAre(Pair(largest_observed, _)),
                                   ElementsAre(Pair(lost_packet, _))));
-    EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-    EXPECT_CALL(*network_change_visitor_, OnRttChange());
+    EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   }
 
   // |packets_acked| and |packets_lost| should be in packet number order.
@@ -164,30 +181,37 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
         *send_algorithm_,
         OnCongestionEvent(rtt_updated, _, Pointwise(KeyEq(), ack_vector),
                           Pointwise(KeyEq(), lost_vector)));
-    EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange())
+    EXPECT_CALL(*network_change_visitor_, OnCongestionChange())
         .Times(AnyNumber());
-    EXPECT_CALL(*network_change_visitor_, OnRttChange()).Times(AnyNumber());
   }
 
   void RetransmitAndSendPacket(QuicPacketNumber old_packet_number,
                                QuicPacketNumber new_packet_number) {
+    RetransmitAndSendPacket(old_packet_number, new_packet_number,
+                            TLP_RETRANSMISSION);
+  }
+
+  void RetransmitAndSendPacket(QuicPacketNumber old_packet_number,
+                               QuicPacketNumber new_packet_number,
+                               TransmissionType transmission_type) {
     QuicSentPacketManagerPeer::MarkForRetransmission(
-        &manager_, old_packet_number, TLP_RETRANSMISSION);
+        &manager_, kDefaultPathId, old_packet_number, transmission_type);
     EXPECT_TRUE(manager_.HasPendingRetransmissions());
     PendingRetransmission next_retransmission =
         manager_.NextPendingRetransmission();
     EXPECT_EQ(old_packet_number, next_retransmission.packet_number);
-    EXPECT_EQ(TLP_RETRANSMISSION, next_retransmission.transmission_type);
+    EXPECT_EQ(transmission_type, next_retransmission.transmission_type);
 
     EXPECT_CALL(*send_algorithm_,
                 OnPacketSent(_, BytesInFlight(), new_packet_number,
                              kDefaultLength, HAS_RETRANSMITTABLE_DATA))
         .WillOnce(Return(true));
     SerializedPacket packet(CreatePacket(new_packet_number, false));
-    manager_.OnPacketSent(&packet, old_packet_number, clock_.Now(),
-                          TLP_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
-    EXPECT_TRUE(QuicSentPacketManagerPeer::IsRetransmission(&manager_,
-                                                            new_packet_number));
+    manager_.OnPacketSent(&packet, packet.path_id, old_packet_number,
+                          clock_.Now(), transmission_type,
+                          HAS_RETRANSMITTABLE_DATA);
+    EXPECT_TRUE(QuicSentPacketManagerPeer::IsRetransmission(
+        &manager_, packet.path_id, new_packet_number));
   }
 
   SerializedPacket CreateDataPacket(QuicPacketNumber packet_number) {
@@ -206,22 +230,14 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
     return packet;
   }
 
-  SerializedPacket CreateFecPacket(QuicPacketNumber packet_number) {
-    SerializedPacket serialized(kDefaultPathId, packet_number,
-                                PACKET_6BYTE_PACKET_NUMBER, nullptr,
-                                kDefaultLength, 0u, false, false);
-    serialized.is_fec_packet = true;
-    return serialized;
-  }
-
   void SendDataPacket(QuicPacketNumber packet_number) {
     EXPECT_CALL(*send_algorithm_,
                 OnPacketSent(_, BytesInFlight(), packet_number, _, _))
         .Times(1)
         .WillOnce(Return(true));
     SerializedPacket packet(CreateDataPacket(packet_number));
-    manager_.OnPacketSent(&packet, 0, clock_.Now(), NOT_RETRANSMISSION,
-                          HAS_RETRANSMITTABLE_DATA);
+    manager_.OnPacketSent(&packet, kInvalidPathId, 0, clock_.Now(),
+                          NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
   }
 
   void SendCryptoPacket(QuicPacketNumber packet_number) {
@@ -234,19 +250,8 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
     packet.retransmittable_frames.push_back(
         QuicFrame(new QuicStreamFrame(1, false, 0, StringPiece())));
     packet.has_crypto_handshake = IS_HANDSHAKE;
-    manager_.OnPacketSent(&packet, 0, clock_.Now(), NOT_RETRANSMISSION,
-                          HAS_RETRANSMITTABLE_DATA);
-  }
-
-  void SendFecPacket(QuicPacketNumber packet_number) {
-    EXPECT_CALL(*send_algorithm_,
-                OnPacketSent(_, BytesInFlight(), packet_number, kDefaultLength,
-                             HAS_RETRANSMITTABLE_DATA))
-        .Times(1)
-        .WillOnce(Return(true));
-    SerializedPacket packet(CreateFecPacket(packet_number));
-    manager_.OnPacketSent(&packet, 0, clock_.Now(), NOT_RETRANSMISSION,
-                          NO_RETRANSMITTABLE_DATA);
+    manager_.OnPacketSent(&packet, kInvalidPathId, 0, clock_.Now(),
+                          NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
   }
 
   void SendAckPacket(QuicPacketNumber packet_number) {
@@ -256,8 +261,8 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
         .Times(1)
         .WillOnce(Return(false));
     SerializedPacket packet(CreatePacket(packet_number, false));
-    manager_.OnPacketSent(&packet, 0, clock_.Now(), NOT_RETRANSMISSION,
-                          NO_RETRANSMITTABLE_DATA);
+    manager_.OnPacketSent(&packet, kInvalidPathId, 0, clock_.Now(),
+                          NOT_RETRANSMISSION, NO_RETRANSMITTABLE_DATA);
   }
 
   // Based on QuicConnection's WritePendingRetransmissions.
@@ -270,8 +275,32 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
         .WillOnce(Return(true));
     const PendingRetransmission pending = manager_.NextPendingRetransmission();
     SerializedPacket packet(CreatePacket(retransmission_packet_number, false));
-    manager_.OnPacketSent(&packet, pending.packet_number, clock_.Now(),
-                          pending.transmission_type, HAS_RETRANSMITTABLE_DATA);
+    manager_.OnPacketSent(&packet, pending.path_id, pending.packet_number,
+                          clock_.Now(), pending.transmission_type,
+                          HAS_RETRANSMITTABLE_DATA);
+  }
+
+  // Initialize a frame acknowledging all packets up to largest_observed.
+  const QuicAckFrame InitAckFrame(QuicPacketNumber largest_observed) {
+    QuicAckFrame frame(MakeAckFrame(largest_observed));
+    frame.missing = GetParam().missing;
+    if (!GetParam().missing) {
+      if (largest_observed > 0) {
+        frame.packets.Add(1, largest_observed + 1);
+      }
+    }
+    return frame;
+  }
+
+  // Explicitly nack packet [lower, higher).
+  void NackPackets(QuicPacketNumber lower,
+                   QuicPacketNumber higher,
+                   QuicAckFrame* frame) {
+    if (frame->missing) {
+      frame->packets.Add(lower, higher);
+    } else {
+      frame->packets.Remove(lower, higher);
+    }
   }
 
   QuicSentPacketManager manager_;
@@ -279,11 +308,14 @@ class QuicSentPacketManagerTest : public ::testing::TestWithParam<bool> {
   MockClock clock_;
   QuicConnectionStats stats_;
   MockSendAlgorithm* send_algorithm_;
-  scoped_ptr<MockNetworkChangeVisitor> network_change_visitor_;
-  bool saved_FLAGS_quic_disable_pacing_;
+  std::unique_ptr<MockNetworkChangeVisitor> network_change_visitor_;
 };
 
-TEST_F(QuicSentPacketManagerTest, IsUnacked) {
+INSTANTIATE_TEST_CASE_P(QuicSentPacketManagerTest,
+                        QuicSentPacketManagerTest,
+                        ::testing::ValuesIn(GetTestParams()));
+
+TEST_P(QuicSentPacketManagerTest, IsUnacked) {
   VerifyUnackedPackets(nullptr, 0);
   SendDataPacket(1);
 
@@ -293,25 +325,25 @@ TEST_F(QuicSentPacketManagerTest, IsUnacked) {
   VerifyRetransmittablePackets(retransmittable, arraysize(retransmittable));
 }
 
-TEST_F(QuicSentPacketManagerTest, IsUnAckedRetransmit) {
+TEST_P(QuicSentPacketManagerTest, IsUnAckedRetransmit) {
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
 
-  EXPECT_TRUE(QuicSentPacketManagerPeer::IsRetransmission(&manager_, 2));
+  EXPECT_TRUE(QuicSentPacketManagerPeer::IsRetransmission(&manager_,
+                                                          kDefaultPathId, 2));
   QuicPacketNumber unacked[] = {1, 2};
   VerifyUnackedPackets(unacked, arraysize(unacked));
   QuicPacketNumber retransmittable[] = {2};
   VerifyRetransmittablePackets(retransmittable, arraysize(retransmittable));
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmitThenAck) {
+TEST_P(QuicSentPacketManagerTest, RetransmitThenAck) {
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
 
   // Ack 2 but not 1.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 2;
-  ack_frame.missing_packets.Add(1);
+  QuicAckFrame ack_frame = InitAckFrame(2);
+  NackPackets(1, 2, &ack_frame);
   ExpectAck(2);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 
@@ -322,15 +354,14 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAck) {
   VerifyRetransmittablePackets(nullptr, 0);
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmitThenAckBeforeSend) {
+TEST_P(QuicSentPacketManagerTest, RetransmitThenAckBeforeSend) {
   SendDataPacket(1);
-  QuicSentPacketManagerPeer::MarkForRetransmission(&manager_, 1,
+  QuicSentPacketManagerPeer::MarkForRetransmission(&manager_, kDefaultPathId, 1,
                                                    TLP_RETRANSMISSION);
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
 
   // Ack 1.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 1;
+  QuicAckFrame ack_frame = InitAckFrame(1);
   ExpectAck(1);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 
@@ -343,9 +374,9 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAckBeforeSend) {
   EXPECT_EQ(0u, stats_.packets_spuriously_retransmitted);
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmitThenStopRetransmittingBeforeSend) {
+TEST_P(QuicSentPacketManagerTest, RetransmitThenStopRetransmittingBeforeSend) {
   SendDataPacket(1);
-  QuicSentPacketManagerPeer::MarkForRetransmission(&manager_, 1,
+  QuicSentPacketManagerPeer::MarkForRetransmission(&manager_, kDefaultPathId, 1,
                                                    TLP_RETRANSMISSION);
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
 
@@ -360,7 +391,7 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenStopRetransmittingBeforeSend) {
   EXPECT_EQ(0u, stats_.packets_spuriously_retransmitted);
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPrevious) {
+TEST_P(QuicSentPacketManagerTest, RetransmitThenAckPrevious) {
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
   QuicTime::Delta rtt = QuicTime::Delta::FromMilliseconds(15);
@@ -368,8 +399,7 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPrevious) {
 
   // Ack 1 but not 2.
   ExpectAck(1);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 1;
+  QuicAckFrame ack_frame = InitAckFrame(1);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   // 2 remains unacked, but no packets have retransmittable data.
@@ -381,7 +411,7 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPrevious) {
   EXPECT_EQ(1u, stats_.packets_spuriously_retransmitted);
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPreviousThenNackRetransmit) {
+TEST_P(QuicSentPacketManagerTest, RetransmitThenAckPreviousThenNackRetransmit) {
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
   QuicTime::Delta rtt = QuicTime::Delta::FromMilliseconds(15);
@@ -389,8 +419,7 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPreviousThenNackRetransmit) {
 
   // First, ACK packet 1 which makes packet 2 non-retransmittable.
   ExpectAck(1);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 1;
+  QuicAckFrame ack_frame = InitAckFrame(1);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   SendDataPacket(3);
@@ -399,16 +428,18 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPreviousThenNackRetransmit) {
   clock_.AdvanceTime(rtt);
 
   // Next, NACK packet 2 three times.
-  ack_frame.largest_observed = 3;
-  ack_frame.missing_packets.Add(2);
+  ack_frame = InitAckFrame(3);
+  NackPackets(2, 3, &ack_frame);
   ExpectAck(3);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
-  ack_frame.largest_observed = 4;
+  ack_frame = InitAckFrame(4);
+  NackPackets(2, 3, &ack_frame);
   ExpectAck(4);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
-  ack_frame.largest_observed = 5;
+  ack_frame = InitAckFrame(5);
+  NackPackets(2, 3, &ack_frame);
   ExpectAckAndLoss(true, 5, 2);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
@@ -422,22 +453,21 @@ TEST_F(QuicSentPacketManagerTest, RetransmitThenAckPreviousThenNackRetransmit) {
   EXPECT_EQ(QuicTime::Zero(), manager_.GetRetransmissionTime());
 }
 
-TEST_F(QuicSentPacketManagerTest,
+TEST_P(QuicSentPacketManagerTest,
        DISABLED_RetransmitTwiceThenAckPreviousBeforeSend) {
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
 
   // Fire the RTO, which will mark 2 for retransmission (but will not send it).
   EXPECT_CALL(*send_algorithm_, OnRetransmissionTimeout(true));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.OnRetransmissionTimeout();
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
 
   // Ack 1 but not 2, before 2 is able to be sent.
   // Since 1 has been retransmitted, it has already been lost, and so the
   // send algorithm is not informed that it has been ACK'd.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 1;
+  QuicAckFrame ack_frame = InitAckFrame(1);
   ExpectUpdatedRtt(1);
   EXPECT_CALL(*send_algorithm_, RevertRetransmissionTimeout());
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
@@ -453,12 +483,12 @@ TEST_F(QuicSentPacketManagerTest,
   EXPECT_EQ(QuicTime::Zero(), manager_.GetRetransmissionTime());
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmitTwiceThenAckFirst) {
+TEST_P(QuicSentPacketManagerTest, RetransmitTwiceThenAckFirst) {
   StrictMock<MockDebugDelegate> debug_delegate;
   EXPECT_CALL(debug_delegate, OnSpuriousPacketRetransmission(TLP_RETRANSMISSION,
                                                              kDefaultLength))
       .Times(2);
-  manager_.set_debug_delegate(&debug_delegate);
+  manager_.SetDebugDelegate(&debug_delegate);
 
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
@@ -468,8 +498,7 @@ TEST_F(QuicSentPacketManagerTest, RetransmitTwiceThenAckFirst) {
 
   // Ack 1 but not 2 or 3.
   ExpectAck(1);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 1;
+  QuicAckFrame ack_frame = InitAckFrame(1);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   // 2 and 3 remain unacked, but no packets have retransmittable data.
@@ -480,8 +509,8 @@ TEST_F(QuicSentPacketManagerTest, RetransmitTwiceThenAckFirst) {
 
   // Ensure packet 2 is lost when 4 is sent and 3 and 4 are acked.
   SendDataPacket(4);
-  ack_frame.largest_observed = 4;
-  ack_frame.missing_packets.Add(2);
+  ack_frame = InitAckFrame(4);
+  NackPackets(2, 3, &ack_frame);
   QuicPacketNumber acked[] = {3, 4};
   ExpectAcksAndLosses(true, acked, arraysize(acked), nullptr, 0);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
@@ -491,7 +520,8 @@ TEST_F(QuicSentPacketManagerTest, RetransmitTwiceThenAckFirst) {
   EXPECT_TRUE(QuicSentPacketManagerPeer::HasPendingPackets(&manager_));
 
   SendDataPacket(5);
-  ack_frame.largest_observed = 5;
+  ack_frame = InitAckFrame(5);
+  NackPackets(2, 3, &ack_frame);
   ExpectAckAndLoss(true, 5, 2);
   EXPECT_CALL(debug_delegate, OnPacketLoss(2, LOSS_RETRANSMISSION, _));
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
@@ -501,77 +531,49 @@ TEST_F(QuicSentPacketManagerTest, RetransmitTwiceThenAckFirst) {
   EXPECT_EQ(2u, stats_.packets_spuriously_retransmitted);
 }
 
-TEST_F(QuicSentPacketManagerTest, LoseButDontRetransmitRevivedPacket) {
-  StrictMock<MockDebugDelegate> debug_delegate;
-  manager_.set_debug_delegate(&debug_delegate);
+TEST_P(QuicSentPacketManagerTest, AckOriginalTransmission) {
+  MockLossAlgorithm* loss_algorithm = new MockLossAlgorithm();
+  QuicSentPacketManagerPeer::SetLossAlgorithm(&manager_, loss_algorithm);
 
   SendDataPacket(1);
-  SendDataPacket(2);
-  SendFecPacket(3);
-  SendDataPacket(4);
+  RetransmitAndSendPacket(1, 2);
 
-  // Ack 2 and 3, and mark 1 as revived.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 3;
-  ack_frame.missing_packets.Add(1);
-  ack_frame.latest_revived_packet = 1;
-  QuicPacketNumber acked[] = {2, 3};
-  ExpectAcksAndLosses(true, acked, arraysize(acked), nullptr, 0);
-  manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
-
-  EXPECT_FALSE(manager_.HasPendingRetransmissions());
-  QuicPacketNumber unacked[] = {1, 4};
-  VerifyUnackedPackets(unacked, arraysize(unacked));
-  EXPECT_TRUE(QuicSentPacketManagerPeer::HasPendingPackets(&manager_));
-  QuicPacketNumber retransmittable[] = {4};
-  VerifyRetransmittablePackets(retransmittable, arraysize(retransmittable));
-
-  // Ack the 4th packet and expect the 1st to be considered lost.
-  if (FLAGS_quic_log_loss_event) {
-    EXPECT_CALL(debug_delegate, OnPacketLoss(1, LOSS_RETRANSMISSION, _));
+  // Ack original transmission, but that wasn't lost via fast retransmit,
+  // so no call on OnSpuriousRetransmission is expected.
+  {
+    QuicAckFrame ack_frame = InitAckFrame(1);
+    ExpectAck(1);
+    EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _));
+    manager_.OnIncomingAck(ack_frame, clock_.Now());
   }
-  ack_frame.largest_observed = 4;
-  ExpectAckAndLoss(true, 4, 1);
-  manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
-  EXPECT_FALSE(manager_.HasPendingRetransmissions());
-  VerifyRetransmittablePackets(nullptr, 0);
-}
-
-TEST_F(QuicSentPacketManagerTest, MarkLostThenReviveAndDontRetransmitPacket) {
-  SendDataPacket(1);
-  SendDataPacket(2);
   SendDataPacket(3);
   SendDataPacket(4);
-  SendFecPacket(5);
+  // Ack 4, which causes 3 to be retransmitted.
+  {
+    QuicAckFrame ack_frame = InitAckFrame(4);
+    NackPackets(2, 4, &ack_frame);
+    ExpectAck(4);
+    EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _));
+    manager_.OnIncomingAck(ack_frame, clock_.Now());
+    RetransmitAndSendPacket(3, 5, LOSS_RETRANSMISSION);
+  }
 
-  // Ack 2, 3, and 4, and expect the 1st to be considered lost.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 4;
-  ack_frame.missing_packets.Add(1);
-  QuicPacketNumber acked[] = {2, 3, 4};
-  QuicPacketNumber lost[] = {1};
-  ExpectAcksAndLosses(true, acked, arraysize(acked), lost, arraysize(lost));
-  manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
-
-  EXPECT_TRUE(manager_.HasPendingRetransmissions());
-  QuicPacketNumber unacked[] = {1, 5};
-  VerifyUnackedPackets(unacked, arraysize(unacked));
-  QuicPacketNumber retransmittable[] = {1};
-  VerifyRetransmittablePackets(retransmittable, arraysize(retransmittable));
-
-  // Ack 5th packet (FEC) and revive 1st packet. 1st packet should now be
-  // removed from pending retransmissions map.
-  ack_frame.largest_observed = 5;
-  ack_frame.latest_revived_packet = 1;
-  ExpectAck(5);
-  manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
-
-  EXPECT_FALSE(manager_.HasPendingRetransmissions());
-  VerifyRetransmittablePackets(nullptr, 0);
+  // Ack 3, which causes SpuriousRetransmitDetected to be called.
+  {
+    QuicAckFrame ack_frame = InitAckFrame(4);
+    NackPackets(2, 3, &ack_frame);
+    EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _));
+    EXPECT_CALL(*loss_algorithm, SpuriousRetransmitDetected(_, _, _, 5));
+    manager_.OnIncomingAck(ack_frame, clock_.Now());
+  }
 }
 
-TEST_F(QuicSentPacketManagerTest, AckPreviousTransmissionThenTruncatedAck) {
+TEST_P(QuicSentPacketManagerTest, AckPreviousTransmissionThenTruncatedAck) {
+  FLAGS_quic_loss_recovery_use_largest_acked = false;
+  if (!GetParam().missing) {
+    return;
+  }
   SendDataPacket(1);
   RetransmitAndSendPacket(1, 2);
   RetransmitAndSendPacket(2, 3);
@@ -584,19 +586,17 @@ TEST_F(QuicSentPacketManagerTest, AckPreviousTransmissionThenTruncatedAck) {
 
   // Ack previous transmission
   {
-    QuicAckFrame ack_frame;
-    ack_frame.largest_observed = 2;
-    ack_frame.missing_packets.Add(1);
+    QuicAckFrame ack_frame = InitAckFrame(2);
+    NackPackets(1, 2, &ack_frame);
     ExpectAck(2);
     manager_.OnIncomingAck(ack_frame, clock_.Now());
-    EXPECT_TRUE(manager_.IsUnacked(4));
+    EXPECT_TRUE(manager_.IsUnacked(kDefaultPathId, 4));
   }
 
   // Truncated ack with 4 NACKs
   {
-    QuicAckFrame ack_frame;
-    ack_frame.largest_observed = 6;
-    ack_frame.missing_packets.Add(3, 7);
+    QuicAckFrame ack_frame = InitAckFrame(6);
+    NackPackets(3, 7, &ack_frame);
     ack_frame.is_truncated = true;
     ExpectAckAndLoss(true, 1, 3);
     manager_.OnIncomingAck(ack_frame, clock_.Now());
@@ -609,69 +609,21 @@ TEST_F(QuicSentPacketManagerTest, AckPreviousTransmissionThenTruncatedAck) {
   VerifyRetransmittablePackets(retransmittable, arraysize(retransmittable));
 }
 
-TEST_F(QuicSentPacketManagerTest, GetLeastUnacked) {
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
+TEST_P(QuicSentPacketManagerTest, GetLeastUnacked) {
+  EXPECT_EQ(1u, manager_.GetLeastUnacked(kDefaultPathId));
 }
 
-TEST_F(QuicSentPacketManagerTest, GetLeastUnackedUnacked) {
+TEST_P(QuicSentPacketManagerTest, GetLeastUnackedUnacked) {
   SendDataPacket(1);
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
+  EXPECT_EQ(1u, manager_.GetLeastUnacked(kDefaultPathId));
 }
 
-TEST_F(QuicSentPacketManagerTest, GetLeastUnackedUnackedFec) {
-  SendFecPacket(1);
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
-}
-
-TEST_F(QuicSentPacketManagerTest, GetLeastUnackedAndDiscard) {
-  VerifyUnackedPackets(nullptr, 0);
-
-  SendFecPacket(1);
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
-
-  SendFecPacket(2);
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
-
-  SendFecPacket(3);
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
-
-  QuicPacketNumber unacked[] = {1, 2, 3};
-  VerifyUnackedPackets(unacked, arraysize(unacked));
-  VerifyRetransmittablePackets(nullptr, 0);
-
-  // Ack 2, so there's an rtt update.
-  ExpectAck(2);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 2;
-  ack_frame.missing_packets.Add(1);
-  manager_.OnIncomingAck(ack_frame, clock_.Now());
-
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
-}
-
-TEST_F(QuicSentPacketManagerTest, GetSentTime) {
-  VerifyUnackedPackets(nullptr, 0);
-
-  QuicTime sent_time = clock_.Now();
-  SendFecPacket(1);
-  QuicTime sent_time2 = clock_.Now();
-  SendFecPacket(2);
-  QuicPacketNumber unacked[] = {1, 2};
-  VerifyUnackedPackets(unacked, arraysize(unacked));
-  VerifyRetransmittablePackets(nullptr, 0);
-
-  EXPECT_TRUE(manager_.HasUnackedPackets());
-  EXPECT_EQ(sent_time, QuicSentPacketManagerPeer::GetSentTime(&manager_, 1));
-  EXPECT_EQ(sent_time2, QuicSentPacketManagerPeer::GetSentTime(&manager_, 2));
-}
-
-TEST_F(QuicSentPacketManagerTest, AckAckAndUpdateRtt) {
+TEST_P(QuicSentPacketManagerTest, AckAckAndUpdateRtt) {
   SendDataPacket(1);
   SendAckPacket(2);
 
   // Now ack the ack and expect an RTT update.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 2;
+  QuicAckFrame ack_frame = InitAckFrame(2);
   ack_frame.ack_delay_time = QuicTime::Delta::FromMilliseconds(5);
 
   ExpectAck(1);
@@ -680,27 +632,25 @@ TEST_F(QuicSentPacketManagerTest, AckAckAndUpdateRtt) {
   SendAckPacket(3);
 
   // Now ack the ack and expect only an RTT update.
-  ack_frame.largest_observed = 3;
+  ack_frame = InitAckFrame(3);
   ExpectUpdatedRtt(3);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 }
 
-TEST_F(QuicSentPacketManagerTest, Rtt) {
+TEST_P(QuicSentPacketManagerTest, Rtt) {
   QuicPacketNumber packet_number = 1;
   QuicTime::Delta expected_rtt = QuicTime::Delta::FromMilliseconds(15);
   SendDataPacket(packet_number);
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(20));
 
   ExpectAck(packet_number);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = packet_number;
+  QuicAckFrame ack_frame = InitAckFrame(packet_number);
   ack_frame.ack_delay_time = QuicTime::Delta::FromMilliseconds(5);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
-  EXPECT_EQ(expected_rtt,
-            QuicSentPacketManagerPeer::GetRttStats(&manager_)->latest_rtt());
+  EXPECT_EQ(expected_rtt, manager_.GetRttStats()->latest_rtt());
 }
 
-TEST_F(QuicSentPacketManagerTest, RttWithInvalidDelta) {
+TEST_P(QuicSentPacketManagerTest, RttWithInvalidDelta) {
   // Expect that the RTT is equal to the local time elapsed, since the
   // ack_delay_time is larger than the local time elapsed
   // and is hence invalid.
@@ -710,15 +660,13 @@ TEST_F(QuicSentPacketManagerTest, RttWithInvalidDelta) {
   clock_.AdvanceTime(expected_rtt);
 
   ExpectAck(packet_number);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = packet_number;
+  QuicAckFrame ack_frame = InitAckFrame(packet_number);
   ack_frame.ack_delay_time = QuicTime::Delta::FromMilliseconds(11);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
-  EXPECT_EQ(expected_rtt,
-            QuicSentPacketManagerPeer::GetRttStats(&manager_)->latest_rtt());
+  EXPECT_EQ(expected_rtt, manager_.GetRttStats()->latest_rtt());
 }
 
-TEST_F(QuicSentPacketManagerTest, RttWithInfiniteDelta) {
+TEST_P(QuicSentPacketManagerTest, RttWithInfiniteDelta) {
   // Expect that the RTT is equal to the local time elapsed, since the
   // ack_delay_time is infinite, and is hence invalid.
   QuicPacketNumber packet_number = 1;
@@ -727,15 +675,13 @@ TEST_F(QuicSentPacketManagerTest, RttWithInfiniteDelta) {
   clock_.AdvanceTime(expected_rtt);
 
   ExpectAck(packet_number);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = packet_number;
+  QuicAckFrame ack_frame = InitAckFrame(packet_number);
   ack_frame.ack_delay_time = QuicTime::Delta::Infinite();
   manager_.OnIncomingAck(ack_frame, clock_.Now());
-  EXPECT_EQ(expected_rtt,
-            QuicSentPacketManagerPeer::GetRttStats(&manager_)->latest_rtt());
+  EXPECT_EQ(expected_rtt, manager_.GetRttStats()->latest_rtt());
 }
 
-TEST_F(QuicSentPacketManagerTest, RttZeroDelta) {
+TEST_P(QuicSentPacketManagerTest, RttZeroDelta) {
   // Expect that the RTT is the time between send and receive since the
   // ack_delay_time is zero.
   QuicPacketNumber packet_number = 1;
@@ -744,25 +690,25 @@ TEST_F(QuicSentPacketManagerTest, RttZeroDelta) {
   clock_.AdvanceTime(expected_rtt);
 
   ExpectAck(packet_number);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = packet_number;
+  QuicAckFrame ack_frame = InitAckFrame(packet_number);
   ack_frame.ack_delay_time = QuicTime::Delta::Zero();
   manager_.OnIncomingAck(ack_frame, clock_.Now());
-  EXPECT_EQ(expected_rtt,
-            QuicSentPacketManagerPeer::GetRttStats(&manager_)->latest_rtt());
+  EXPECT_EQ(expected_rtt, manager_.GetRttStats()->latest_rtt());
 }
 
-TEST_F(QuicSentPacketManagerTest, TailLossProbeTimeout) {
+TEST_P(QuicSentPacketManagerTest, TailLossProbeTimeout) {
   QuicSentPacketManagerPeer::SetMaxTailLossProbes(&manager_, 2);
 
   // Send 1 packet.
   QuicPacketNumber packet_number = 1;
   SendDataPacket(packet_number);
 
+  QuicPathId path_id = kInvalidPathId;
   // The first tail loss probe retransmits 1 packet.
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
   manager_.MaybeRetransmitTailLossProbe();
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
@@ -771,31 +717,37 @@ TEST_F(QuicSentPacketManagerTest, TailLossProbeTimeout) {
 
   // The second tail loss probe retransmits 1 packet.
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
   manager_.MaybeRetransmitTailLossProbe();
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
   RetransmitNextPacket(3);
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
       .WillOnce(Return(QuicTime::Delta::Infinite()));
-  EXPECT_EQ(QuicTime::Delta::Infinite(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Infinite(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
 
   // Ack the third and ensure the first two are still pending.
   ExpectAck(3);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 3;
-  ack_frame.missing_packets.Add(1, 3);
+
+  QuicAckFrame ack_frame = InitAckFrame(3);
+  NackPackets(1, 3, &ack_frame);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   EXPECT_TRUE(QuicSentPacketManagerPeer::HasPendingPackets(&manager_));
 
   // Acking two more packets will lose both of them due to nacks.
-  ack_frame.largest_observed = 5;
+  SendDataPacket(4);
+  SendDataPacket(5);
+  ack_frame = InitAckFrame(5);
+  NackPackets(1, 3, &ack_frame);
+  QuicPacketNumber acked[] = {4, 5};
   QuicPacketNumber lost[] = {1, 2};
-  ExpectAcksAndLosses(false, nullptr, 0, lost, arraysize(lost));
+  ExpectAcksAndLosses(true, acked, arraysize(acked), lost, arraysize(lost));
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
@@ -804,7 +756,7 @@ TEST_F(QuicSentPacketManagerTest, TailLossProbeTimeout) {
   EXPECT_EQ(0u, stats_.rto_count);
 }
 
-TEST_F(QuicSentPacketManagerTest, TailLossProbeThenRTO) {
+TEST_P(QuicSentPacketManagerTest, TailLossProbeThenRTO) {
   QuicSentPacketManagerPeer::SetMaxTailLossProbes(&manager_, 2);
 
   // Send 100 packets.
@@ -818,31 +770,36 @@ TEST_F(QuicSentPacketManagerTest, TailLossProbeThenRTO) {
 
   // The first tail loss probe retransmits 1 packet.
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  QuicPathId path_id = kInvalidPathId;
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
   manager_.MaybeRetransmitTailLossProbe();
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
   RetransmitNextPacket(101);
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
       .WillOnce(Return(QuicTime::Delta::Infinite()));
-  EXPECT_EQ(QuicTime::Delta::Infinite(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Infinite(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
   clock_.AdvanceTime(manager_.GetRetransmissionTime().Subtract(clock_.Now()));
 
   // The second tail loss probe retransmits 1 packet.
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
   EXPECT_TRUE(manager_.MaybeRetransmitTailLossProbe());
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
   RetransmitNextPacket(102);
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
       .WillOnce(Return(QuicTime::Delta::Infinite()));
-  EXPECT_EQ(QuicTime::Delta::Infinite(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Infinite(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
 
   // Ensure the RTO is set based on the correct packet.
   rto_packet_time = clock_.Now();
@@ -864,20 +821,18 @@ TEST_F(QuicSentPacketManagerTest, TailLossProbeThenRTO) {
             QuicSentPacketManagerPeer::GetBytesInFlight(&manager_));
 
   RetransmitNextPacket(103);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 103;
-  ack_frame.missing_packets.Add(0, 103);
+  QuicAckFrame ack_frame = InitAckFrame(103);
+  NackPackets(0, 103, &ack_frame);
   EXPECT_CALL(*send_algorithm_, OnRetransmissionTimeout(true));
   EXPECT_CALL(*send_algorithm_,
               OnCongestionEvent(true, _, ElementsAre(Pair(103, _)), _));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
   // All packets before 103 should be lost.
   EXPECT_EQ(0u, QuicSentPacketManagerPeer::GetBytesInFlight(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeout) {
+TEST_P(QuicSentPacketManagerTest, CryptoHandshakeTimeout) {
   // Send 2 crypto packets and 3 data packets.
   const size_t kNumSentCryptoPackets = 2;
   for (size_t i = 1; i <= kNumSentCryptoPackets; ++i) {
@@ -890,9 +845,11 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeout) {
   EXPECT_TRUE(QuicSentPacketManagerPeer::HasUnackedCryptoPackets(&manager_));
 
   // The first retransmits 2 packets.
+  QuicPathId path_id = kInvalidPathId;
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   RetransmitNextPacket(6);
   RetransmitNextPacket(7);
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
@@ -900,8 +857,9 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeout) {
 
   // The second retransmits 2 packets.
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   RetransmitNextPacket(8);
   RetransmitNextPacket(9);
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
@@ -911,16 +869,15 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeout) {
   // and ensure the first four crypto packets get abandoned, but not lost.
   QuicPacketNumber acked[] = {3, 4, 5, 8, 9};
   ExpectAcksAndLosses(true, acked, arraysize(acked), nullptr, 0);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 9;
-  ack_frame.missing_packets.Add(1, 3);
-  ack_frame.missing_packets.Add(6, 8);
+  QuicAckFrame ack_frame = InitAckFrame(9);
+  NackPackets(1, 3, &ack_frame);
+  NackPackets(6, 8, &ack_frame);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   EXPECT_FALSE(QuicSentPacketManagerPeer::HasUnackedCryptoPackets(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeoutVersionNegotiation) {
+TEST_P(QuicSentPacketManagerTest, CryptoHandshakeTimeoutVersionNegotiation) {
   // Send 2 crypto packets and 3 data packets.
   const size_t kNumSentCryptoPackets = 2;
   for (size_t i = 1; i <= kNumSentCryptoPackets; ++i) {
@@ -957,21 +914,20 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeoutVersionNegotiation) {
   RetransmitNextPacket(12);
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
 
-  EXPECT_EQ(1u, manager_.GetLeastUnacked());
+  EXPECT_EQ(1u, manager_.GetLeastUnacked(kDefaultPathId));
   // Least unacked isn't raised until an ack is received, so ack the
   // crypto packets.
   QuicPacketNumber acked[] = {8, 9};
   ExpectAcksAndLosses(true, acked, arraysize(acked), nullptr, 0);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 9;
+  QuicAckFrame ack_frame = InitAckFrame(9);
   for (QuicPacketNumber i = 1; i < 8; ++i) {
-    ack_frame.missing_packets.Add(i);
+    NackPackets(i, i + 1, &ack_frame);
   }
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
-  EXPECT_EQ(10u, manager_.GetLeastUnacked());
+  EXPECT_EQ(10u, manager_.GetLeastUnacked(kDefaultPathId));
 }
 
-TEST_F(QuicSentPacketManagerTest, CryptoHandshakeSpuriousRetransmission) {
+TEST_P(QuicSentPacketManagerTest, CryptoHandshakeSpuriousRetransmission) {
   // Send 1 crypto packet.
   SendCryptoPacket(1);
   EXPECT_TRUE(QuicSentPacketManagerPeer::HasUnackedCryptoPackets(&manager_));
@@ -987,9 +943,8 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeSpuriousRetransmission) {
   // Now ack the second crypto packet, and ensure the first gets removed, but
   // the third does not.
   ExpectUpdatedRtt(2);
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 2;
-  ack_frame.missing_packets.Add(1);
+  QuicAckFrame ack_frame = InitAckFrame(2);
+  NackPackets(1, 2, &ack_frame);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
 
   EXPECT_FALSE(QuicSentPacketManagerPeer::HasUnackedCryptoPackets(&manager_));
@@ -997,7 +952,7 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeSpuriousRetransmission) {
   VerifyUnackedPackets(unacked, arraysize(unacked));
 }
 
-TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeoutUnsentDataPacket) {
+TEST_P(QuicSentPacketManagerTest, CryptoHandshakeTimeoutUnsentDataPacket) {
   // Send 2 crypto packets and 1 data packet.
   const size_t kNumSentCryptoPackets = 2;
   for (size_t i = 1; i <= kNumSentCryptoPackets; ++i) {
@@ -1014,7 +969,7 @@ TEST_F(QuicSentPacketManagerTest, CryptoHandshakeTimeoutUnsentDataPacket) {
   EXPECT_TRUE(QuicSentPacketManagerPeer::HasUnackedCryptoPackets(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest,
+TEST_P(QuicSentPacketManagerTest,
        CryptoHandshakeRetransmissionThenRetransmitAll) {
   // Send 1 crypto packet.
   SendCryptoPacket(1);
@@ -1034,7 +989,7 @@ TEST_F(QuicSentPacketManagerTest,
   EXPECT_FALSE(QuicSentPacketManagerPeer::HasPendingPackets(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest,
+TEST_P(QuicSentPacketManagerTest,
        CryptoHandshakeRetransmissionThenNeuterAndAck) {
   // Send 1 crypto packet.
   SendCryptoPacket(1);
@@ -1062,18 +1017,17 @@ TEST_F(QuicSentPacketManagerTest,
   EXPECT_FALSE(QuicSentPacketManagerPeer::HasPendingPackets(&manager_));
 
   // Ensure both packets get discarded when packet 2 is acked.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 3;
-  ack_frame.missing_packets.Add(1, 3);
+  QuicAckFrame ack_frame = InitAckFrame(3);
+  NackPackets(1, 3, &ack_frame);
   ExpectUpdatedRtt(3);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
   VerifyUnackedPackets(nullptr, 0);
   VerifyRetransmittablePackets(nullptr, 0);
 }
 
-TEST_F(QuicSentPacketManagerTest, RetransmissionTimeout) {
+TEST_P(QuicSentPacketManagerTest, RetransmissionTimeout) {
   StrictMock<MockDebugDelegate> debug_delegate;
-  manager_.set_debug_delegate(&debug_delegate);
+  manager_.SetDebugDelegate(&debug_delegate);
 
   // Send 100 packets.
   const size_t kNumSentPackets = 100;
@@ -1091,37 +1045,32 @@ TEST_F(QuicSentPacketManagerTest, RetransmissionTimeout) {
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
 
   // Ack a retransmission.
-  QuicAckFrame ack_frame;
+  QuicAckFrame ack_frame = InitAckFrame(102);
+  NackPackets(0, 102, &ack_frame);
   ack_frame.ack_delay_time = QuicTime::Delta::Zero();
-  ack_frame.largest_observed = 102;
-  ack_frame.missing_packets.Add(0, 102);
   // Ensure no packets are lost.
   EXPECT_CALL(*send_algorithm_,
               OnCongestionEvent(true, _, ElementsAre(Pair(102, _)),
                                 /*lost_packets=*/IsEmpty()));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, OnRetransmissionTimeout(true));
   // RTO's use loss detection instead of immediately declaring retransmitted
   // packets lost.
-  if (FLAGS_quic_log_loss_event) {
-    for (int i = 1; i <= 99; ++i) {
-      EXPECT_CALL(debug_delegate, OnPacketLoss(i, LOSS_RETRANSMISSION, _));
-    }
+  for (int i = 1; i <= 99; ++i) {
+    EXPECT_CALL(debug_delegate, OnPacketLoss(i, LOSS_RETRANSMISSION, _));
   }
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 }
 
-TEST_F(QuicSentPacketManagerTest, NewRetransmissionTimeout) {
+TEST_P(QuicSentPacketManagerTest, NewRetransmissionTimeout) {
   QuicConfig client_config;
   QuicTagVector options;
   options.push_back(kNRTO);
   QuicSentPacketManagerPeer::SetPerspective(&manager_, Perspective::IS_CLIENT);
   client_config.SetConnectionOptionsToSend(options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
-  EXPECT_CALL(*send_algorithm_, PacingRate())
+  EXPECT_CALL(*send_algorithm_, PacingRate(_))
       .WillRepeatedly(Return(QuicBandwidth::Zero()));
   EXPECT_CALL(*send_algorithm_, GetCongestionWindow())
       .WillOnce(Return(10 * kDefaultTCPMSS));
@@ -1144,20 +1093,18 @@ TEST_F(QuicSentPacketManagerTest, NewRetransmissionTimeout) {
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
 
   // Ack a retransmission and expect no call to OnRetransmissionTimeout.
-  QuicAckFrame ack_frame;
+  QuicAckFrame ack_frame = InitAckFrame(102);
+  NackPackets(0, 102, &ack_frame);
   ack_frame.ack_delay_time = QuicTime::Delta::Zero();
-  ack_frame.largest_observed = 102;
-  ack_frame.missing_packets.Add(0, 102);
   // This will include packets in the lost packet map.
   EXPECT_CALL(*send_algorithm_,
               OnCongestionEvent(true, _, ElementsAre(Pair(102, _)),
                                 /*lost_packets=*/Not(IsEmpty())));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 }
 
-TEST_F(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckSecond) {
+TEST_P(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckSecond) {
   // Send 1 packet.
   SendDataPacket(1);
 
@@ -1179,10 +1126,9 @@ TEST_F(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckSecond) {
 
   // Ack a retransmission and ensure OnRetransmissionTimeout is called.
   EXPECT_CALL(*send_algorithm_, OnRetransmissionTimeout(true));
-  QuicAckFrame ack_frame;
+  QuicAckFrame ack_frame = InitAckFrame(2);
+  NackPackets(1, 2, &ack_frame);
   ack_frame.ack_delay_time = QuicTime::Delta::Zero();
-  ack_frame.largest_observed = 2;
-  ack_frame.missing_packets.Add(1);
   ExpectAck(2);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 
@@ -1191,7 +1137,7 @@ TEST_F(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckSecond) {
             QuicSentPacketManagerPeer::GetBytesInFlight(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckFirst) {
+TEST_P(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckFirst) {
   // Send 1 packet.
   SendDataPacket(1);
 
@@ -1213,10 +1159,9 @@ TEST_F(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckFirst) {
 
   // Ack a retransmission and ensure OnRetransmissionTimeout is called.
   EXPECT_CALL(*send_algorithm_, OnRetransmissionTimeout(true));
-  QuicAckFrame ack_frame;
+  QuicAckFrame ack_frame = InitAckFrame(3);
+  NackPackets(1, 3, &ack_frame);
   ack_frame.ack_delay_time = QuicTime::Delta::Zero();
-  ack_frame.largest_observed = 3;
-  ack_frame.missing_packets.Add(1, 3);
   ExpectAck(3);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 
@@ -1225,7 +1170,7 @@ TEST_F(QuicSentPacketManagerTest, TwoRetransmissionTimeoutsAckFirst) {
             QuicSentPacketManagerPeer::GetBytesInFlight(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, OnPathDegrading) {
+TEST_P(QuicSentPacketManagerTest, OnPathDegrading) {
   SendDataPacket(1);
   QuicTime::Delta delay = QuicTime::Delta::FromMilliseconds(500);
   EXPECT_CALL(*send_algorithm_, RetransmissionDelay())
@@ -1240,15 +1185,15 @@ TEST_F(QuicSentPacketManagerTest, OnPathDegrading) {
   manager_.OnRetransmissionTimeout();
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionTime) {
+TEST_P(QuicSentPacketManagerTest, GetTransmissionTime) {
   EXPECT_EQ(QuicTime::Zero(), manager_.GetRetransmissionTime());
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeCryptoHandshake) {
+TEST_P(QuicSentPacketManagerTest, GetTransmissionTimeCryptoHandshake) {
   SendCryptoPacket(1);
 
   // Check the min.
-  RttStats* rtt_stats = QuicSentPacketManagerPeer::GetRttStats(&manager_);
+  RttStats* rtt_stats = const_cast<RttStats*>(manager_.GetRttStats());
   rtt_stats->set_initial_rtt_us(1 * kNumMicrosPerMilli);
   EXPECT_EQ(clock_.Now().Add(QuicTime::Delta::FromMilliseconds(10)),
             manager_.GetRetransmissionTime());
@@ -1271,13 +1216,13 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeCryptoHandshake) {
   EXPECT_EQ(expected_time, manager_.GetRetransmissionTime());
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeTailLossProbe) {
+TEST_P(QuicSentPacketManagerTest, GetTransmissionTimeTailLossProbe) {
   QuicSentPacketManagerPeer::SetMaxTailLossProbes(&manager_, 2);
   SendDataPacket(1);
   SendDataPacket(2);
 
   // Check the min.
-  RttStats* rtt_stats = QuicSentPacketManagerPeer::GetRttStats(&manager_);
+  RttStats* rtt_stats = const_cast<RttStats*>(manager_.GetRttStats());
   rtt_stats->set_initial_rtt_us(1 * kNumMicrosPerMilli);
   EXPECT_EQ(clock_.Now().Add(QuicTime::Delta::FromMilliseconds(10)),
             manager_.GetRetransmissionTime());
@@ -1293,27 +1238,29 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeTailLossProbe) {
   // Retransmit the packet by invoking the retransmission timeout.
   clock_.AdvanceTime(expected_tlp_delay);
   manager_.OnRetransmissionTimeout();
-  EXPECT_EQ(QuicTime::Delta::Zero(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  QuicPathId path_id = kInvalidPathId;
+  EXPECT_EQ(
+      QuicTime::Delta::Zero(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
   EXPECT_TRUE(manager_.MaybeRetransmitTailLossProbe());
   EXPECT_TRUE(manager_.HasPendingRetransmissions());
   RetransmitNextPacket(3);
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
       .WillOnce(Return(QuicTime::Delta::Infinite()));
-  EXPECT_EQ(QuicTime::Delta::Infinite(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Infinite(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
 
   expected_time = clock_.Now().Add(expected_tlp_delay);
   EXPECT_EQ(expected_time, manager_.GetRetransmissionTime());
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeSpuriousRTO) {
-  QuicSentPacketManagerPeer::GetRttStats(&manager_)
+TEST_P(QuicSentPacketManagerTest, GetTransmissionTimeSpuriousRTO) {
+  const_cast<RttStats*>(manager_.GetRttStats())
       ->UpdateRtt(QuicTime::Delta::FromMilliseconds(100),
                   QuicTime::Delta::Zero(), QuicTime::Zero());
-
   SendDataPacket(1);
   SendDataPacket(2);
   SendDataPacket(3);
@@ -1346,9 +1293,8 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeSpuriousRTO) {
 
   // Ack a packet before the first RTO and ensure the RTO timeout returns to the
   // original value and OnRetransmissionTimeout is not called or reverted.
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 2;
-  ack_frame.missing_packets.Add(1);
+  QuicAckFrame ack_frame = InitAckFrame(2);
+  NackPackets(1, 2, &ack_frame);
   ExpectAck(2);
   manager_.OnIncomingAck(ack_frame, clock_.ApproximateNow());
   EXPECT_FALSE(manager_.HasPendingRetransmissions());
@@ -1365,7 +1311,7 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionTimeSpuriousRTO) {
   EXPECT_EQ(expected_time, manager_.GetRetransmissionTime());
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionDelayMin) {
+TEST_P(QuicSentPacketManagerTest, GetTransmissionDelayMin) {
   SendDataPacket(1);
   EXPECT_CALL(*send_algorithm_, RetransmissionDelay())
       .WillRepeatedly(Return(QuicTime::Delta::FromMilliseconds(1)));
@@ -1383,7 +1329,7 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionDelayMin) {
   }
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionDelayMax) {
+TEST_P(QuicSentPacketManagerTest, GetTransmissionDelayMax) {
   EXPECT_CALL(*send_algorithm_, RetransmissionDelay())
       .WillOnce(Return(QuicTime::Delta::FromSeconds(500)));
 
@@ -1391,7 +1337,7 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionDelayMax) {
             QuicSentPacketManagerPeer::GetRetransmissionDelay(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, GetTransmissionDelay) {
+TEST_P(QuicSentPacketManagerTest, GetTransmissionDelay) {
   SendDataPacket(1);
   QuicTime::Delta delay = QuicTime::Delta::FromMilliseconds(500);
   EXPECT_CALL(*send_algorithm_, RetransmissionDelay())
@@ -1408,7 +1354,7 @@ TEST_F(QuicSentPacketManagerTest, GetTransmissionDelay) {
   }
 }
 
-TEST_F(QuicSentPacketManagerTest, GetLossDelay) {
+TEST_P(QuicSentPacketManagerTest, GetLossDelay) {
   MockLossAlgorithm* loss_algorithm = new MockLossAlgorithm();
   QuicSentPacketManagerPeer::SetLossAlgorithm(&manager_, loss_algorithm);
 
@@ -1420,10 +1366,9 @@ TEST_F(QuicSentPacketManagerTest, GetLossDelay) {
   // Handle an ack which causes the loss algorithm to be evaluated and
   // set the loss timeout.
   ExpectAck(2);
-  EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _));
-  QuicAckFrame ack_frame;
-  ack_frame.largest_observed = 2;
-  ack_frame.missing_packets.Add(1);
+  EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _));
+  QuicAckFrame ack_frame = InitAckFrame(2);
+  NackPackets(1, 2, &ack_frame);
   manager_.OnIncomingAck(ack_frame, clock_.Now());
 
   QuicTime timeout(clock_.Now().Add(QuicTime::Delta::FromMilliseconds(10)));
@@ -1433,11 +1378,11 @@ TEST_F(QuicSentPacketManagerTest, GetLossDelay) {
 
   // Fire the retransmission timeout and ensure the loss detection algorithm
   // is invoked.
-  EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _));
+  EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _));
   manager_.OnRetransmissionTimeout();
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateTimeLossDetectionFromOptions) {
+TEST_P(QuicSentPacketManagerTest, NegotiateTimeLossDetectionFromOptions) {
   EXPECT_EQ(kNack, QuicSentPacketManagerPeer::GetLossAlgorithm(&manager_)
                        ->GetLossDetectionType());
 
@@ -1446,23 +1391,21 @@ TEST_F(QuicSentPacketManagerTest, NegotiateTimeLossDetectionFromOptions) {
   options.push_back(kTIME);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(config);
 
   EXPECT_EQ(kTime, QuicSentPacketManagerPeer::GetLossAlgorithm(&manager_)
                        ->GetLossDetectionType());
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateCongestionControlFromOptions) {
-  ValueRestore<bool> old_flag(&FLAGS_quic_allow_bbr, true);
+TEST_P(QuicSentPacketManagerTest, NegotiateCongestionControlFromOptions) {
+  FLAGS_quic_allow_bbr = true;
   QuicConfig config;
   QuicTagVector options;
 
   options.push_back(kRENO);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(config);
   EXPECT_EQ(kReno, QuicSentPacketManagerPeer::GetSendAlgorithm(manager_)
                        ->GetCongestionControlType());
@@ -1472,8 +1415,7 @@ TEST_F(QuicSentPacketManagerTest, NegotiateCongestionControlFromOptions) {
   options.clear();
   options.push_back(kTBBR);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(config);
   EXPECT_EQ(kBBR, QuicSentPacketManagerPeer::GetSendAlgorithm(
       manager_)->GetCongestionControlType());
@@ -1482,8 +1424,7 @@ TEST_F(QuicSentPacketManagerTest, NegotiateCongestionControlFromOptions) {
   options.clear();
   options.push_back(kBYTE);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(config);
   EXPECT_EQ(kCubicBytes, QuicSentPacketManagerPeer::GetSendAlgorithm(manager_)
                              ->GetCongestionControlType());
@@ -1492,21 +1433,19 @@ TEST_F(QuicSentPacketManagerTest, NegotiateCongestionControlFromOptions) {
   options.push_back(kRENO);
   options.push_back(kBYTE);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(config);
   EXPECT_EQ(kRenoBytes, QuicSentPacketManagerPeer::GetSendAlgorithm(manager_)
                             ->GetCongestionControlType());
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateNumConnectionsFromOptions) {
+TEST_P(QuicSentPacketManagerTest, NegotiateNumConnectionsFromOptions) {
   QuicConfig config;
   QuicTagVector options;
 
   options.push_back(k1CON);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetNumEmulatedConnections(1));
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(config);
@@ -1514,14 +1453,13 @@ TEST_F(QuicSentPacketManagerTest, NegotiateNumConnectionsFromOptions) {
   QuicSentPacketManagerPeer::SetPerspective(&manager_, Perspective::IS_CLIENT);
   QuicConfig client_config;
   client_config.SetConnectionOptionsToSend(options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetNumEmulatedConnections(1));
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(client_config);
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateNConnectionFromOptions) {
+TEST_P(QuicSentPacketManagerTest, NegotiateNConnectionFromOptions) {
   // By default, changing the number of open streams does nothing.
   manager_.SetNumOpenStreams(5);
 
@@ -1530,8 +1468,7 @@ TEST_F(QuicSentPacketManagerTest, NegotiateNConnectionFromOptions) {
 
   options.push_back(kNCON);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(config);
 
@@ -1539,77 +1476,72 @@ TEST_F(QuicSentPacketManagerTest, NegotiateNConnectionFromOptions) {
   manager_.SetNumOpenStreams(5);
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateNoTLPFromOptionsAtServer) {
+TEST_P(QuicSentPacketManagerTest, NegotiateNoTLPFromOptionsAtServer) {
   QuicConfig config;
   QuicTagVector options;
 
   options.push_back(kNTLP);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(config);
   EXPECT_EQ(0u, QuicSentPacketManagerPeer::GetMaxTailLossProbes(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateNoTLPFromOptionsAtClient) {
+TEST_P(QuicSentPacketManagerTest, NegotiateNoTLPFromOptionsAtClient) {
   QuicConfig client_config;
   QuicTagVector options;
 
   options.push_back(kNTLP);
   QuicSentPacketManagerPeer::SetPerspective(&manager_, Perspective::IS_CLIENT);
   client_config.SetConnectionOptionsToSend(options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(client_config);
   EXPECT_EQ(0u, QuicSentPacketManagerPeer::GetMaxTailLossProbes(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateTLPRttFromOptionsAtServer) {
+TEST_P(QuicSentPacketManagerTest, NegotiateTLPRttFromOptionsAtServer) {
   QuicConfig config;
   QuicTagVector options;
 
   options.push_back(kTLPR);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(config);
   EXPECT_TRUE(
       QuicSentPacketManagerPeer::GetEnableHalfRttTailLossProbe(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateTLPRttFromOptionsAtClient) {
+TEST_P(QuicSentPacketManagerTest, NegotiateTLPRttFromOptionsAtClient) {
   QuicConfig client_config;
   QuicTagVector options;
 
   options.push_back(kTLPR);
   QuicSentPacketManagerPeer::SetPerspective(&manager_, Perspective::IS_CLIENT);
   client_config.SetConnectionOptionsToSend(options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(client_config);
   EXPECT_TRUE(
       QuicSentPacketManagerPeer::GetEnableHalfRttTailLossProbe(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateNewRTOFromOptionsAtServer) {
+TEST_P(QuicSentPacketManagerTest, NegotiateNewRTOFromOptionsAtServer) {
   EXPECT_FALSE(QuicSentPacketManagerPeer::GetUseNewRto(&manager_));
   QuicConfig config;
   QuicTagVector options;
 
   options.push_back(kNRTO);
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(config);
   EXPECT_TRUE(QuicSentPacketManagerPeer::GetUseNewRto(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest, NegotiateNewRTOFromOptionsAtClient) {
+TEST_P(QuicSentPacketManagerTest, NegotiateNewRTOFromOptionsAtClient) {
   EXPECT_FALSE(QuicSentPacketManagerPeer::GetUseNewRto(&manager_));
   QuicConfig client_config;
   QuicTagVector options;
@@ -1617,15 +1549,82 @@ TEST_F(QuicSentPacketManagerTest, NegotiateNewRTOFromOptionsAtClient) {
   options.push_back(kNRTO);
   QuicSentPacketManagerPeer::SetPerspective(&manager_, Perspective::IS_CLIENT);
   client_config.SetConnectionOptionsToSend(options);
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   manager_.SetFromConfig(client_config);
   EXPECT_TRUE(QuicSentPacketManagerPeer::GetUseNewRto(&manager_));
 }
 
-TEST_F(QuicSentPacketManagerTest,
+TEST_P(QuicSentPacketManagerTest, NegotiateUndoFromOptionsAtServer) {
+  FLAGS_quic_loss_recovery_use_largest_acked = true;
+  EXPECT_FALSE(QuicSentPacketManagerPeer::GetUndoRetransmits(&manager_));
+  QuicConfig config;
+  QuicTagVector options;
+
+  options.push_back(kUNDO);
+  QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
+  EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
+  manager_.SetFromConfig(config);
+  EXPECT_TRUE(QuicSentPacketManagerPeer::GetUndoRetransmits(&manager_));
+
+  // Ensure undo works as intended.
+  // Send 5 packets, mark the first 4 for retransmission, and then cancel
+  // them when 1 is acked.
+  EXPECT_CALL(*send_algorithm_, PacingRate(_))
+      .WillRepeatedly(Return(QuicBandwidth::Zero()));
+  EXPECT_CALL(*send_algorithm_, GetCongestionWindow())
+      .WillOnce(Return(10 * kDefaultTCPMSS));
+  const size_t kNumSentPackets = 5;
+  for (size_t i = 1; i <= kNumSentPackets; ++i) {
+    SendDataPacket(i);
+  }
+  MockLossAlgorithm* loss_algorithm = new MockLossAlgorithm();
+  QuicSentPacketManagerPeer::SetLossAlgorithm(&manager_, loss_algorithm);
+  EXPECT_CALL(*send_algorithm_, OnCongestionEvent(true, _, _, _));
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
+  SendAlgorithmInterface::CongestionVector lost_packets;
+  for (size_t i = 1; i < kNumSentPackets; ++i) {
+    lost_packets.push_back(std::make_pair(i, kMaxPacketSize));
+  }
+  EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _))
+      .WillOnce(SetArgPointee<4>(lost_packets));
+  QuicAckFrame ack_frame = InitAckFrame(kNumSentPackets);
+  NackPackets(1, kNumSentPackets, &ack_frame);
+  // Congestion block the sending right before losing the packets.
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
+      .WillRepeatedly(Return(QuicTime::Delta::Infinite()));
+  manager_.OnIncomingAck(ack_frame, clock_.Now());
+  EXPECT_TRUE(manager_.HasPendingRetransmissions());
+  EXPECT_EQ(0u, BytesInFlight());
+
+  // Ack 1 and ensure the retransmissions are cancelled and put back in flight.
+  EXPECT_CALL(*loss_algorithm, DetectLosses(_, _, _, _, _));
+  ack_frame = InitAckFrame(5);
+  NackPackets(2, kNumSentPackets, &ack_frame);
+  manager_.OnIncomingAck(ack_frame, clock_.Now());
+  EXPECT_FALSE(manager_.HasPendingRetransmissions());
+  EXPECT_EQ(3u * kDefaultLength, BytesInFlight());
+}
+
+TEST_P(QuicSentPacketManagerTest, NegotiateUndoFromOptionsAtClient) {
+  FLAGS_quic_loss_recovery_use_largest_acked = true;
+  EXPECT_FALSE(QuicSentPacketManagerPeer::GetUndoRetransmits(&manager_));
+  QuicConfig client_config;
+  QuicTagVector options;
+
+  options.push_back(kUNDO);
+  QuicSentPacketManagerPeer::SetPerspective(&manager_, Perspective::IS_CLIENT);
+  client_config.SetConnectionOptionsToSend(options);
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
+  EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
+  manager_.SetFromConfig(client_config);
+  EXPECT_TRUE(QuicSentPacketManagerPeer::GetUndoRetransmits(&manager_));
+}
+
+TEST_P(QuicSentPacketManagerTest,
        NegotiateConservativeReceiveWindowFromOptions) {
+  ValueRestore<bool> old_flag(&FLAGS_quic_ignore_srbf, false);
   EXPECT_EQ(kDefaultSocketReceiveBuffer,
             QuicSentPacketManagerPeer::GetReceiveWindow(&manager_));
 
@@ -1635,62 +1634,68 @@ TEST_F(QuicSentPacketManagerTest,
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
   EXPECT_CALL(*send_algorithm_,
               SetMaxCongestionWindow(kMinSocketReceiveBuffer * 0.6));
-  EXPECT_CALL(*send_algorithm_, PacingRate())
+  EXPECT_CALL(*send_algorithm_, PacingRate(_))
       .WillRepeatedly(Return(QuicBandwidth::Zero()));
   EXPECT_CALL(*send_algorithm_, GetCongestionWindow())
       .WillOnce(Return(10 * kDefaultTCPMSS));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(client_config);
 
   EXPECT_EQ(kMinSocketReceiveBuffer,
             QuicSentPacketManagerPeer::GetReceiveWindow(&manager_));
 
   // Ensure the smaller send window only allows 16 packets to be sent.
+  QuicPathId path_id = kInvalidPathId;
   for (QuicPacketNumber i = 1; i <= 16; ++i) {
-    EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+    EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
         .WillOnce(Return(QuicTime::Delta::Zero()));
     EXPECT_EQ(QuicTime::Delta::Zero(),
-              manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+              manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA,
+                                     &path_id));
     EXPECT_CALL(*send_algorithm_,
                 OnPacketSent(_, BytesInFlight(), i, kDefaultLength,
                              HAS_RETRANSMITTABLE_DATA))
         .WillOnce(Return(true));
     SerializedPacket packet(CreatePacket(i, true));
-    manager_.OnPacketSent(&packet, 0, clock_.Now(), NOT_RETRANSMISSION,
-                          HAS_RETRANSMITTABLE_DATA);
+    manager_.OnPacketSent(&packet, kInvalidPathId, 0, clock_.Now(),
+                          NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
   }
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
       .WillOnce(Return(QuicTime::Delta::Infinite()));
-  EXPECT_EQ(QuicTime::Delta::Infinite(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Infinite(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
 }
 
-TEST_F(QuicSentPacketManagerTest, ReceiveWindowLimited) {
+TEST_P(QuicSentPacketManagerTest, ReceiveWindowLimited) {
+  ValueRestore<bool> old_flag(&FLAGS_quic_ignore_srbf, false);
   EXPECT_EQ(kDefaultSocketReceiveBuffer,
             QuicSentPacketManagerPeer::GetReceiveWindow(&manager_));
 
   // Ensure the smaller send window only allows 256 * 0.95 packets to be sent.
+  QuicPathId path_id = kInvalidPathId;
   for (QuicPacketNumber i = 1; i <= 244; ++i) {
-    EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+    EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
         .WillOnce(Return(QuicTime::Delta::Zero()));
     EXPECT_EQ(QuicTime::Delta::Zero(),
-              manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+              manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA,
+                                     &path_id));
     EXPECT_CALL(*send_algorithm_,
                 OnPacketSent(_, BytesInFlight(), i, kDefaultLength,
                              HAS_RETRANSMITTABLE_DATA))
         .WillOnce(Return(true));
     SerializedPacket packet(CreatePacket(i, true));
-    manager_.OnPacketSent(&packet, 0, clock_.Now(), NOT_RETRANSMISSION,
-                          HAS_RETRANSMITTABLE_DATA);
+    manager_.OnPacketSent(&packet, kInvalidPathId, 0, clock_.Now(),
+                          NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
   }
-  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _, _))
+  EXPECT_CALL(*send_algorithm_, TimeUntilSend(_, _))
       .WillOnce(Return(QuicTime::Delta::Infinite()));
-  EXPECT_EQ(QuicTime::Delta::Infinite(),
-            manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA));
+  EXPECT_EQ(
+      QuicTime::Delta::Infinite(),
+      manager_.TimeUntilSend(clock_.Now(), HAS_RETRANSMITTABLE_DATA, &path_id));
 }
 
-TEST_F(QuicSentPacketManagerTest, UseInitialRoundTripTimeToSend) {
+TEST_P(QuicSentPacketManagerTest, UseInitialRoundTripTimeToSend) {
   uint32_t initial_rtt_us = 325000;
   EXPECT_NE(initial_rtt_us,
             manager_.GetRttStats()->smoothed_rtt().ToMicroseconds());
@@ -1698,15 +1703,14 @@ TEST_F(QuicSentPacketManagerTest, UseInitialRoundTripTimeToSend) {
   QuicConfig config;
   config.SetInitialRoundTripTimeUsToSend(initial_rtt_us);
   EXPECT_CALL(*send_algorithm_, SetFromConfig(_, _));
-  EXPECT_CALL(*network_change_visitor_, OnCongestionWindowChange());
-  EXPECT_CALL(*network_change_visitor_, OnRttChange());
+  EXPECT_CALL(*network_change_visitor_, OnCongestionChange());
   manager_.SetFromConfig(config);
 
   EXPECT_EQ(0, manager_.GetRttStats()->smoothed_rtt().ToMicroseconds());
   EXPECT_EQ(initial_rtt_us, manager_.GetRttStats()->initial_rtt_us());
 }
 
-TEST_F(QuicSentPacketManagerTest, ResumeConnectionState) {
+TEST_P(QuicSentPacketManagerTest, ResumeConnectionState) {
   // The sent packet manager should use the RTT from CachedNetworkParameters if
   // it is provided.
   const int kRttMs = 1234;
@@ -1719,59 +1723,77 @@ TEST_F(QuicSentPacketManagerTest, ResumeConnectionState) {
             static_cast<uint64_t>(manager_.GetRttStats()->initial_rtt_us()));
 }
 
-TEST_F(QuicSentPacketManagerTest, ConnectionMigrationUnspecifiedChange) {
-  RttStats* rtt_stats = QuicSentPacketManagerPeer::GetRttStats(&manager_);
+TEST_P(QuicSentPacketManagerTest, ConnectionMigrationUnspecifiedChange) {
+  RttStats* rtt_stats = const_cast<RttStats*>(manager_.GetRttStats());
   int64_t default_init_rtt = rtt_stats->initial_rtt_us();
   rtt_stats->set_initial_rtt_us(default_init_rtt * 2);
   EXPECT_EQ(2 * default_init_rtt, rtt_stats->initial_rtt_us());
 
   QuicSentPacketManagerPeer::SetConsecutiveRtoCount(&manager_, 1);
-  EXPECT_EQ(1u, manager_.consecutive_rto_count());
+  EXPECT_EQ(1u, manager_.GetConsecutiveRtoCount());
   QuicSentPacketManagerPeer::SetConsecutiveTlpCount(&manager_, 2);
-  EXPECT_EQ(2u, manager_.consecutive_tlp_count());
+  EXPECT_EQ(2u, manager_.GetConsecutiveTlpCount());
 
   EXPECT_CALL(*send_algorithm_, OnConnectionMigration());
-  manager_.OnConnectionMigration(UNSPECIFIED_CHANGE);
+  manager_.OnConnectionMigration(kDefaultPathId, UNSPECIFIED_CHANGE);
 
   EXPECT_EQ(default_init_rtt, rtt_stats->initial_rtt_us());
-  EXPECT_EQ(0u, manager_.consecutive_rto_count());
-  EXPECT_EQ(0u, manager_.consecutive_tlp_count());
+  EXPECT_EQ(0u, manager_.GetConsecutiveRtoCount());
+  EXPECT_EQ(0u, manager_.GetConsecutiveTlpCount());
 }
 
-TEST_F(QuicSentPacketManagerTest, ConnectionMigrationIPSubnetChange) {
-  RttStats* rtt_stats = QuicSentPacketManagerPeer::GetRttStats(&manager_);
+TEST_P(QuicSentPacketManagerTest, ConnectionMigrationIPSubnetChange) {
+  RttStats* rtt_stats = const_cast<RttStats*>(manager_.GetRttStats());
   int64_t default_init_rtt = rtt_stats->initial_rtt_us();
   rtt_stats->set_initial_rtt_us(default_init_rtt * 2);
   EXPECT_EQ(2 * default_init_rtt, rtt_stats->initial_rtt_us());
 
   QuicSentPacketManagerPeer::SetConsecutiveRtoCount(&manager_, 1);
-  EXPECT_EQ(1u, manager_.consecutive_rto_count());
+  EXPECT_EQ(1u, manager_.GetConsecutiveRtoCount());
   QuicSentPacketManagerPeer::SetConsecutiveTlpCount(&manager_, 2);
-  EXPECT_EQ(2u, manager_.consecutive_tlp_count());
+  EXPECT_EQ(2u, manager_.GetConsecutiveTlpCount());
 
-  manager_.OnConnectionMigration(IPV4_SUBNET_CHANGE);
+  manager_.OnConnectionMigration(kDefaultPathId, IPV4_SUBNET_CHANGE);
 
   EXPECT_EQ(2 * default_init_rtt, rtt_stats->initial_rtt_us());
-  EXPECT_EQ(1u, manager_.consecutive_rto_count());
-  EXPECT_EQ(2u, manager_.consecutive_tlp_count());
+  EXPECT_EQ(1u, manager_.GetConsecutiveRtoCount());
+  EXPECT_EQ(2u, manager_.GetConsecutiveTlpCount());
 }
 
-TEST_F(QuicSentPacketManagerTest, ConnectionMigrationPortChange) {
-  RttStats* rtt_stats = QuicSentPacketManagerPeer::GetRttStats(&manager_);
+TEST_P(QuicSentPacketManagerTest, ConnectionMigrationPortChange) {
+  RttStats* rtt_stats = const_cast<RttStats*>(manager_.GetRttStats());
   int64_t default_init_rtt = rtt_stats->initial_rtt_us();
   rtt_stats->set_initial_rtt_us(default_init_rtt * 2);
   EXPECT_EQ(2 * default_init_rtt, rtt_stats->initial_rtt_us());
 
   QuicSentPacketManagerPeer::SetConsecutiveRtoCount(&manager_, 1);
-  EXPECT_EQ(1u, manager_.consecutive_rto_count());
+  EXPECT_EQ(1u, manager_.GetConsecutiveRtoCount());
   QuicSentPacketManagerPeer::SetConsecutiveTlpCount(&manager_, 2);
-  EXPECT_EQ(2u, manager_.consecutive_tlp_count());
+  EXPECT_EQ(2u, manager_.GetConsecutiveTlpCount());
 
-  manager_.OnConnectionMigration(PORT_CHANGE);
+  manager_.OnConnectionMigration(kDefaultPathId, PORT_CHANGE);
 
   EXPECT_EQ(2 * default_init_rtt, rtt_stats->initial_rtt_us());
-  EXPECT_EQ(1u, manager_.consecutive_rto_count());
-  EXPECT_EQ(2u, manager_.consecutive_tlp_count());
+  EXPECT_EQ(1u, manager_.GetConsecutiveRtoCount());
+  EXPECT_EQ(2u, manager_.GetConsecutiveTlpCount());
+}
+
+TEST_P(QuicSentPacketManagerTest, PathMtuIncreased) {
+  FLAGS_quic_no_mtu_discovery_ack_listener = true;
+  EXPECT_CALL(*send_algorithm_, OnPacketSent(_, BytesInFlight(), 1, _, _))
+      .Times(1)
+      .WillOnce(Return(true));
+  SerializedPacket packet(kDefaultPathId, 1, PACKET_6BYTE_PACKET_NUMBER,
+                          nullptr, kDefaultLength + 100, 0u, false, false);
+  manager_.OnPacketSent(&packet, kInvalidPathId, 0, clock_.Now(),
+                        NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
+
+  // Ack the large packet and expect the path MTU to increase.
+  ExpectAck(1);
+  EXPECT_CALL(*network_change_visitor_,
+              OnPathMtuIncreased(kDefaultLength + 100));
+  QuicAckFrame ack_frame = InitAckFrame(1);
+  manager_.OnIncomingAck(ack_frame, clock_.Now());
 }
 
 }  // namespace

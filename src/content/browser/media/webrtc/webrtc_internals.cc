@@ -12,9 +12,9 @@
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/power_save_blocker.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "device/power_save_blocker/power_save_blocker.h"
 
 using base::ProcessId;
 using std::string;
@@ -40,7 +40,8 @@ static base::ListValue* EnsureLogList(base::DictionaryValue* dict) {
 }  // namespace
 
 WebRTCInternals::PendingUpdate::PendingUpdate(
-    const std::string& command, scoped_ptr<base::Value> value)
+    const std::string& command,
+    std::unique_ptr<base::Value> value)
     : command_(command), value_(std::move(value)) {}
 
 WebRTCInternals::PendingUpdate::PendingUpdate(PendingUpdate&& other)
@@ -145,7 +146,7 @@ void WebRTCInternals::OnRemovePeerConnection(ProcessId pid, int lid) {
     CreateOrReleasePowerSaveBlocker();
 
     if (observers_.might_have_observers()) {
-      scoped_ptr<base::DictionaryValue> id(new base::DictionaryValue());
+      std::unique_ptr<base::DictionaryValue> id(new base::DictionaryValue());
       id->SetInteger("pid", static_cast<int>(pid));
       id->SetInteger("lid", lid);
       SendUpdate("removePeerConnection", std::move(id));
@@ -186,7 +187,8 @@ void WebRTCInternals::OnUpdatePeerConnection(
     log->Append(log_entry);
 
     if (observers_.might_have_observers()) {
-      scoped_ptr<base::DictionaryValue> update(new base::DictionaryValue());
+      std::unique_ptr<base::DictionaryValue> update(
+          new base::DictionaryValue());
       update->SetInteger("pid", static_cast<int>(pid));
       update->SetInteger("lid", lid);
       update->MergeDictionary(log_entry);
@@ -202,7 +204,7 @@ void WebRTCInternals::OnAddStats(base::ProcessId pid, int lid,
   if (!observers_.might_have_observers())
     return;
 
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetInteger("pid", static_cast<int>(pid));
   dict->SetInteger("lid", lid);
 
@@ -261,10 +263,8 @@ void WebRTCInternals::UpdateObserver(WebRTCInternalsUIObserver* observer) {
   if (peer_connection_data_.GetSize() > 0)
     observer->OnUpdate("updateAllPeerConnections", &peer_connection_data_);
 
-  for (base::ListValue::iterator it = get_user_media_requests_.begin();
-       it != get_user_media_requests_.end();
-       ++it) {
-    observer->OnUpdate("addGetUserMedia", *it);
+  for (const auto& request : get_user_media_requests_) {
+    observer->OnUpdate("addGetUserMedia", request.get());
   }
 }
 
@@ -276,7 +276,7 @@ void WebRTCInternals::EnableAudioDebugRecordings(
   EnableAudioDebugRecordingsOnAllRenderProcessHosts();
 #else
   selecting_event_log_ = false;
-  DCHECK(select_file_dialog_ == nullptr);
+  DCHECK(!select_file_dialog_);
   select_file_dialog_ = ui::SelectFileDialog::Create(this, NULL);
   select_file_dialog_->SelectFile(
       ui::SelectFileDialog::SELECT_SAVEAS_FILE,
@@ -328,7 +328,7 @@ void WebRTCInternals::SetEventLogRecordings(
     EnableEventLogRecordingsOnAllRenderProcessHosts();
 #else
     DCHECK(web_contents);
-    DCHECK(select_file_dialog_ == nullptr);
+    DCHECK(!select_file_dialog_);
     selecting_event_log_ = true;
     select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
     select_file_dialog_->SelectFile(
@@ -363,7 +363,7 @@ const base::FilePath& WebRTCInternals::GetEventLogRecordingsFilePath() const {
 }
 
 void WebRTCInternals::SendUpdate(const string& command,
-                                 scoped_ptr<base::Value> value) {
+                                 std::unique_ptr<base::Value> value) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(observers_.might_have_observers());
 
@@ -430,7 +430,8 @@ void WebRTCInternals::OnRendererExit(int render_process_id) {
         record->GetInteger("lid", &lid);
         record->GetInteger("pid", &pid);
 
-        scoped_ptr<base::DictionaryValue> update(new base::DictionaryValue());
+        std::unique_ptr<base::DictionaryValue> update(
+            new base::DictionaryValue());
         update->SetInteger("lid", lid);
         update->SetInteger("pid", pid);
         SendUpdate("removePeerConnection", std::move(update));
@@ -457,7 +458,7 @@ void WebRTCInternals::OnRendererExit(int render_process_id) {
   }
 
   if (found_any && observers_.might_have_observers()) {
-    scoped_ptr<base::DictionaryValue> update(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> update(new base::DictionaryValue());
     update->SetInteger("rid", render_process_id);
     SendUpdate("removeGetUserMediaForRenderer", std::move(update));
   }
@@ -499,9 +500,12 @@ void WebRTCInternals::CreateOrReleasePowerSaveBlocker() {
   } else if (!peer_connection_data_.empty() && !power_save_blocker_) {
     DVLOG(1) << ("Preventing the application from being suspended while one or "
                  "more PeerConnections are active.");
-    power_save_blocker_ = content::PowerSaveBlocker::Create(
-        PowerSaveBlocker::kPowerSaveBlockPreventAppSuspension,
-        PowerSaveBlocker::kReasonOther, "WebRTC has active PeerConnections");
+    power_save_blocker_.reset(new device::PowerSaveBlocker(
+        device::PowerSaveBlocker::kPowerSaveBlockPreventAppSuspension,
+        device::PowerSaveBlocker::kReasonOther,
+        "WebRTC has active PeerConnections",
+        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
+        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)));
   }
 }
 

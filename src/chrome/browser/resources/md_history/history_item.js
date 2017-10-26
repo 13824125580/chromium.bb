@@ -2,120 +2,122 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-Polymer({
-  is: 'history-item',
+cr.define('md_history', function() {
+  var HistoryItem = Polymer({
+    is: 'history-item',
 
-  properties: {
-    // The date of these history items.
-    historyDate: {
-      type: String,
-      value: ''
+    properties: {
+      // Underlying HistoryEntry data for this item. Contains read-only fields
+      // from the history backend, as well as fields computed by history-list.
+      item: {type: Object, observer: 'showIcon_'},
+
+      // True if the website is a bookmarked page.
+      starred: {type: Boolean, reflectToAttribute: true},
+
+      // Search term used to obtain this history-item.
+      searchTerm: {type: String},
+
+      selected: {type: Boolean, notify: true},
+
+      isFirstItem: {type: Boolean, reflectToAttribute: true},
+
+      isCardStart: {type: Boolean, reflectToAttribute: true},
+
+      isCardEnd: {type: Boolean, reflectToAttribute: true},
+
+      hasTimeGap: {type: Boolean},
+
+      numberOfItems: {type: Number}
     },
 
-    timeAccessed: {
-      type: String,
-      value: ''
+    /**
+     * When a history-item is selected the toolbar is notified and increases
+     * or decreases its count of selected items accordingly.
+     * @private
+     */
+    onCheckboxSelected_: function() {
+      this.fire('history-checkbox-select', {
+        countAddition: this.$.checkbox.checked ? 1 : -1
+      });
     },
 
-    websiteTitle: {
-      type: String,
-      value: ''
+    /**
+     * Fires a custom event when the menu button is clicked. Sends the details
+     * of the history item and where the menu should appear.
+     */
+    onMenuButtonTap_: function(e) {
+      this.fire('toggle-menu', {
+        target: Polymer.dom(e).localTarget,
+        item: this.item,
+      });
+
+      // Stops the 'tap' event from closing the menu when it opens.
+      e.stopPropagation();
     },
 
-    // Domain is the website text shown on the history-item next to the title.
-    // Gives the user some idea of which history items are different pages
-    // belonging to the same site, and can be used to look for more items
-    // from the same site.
-    websiteDomain: {
-      type: String,
-      value: ''
+    /**
+     * Set the favicon image, based on the URL of the history item.
+     * @private
+     */
+    showIcon_: function() {
+      this.$.icon.style.backgroundImage =
+          cr.icon.getFaviconImageSet(this.item.url);
     },
 
-    // The website url is used to define where the link should take you if
-    // you click on the title, and also to define which icon the history-item
-    // should display.
-    websiteUrl: {
-      type: String,
-      value: '',
-      observer: 'showIcon_'
+    selectionNotAllowed_: function() {
+      return !loadTimeData.getBoolean('allowDeletingHistory');
     },
 
-    // If the website is a bookmarked page starred is true.
-    starred: {
-      type: Boolean,
-      value: false,
-      reflectToAttribute: true
+    /**
+     * Generates the title for this history card.
+     * @param {number} numberOfItems The number of items in the card.
+     * @param {string} search The search term associated with these results.
+     * @private
+     */
+    cardTitle_: function(numberOfItems, historyDate, search) {
+      if (!search)
+        return this.item.dateRelativeDay;
+
+      var resultId = numberOfItems == 1 ? 'searchResult' : 'searchResults';
+      return loadTimeData.getStringF('foundSearchResults', numberOfItems,
+          loadTimeData.getString(resultId), search);
     },
 
-    // The time in seconds of when the website was accessed.
-    timestamp: {
-      type: Number,
-      value: 0
-    },
-
-    selected: {
-      type: Boolean,
-      value: false,
-      notify: true
-    },
-
-    isCardStart: {
-      type: Boolean,
-      value: false,
-      reflectToAttribute: true
-    },
-
-    isCardEnd: {
-      type: Boolean,
-      value: false,
-      reflectToAttribute: true
-    },
-
-    hasTimeGap: {
-      type: Boolean,
-      value: false
+    /**
+     * Crop long item titles to reduce their effect on layout performance. See
+     * crbug.com/621347.
+     * @param {string} title
+     * @return {string}
+     */
+    cropItemTitle_: function(title) {
+      return (title.length > TITLE_MAX_LENGTH) ?
+          title.substr(0, TITLE_MAX_LENGTH) :
+          title;
     }
-  },
+  });
 
   /**
-   * When a history-item is selected the toolbar is notified and increases
-   * or decreases its count of selected items accordingly.
+   * Check whether the time difference between the given history item and the
+   * next one is large enough for a spacer to be required.
+   * @param {Array<HistoryEntry>} visits
+   * @param {number} currentIndex
+   * @param {string} searchedTerm
+   * @return {boolean} Whether or not time gap separator is required.
    * @private
    */
-  onCheckboxSelected_: function() {
-    this.fire('history-checkbox-select', {
-      countAddition: this.$.checkbox.checked ? 1 : -1
-    });
-  },
+  HistoryItem.needsTimeGap = function(visits, currentIndex, searchedTerm) {
+    if (currentIndex >= visits.length - 1 || visits.length == 0)
+      return false;
 
-  /**
-   * When the url for the history-item is set, the icon associated with this
-   * website is also set.
-   * @private
-   */
-  showIcon_: function() {
-    this.$.icon.style.backgroundImage =
-        getFaviconImageSet(this.websiteUrl);
-  },
+    var currentItem = visits[currentIndex];
+    var nextItem = visits[currentIndex + 1];
 
-  /**
-   * Fires a custom event when the menu button is clicked. Sends the details of
-   * the history item and where the menu should appear.
-   */
-  onMenuButtonTap_: function(e) {
-    var position = this.$['menu-button'].getBoundingClientRect();
+    if (searchedTerm)
+      return currentItem.dateShort != nextItem.dateShort;
 
-    this.fire('toggle-menu', {
-      x: position.left,
-      y: position.top,
-      accessTime: this.timestamp
-    });
+    return currentItem.time - nextItem.time > BROWSING_GAP_TIME &&
+        currentItem.dateRelativeDay == nextItem.dateRelativeDay;
+  };
 
-    // Stops the 'tap' event from closing the menu when it opens.
-    e.stopPropagation();
-  },
-
-  selectionNotAllowed_: function() {
-    return !loadTimeData.getBoolean('allowDeletingHistory');
-  }
+  return { HistoryItem: HistoryItem };
 });

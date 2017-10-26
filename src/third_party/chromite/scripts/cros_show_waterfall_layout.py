@@ -27,9 +27,9 @@ def _FormatText(data, out):
       board_layout = layout[board]
       children = board_layout.get('children', ())
       if not children:
-        output('%(name)s' % board_layout)
+        output('%(name)s (%(buildslave_type)s)' % board_layout)
       else:
-        output('[%(name)s]' % board_layout)
+        output('[%(name)s] (%(buildslave_type)s)' % board_layout)
       for child in sorted(board_layout.get('children', ())):
         output('  %s' % (child,))
     output()
@@ -61,7 +61,7 @@ def _ParseArguments(argv):
 def main(argv):
   opts = _ParseArguments(argv)
 
-  site_config = config_lib.LoadConfigFromFile()
+  site_config = config_lib.GetConfig()
 
   layout = {}
   for config_name, config in site_config.iteritems():
@@ -72,6 +72,7 @@ def main(argv):
     waterfall_layout = layout.setdefault(active_waterfall, {})
     board_layout = waterfall_layout[config_name] = {
         'name': config_name,
+        'buildslave_type': config['buildslave_type'],
     }
 
     children = config['child_configs']

@@ -8,8 +8,8 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
+#include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/elapsed_timer.h"
@@ -93,9 +93,9 @@ class RealFetchTester {
 
   void WaitUntilDone() {
     while (!finished_) {
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
     }
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   // Attempts to give worker threads time to finish.  This is currently
@@ -108,8 +108,8 @@ class RealFetchTester {
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(30));
   }
 
-  scoped_ptr<URLRequestContext> context_;
-  scoped_ptr<DhcpProxyScriptFetcherWin> fetcher_;
+  std::unique_ptr<URLRequestContext> context_;
+  std::unique_ptr<DhcpProxyScriptFetcherWin> fetcher_;
   bool finished_;
   base::string16 pac_text_;
   base::OneShotTimer timeout_;
@@ -138,7 +138,7 @@ TEST(DhcpProxyScriptFetcherWin, RealFetchWithCancel) {
   // exercises the code without stubbing out dependencies.
   RealFetchTester fetcher;
   fetcher.RunTestWithCancel();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Attempt to avoid Valgrind leak reports in case worker thread is
   // still running.
@@ -286,7 +286,9 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
   MockDhcpProxyScriptFetcherWin(URLRequestContext* context)
       : DhcpProxyScriptFetcherWin(context),
         num_fetchers_created_(0),
-        worker_finished_event_(true, false) {
+        worker_finished_event_(
+            base::WaitableEvent::ResetPolicy::MANUAL,
+            base::WaitableEvent::InitialState::NOT_SIGNALED) {
     ResetTestState();
   }
 
@@ -308,7 +310,7 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
                                    int result,
                                    base::string16 pac_script,
                                    base::TimeDelta fetch_delay) {
-    scoped_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
+    std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
         new DummyDhcpProxyScriptAdapterFetcher(url_request_context(),
                                                GetTaskRunner()));
     adapter_fetcher->Configure(
@@ -387,16 +389,16 @@ class FetcherClient {
 
   void RunMessageLoopUntilComplete() {
     while (!finished_) {
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
     }
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void RunMessageLoopUntilWorkerDone() {
     DCHECK(fetcher_.adapter_query_.get());
     while (!fetcher_.worker_finished_event_.TimedWait(
         base::TimeDelta::FromMilliseconds(10))) {
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
     }
   }
 
@@ -416,7 +418,7 @@ class FetcherClient {
     return fetcher_.GetTaskRunner();
   }
 
-  scoped_ptr<URLRequestContext> context_;
+  std::unique_ptr<URLRequestContext> context_;
   MockDhcpProxyScriptFetcherWin fetcher_;
   bool finished_;
   int result_;
@@ -427,7 +429,7 @@ class FetcherClient {
 // the ReuseFetcher test at the bottom.
 void TestNormalCaseURLConfiguredOneAdapter(FetcherClient* client) {
   TestURLRequestContext context;
-  scoped_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
+  std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
       new DummyDhcpProxyScriptAdapterFetcher(&context,
                                              client->GetTaskRunner()));
   adapter_fetcher->Configure(true, OK, L"bingo", 1);
@@ -588,7 +590,7 @@ TEST(DhcpProxyScriptFetcherWin, ShortCircuitLessPreferredAdapters) {
 
 void TestImmediateCancel(FetcherClient* client) {
   TestURLRequestContext context;
-  scoped_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
+  std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
       new DummyDhcpProxyScriptAdapterFetcher(&context,
                                              client->GetTaskRunner()));
   adapter_fetcher->Configure(true, OK, L"bingo", 1);

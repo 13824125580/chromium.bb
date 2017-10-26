@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <list>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -17,13 +18,13 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/texture_layer_client.h"
+#include "cc/resources/texture_mailbox.h"
 #include "content/common/content_export.h"
 #include "content/public/renderer/pepper_plugin_instance.h"
 #include "content/public/renderer/plugin_instance_throttler.h"
@@ -54,7 +55,6 @@
 #include "ppapi/shared_impl/tracked_callback.h"
 #include "ppapi/thunk/ppb_gamepad_api.h"
 #include "ppapi/thunk/resource_creation_api.h"
-#include "skia/ext/refptr.h"
 #include "third_party/WebKit/public/platform/WebCanvas.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURLLoaderClient.h"
@@ -106,6 +106,7 @@ namespace content {
 class ContentDecryptorDelegate;
 class FullscreenContainer;
 class MessageChannel;
+class PepperAudioController;
 class PepperCompositorHost;
 class PepperGraphics2DHost;
 class PluginInstanceThrottlerImpl;
@@ -198,9 +199,18 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // slow path can also be triggered if there is an overlapping frame.
   void ScrollRect(int dx, int dy, const gfx::Rect& rect);
 
-  // Commit the backing texture to the screen once the side effects some
-  // rendering up to an offscreen SwapBuffers are visible.
-  void CommitBackingTexture();
+  // Commit the texture mailbox to the screen.
+  void CommitTextureMailbox(const cc::TextureMailbox& texture_mailbox);
+
+  // Passes the committed texture to |texture_layer_| and marks it as in use.
+  void PassCommittedTextureToTextureLayer();
+
+  // Callback when the compositor is finished consuming the committed texture.
+  void FinishedConsumingCommittedTexture(
+      const cc::TextureMailbox& texture_mailbox,
+      scoped_refptr<PPB_Graphics3D_Impl> graphics_3d,
+      const gpu::SyncToken& sync_token,
+      bool is_lost);
 
   // Called when the out-of-process plugin implementing this instance crashed.
   void InstanceCrashed();
@@ -213,15 +223,14 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool Initialize(const std::vector<std::string>& arg_names,
                   const std::vector<std::string>& arg_values,
                   bool full_frame,
-                  scoped_ptr<PluginInstanceThrottlerImpl> throttler);
+                  std::unique_ptr<PluginInstanceThrottlerImpl> throttler);
   bool HandleDocumentLoad(const blink::WebURLResponse& response);
   bool HandleInputEvent(const blink::WebInputEvent& event,
                         blink::WebCursorInfo* cursor_info);
   PP_Var GetInstanceObject(v8::Isolate* isolate);
   void ViewChanged(const gfx::Rect& window,
                    const gfx::Rect& clip,
-                   const gfx::Rect& unobscured,
-                   const std::vector<gfx::Rect>& cut_outs_rects);
+                   const gfx::Rect& unobscured);
 
   // Handlers for composition events.
   bool HandleCompositionStart(const base::string16& text);
@@ -260,7 +269,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool StartFind(const base::string16& search_text,
                  bool case_sensitive,
                  int identifier);
-  void SelectFindResult(bool forward);
+  void SelectFindResult(bool forward, int identifier);
   void StopFind();
 
   bool SupportsPrintInterface();
@@ -372,6 +381,9 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   }
 
   ContentDecryptorDelegate* GetContentDecryptorDelegate();
+
+  void SetGraphics2DTransform(const float& scale,
+                              const gfx::PointF& translation);
 
   // PluginInstance implementation
   RenderView* GetRenderView() override;
@@ -536,7 +548,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // cc::TextureLayerClient implementation.
   bool PrepareTextureMailbox(
       cc::TextureMailbox* mailbox,
-      scoped_ptr<cc::SingleReleaseCallback>* release_callback,
+      std::unique_ptr<cc::SingleReleaseCallback>* release_callback,
       bool use_shared_memory) override;
 
   // RenderFrameObserver
@@ -545,6 +557,10 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // PluginInstanceThrottler::Observer
   void OnThrottleStateChange() override;
   void OnHiddenForPlaceholder(bool hidden) override;
+
+  PepperAudioController& audio_controller() {
+    return *audio_controller_;
+  }
 
  private:
   friend class base::RefCounted<PepperPluginInstanceImpl>;
@@ -577,7 +593,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
    private:
     std::list<std::string> data_;
     bool finished_loading_;
-    scoped_ptr<blink::WebURLError> error_;
+    std::unique_ptr<blink::WebURLError> error_;
   };
 
   // Implements PPB_Gamepad_API. This is just to avoid having an excessive
@@ -700,23 +716,48 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   void ConvertRectToDIP(PP_Rect* rect) const;
   void ConvertDIPToViewport(gfx::Rect* rect) const;
 
+  // Each time CommitTextureMailbox() is called, this instance is given
+  // ownership
+  // of a cc::TextureMailbox. This instance always needs to hold on to the most
+  // recently committed cc::TextureMailbox, since UpdateLayer() might require
+  // it.
+  // Since it is possible for a cc::TextureMailbox to be passed to
+  // texture_layer_ more than once, a reference counting mechanism is necessary
+  // to ensure that a cc::TextureMailbox isn't returned until all copies of it
+  // have been released by texture_layer_.
+  //
+  // This method should be called each time a cc::TextureMailbox is passed to
+  // |texture_layer_|. It increments an internal reference count.
+  void IncrementTextureReferenceCount(const cc::TextureMailbox& mailbox);
+
+  // This method should be called each time |texture_layer_| finishes consuming
+  // a cc::TextureMailbox. It decrements an internal reference count. Returns
+  // whether the last reference was removed.
+  bool DecrementTextureReferenceCount(const cc::TextureMailbox& mailbox);
+
+  // Whether a given cc::TextureMailbox is in use by |texture_layer_|.
+  bool IsTextureInUse(const cc::TextureMailbox& mailbox) const;
+
   RenderFrameImpl* render_frame_;
-  base::Closure instance_deleted_callback_;
   scoped_refptr<PluginModule> module_;
-  scoped_ptr<ppapi::PPP_Instance_Combined> instance_interface_;
+  std::unique_ptr<ppapi::PPP_Instance_Combined> instance_interface_;
   // If this is the NaCl plugin, we create a new module when we switch to the
   // IPC-based PPAPI proxy. Store the original module and instance interface
   // so we can shut down properly.
   scoped_refptr<PluginModule> original_module_;
-  scoped_ptr<ppapi::PPP_Instance_Combined> original_instance_interface_;
+  std::unique_ptr<ppapi::PPP_Instance_Combined> original_instance_interface_;
 
   PP_Instance pp_instance_;
+
+  // These are the scale and the translation that will be applied to the layer.
+  gfx::PointF graphics2d_translation_;
+  float graphics2d_scale_;
 
   // NULL until we have been initialized.
   blink::WebPluginContainer* container_;
   scoped_refptr<cc::Layer> compositor_layer_;
   scoped_refptr<cc::TextureLayer> texture_layer_;
-  scoped_ptr<blink::WebLayer> web_layer_;
+  std::unique_ptr<blink::WebLayer> web_layer_;
   bool layer_bound_to_fullscreen_;
   bool layer_is_hardware_;
 
@@ -735,7 +776,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool javascript_used_;
 
   // Responsible for turning on throttling if Power Saver is on.
-  scoped_ptr<PluginInstanceThrottlerImpl> throttler_;
+  std::unique_ptr<PluginInstanceThrottlerImpl> throttler_;
 
   // Indicates whether this is a full frame instance, which means it represents
   // an entire document rather than an embed tag.
@@ -772,7 +813,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   int find_identifier_;
 
   // Helper object that creates resources.
-  scoped_ptr<ppapi::thunk::ResourceCreationAPI> resource_creation_;
+  std::unique_ptr<ppapi::thunk::ResourceCreationAPI> resource_creation_;
 
   // The plugin-provided interfaces.
   // When adding PPP interfaces, make sure to reset them in ResetAsProxied.
@@ -807,7 +848,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // to generate the entire PDF given the variables below:
   //
   // The most recently used WebCanvas, guaranteed to be valid.
-  skia::RefPtr<blink::WebCanvas> canvas_;
+  sk_sp<blink::WebCanvas> canvas_;
   // An array of page ranges.
   std::vector<PP_PrintPageNumberRange_Dev> ranges_;
 
@@ -821,15 +862,11 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   const PPP_Graphics3D* plugin_graphics_3d_interface_;
 
   // Contains the cursor if it's set by the plugin.
-  scoped_ptr<blink::WebCursorInfo> cursor_;
+  std::unique_ptr<blink::WebCursorInfo> cursor_;
 
   // Set to true if this plugin thinks it will always be on top. This allows us
   // to use a more optimized painting path in some cases.
   bool always_on_top_;
-  // Even if |always_on_top_| is true, the plugin is not fully visible if there
-  // are some cut-out areas (occupied by iframes higher in the stacking order).
-  // This information is used in the optimized painting path.
-  std::vector<gfx::Rect> cut_outs_rects_;
 
   // Implementation of PPB_FlashFullscreen.
 
@@ -906,12 +943,12 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   blink::WebURLLoaderClient* document_loader_;
   // State for deferring document loads. Used only by external instances.
   blink::WebURLResponse external_document_response_;
-  scoped_ptr<ExternalDocumentLoader> external_document_loader_;
+  std::unique_ptr<ExternalDocumentLoader> external_document_loader_;
   bool external_document_load_;
 
   // The ContentDecryptorDelegate forwards PPP_ContentDecryptor_Private
   // calls and handles PPB_ContentDecryptor_Private calls.
-  scoped_ptr<ContentDecryptorDelegate> content_decryptor_delegate_;
+  std::unique_ptr<ContentDecryptorDelegate> content_decryptor_delegate_;
 
   // The link currently under the cursor.
   base::string16 link_under_cursor_;
@@ -920,14 +957,33 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // Isolate in which this Instance was created when interacting with v8.
   v8::Isolate* isolate_;
 
-  scoped_ptr<MouseLockDispatcher::LockTarget> lock_target_;
+  std::unique_ptr<MouseLockDispatcher::LockTarget> lock_target_;
 
   bool is_deleted_;
 
   // The text that is currently selected in the plugin.
   base::string16 selected_text_;
 
+  // The most recently committed texture. This is kept around in case the layer
+  // needs to be regenerated.
+  cc::TextureMailbox committed_texture_;
+
+  // The Graphics3D that produced the most recently committed texture.
+  scoped_refptr<PPB_Graphics3D_Impl> committed_texture_graphics_3d_;
+
+  gpu::SyncToken committed_texture_consumed_sync_token_;
+
+  // Holds the number of references |texture_layer_| has to any given
+  // cc::TextureMailbox.
+  // We expect there to be no more than 10 textures in use at a time. A
+  // std::vector will have better performance than a std::map.
+  using TextureMailboxRefCount = std::pair<cc::TextureMailbox, int>;
+  std::vector<TextureMailboxRefCount> texture_ref_counts_;
+
   bool initialized_;
+
+  // The controller for all active audios of this pepper instance.
+  std::unique_ptr<PepperAudioController> audio_controller_;
 
   // We use a weak ptr factory for scheduling DidChangeView events so that we
   // can tell whether updates are pending and consolidate them. When there's

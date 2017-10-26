@@ -34,9 +34,14 @@
 
 namespace blink {
 
-SVGStringListTearOff::SVGStringListTearOff(PassRefPtrWillBeRawPtr<SVGStringList> target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName)
+SVGStringListTearOff::SVGStringListTearOff(SVGStringList* target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName)
     : SVGPropertyTearOff<SVGStringList>(target, contextElement, propertyIsAnimVal, attributeName)
 {
+}
+
+DEFINE_TRACE_WRAPPERS(SVGStringListTearOff)
+{
+    visitor->traceWrappers(contextElement());
 }
 
 }

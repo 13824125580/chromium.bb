@@ -25,7 +25,6 @@
 
 #include <blpwtk2_config.h>
 
-#include <blpwtk2_pumpmode.h>
 #include <blpwtk2_threadmode.h>
 
 #include <stdlib.h>  // for _invalid_parameter_handler and _purecall_handler
@@ -82,17 +81,6 @@ class ToolkitCreateParams {
     // change the thread mode.
     BLPWTK2_EXPORT void setThreadMode(ThreadMode::Value mode);
 
-    // By default, blpwtk2 uses 'PumpMode::MANUAL'.  Use this method to change
-    // the pump mode.
-    BLPWTK2_EXPORT void setPumpMode(PumpMode::Value mode);
-
-    // This only has any effect in the MANUAL pump mode.  By default, blpwtk2
-    // allows work messages to be posted to the main thread while it is doing
-    // work.  This function can be used to disable that.  In this case, the
-    // work message will be posted after doing work, if there is still more
-    // work to be done.
-    BLPWTK2_EXPORT void disableWorkMessageWhileDoingWork();
-
     // By default, initiating a document print will cause the browser to open
     // a print dialog to ask for the target printing device.  Calling this
     // will disable the print dialog and use the default printing device on
@@ -146,12 +134,6 @@ class ToolkitCreateParams {
     // applications to load additional fonts.
     // Note that right now, this only works for in-process renderers.
     BLPWTK2_EXPORT void appendSideLoadedFontInProcess(const StringRef& fontFile);
-
-    // By default, blpwtk2 will automatically load plugins it finds on the
-    // system (e.g. from paths in the Windows registry).  Use this method to
-    // disable this behavior.  If it is disabled, then only plugins registered
-    // via 'registerPlugin' will be loaded.
-    BLPWTK2_EXPORT void disablePluginDiscovery();
 
     // Install a custom ResourceLoader.  Note that this is only valid when
     // using the 'RENDERER_MAIN' thread-mode, and will only be used for
@@ -229,8 +211,6 @@ class ToolkitCreateParams {
 
     // ACCESSORS
     ThreadMode::Value threadMode() const;
-    PumpMode::Value pumpMode() const;
-    bool workMessageWhileDoingWorkDisabled() const;
     bool useDefaultPrintSettings() const;
     LogMessageHandler logMessageHandler() const;
     ConsoleLogMessageHandler consoleLogMessageHandler() const;

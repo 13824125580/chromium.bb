@@ -17,12 +17,10 @@
 PermissionBubbleRequestImpl::PermissionBubbleRequestImpl(
     const GURL& request_origin,
     content::PermissionType permission_type,
-    const std::string& display_languages,
     const PermissionDecidedCallback& permission_decided_callback,
     const base::Closure delete_callback)
     : request_origin_(request_origin),
       permission_type_(permission_type),
-      display_languages_(display_languages),
       permission_decided_callback_(permission_decided_callback),
       delete_callback_(delete_callback),
       is_finished_(false),
@@ -81,37 +79,6 @@ int PermissionBubbleRequestImpl::GetIconId() const {
   return icon_id;
 }
 
-base::string16 PermissionBubbleRequestImpl::GetMessageText() const {
-  int message_id;
-  switch (permission_type_) {
-    case content::PermissionType::GEOLOCATION:
-      message_id = IDS_GEOLOCATION_INFOBAR_QUESTION;
-      break;
-#if defined(ENABLE_NOTIFICATIONS)
-    case content::PermissionType::NOTIFICATIONS:
-      message_id = IDS_NOTIFICATION_PERMISSIONS;
-      break;
-#endif
-    case content::PermissionType::MIDI_SYSEX:
-      message_id = IDS_MIDI_SYSEX_INFOBAR_QUESTION;
-      break;
-    case content::PermissionType::PUSH_MESSAGING:
-      message_id = IDS_PUSH_MESSAGES_PERMISSION_QUESTION;
-      break;
-#if defined(OS_CHROMEOS)
-    case content::PermissionType::PROTECTED_MEDIA_IDENTIFIER:
-      message_id = IDS_PROTECTED_MEDIA_IDENTIFIER_INFOBAR_QUESTION;
-      break;
-#endif
-    default:
-      NOTREACHED();
-      return base::string16();
-  }
-  return l10n_util::GetStringFUTF16(message_id,
-                                    url_formatter::FormatUrlForSecurityDisplay(
-                                        request_origin_, display_languages_));
-}
-
 base::string16 PermissionBubbleRequestImpl::GetMessageTextFragment() const {
   int message_id;
   switch (permission_type_) {
@@ -134,9 +101,6 @@ base::string16 PermissionBubbleRequestImpl::GetMessageTextFragment() const {
       message_id = IDS_PROTECTED_MEDIA_IDENTIFIER_PERMISSION_FRAGMENT;
       break;
 #endif
-    case content::PermissionType::DURABLE_STORAGE:
-      message_id = IDS_DURABLE_STORAGE_BUBBLE_FRAGMENT;
-      break;
     default:
       NOTREACHED();
       return base::string16();
@@ -166,4 +130,27 @@ void PermissionBubbleRequestImpl::Cancelled() {
 void PermissionBubbleRequestImpl::RequestFinished() {
   is_finished_ = true;
   delete_callback_.Run();
+}
+
+PermissionBubbleType PermissionBubbleRequestImpl::GetPermissionBubbleType()
+    const {
+  switch (permission_type_) {
+    case content::PermissionType::GEOLOCATION:
+      return PermissionBubbleType::PERMISSION_GEOLOCATION;
+#if defined(ENABLE_NOTIFICATIONS)
+    case content::PermissionType::NOTIFICATIONS:
+      return PermissionBubbleType::PERMISSION_NOTIFICATIONS;
+#endif
+    case content::PermissionType::MIDI_SYSEX:
+      return PermissionBubbleType::PERMISSION_MIDI_SYSEX;
+    case content::PermissionType::PUSH_MESSAGING:
+      return PermissionBubbleType::PERMISSION_PUSH_MESSAGING;
+#if defined(OS_CHROMEOS)
+    case content::PermissionType::PROTECTED_MEDIA_IDENTIFIER:
+      return PermissionBubbleType::PERMISSION_PROTECTED_MEDIA_IDENTIFIER;
+#endif
+    default:
+      NOTREACHED();
+      return PermissionBubbleType::UNKNOWN;
+  }
 }

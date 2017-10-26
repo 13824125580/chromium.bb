@@ -5,25 +5,19 @@
 /**
  * @fileoverview
  * 'settings-main' displays the selected settings page.
- *
- * Example:
- *
- *     <settings-main pages="[[pages]]" selected-page-id="{{selectedId}}">
- *     </settings-main>
- *
- * See settings-drawer for example of use in 'paper-drawer-panel'.
- *
- * @group Chrome Settings Elements
- * @element settings-main
  */
 Polymer({
   is: 'settings-main',
 
   properties: {
+    /** @private */
+    isAdvancedMenuOpen_: {
+      type: Boolean,
+      value: false,
+    },
+
     /**
      * Preferences state.
-     *
-     * @type {?CrSettingsPrefsElement}
      */
     prefs: {
       type: Object,
@@ -32,6 +26,7 @@ Polymer({
 
     /**
      * The current active route.
+     * @type {!SettingsRoute}
      */
     currentRoute: {
       type: Object,
@@ -39,42 +34,94 @@ Polymer({
       observer: 'currentRouteChanged_',
     },
 
-    // If false the 'basic' page should be shown.
+    /** @private */
     showAdvancedPage_: {
       type: Boolean,
-      value: false
-    }
+      value: false,
+    },
+
+    /** @private */
+    showAdvancedToggle_: {
+      type: Boolean,
+      value: true,
+    },
+
+    /** @private */
+    showBasicPage_: {
+      type: Boolean,
+      value: true,
+    },
+
+    /** @private */
+    showAboutPage_: {
+      type: Boolean,
+      value: false,
+    },
   },
 
-  listeners: {
-    'expand-animation-complete': 'onExpandAnimationComplete_',
+  created: function() {
+    /** @private {!PromiseResolver} */
+    this.resolver_ = new PromiseResolver;
+    settings.main.rendered = this.resolver_.promise;
+  },
+
+  attached: function() {
+    document.addEventListener('toggle-advanced-page', function(e) {
+      this.showAdvancedPage_ = e.detail;
+      this.isAdvancedMenuOpen_ = e.detail;
+      if (this.showAdvancedPage_) {
+        doWhenReady(
+            function() {
+              var advancedPage = this.$$('settings-advanced-page');
+              return !!advancedPage && advancedPage.scrollHeight > 0;
+            }.bind(this),
+            function() {
+              this.$$('#toggleContainer').scrollIntoView();
+            }.bind(this));
+      }
+    }.bind(this));
+
+    doWhenReady(
+        function() {
+          var basicPage = this.$$('settings-basic-page');
+          return !!basicPage && basicPage.scrollHeight > 0;
+        }.bind(this),
+        function() {
+          this.resolver_.resolve();
+        }.bind(this));
+  },
+
+  /**
+   * @param {boolean} opened Whether the menu is expanded.
+   * @return {string} Which icon to use.
+   * @private
+   * */
+  arrowState_: function(opened) {
+    return opened ? 'settings:arrow-drop-up' : 'cr:arrow-drop-down';
+  },
+
+  /**
+   * @param {!SettingsRoute} newRoute
+   * @private
+   */
+  currentRouteChanged_: function(newRoute) {
+    var isSubpage = !!newRoute.subpage.length;
+
+    this.showAboutPage_ = newRoute.page == 'about';
+
+    this.showAdvancedToggle_ = !this.showAboutPage_ && !isSubpage;
+
+    this.showBasicPage_ = this.showAdvancedToggle_ || newRoute.page == 'basic';
+
+    this.showAdvancedPage_ =
+        (this.isAdvancedMenuOpen_ && this.showAdvancedToggle_) ||
+        newRoute.page == 'advanced';
+
+    this.style.height = isSubpage ? '100%' : '';
   },
 
   /** @private */
-  currentRouteChanged_: function(newRoute, oldRoute) {
-    this.showAdvancedPage_ = newRoute.page == 'advanced';
-
-    var pageContainer = this.$.pageContainer;
-    if (!oldRoute) {
-      pageContainer.classList.toggle('expanded', newRoute.section);
-      return;
-    }
-
-    // For contraction only, apply new styling immediately.
-    if (!newRoute.section && oldRoute.section) {
-      pageContainer.classList.remove('expanded');
-
-      // TODO(tommycli): Save and restore scroll position. crbug.com/537359.
-      pageContainer.scrollTop = 0;
-    }
-  },
-
-  /** @private */
-  onExpandAnimationComplete_: function() {
-    if (this.currentRoute.section) {
-      var pageContainer = this.$.pageContainer;
-      pageContainer.classList.add('expanded');
-      pageContainer.scrollTop = 0;
-    }
+  toggleAdvancedPage_: function() {
+    this.fire('toggle-advanced-page', !this.isAdvancedMenuOpen_);
   },
 });

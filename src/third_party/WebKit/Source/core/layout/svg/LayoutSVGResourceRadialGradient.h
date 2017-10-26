@@ -39,9 +39,9 @@ public:
     LayoutSVGResourceType resourceType() const override { return s_resourceType; }
 
     SVGUnitTypes::SVGUnitType gradientUnits() const override { return attributes().gradientUnits(); }
-    void calculateGradientTransform(AffineTransform& transform) override { transform = attributes().gradientTransform(); }
+    AffineTransform calculateGradientTransform() const override { return attributes().gradientTransform(); }
     bool collectGradientAttributes(SVGGradientElement*) override;
-    void buildGradient(GradientData*) const override;
+    PassRefPtr<Gradient> buildGradient() const override;
 
     FloatPoint centerPoint(const RadialGradientAttributes&) const;
     FloatPoint focalPoint(const RadialGradientAttributes&) const;
@@ -49,17 +49,10 @@ public:
     float focalRadius(const RadialGradientAttributes&) const;
 
 private:
-#if ENABLE(OILPAN)
     Persistent<RadialGradientAttributesWrapper> m_attributesWrapper;
 
     RadialGradientAttributes& mutableAttributes() { return m_attributesWrapper->attributes(); }
     const RadialGradientAttributes& attributes() const { return m_attributesWrapper->attributes(); }
-#else
-    RadialGradientAttributes m_attributes;
-
-    RadialGradientAttributes& mutableAttributes() { return m_attributes; }
-    const RadialGradientAttributes& attributes() const { return m_attributes; }
-#endif
 };
 
 DEFINE_LAYOUT_SVG_RESOURCE_TYPE_CASTS(LayoutSVGResourceRadialGradient, RadialGradientResourceType);

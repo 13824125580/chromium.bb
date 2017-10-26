@@ -259,7 +259,7 @@ static void GetDeviceSupportedFormatsDirectShow(const Name& device,
     return;
   }
 
-  scoped_ptr<BYTE[]> caps(new BYTE[size]);
+  std::unique_ptr<BYTE[]> caps(new BYTE[size]);
   for (int i = 0; i < count; ++i) {
     VideoCaptureDeviceWin::ScopedMediaType media_type;
     hr = stream_config->GetStreamCaps(i, media_type.Receive(), caps.get());
@@ -370,21 +370,16 @@ bool VideoCaptureDeviceFactoryWin::PlatformSupportsMediaFoundation() {
   return g_dlls_available;
 }
 
-VideoCaptureDeviceFactoryWin::VideoCaptureDeviceFactoryWin() {
-  // Use Media Foundation for Metro processes (after and including Win8) and
-  // DirectShow for any other versions, unless forced via flag. Media Foundation
-  // can also be forced if appropriate flag is set and we are in Windows 7 or
-  // 8 in non-Metro mode.
-  const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  use_media_foundation_ =
-      base::win::GetVersion() >= base::win::VERSION_WIN7 &&
-      cmd_line->HasSwitch(switches::kForceMediaFoundationVideoCapture);
-}
+VideoCaptureDeviceFactoryWin::VideoCaptureDeviceFactoryWin()
+    : use_media_foundation_(base::win::GetVersion() >=
+                                base::win::VERSION_WIN7 &&
+                            base::CommandLine::ForCurrentProcess()->HasSwitch(
+                                switches::kForceMediaFoundationVideoCapture)) {}
 
-scoped_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryWin::Create(
+std::unique_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryWin::Create(
     const Name& device_name) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  scoped_ptr<VideoCaptureDevice> device;
+  std::unique_ptr<VideoCaptureDevice> device;
   if (device_name.capture_api_type() == Name::MEDIA_FOUNDATION) {
     DCHECK(PlatformSupportsMediaFoundation());
     device.reset(new VideoCaptureDeviceMFWin(device_name));
@@ -392,7 +387,7 @@ scoped_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryWin::Create(
     ScopedComPtr<IMFMediaSource> source;
     if (!CreateVideoCaptureDeviceMediaFoundation(device_name.id().c_str(),
                                                  source.Receive())) {
-      return scoped_ptr<VideoCaptureDevice>();
+      return std::unique_ptr<VideoCaptureDevice>();
     }
     if (!static_cast<VideoCaptureDeviceMFWin*>(device.get())->Init(source))
       device.reset();
@@ -403,7 +398,7 @@ scoped_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryWin::Create(
     if (!static_cast<VideoCaptureDeviceWin*>(device.get())->Init())
       device.reset();
   }
-  return device.Pass();
+  return device;
 }
 
 void VideoCaptureDeviceFactoryWin::GetDeviceNames(Names* device_names) {

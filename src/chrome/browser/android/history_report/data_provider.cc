@@ -38,7 +38,8 @@ struct Context {
           base::CancelableTaskTracker* tracker)
       : history_service(hservice),
         history_task_tracker(tracker),
-        finished(false, false) {}
+        finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                 base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 };
 
 void UpdateUrl(Context* context,
@@ -87,7 +88,7 @@ void StartVisitMigrationToUsageBufferUiThread(
     base::WaitableEvent* finished,
     base::CancelableTaskTracker* task_tracker) {
   history_service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
+      std::unique_ptr<history::HistoryDBTask>(
           new history_report::HistoricVisitsMigrationTask(finished,
                                                           buffer_service)),
       task_tracker);
@@ -108,13 +109,13 @@ DataProvider::DataProvider(Profile* profile,
 
 DataProvider::~DataProvider() {}
 
-scoped_ptr<std::vector<DeltaFileEntryWithData>> DataProvider::Query(
+std::unique_ptr<std::vector<DeltaFileEntryWithData>> DataProvider::Query(
     int64_t last_seq_no,
     int32_t limit) {
   if (last_seq_no == 0)
     RecreateLog();
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > entries;
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > valid_entries;
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> entries;
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> valid_entries;
   do {
     entries = delta_file_service_->Query(last_seq_no, limit);
     if (!entries->empty()) {
@@ -156,7 +157,8 @@ scoped_ptr<std::vector<DeltaFileEntryWithData>> DataProvider::Query(
 
 void DataProvider::StartVisitMigrationToUsageBuffer(
     UsageReportsBufferService* buffer_service) {
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   buffer_service->Clear();
   content::BrowserThread::PostTask(
       content::BrowserThread::UI,
@@ -172,11 +174,13 @@ void DataProvider::StartVisitMigrationToUsageBuffer(
 void DataProvider::RecreateLog() {
   std::vector<std::string> urls;
   {
-    base::WaitableEvent finished(false, false);
+    base::WaitableEvent finished(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
 
-    scoped_ptr<history::HistoryDBTask> task =
-        scoped_ptr<history::HistoryDBTask>(new GetAllUrlsFromHistoryTask(
-          &finished, &urls));
+    std::unique_ptr<history::HistoryDBTask> task =
+        std::unique_ptr<history::HistoryDBTask>(
+            new GetAllUrlsFromHistoryTask(&finished, &urls));
     content::BrowserThread::PostTask(
         content::BrowserThread::UI, FROM_HERE,
         base::Bind(base::IgnoreResult(&history::HistoryService::ScheduleDBTask),

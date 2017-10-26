@@ -81,12 +81,12 @@ bool HeadersContainMultipleCopiesOfField(const HttpResponseHeaders& headers,
   return false;
 }
 
-scoped_ptr<base::Value> NetLogSendRequestBodyCallback(
+std::unique_ptr<base::Value> NetLogSendRequestBodyCallback(
     uint64_t length,
     bool is_chunked,
     bool did_merge,
     NetLogCaptureMode /* capture_mode */) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetInteger("length", static_cast<int>(length));
   dict->SetBoolean("is_chunked", is_chunked);
   dict->SetBoolean("did_merge", did_merge);
@@ -214,6 +214,7 @@ HttpStreamParser::HttpStreamParser(ClientSocketHandle* connection,
       sent_bytes_(0),
       response_(nullptr),
       response_body_length_(-1),
+      response_is_keep_alive_(false),
       response_body_read_(0),
       user_read_buf_(nullptr),
       user_read_buf_len_(0),
@@ -294,7 +295,8 @@ int HttpStreamParser::SendRequest(const std::string& request_line,
     while (todo) {
       int consumed = request_->upload_data_stream->Read(
           request_headers_.get(), static_cast<int>(todo), CompletionCallback());
-      DCHECK_GT(consumed, 0);  // Read() won't fail if not chunked.
+      // Read() must succeed synchronously if not chunked and in memory.
+      DCHECK_GT(consumed, 0);
       request_headers_->DidConsume(consumed);
       todo -= consumed;
     }
@@ -367,6 +369,8 @@ int HttpStreamParser::ReadResponseBody(IOBuffer* buf, int buf_len,
   DCHECK(callback_.is_null());
   DCHECK(!callback.is_null());
   DCHECK_LE(buf_len, kMaxBufSize);
+  // Added to investigate crbug.com/499663.
+  CHECK(buf);
 
   if (io_state_ == STATE_DONE)
     return OK;
@@ -547,7 +551,8 @@ int HttpStreamParser::DoSendBodyComplete(int result) {
 int HttpStreamParser::DoSendRequestReadBodyComplete(int result) {
   // |result| is the result of read from the request body from the last call to
   // DoSendBody().
-  DCHECK_GE(result, 0);  // There won't be errors.
+  if (result < 0)
+    return result;
 
   // Chunked data needs to be encoded.
   if (request_->upload_data_stream->is_chunked()) {
@@ -593,6 +598,9 @@ int HttpStreamParser::DoReadHeaders() {
 }
 
 int HttpStreamParser::DoReadHeadersComplete(int result) {
+  // DoReadHeadersComplete is called with the result of Socket::Read, which is a
+  // (byte_count | error), and returns (error | OK).
+
   result = HandleReadHeaderResult(result);
 
   // TODO(mmenke):  The code below is ugly and hacky.  A much better and more
@@ -617,7 +625,7 @@ int HttpStreamParser::DoReadHeadersComplete(int result) {
     // cases, can normally go to other states after an error reading headers.
     io_state_ = STATE_DONE;
     // Don't let caller see the headers.
-    response_->headers = NULL;
+    response_->headers = nullptr;
     return upload_error_;
   }
 
@@ -635,12 +643,15 @@ int HttpStreamParser::DoReadHeadersComplete(int result) {
   // Nothing else to do.
   io_state_ = STATE_DONE;
   // Don't let caller see the headers.
-  response_->headers = NULL;
+  response_->headers = nullptr;
   return upload_error_;
 }
 
 int HttpStreamParser::DoReadBody() {
   io_state_ = STATE_READ_BODY_COMPLETE;
+
+  // Added to investigate crbug.com/499663.
+  CHECK(user_read_buf_.get());
 
   // There may be some data left over from reading the response headers.
   if (read_buf_->offset()) {
@@ -843,7 +854,7 @@ int HttpStreamParser::HandleReadHeaderResult(int result) {
 
   read_buf_->set_offset(read_buf_->offset() + result);
   DCHECK_LE(read_buf_->offset(), read_buf_->capacity());
-  DCHECK_GE(result,  0);
+  DCHECK_GT(result, 0);
 
   int end_of_header_offset = FindAndParseResponseHeaders();
 
@@ -861,6 +872,7 @@ int HttpStreamParser::HandleReadHeaderResult(int result) {
     }
   } else {
     CalculateResponseBodySize();
+
     // If the body is zero length, the caller may not call ReadResponseBody,
     // which is where any extra data is copied to read_buf_, so we move the
     // data here.
@@ -884,16 +896,22 @@ int HttpStreamParser::HandleReadHeaderResult(int result) {
         response_body_length_ = -1;
         // Now waiting for the second set of headers to be read.
       } else {
+        // Only set keep-alive based on final set of headers.
+        response_is_keep_alive_ = response_->headers->IsKeepAlive();
+
         io_state_ = STATE_DONE;
       }
       return OK;
     }
 
+    // Only set keep-alive based on final set of headers.
+    response_is_keep_alive_ = response_->headers->IsKeepAlive();
+
     // Note where the headers stop.
     read_buf_unused_offset_ = end_of_header_offset;
     // Now waiting for the body to be read.
   }
-  return result;
+  return OK;
 }
 
 int HttpStreamParser::FindAndParseResponseHeaders() {
@@ -982,7 +1000,13 @@ int HttpStreamParser::ParseResponseHeaders(int end_offset) {
     return ERR_RESPONSE_HEADERS_MULTIPLE_LOCATION;
 
   response_->headers = headers;
-  response_->connection_info = HttpResponseInfo::CONNECTION_INFO_HTTP1;
+  if (headers->GetHttpVersion() == HttpVersion(0, 9)) {
+    response_->connection_info = HttpResponseInfo::CONNECTION_INFO_HTTP0_9;
+  } else if (headers->GetHttpVersion() == HttpVersion(1, 0)) {
+    response_->connection_info = HttpResponseInfo::CONNECTION_INFO_HTTP1_0;
+  } else if (headers->GetHttpVersion() == HttpVersion(1, 1)) {
+    response_->connection_info = HttpResponseInfo::CONNECTION_INFO_HTTP1_1;
+  }
   response_->vary_data.Init(*request_, *response_->headers);
   DVLOG(1) << __FUNCTION__ << "()"
            << " content_length = \"" << response_->headers->GetContentLength()
@@ -1079,8 +1103,20 @@ void HttpStreamParser::SetConnectionReused() {
 bool HttpStreamParser::CanReuseConnection() const {
   if (!CanFindEndOfResponse())
     return false;
-  if (!response_->headers || !response_->headers->IsKeepAlive())
+
+  if (!response_is_keep_alive_)
     return false;
+
+  // Check if extra data was received after reading the entire response body. If
+  // extra data was received, reusing the socket is not a great idea. This does
+  // have the down side of papering over certain server bugs, but seems to be
+  // the best option here.
+  //
+  // TODO(mmenke): Consider logging this - hard to decipher socket reuse
+  //     behavior makes NetLogs harder to read.
+  if (IsResponseBodyComplete() && IsMoreDataBuffered())
+    return false;
+
   return connection_->socket() && connection_->socket()->IsConnected();
 }
 

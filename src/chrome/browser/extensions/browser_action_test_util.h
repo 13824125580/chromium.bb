@@ -7,10 +7,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/gfx/native_widget_types.h"
 
 class Browser;
@@ -48,11 +48,6 @@ class BrowserActionTestUtil {
 
   // Returns the number of browser action currently visible.
   int VisibleBrowserActions();
-
-  // Returns true if the overflow chevron is completely shown in the browser
-  // actions container (i.e., is visible and is within the bounds of the
-  // container).
-  bool IsChevronShowing();
 
   // Inspects the extension popup for the action at the given index.
   void InspectPopup(int index);
@@ -94,16 +89,12 @@ class BrowserActionTestUtil {
   // is too small for the preferred width.
   void SetWidth(int width);
 
-  // Returns true if the container is currently highlighting in preparation for
-  // showing the icon surfacing bubble.
-  bool IsHighlightingForSurfacingBubble();
-
   // Returns the ToolbarActionsBar.
   ToolbarActionsBar* GetToolbarActionsBar();
 
   // Creates and returns a BrowserActionTestUtil with an "overflow" container,
   // with this object's container as the main bar.
-  scoped_ptr<BrowserActionTestUtil> CreateOverflowBar();
+  std::unique_ptr<BrowserActionTestUtil> CreateOverflowBar();
 
   // Returns the minimum allowed size of an extension popup.
   static gfx::Size GetMinPopupSize();
@@ -119,7 +110,7 @@ class BrowserActionTestUtil {
 
   // Our test helper, which constructs and owns the views if we don't have a
   // real browser window, or if this is an overflow version.
-  scoped_ptr<TestToolbarActionsBarHelper> test_helper_;
+  std::unique_ptr<TestToolbarActionsBarHelper> test_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserActionTestUtil);
 };

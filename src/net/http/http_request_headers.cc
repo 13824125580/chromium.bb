@@ -37,7 +37,7 @@ const char HttpRequestHeaders::kProxyConnection[] = "Proxy-Connection";
 const char HttpRequestHeaders::kRange[] = "Range";
 const char HttpRequestHeaders::kReferer[] = "Referer";
 const char HttpRequestHeaders::kTransferEncoding[] = "Transfer-Encoding";
-const char HttpRequestHeaders::kTokenBinding[] = "Token-Binding";
+const char HttpRequestHeaders::kTokenBinding[] = "Sec-Token-Binding";
 const char HttpRequestHeaders::kUserAgent[] = "User-Agent";
 
 HttpRequestHeaders::HeaderKeyValuePair::HeaderKeyValuePair() {
@@ -187,19 +187,18 @@ std::string HttpRequestHeaders::ToString() const {
   return output;
 }
 
-scoped_ptr<base::Value> HttpRequestHeaders::NetLogCallback(
+std::unique_ptr<base::Value> HttpRequestHeaders::NetLogCallback(
     const std::string* request_line,
     NetLogCaptureMode capture_mode) const {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("line", *request_line);
   base::ListValue* headers = new base::ListValue();
   for (HeaderVector::const_iterator it = headers_.begin();
        it != headers_.end(); ++it) {
     std::string log_value =
         ElideHeaderValueForNetLog(capture_mode, it->key, it->value);
-    headers->Append(new base::StringValue(
-        base::StringPrintf("%s: %s",
-                           it->key.c_str(), log_value.c_str())));
+    headers->AppendString(
+        base::StringPrintf("%s: %s", it->key.c_str(), log_value.c_str()));
   }
   dict->Set("headers", headers);
   return std::move(dict);

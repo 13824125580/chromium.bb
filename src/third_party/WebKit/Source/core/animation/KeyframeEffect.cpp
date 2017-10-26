@@ -53,26 +53,35 @@ KeyframeEffect* KeyframeEffect::create(Element* target, EffectModel* model, cons
     return new KeyframeEffect(target, model, timing, priority, eventDelegate);
 }
 
-KeyframeEffect* KeyframeEffect::create(Element* element, const EffectModelOrDictionarySequenceOrDictionary& effectInput, double duration, ExceptionState& exceptionState)
+KeyframeEffect* KeyframeEffect::create(ExecutionContext* executionContext, Element* element, const EffectModelOrDictionarySequenceOrDictionary& effectInput, double duration, ExceptionState& exceptionState)
 {
     ASSERT(RuntimeEnabledFeatures::webAnimationsAPIEnabled());
     if (element)
         UseCounter::count(element->document(), UseCounter::AnimationConstructorKeyframeListEffectObjectTiming);
-    return create(element, EffectInput::convert(element, effectInput, exceptionState), TimingInput::convert(duration));
+    Timing timing;
+    if (!TimingInput::convert(duration, timing, exceptionState))
+        return nullptr;
+    return create(element, EffectInput::convert(element, effectInput, executionContext, exceptionState), timing);
 }
-KeyframeEffect* KeyframeEffect::create(Element* element, const EffectModelOrDictionarySequenceOrDictionary& effectInput, const KeyframeEffectOptions& timingInput, ExceptionState& exceptionState)
+
+KeyframeEffect* KeyframeEffect::create(ExecutionContext* executionContext, Element* element, const EffectModelOrDictionarySequenceOrDictionary& effectInput, const KeyframeEffectOptions& timingInput, ExceptionState& exceptionState)
 {
     ASSERT(RuntimeEnabledFeatures::webAnimationsAPIEnabled());
     if (element)
         UseCounter::count(element->document(), UseCounter::AnimationConstructorKeyframeListEffectObjectTiming);
-    return create(element, EffectInput::convert(element, effectInput, exceptionState), TimingInput::convert(timingInput));
+    Timing timing;
+    Document* document = element ? &element->document() : nullptr;
+    if (!TimingInput::convert(timingInput, timing, document, exceptionState))
+        return nullptr;
+    return create(element, EffectInput::convert(element, effectInput, executionContext, exceptionState), timing);
 }
-KeyframeEffect* KeyframeEffect::create(Element* element, const EffectModelOrDictionarySequenceOrDictionary& effectInput, ExceptionState& exceptionState)
+
+KeyframeEffect* KeyframeEffect::create(ExecutionContext* executionContext, Element* element, const EffectModelOrDictionarySequenceOrDictionary& effectInput, ExceptionState& exceptionState)
 {
     ASSERT(RuntimeEnabledFeatures::webAnimationsAPIEnabled());
     if (element)
         UseCounter::count(element->document(), UseCounter::AnimationConstructorKeyframeListEffectNoTiming);
-    return create(element, EffectInput::convert(element, effectInput, exceptionState), Timing());
+    return create(element, EffectInput::convert(element, effectInput, executionContext, exceptionState), Timing());
 }
 
 KeyframeEffect::KeyframeEffect(Element* target, EffectModel* model, const Timing& timing, Priority priority, EventDelegate* eventDelegate)
@@ -82,10 +91,6 @@ KeyframeEffect::KeyframeEffect(Element* target, EffectModel* model, const Timing
     , m_sampledEffect(nullptr)
     , m_priority(priority)
 {
-#if !ENABLE(OILPAN)
-    if (m_target)
-        m_target->ensureElementAnimations().addEffect(this);
-#endif
 }
 
 KeyframeEffect::~KeyframeEffect()
@@ -179,10 +184,10 @@ void KeyframeEffect::applyEffects()
     ASSERT(iteration >= 0);
     bool changed = false;
     if (m_sampledEffect) {
-        changed = m_model->sample(clampTo<int>(iteration, 0), timeFraction(), iterationDuration(), m_sampledEffect->mutableInterpolations());
+        changed = m_model->sample(clampTo<int>(iteration, 0), progress(), iterationDuration(), m_sampledEffect->mutableInterpolations());
     } else {
         Vector<RefPtr<Interpolation>> interpolations;
-        m_model->sample(clampTo<int>(iteration, 0), timeFraction(), iterationDuration(), interpolations);
+        m_model->sample(clampTo<int>(iteration, 0), progress(), iterationDuration(), interpolations);
         if (!interpolations.isEmpty()) {
             SampledEffect* sampledEffect = SampledEffect::create(this);
             sampledEffect->mutableInterpolations().swap(interpolations);
@@ -219,7 +224,8 @@ void KeyframeEffect::updateChildrenAndEffects() const
 {
     if (!m_model)
         return;
-    if (isInEffect())
+    ASSERT(animation());
+    if (isInEffect() && !animation()->effectSuppressed())
         const_cast<KeyframeEffect*>(this)->applyEffects();
     else if (m_sampledEffect)
         const_cast<KeyframeEffect*>(this)->clearEffects();
@@ -227,21 +233,23 @@ void KeyframeEffect::updateChildrenAndEffects() const
 
 double KeyframeEffect::calculateTimeToEffectChange(bool forwards, double localTime, double timeToNextIteration) const
 {
-    const double start = specifiedTiming().startDelay;
-    const double end = start + activeDurationInternal();
+    const double startTime = specifiedTiming().startDelay;
+    const double endTimeMinusEndDelay = startTime + activeDurationInternal();
+    const double endTime = endTimeMinusEndDelay + specifiedTiming().endDelay;
+    const double afterTime = std::min(endTimeMinusEndDelay, endTime);
 
-    switch (phase()) {
+    switch (getPhase()) {
     case PhaseNone:
         return std::numeric_limits<double>::infinity();
     case PhaseBefore:
-        ASSERT(start >= localTime);
+        ASSERT(startTime >= localTime);
         return forwards
-            ? start - localTime
+            ? startTime - localTime
             : std::numeric_limits<double>::infinity();
     case PhaseActive:
         if (forwards) {
             // Need service to apply fill / fire events.
-            const double timeToEnd = end - localTime;
+            const double timeToEnd = afterTime - localTime;
             if (requiresIterationEvents()) {
                 return std::min(timeToEnd, timeToNextIteration);
             }
@@ -249,15 +257,15 @@ double KeyframeEffect::calculateTimeToEffectChange(bool forwards, double localTi
         }
         return 0;
     case PhaseAfter:
-        ASSERT(localTime >= end);
+        ASSERT(localTime >= afterTime);
         // If this KeyframeEffect is still in effect then it will need to update
         // when its parent goes out of effect. We have no way of knowing when
         // that will be, however, so the parent will need to supply it.
         return forwards
             ? std::numeric_limits<double>::infinity()
-            : localTime - end;
+            : localTime - afterTime;
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return std::numeric_limits<double>::infinity();
     }
 }
@@ -266,21 +274,6 @@ void KeyframeEffect::notifySampledEffectRemovedFromAnimationStack()
 {
     m_sampledEffect = nullptr;
 }
-
-#if !ENABLE(OILPAN)
-void KeyframeEffect::notifyElementDestroyed()
-{
-    // If our animation is kept alive just by the sampledEffect, we might get our
-    // destructor called when we call SampledEffect::clear(), so we need to
-    // clear m_sampledEffect first.
-    m_target = nullptr;
-    clearEventDelegate();
-    SampledEffect* sampledEffect = m_sampledEffect;
-    m_sampledEffect = nullptr;
-    if (sampledEffect)
-        sampledEffect->clear();
-}
-#endif
 
 bool KeyframeEffect::isCandidateForAnimationOnCompositor(double animationPlaybackRate) const
 {
@@ -292,7 +285,7 @@ bool KeyframeEffect::isCandidateForAnimationOnCompositor(double animationPlaybac
         || hasMultipleTransformProperties())
         return false;
 
-    return CompositorAnimations::instance()->isCandidateForAnimationOnCompositor(specifiedTiming(), *m_target, animation(), *model(), animationPlaybackRate);
+    return CompositorAnimations::isCandidateForAnimationOnCompositor(specifiedTiming(), *m_target, animation(), *model(), animationPlaybackRate);
 }
 
 bool KeyframeEffect::maybeStartAnimationOnCompositor(int group, double startTime, double currentTime, double animationPlaybackRate)
@@ -300,10 +293,9 @@ bool KeyframeEffect::maybeStartAnimationOnCompositor(int group, double startTime
     ASSERT(!hasActiveAnimationsOnCompositor());
     if (!isCandidateForAnimationOnCompositor(animationPlaybackRate))
         return false;
-    if (!CompositorAnimations::instance()->canStartAnimationOnCompositor(*m_target))
+    if (!CompositorAnimations::canStartAnimationOnCompositor(*m_target))
         return false;
-    if (!CompositorAnimations::instance()->startAnimationOnCompositor(*m_target, group, startTime, currentTime, specifiedTiming(), *animation(), *model(), m_compositorAnimationIds, animationPlaybackRate))
-        return false;
+    CompositorAnimations::startAnimationOnCompositor(*m_target, group, startTime, currentTime, specifiedTiming(), *animation(), *model(), m_compositorAnimationIds, animationPlaybackRate);
     ASSERT(!m_compositorAnimationIds.isEmpty());
     return true;
 }
@@ -335,7 +327,7 @@ bool KeyframeEffect::cancelAnimationOnCompositor()
         return false;
     ASSERT(animation());
     for (const auto& compositorAnimationId : m_compositorAnimationIds)
-        CompositorAnimations::instance()->cancelAnimationOnCompositor(*m_target, *animation(), compositorAnimationId);
+        CompositorAnimations::cancelAnimationOnCompositor(*m_target, *animation(), compositorAnimationId);
     m_compositorAnimationIds.clear();
     return true;
 }
@@ -349,7 +341,7 @@ void KeyframeEffect::restartAnimationOnCompositor()
 void KeyframeEffect::cancelIncompatibleAnimationsOnCompositor()
 {
     if (m_target && animation() && model())
-        CompositorAnimations::instance()->cancelIncompatibleAnimationsOnCompositor(*m_target, *animation(), *model());
+        CompositorAnimations::cancelIncompatibleAnimationsOnCompositor(*m_target, *animation(), *model());
 }
 
 void KeyframeEffect::pauseAnimationForTestingOnCompositor(double pauseTime)
@@ -359,22 +351,14 @@ void KeyframeEffect::pauseAnimationForTestingOnCompositor(double pauseTime)
         return;
     ASSERT(animation());
     for (const auto& compositorAnimationId : m_compositorAnimationIds)
-        CompositorAnimations::instance()->pauseAnimationForTestingOnCompositor(*m_target, *animation(), compositorAnimationId, pauseTime);
-}
-
-bool KeyframeEffect::canAttachCompositedLayers() const
-{
-    if (!m_target || !animation())
-        return false;
-
-    return CompositorAnimations::instance()->canAttachCompositedLayers(*m_target, *animation());
+        CompositorAnimations::pauseAnimationForTestingOnCompositor(*m_target, *animation(), compositorAnimationId, pauseTime);
 }
 
 void KeyframeEffect::attachCompositedLayers()
 {
     ASSERT(m_target);
     ASSERT(animation());
-    CompositorAnimations::instance()->attachCompositedLayers(*m_target, *animation());
+    CompositorAnimations::attachCompositedLayers(*m_target, *animation());
 }
 
 DEFINE_TRACE(KeyframeEffect)

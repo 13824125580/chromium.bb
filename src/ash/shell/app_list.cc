@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "ash/session/session_state_delegate.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
 #include "ash/shell/example_factory.h"
 #include "ash/shell/toplevel_window.h"
@@ -56,11 +58,7 @@ class WindowTypeShelfItem : public app_list::AppListItem {
 
   static gfx::ImageSkia GetIcon(Type type) {
     static const SkColor kColors[] = {
-        SK_ColorRED,
-        SK_ColorGREEN,
-        SK_ColorBLUE,
-        SK_ColorYELLOW,
-        SK_ColorCYAN,
+        SK_ColorRED, SK_ColorGREEN, SK_ColorBLUE, SK_ColorYELLOW, SK_ColorCYAN,
     };
 
     const int kIconSize = 128;
@@ -103,7 +101,7 @@ class WindowTypeShelfItem : public app_list::AppListItem {
   }
 
   static void ActivateItem(Type type, int event_flags) {
-     switch (type) {
+    switch (type) {
       case TOPLEVEL_WINDOW: {
         ToplevelWindow::CreateParams params;
         params.can_resize = true;
@@ -115,7 +113,7 @@ class WindowTypeShelfItem : public app_list::AppListItem {
         break;
       }
       case LOCK_SCREEN: {
-        Shell::GetInstance()->session_state_delegate()->LockScreen();
+        WmShell::Get()->GetSessionStateDelegate()->LockScreen();
         break;
       }
       case WIDGETS_WINDOW: {
@@ -125,7 +123,7 @@ class WindowTypeShelfItem : public app_list::AppListItem {
       case EXAMPLES_WINDOW: {
         views::examples::ShowExamplesWindow(
             views::examples::QUIT_ON_CLOSE, NULL,
-            scoped_ptr<ScopedVector<views::examples::ExampleBase>>());
+            std::unique_ptr<ScopedVector<views::examples::ExampleBase>>());
         break;
       }
       default:
@@ -149,8 +147,7 @@ WindowTypeShelfItem::WindowTypeShelfItem(const std::string& id, Type type)
   SetName(title);
 }
 
-WindowTypeShelfItem::~WindowTypeShelfItem() {
-}
+WindowTypeShelfItem::~WindowTypeShelfItem() {}
 
 // ExampleSearchResult is an app list search result. It provides what icon to
 // show, what should title and details text look like. It also carries the
@@ -175,9 +172,8 @@ class ExampleSearchResult : public app_list::SearchResult {
     title = base::i18n::ToLower(title);
     size_t match_start = title.find(query);
     while (match_start != base::string16::npos) {
-      title_tags.push_back(Tag(Tag::MATCH,
-                               match_start,
-                               match_start + match_len));
+      title_tags.push_back(
+          Tag(Tag::MATCH, match_start, match_start + match_len));
       match_start = title.find(query, match_start + match_len);
     }
     set_title_tags(title_tags);
@@ -193,8 +189,8 @@ class ExampleSearchResult : public app_list::SearchResult {
   WindowTypeShelfItem::Type type() const { return type_; }
 
   // app_list::SearchResult:
-  scoped_ptr<SearchResult> Duplicate() const override {
-    return scoped_ptr<SearchResult>();
+  std::unique_ptr<SearchResult> Duplicate() const override {
+    return std::unique_ptr<SearchResult>();
   }
 
  private:
@@ -205,8 +201,7 @@ class ExampleSearchResult : public app_list::SearchResult {
 
 class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
  public:
-  ExampleAppListViewDelegate()
-      : model_(new app_list::AppListModel) {
+  ExampleAppListViewDelegate() : model_(new app_list::AppListModel) {
     PopulateApps();
     DecorateSearchBox(model_->search_box());
   }
@@ -217,7 +212,7 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
       WindowTypeShelfItem::Type type =
           static_cast<WindowTypeShelfItem::Type>(i);
       std::string id = base::IntToString(i);
-      scoped_ptr<WindowTypeShelfItem> shelf_item(
+      std::unique_ptr<WindowTypeShelfItem> shelf_item(
           new WindowTypeShelfItem(id, type));
       model_->AddItem(std::move(shelf_item));
     }
@@ -229,10 +224,7 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
 
     gfx::Canvas canvas(icon_size, 1.0f, false /* is_opaque */);
     canvas.DrawStringRectWithFlags(
-        icon_text,
-        gfx::FontList(),
-        SK_ColorBLACK,
-        gfx::Rect(icon_size),
+        icon_text, gfx::FontList(), SK_ColorBLACK, gfx::Rect(icon_size),
         gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
 
     return gfx::ImageSkia(canvas.ExtractImageRep());
@@ -297,8 +289,8 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
 
       base::string16 title =
           base::UTF8ToUTF16(WindowTypeShelfItem::GetTitle(type));
-      if (base::i18n::StringSearchIgnoringCaseAndAccents(
-              query, title, NULL, NULL)) {
+      if (base::i18n::StringSearchIgnoringCaseAndAccents(query, title, NULL,
+                                                         NULL)) {
         model_->results()->Add(new ExampleSearchResult(type, query));
       }
     }
@@ -313,15 +305,13 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
   }
 
   void Dismiss() override {
-    DCHECK(ash::Shell::HasInstance());
+    DCHECK(Shell::HasInstance());
     Shell::GetInstance()->DismissAppList();
   }
 
   void ViewClosing() override {
     // Nothing needs to be done.
   }
-
-  gfx::ImageSkia GetWindowIcon() override { return gfx::ImageSkia(); }
 
   void OpenSettings() override {
     // Nothing needs to be done.
@@ -357,7 +347,7 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
 
   bool IsSpeechRecognitionEnabled() override { return false; }
 
-  scoped_ptr<app_list::AppListModel> model_;
+  std::unique_ptr<app_list::AppListModel> model_;
   app_list::SpeechUIModel speech_ui_;
   Users users_;
 

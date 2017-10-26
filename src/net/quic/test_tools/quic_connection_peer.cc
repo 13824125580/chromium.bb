@@ -6,7 +6,6 @@
 
 #include "base/stl_util.h"
 #include "net/quic/congestion_control/send_algorithm_interface.h"
-#include "net/quic/quic_connection.h"
 #include "net/quic/quic_packet_writer.h"
 #include "net/quic/quic_received_packet_manager.h"
 #include "net/quic/test_tools/quic_framer_peer.h"
@@ -25,13 +24,15 @@ void QuicConnectionPeer::SendAck(QuicConnection* connection) {
 void QuicConnectionPeer::SetSendAlgorithm(
     QuicConnection* connection,
     SendAlgorithmInterface* send_algorithm) {
-  connection->sent_packet_manager_.send_algorithm_.reset(send_algorithm);
+  // TODO(fayang): Remove this method when there is a MockSentPacketManager.
+  static_cast<QuicSentPacketManager*>(connection->sent_packet_manager_.get())
+      ->send_algorithm_.reset(send_algorithm);
 }
 
 // static
-void QuicConnectionPeer::PopulateAckFrame(QuicConnection* connection,
-                                          QuicAckFrame* ack) {
-  connection->PopulateAckFrame(ack);
+const QuicFrame QuicConnectionPeer::GetUpdatedAckFrame(
+    QuicConnection* connection) {
+  return connection->GetUpdatedAckFrame();
 }
 
 // static
@@ -63,7 +64,9 @@ QuicPacketGenerator* QuicConnectionPeer::GetPacketGenerator(
 // static
 QuicSentPacketManager* QuicConnectionPeer::GetSentPacketManager(
     QuicConnection* connection) {
-  return &connection->sent_packet_manager_;
+  // TODO(fayang): Remove this method when there is a MockSentPacketManager.
+  return static_cast<QuicSentPacketManager*>(
+      connection->sent_packet_manager_.get());
 }
 
 // static
@@ -125,7 +128,8 @@ void QuicConnectionPeer::SetPeerAddress(QuicConnection* connection,
 
 // static
 bool QuicConnectionPeer::IsSilentCloseEnabled(QuicConnection* connection) {
-  return connection->silent_close_enabled_;
+  return connection->idle_timeout_connection_close_behavior_ ==
+         ConnectionCloseBehavior::SILENT_CLOSE;
 }
 
 // static
@@ -146,15 +150,14 @@ QuicConnectionHelperInterface* QuicConnectionPeer::GetHelper(
 }
 
 // static
-QuicFramer* QuicConnectionPeer::GetFramer(QuicConnection* connection) {
-  return &connection->framer_;
+QuicAlarmFactory* QuicConnectionPeer::GetAlarmFactory(
+    QuicConnection* connection) {
+  return connection->alarm_factory_;
 }
 
 // static
-QuicFecGroup* QuicConnectionPeer::GetFecGroup(QuicConnection* connection,
-                                              int fec_group) {
-  connection->last_header_.fec_group = fec_group;
-  return connection->GetFecGroup();
+QuicFramer* QuicConnectionPeer::GetFramer(QuicConnection* connection) {
+  return &connection->framer_;
 }
 
 // static
@@ -165,11 +168,6 @@ QuicAlarm* QuicConnectionPeer::GetAckAlarm(QuicConnection* connection) {
 // static
 QuicAlarm* QuicConnectionPeer::GetPingAlarm(QuicConnection* connection) {
   return connection->ping_alarm_.get();
-}
-
-// static
-QuicAlarm* QuicConnectionPeer::GetFecAlarm(QuicConnection* connection) {
-  return connection->fec_alarm_.get();
 }
 
 // static
@@ -217,7 +215,8 @@ void QuicConnectionPeer::SetWriter(QuicConnection* connection,
 }
 
 // static
-void QuicConnectionPeer::CloseConnection(QuicConnection* connection) {
+void QuicConnectionPeer::TearDownLocalConnectionState(
+    QuicConnection* connection) {
   connection->connected_ = false;
 }
 
@@ -228,7 +227,7 @@ QuicEncryptedPacket* QuicConnectionPeer::GetConnectionClosePacket(
       connection->termination_packets_->empty()) {
     return nullptr;
   }
-  return (*connection->termination_packets_)[0];
+  return (*connection->termination_packets_)[0].get();
 }
 
 // static
@@ -268,8 +267,15 @@ void QuicConnectionPeer::SetNextMtuProbeAt(QuicConnection* connection,
 }
 
 // static
-void QuicConnectionPeer::EnableAckDecimation(QuicConnection* connection) {
-  connection->ack_decimation_enabled_ = true;
+void QuicConnectionPeer::SetAckMode(QuicConnection* connection,
+                                    QuicConnection::AckMode ack_mode) {
+  connection->ack_mode_ = ack_mode;
+}
+
+// static
+void QuicConnectionPeer::SetAckDecimationDelay(QuicConnection* connection,
+                                               float ack_decimation_delay) {
+  connection->ack_decimation_delay_ = ack_decimation_delay;
 }
 
 }  // namespace test

@@ -85,9 +85,19 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
                               Handle<Context> native_context,
                               Handle<JSObject> holder);
 
-  // Assuming that {if_projection} is either IfTrue or IfFalse, adds a hint on
-  // the dominating Branch that {if_projection} is the unlikely (deferred) case.
-  void MarkAsDeferred(Node* if_projection);
+  // Extract receiver maps from {nexus} and filter based on {receiver} if
+  // possible.
+  bool ExtractReceiverMaps(Node* receiver, Node* effect,
+                           FeedbackNexus const& nexus,
+                           MapHandleList* receiver_maps);
+
+  // Try to infer a map for the given {receiver} at the current {effect}.
+  // If a map is returned then you can be sure that the {receiver} definitely
+  // has the returned map at this point in the program (identified by {effect}).
+  MaybeHandle<Map> InferReceiverMap(Node* receiver, Node* effect);
+  // Try to infer a root map for the {receiver} independent of the current
+  // program location.
+  MaybeHandle<Map> InferReceiverRootMap(Node* receiver);
 
   // Retrieve the native context from the given {node} if known.
   MaybeHandle<Context> GetNativeContext(Node* node);

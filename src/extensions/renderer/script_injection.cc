@@ -115,10 +115,12 @@ void ScriptInjection::RemoveIsolatedWorld(const std::string& host_id) {
   g_isolated_worlds.Get().erase(host_id);
 }
 
-ScriptInjection::ScriptInjection(scoped_ptr<ScriptInjector> injector,
-                                 content::RenderFrame* render_frame,
-                                 scoped_ptr<const InjectionHost> injection_host,
-                                 UserScript::RunLocation run_location)
+ScriptInjection::ScriptInjection(
+    std::unique_ptr<ScriptInjector> injector,
+    content::RenderFrame* render_frame,
+    std::unique_ptr<const InjectionHost> injection_host,
+    UserScript::RunLocation run_location,
+    bool log_activity)
     : injector_(std::move(injector)),
       render_frame_(render_frame),
       injection_host_(std::move(injection_host)),
@@ -126,6 +128,7 @@ ScriptInjection::ScriptInjection(scoped_ptr<ScriptInjector> injector,
       request_id_(kInvalidRequestId),
       complete_(false),
       did_inject_js_(false),
+      log_activity_(log_activity),
       frame_watcher_(new FrameWatcher(render_frame, this)),
       weak_ptr_factory_(this) {
   CHECK(injection_host_.get());
@@ -246,13 +249,13 @@ void ScriptInjection::InjectJs() {
                                                      web_frame);
   bool is_user_gesture = injector_->IsUserGesture();
 
-  scoped_ptr<blink::WebScriptExecutionCallback> callback(
+  std::unique_ptr<blink::WebScriptExecutionCallback> callback(
       new ScriptInjectionCallback(
           base::Bind(&ScriptInjection::OnJsInjectionCompleted,
                      weak_ptr_factory_.GetWeakPtr())));
 
   base::ElapsedTimer exec_timer;
-  if (injection_host_->id().type() == HostID::EXTENSIONS)
+  if (injection_host_->id().type() == HostID::EXTENSIONS && log_activity_)
     DOMActivityLogger::AttachToWorld(world_id, injection_host_->id().id());
   if (in_main_world) {
     // We only inject in the main world for javascript: urls.
@@ -283,7 +286,7 @@ void ScriptInjection::OnJsInjectionCompleted(
   if (expects_results) {
     if (!results.isEmpty() && !results[0].IsEmpty()) {
       // Right now, we only support returning single results (per frame).
-      scoped_ptr<content::V8ValueConverter> v8_converter(
+      std::unique_ptr<content::V8ValueConverter> v8_converter(
           content::V8ValueConverter::create());
       // It's safe to always use the main world context when converting
       // here. V8ValueConverterImpl shouldn't actually care about the
@@ -291,7 +294,7 @@ void ScriptInjection::OnJsInjectionCompleted(
       // when encountered.
       v8::Local<v8::Context> context =
           render_frame_->GetWebFrame()->mainWorldScriptContext();
-      execution_result_.reset(v8_converter->FromV8Value(results[0], context));
+      execution_result_ = v8_converter->FromV8Value(results[0], context);
     }
     if (!execution_result_.get())
       execution_result_ = base::Value::CreateNullValue();

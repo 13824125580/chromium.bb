@@ -33,22 +33,22 @@
 
 namespace blink {
 
-InsertIntoTextNodeCommand::InsertIntoTextNodeCommand(PassRefPtrWillBeRawPtr<Text> node, unsigned offset, const String& text)
+InsertIntoTextNodeCommand::InsertIntoTextNodeCommand(Text* node, unsigned offset, const String& text)
     : SimpleEditCommand(node->document())
     , m_node(node)
     , m_offset(offset)
     , m_text(text)
 {
-    ASSERT(m_node);
-    ASSERT(m_offset <= m_node->length());
-    ASSERT(!m_text.isEmpty());
+    DCHECK(m_node);
+    DCHECK_LE(m_offset, m_node->length());
+    DCHECK(!m_text.isEmpty());
 }
 
 void InsertIntoTextNodeCommand::doApply(EditingState*)
 {
     bool passwordEchoEnabled = document().settings() && document().settings()->passwordEchoEnabled();
     if (passwordEchoEnabled)
-        document().updateLayoutIgnorePendingStylesheets();
+        document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     if (!m_node->hasEditableStyle())
         return;
@@ -59,7 +59,8 @@ void InsertIntoTextNodeCommand::doApply(EditingState*)
             layoutText->momentarilyRevealLastTypedCharacter(m_offset + m_text.length() - 1);
     }
 
-    m_node->insertData(m_offset, m_text, IGNORE_EXCEPTION, CharacterData::DeprecatedRecalcStyleImmediatlelyForEditing);
+    m_node->insertData(m_offset, m_text, IGNORE_EXCEPTION);
+    document().updateStyleAndLayout();
 }
 
 void InsertIntoTextNodeCommand::doUnapply()
@@ -67,7 +68,8 @@ void InsertIntoTextNodeCommand::doUnapply()
     if (!m_node->hasEditableStyle())
         return;
 
-    m_node->deleteData(m_offset, m_text.length(), IGNORE_EXCEPTION, CharacterData::DeprecatedRecalcStyleImmediatlelyForEditing);
+    m_node->deleteData(m_offset, m_text.length(), IGNORE_EXCEPTION);
+    document().updateStyleAndLayout();
 }
 
 DEFINE_TRACE(InsertIntoTextNodeCommand)

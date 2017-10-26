@@ -36,7 +36,7 @@ const Node* parentNodeAcrossFrames(const Node* curNode)
 
     if (curNode->isDocumentNode()) {
         const Document* doc = toDocument(curNode);
-        return doc->ownerElement();
+        return doc->localOwner();
     }
 
     return nullptr;
@@ -56,7 +56,7 @@ TouchAction computeEffectiveTouchAction(const Node& node)
     for (const Node* curNode = &node; curNode; curNode = parentNodeAcrossFrames(curNode)) {
         if (LayoutObject* layoutObject = curNode->layoutObject()) {
             if (supportsTouchAction(*layoutObject)) {
-                TouchAction action = layoutObject->style()->touchAction();
+                TouchAction action = layoutObject->style()->getTouchAction();
                 action |= handledTouchActions;
                 effectiveTouchAction &= action;
                 if (effectiveTouchAction == TouchActionNone)

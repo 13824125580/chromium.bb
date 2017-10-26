@@ -102,7 +102,7 @@ HTMLFormControlElement* buttonToActivate(const HTMLFormElement& form)
 // selected state.
 bool isSelectInDefaultState(const HTMLSelectElement& select)
 {
-    const WillBeHeapVector<RawPtrWillBeMember<HTMLElement>>& listItems = select.listItems();
+    const HeapVector<Member<HTMLElement>>& listItems = select.listItems();
     if (select.multiple() || select.size() > 1) {
         for (const auto& item : listItems) {
             if (!isHTMLOptionElement(*item))
@@ -215,13 +215,13 @@ bool buildSearchString(const HTMLFormElement& form, Vector<char>* encodedString,
         for (const auto& entry : formData->entries()) {
             if (!encodedString->isEmpty())
                 encodedString->append('&');
-            FormDataEncoder::encodeStringAsFormData(*encodedString, entry->name());
+            FormDataEncoder::encodeStringAsFormData(*encodedString, entry->name(), FormDataEncoder::NormalizeCRLF);
             encodedString->append('=');
             if (&control == textElement) {
                 encodedString->append("{searchTerms}", 13);
                 isElementFound = true;
             } else {
-                FormDataEncoder::encodeStringAsFormData(*encodedString, entry->value());
+                FormDataEncoder::encodeStringAsFormData(*encodedString, entry->value(), FormDataEncoder::NormalizeCRLF);
             }
         }
     }
@@ -232,8 +232,8 @@ bool buildSearchString(const HTMLFormElement& form, Vector<char>* encodedString,
 
 WebSearchableFormData::WebSearchableFormData(const WebFormElement& form, const WebInputElement& selectedInputElement)
 {
-    RefPtrWillBeRawPtr<HTMLFormElement> formElement = static_cast<PassRefPtrWillBeRawPtr<HTMLFormElement>>(form);
-    HTMLInputElement* inputElement = static_cast<PassRefPtrWillBeRawPtr<HTMLInputElement>>(selectedInputElement).get();
+    HTMLFormElement* formElement = static_cast<HTMLFormElement*>(form);
+    HTMLInputElement* inputElement = static_cast<HTMLInputElement*>(selectedInputElement);
 
     // Only consider forms that GET data.
     // Allow HTTPS only when an input element is provided.

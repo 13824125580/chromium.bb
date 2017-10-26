@@ -57,7 +57,6 @@ enum AdjustMidCluster { AdjustToStart, AdjustToEnd };
 
 struct ShapeResult::RunInfo {
     USING_FAST_MALLOC(RunInfo);
-    WTF_MAKE_NONCOPYABLE(RunInfo);
 public:
     RunInfo(const SimpleFontData* font, hb_direction_t dir, hb_script_t script,
         unsigned startIndex, unsigned numGlyphs, unsigned numCharacters)
@@ -67,17 +66,23 @@ public:
     {
     }
 
+    RunInfo(const RunInfo& other)
+        : m_fontData(other.m_fontData)
+        , m_direction(other.m_direction)
+        , m_script(other.m_script)
+        , m_glyphData(other.m_glyphData)
+        , m_startIndex(other.m_startIndex)
+        , m_numCharacters(other.m_numCharacters)
+        , m_width(other.m_width)
+    {
+    }
+
     bool rtl() const { return HB_DIRECTION_IS_BACKWARD(m_direction); }
     float xPositionForVisualOffset(unsigned, AdjustMidCluster) const;
     float xPositionForOffset(unsigned, AdjustMidCluster) const;
-    int characterIndexForXPosition(float) const;
+    int characterIndexForXPosition(float, bool includePartialGlyphs) const;
     void setGlyphAndPositions(unsigned index, uint16_t glyphId, float advance,
         float offsetX, float offsetY);
-
-    void addAdvance(unsigned index, float advance)
-    {
-        m_glyphData[index].advance += advance;
-    }
 
     size_t glyphToCharacterIndex(size_t i) const
     {

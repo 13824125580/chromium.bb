@@ -24,7 +24,6 @@
 #include "chrome/browser/ui/browser_instant_controller.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/search/instant_search_prerenderer.h"
 #include "chrome/browser/ui/singleton_tabs.h"
@@ -265,13 +264,11 @@ void LoadURLInContents(WebContents* target_contents,
       params->should_replace_current_entry;
   load_url_params.is_renderer_initiated = params->is_renderer_initiated;
 
-  // Only allows the browser-initiated navigation to use POST.
-  if (params->uses_post && !params->is_renderer_initiated) {
-    load_url_params.load_type =
-        NavigationController::LOAD_TYPE_BROWSER_INITIATED_HTTP_POST;
-    load_url_params.browser_initiated_post_data =
-        params->browser_initiated_post_data;
+  if (params->uses_post) {
+    load_url_params.load_type = NavigationController::LOAD_TYPE_HTTP_POST;
+    load_url_params.post_data = params->post_data;
   }
+
   target_contents->GetController().LoadURLWithParams(load_url_params);
 }
 
@@ -331,7 +328,7 @@ class ScopedTargetContentsOwner {
 
  private:
   chrome::NavigateParams* params_;
-  scoped_ptr<WebContents> target_contents_owner_;
+  std::unique_ptr<WebContents> target_contents_owner_;
   DISALLOW_COPY_AND_ASSIGN(ScopedTargetContentsOwner);
 };
 
@@ -339,7 +336,9 @@ content::WebContents* CreateTargetContents(const chrome::NavigateParams& params,
                                            const GURL& url) {
   WebContents::CreateParams create_params(
       params.browser->profile(),
-      tab_util::GetSiteInstanceForNewTab(params.browser->profile(), url));
+      params.source_site_instance
+          ? params.source_site_instance
+          : tab_util::GetSiteInstanceForNewTab(params.browser->profile(), url));
   if (params.source_contents) {
     create_params.initial_size =
         params.source_contents->GetContainerBounds().size();
@@ -480,16 +479,20 @@ void Navigate(NavigateParams* params) {
 
   // Determine if the navigation was user initiated. If it was, we need to
   // inform the target WebContents, and we may need to update the UI.
-  ui::PageTransition base_transition =
-      ui::PageTransitionStripQualifier(params->transition);
   bool user_initiated =
       params->transition & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR ||
-      base_transition == ui::PAGE_TRANSITION_TYPED ||
-      base_transition == ui::PAGE_TRANSITION_AUTO_BOOKMARK ||
-      base_transition == ui::PAGE_TRANSITION_GENERATED ||
-      base_transition == ui::PAGE_TRANSITION_AUTO_TOPLEVEL ||
-      base_transition == ui::PAGE_TRANSITION_RELOAD ||
-      base_transition == ui::PAGE_TRANSITION_KEYWORD;
+      ui::PageTransitionCoreTypeIs(params->transition,
+                                   ui::PAGE_TRANSITION_TYPED) ||
+      ui::PageTransitionCoreTypeIs(params->transition,
+                                   ui::PAGE_TRANSITION_AUTO_BOOKMARK) ||
+      ui::PageTransitionCoreTypeIs(params->transition,
+                                   ui::PAGE_TRANSITION_GENERATED) ||
+      ui::PageTransitionCoreTypeIs(params->transition,
+                                   ui::PAGE_TRANSITION_AUTO_TOPLEVEL) ||
+      ui::PageTransitionCoreTypeIs(params->transition,
+                                   ui::PAGE_TRANSITION_RELOAD) ||
+      ui::PageTransitionCoreTypeIs(params->transition,
+                                   ui::PAGE_TRANSITION_KEYWORD);
 
   // Check if this is a singleton tab that already exists
   int singleton_index = chrome::GetIndexOfSingletonTab(params);

@@ -40,15 +40,13 @@ enum {
                                 // "Downloads". (Linux)
   DIR_DEFAULT_DOWNLOADS,        // Directory for a user's downloads.
   DIR_INTERNAL_PLUGINS,         // Directory where internal plugins reside.
+  DIR_COMPONENTS,               // Directory where built-in implementations of
+                                // component-updated libraries or data reside.
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
   DIR_POLICY_FILES,             // Directory for system-wide read-only
                                 // policy files that allow sys-admins
                                 // to set policies for chrome. This directory
                                 // contains subdirectories.
-#endif
-#if defined(OS_MACOSX)
-  DIR_USER_APPLICATIONS,        // ~/Applications
-  DIR_USER_LIBRARY,             // ~/Library
 #endif
 #if defined(OS_CHROMEOS) || (defined(OS_LINUX) && defined(CHROMIUM_BUILD)) || \
     defined(OS_MACOSX)
@@ -88,10 +86,6 @@ enum {
                                     // Pepper Flash plugin, downloadable from
                                     // Adobe website. Querying this path might
                                     // succeed no matter the file exists or not.
-  FILE_FLASH_SYSTEM_PLUGIN,     // Full path to the system version of NPAPI
-                                // Flash plugin, downloadable from Adobe
-                                // website. Querying this path might succeed no
-                                // matter the file exists or not.
   FILE_NACL_PLUGIN,             // Full path to the internal NaCl plugin file.
   DIR_PNACL_BASE,               // Full path to the base dir for PNaCl.
   DIR_PNACL_COMPONENT,          // Full path to the latest PNaCl version

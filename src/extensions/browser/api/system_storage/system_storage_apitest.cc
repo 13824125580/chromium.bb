@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/linked_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/storage_monitor/storage_monitor.h"
@@ -101,7 +102,7 @@ class SystemStorageApiTest : public extensions::ShellApiTest {
   }
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
 };
 
 IN_PROC_BROWSER_TEST_F(SystemStorageApiTest, Storage) {

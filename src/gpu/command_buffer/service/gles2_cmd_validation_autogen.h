@@ -253,12 +253,7 @@ class QueryTargetValidator {
 };
 QueryTargetValidator query_target;
 
-class ReadBufferValidator {
- public:
-  bool IsValid(const GLenum value) const;
-};
-ReadBufferValidator read_buffer;
-
+ValueValidator<GLenum> read_buffer;
 ValueValidator<GLenum> read_pixel_format;
 ValueValidator<GLenum> read_pixel_type;
 ValueValidator<GLenum> render_buffer_format;
@@ -308,7 +303,6 @@ class StringTypeValidator {
 };
 StringTypeValidator string_type;
 
-ValueValidator<GLenum> subscription_target;
 ValueValidator<GLbitfield> sync_flush_flags;
 class SyncParameterValidator {
  public:
@@ -350,6 +344,12 @@ ValueValidator<GLenum> texture_parameter;
 ValueValidator<GLenum> texture_sized_color_renderable_internal_format;
 ValueValidator<GLenum> texture_sized_texture_filterable_internal_format;
 ValueValidator<GLenum> texture_stencil_renderable_internal_format;
+class TextureSwizzleValidator {
+ public:
+  bool IsValid(const GLenum value) const;
+};
+TextureSwizzleValidator texture_swizzle;
+
 ValueValidator<GLenum> texture_target;
 ValueValidator<GLenum> texture_unsized_internal_format;
 class TextureUsageValidator {
@@ -383,7 +383,6 @@ class UniformParameterValidator {
 };
 UniformParameterValidator uniform_parameter;
 
-ValueValidator<GLenum> value_buffer_target;
 class VertexAttribITypeValidator {
  public:
   bool IsValid(const GLenum value) const;

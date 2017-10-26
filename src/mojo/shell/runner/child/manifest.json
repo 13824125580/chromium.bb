@@ -1,5 +1,0 @@
-{
-  "url": "mojo://mojo_runner_child_apptest/",
-  "name": "Runner Child Apptest",
-  "capabilities": { "*": [ "*" ] }
-}

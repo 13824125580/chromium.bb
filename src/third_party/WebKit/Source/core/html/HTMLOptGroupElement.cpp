@@ -45,11 +45,11 @@ inline HTMLOptGroupElement::HTMLOptGroupElement(Document& document)
     setHasCustomStyleCallbacks();
 }
 
-PassRefPtrWillBeRawPtr<HTMLOptGroupElement> HTMLOptGroupElement::create(Document& document)
+HTMLOptGroupElement* HTMLOptGroupElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<HTMLOptGroupElement> optGroupElement = adoptRefWillBeNoop(new HTMLOptGroupElement(document));
+    HTMLOptGroupElement* optGroupElement = new HTMLOptGroupElement(document);
     optGroupElement->ensureUserAgentShadowRoot();
-    return optGroupElement.release();
+    return optGroupElement;
 }
 
 bool HTMLOptGroupElement::isDisabledFormControl() const
@@ -57,16 +57,9 @@ bool HTMLOptGroupElement::isDisabledFormControl() const
     return fastHasAttribute(disabledAttr);
 }
 
-void HTMLOptGroupElement::childrenChanged(const ChildrenChange& change)
-{
-    recalcSelectOptions();
-    HTMLElement::childrenChanged(change);
-}
-
 void HTMLOptGroupElement::parseAttribute(const QualifiedName& name, const AtomicString& oldValue, const AtomicString& value)
 {
     HTMLElement::parseAttribute(name, oldValue, value);
-    recalcSelectOptions();
 
     if (name == disabledAttr) {
         pseudoStateChanged(CSSSelector::PseudoDisabled);
@@ -74,13 +67,6 @@ void HTMLOptGroupElement::parseAttribute(const QualifiedName& name, const Atomic
     } else if (name == labelAttr) {
         updateGroupLabel();
     }
-}
-
-void HTMLOptGroupElement::recalcSelectOptions()
-{
-    // TODO(tkent): Should use ownerSelectElement().
-    if (HTMLSelectElement* select = Traversal<HTMLSelectElement>::firstAncestor(*this))
-        select->setRecalcListItems();
 }
 
 void HTMLOptGroupElement::attach(const AttachContext& context)
@@ -100,10 +86,34 @@ void HTMLOptGroupElement::detach(const AttachContext& context)
 
 bool HTMLOptGroupElement::supportsFocus() const
 {
-    RefPtrWillBeRawPtr<HTMLSelectElement> select = ownerSelectElement();
+    HTMLSelectElement* select = ownerSelectElement();
     if (select && select->usesMenuList())
         return false;
     return HTMLElement::supportsFocus();
+}
+
+bool HTMLOptGroupElement::matchesEnabledPseudoClass() const
+{
+    return !isDisabledFormControl();
+}
+
+Node::InsertionNotificationRequest HTMLOptGroupElement::insertedInto(ContainerNode* insertionPoint)
+{
+    HTMLElement::insertedInto(insertionPoint);
+    if (HTMLSelectElement* select = ownerSelectElement()) {
+        if (insertionPoint == select)
+            select->optGroupInsertedOrRemoved(*this);
+    }
+    return InsertionDone;
+}
+
+void HTMLOptGroupElement::removedFrom(ContainerNode* insertionPoint)
+{
+    if (isHTMLSelectElement(*insertionPoint)) {
+        if (!parentNode())
+            toHTMLSelectElement(insertionPoint)->optGroupInsertedOrRemoved(*this);
+    }
+    HTMLElement::removedFrom(insertionPoint);
 }
 
 void HTMLOptGroupElement::updateNonComputedStyle()
@@ -161,17 +171,17 @@ void HTMLOptGroupElement::accessKeyAction(bool)
 
 void HTMLOptGroupElement::didAddUserAgentShadowRoot(ShadowRoot& root)
 {
-    DEFINE_STATIC_LOCAL(AtomicString, labelPadding, ("0 2px 1px 2px", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(AtomicString, labelMinHeight, ("1.2em", AtomicString::ConstructFromLiteral));
-    RefPtrWillBeRawPtr<HTMLDivElement> label = HTMLDivElement::create(document());
-    label->setAttribute(roleAttr, AtomicString("group", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(AtomicString, labelPadding, ("0 2px 1px 2px"));
+    DEFINE_STATIC_LOCAL(AtomicString, labelMinHeight, ("1.2em"));
+    HTMLDivElement* label = HTMLDivElement::create(document());
+    label->setAttribute(roleAttr, AtomicString("group"));
     label->setAttribute(aria_labelAttr, AtomicString());
     label->setInlineStyleProperty(CSSPropertyPadding, labelPadding);
     label->setInlineStyleProperty(CSSPropertyMinHeight, labelMinHeight);
     label->setIdAttribute(ShadowElementNames::optGroupLabel());
     root.appendChild(label);
 
-    RefPtrWillBeRawPtr<HTMLContentElement> content = HTMLContentElement::create(document());
+    HTMLContentElement* content = HTMLContentElement::create(document());
     content->setAttribute(selectAttr, "option,hr");
     root.appendChild(content);
 }

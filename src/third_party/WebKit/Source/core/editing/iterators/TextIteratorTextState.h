@@ -29,10 +29,11 @@
 #include "core/CoreExport.h"
 #include "core/dom/Range.h"
 #include "core/editing/iterators/ForwardsTextBuffer.h"
-#include "core/layout/LayoutText.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
+
+class LayoutText;
 
 class CORE_EXPORT TextIteratorTextState {
     STACK_ALLOCATED();
@@ -74,8 +75,8 @@ private:
     UChar m_singleCharacterBuffer;
 
     // The current text and its position, in the form to be returned from the iterator.
-    RawPtrWillBeMember<Node> m_positionNode;
-    mutable RawPtrWillBeMember<Node> m_positionOffsetBaseNode;
+    Member<Node> m_positionNode;
+    mutable Member<Node> m_positionOffsetBaseNode;
     mutable int m_positionStartOffset;
     mutable int m_positionEndOffset;
 

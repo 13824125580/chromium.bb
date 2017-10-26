@@ -11,10 +11,10 @@ import android.util.AttributeSet;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-
 import org.chromium.blimp.R;
 import org.chromium.blimp.session.BlimpClientSession;
 
@@ -23,12 +23,29 @@ import org.chromium.blimp.session.BlimpClientSession;
  * commands and displays relevant navigation UI.
  */
 @JNINamespace("blimp::client")
-public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
-        View.OnClickListener {
+public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver, View.OnClickListener {
+    /**
+     * Delegate for the Toolbar.
+     */
+    public interface ToolbarDelegate {
+        /**
+         * Resets the metrics. Used for displaying per navigation metrics.
+         */
+        public void resetDebugStats();
+    }
+
+    private static final String TAG = "Toolbar";
+
     private long mNativeToolbarPtr;
 
+    private Context mContext;
     private UrlBar mUrlBar;
+    private ToolbarMenu mToolbarMenu;
     private ImageButton mReloadButton;
+    private ImageButton mMenuButton;
+    private ProgressBar mProgressBar;
+    private BlimpClientSession mBlimpClientSession;
+    private ToolbarDelegate mDelegate;
 
     /**
      * A URL to load when this object is initialized.  This handles the case where there is a URL
@@ -43,6 +60,14 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
      */
     public Toolbar(Context context, AttributeSet attrs) {
         super(context, attrs);
+        mContext = context;
+    }
+
+    /**
+     * @return the mToolbarMenu
+     */
+    public ToolbarMenu getToolbarMenu() {
+        return mToolbarMenu;
     }
 
     /**
@@ -50,12 +75,19 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
      * components.
      * @param blimpClientSession The {@link BlimpClientSession} that contains the content-lite
      *                           features required by the native components of the Toolbar.
+     *        delegate The delegate for the Toolbar.
      */
-    public void initialize(BlimpClientSession blimpClientSession) {
+    public void initialize(BlimpClientSession blimpClientSession, ToolbarDelegate delegate) {
         assert mNativeToolbarPtr == 0;
 
-        mNativeToolbarPtr = nativeInit(blimpClientSession);
+        mDelegate = delegate;
+
+        mBlimpClientSession = blimpClientSession;
+        mNativeToolbarPtr = nativeInit(mBlimpClientSession);
         sendUrlTextInternal(mUrlToLoad);
+
+        mToolbarMenu = new ToolbarMenu(mContext, this);
+        mBlimpClientSession.addObserver(mToolbarMenu);
     }
 
     /**
@@ -63,6 +95,7 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
      * this.
      */
     public void destroy() {
+        mBlimpClientSession.removeObserver(mToolbarMenu);
         if (mNativeToolbarPtr != 0) {
             nativeDestroy(mNativeToolbarPtr);
             mNativeToolbarPtr = 0;
@@ -76,7 +109,16 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
      */
     public void loadUrl(String text) {
         mUrlBar.setText(text);
+        mDelegate.resetDebugStats();
         sendUrlTextInternal(text);
+    }
+
+    /**
+     * Returns the URL from the URL bar.
+     * @return Current URL
+     */
+    public String getUrl() {
+        return mUrlBar.getText().toString();
     }
 
     /**
@@ -85,6 +127,7 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
      */
     public boolean onBackPressed() {
         if (mNativeToolbarPtr == 0) return false;
+        mDelegate.resetDebugStats();
         return nativeOnBackPressed(mNativeToolbarPtr);
     }
 
@@ -93,6 +136,7 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
      */
     public void onForwardPressed() {
         if (mNativeToolbarPtr == 0) return;
+        mDelegate.resetDebugStats();
         nativeOnForwardPressed(mNativeToolbarPtr);
     }
 
@@ -106,6 +150,17 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
 
         mReloadButton = (ImageButton) findViewById(R.id.toolbar_reload_btn);
         mReloadButton.setOnClickListener(this);
+
+        mMenuButton = (ImageButton) findViewById(R.id.menu_button);
+        mMenuButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                mToolbarMenu.showMenu(v);
+            }
+        });
+
+        mProgressBar = (ProgressBar) findViewById(R.id.page_load_progress);
+        mProgressBar.setVisibility(View.GONE);
     }
 
     // UrlBar.UrlBarObserver interface.
@@ -131,12 +186,26 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
         }
 
         nativeOnUrlTextEntered(mNativeToolbarPtr, text);
+
+        // When triggering a navigation to a new URL, show the progress bar.
+        // TODO(khushalsagar): We need more signals to hide the bar when the load might have failed.
+        // For instance, in the case of a wrong URL right now or if there is no network connection.
+        updateProgressBar(true);
+    }
+
+    private void updateProgressBar(boolean show) {
+        if (show) {
+            mProgressBar.setVisibility(View.VISIBLE);
+        } else {
+            mProgressBar.setVisibility(View.GONE);
+        }
     }
 
     // Methods that are called by native via JNI.
     @CalledByNative
     private void onEngineSentUrl(String url) {
         if (url != null) mUrlBar.setText(url);
+        mDelegate.resetDebugStats();
     }
 
     @CalledByNative
@@ -152,6 +221,12 @@ public class Toolbar extends LinearLayout implements UrlBar.UrlBarObserver,
     @CalledByNative
     private void onEngineSentLoading(boolean loading) {
         // TODO(dtrainor): Add a UI for the loading state.
+    }
+
+    @CalledByNative
+    private void onEngineSentPageLoadStatusUpdate(boolean completed) {
+        boolean show = !completed;
+        updateProgressBar(show);
     }
 
     private native long nativeInit(BlimpClientSession blimpClientSession);

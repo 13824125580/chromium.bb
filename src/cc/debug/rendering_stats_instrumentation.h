@@ -7,8 +7,9 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "cc/debug/rendering_stats.h"
 
@@ -18,7 +19,7 @@ namespace cc {
 // recording of rendering stats into a private RenderingStats instance.
 class CC_EXPORT RenderingStatsInstrumentation {
  public:
-  static scoped_ptr<RenderingStatsInstrumentation> Create();
+  static std::unique_ptr<RenderingStatsInstrumentation> Create();
   virtual ~RenderingStatsInstrumentation();
 
   // Return copy of current impl thread rendering stats.
@@ -49,8 +50,7 @@ class CC_EXPORT RenderingStatsInstrumentation {
   void AddDrawDuration(base::TimeDelta draw_duration,
                        base::TimeDelta draw_duration_estimate);
   void AddBeginMainFrameToCommitDuration(
-      base::TimeDelta begin_main_frame_to_commit_duration,
-      base::TimeDelta begin_main_frame_to_commit_duration_estimate);
+      base::TimeDelta begin_main_frame_to_commit_duration);
   void AddCommitToActivateDuration(
       base::TimeDelta commit_to_activate_duration,
       base::TimeDelta commit_to_activate_duration_estimate);

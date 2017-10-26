@@ -43,13 +43,11 @@ class TextCheckerClient;
 class TextCheckingParagraph;
 struct TextCheckingResult;
 
-class CORE_EXPORT SpellChecker final : public NoBaseWillBeGarbageCollectedFinalized<SpellChecker> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(SpellChecker);
+class CORE_EXPORT SpellChecker final : public GarbageCollected<SpellChecker> {
     WTF_MAKE_NONCOPYABLE(SpellChecker);
 public:
-    static PassOwnPtrWillBeRawPtr<SpellChecker> create(LocalFrame&);
+    static SpellChecker* create(LocalFrame&);
 
-    ~SpellChecker();
     DECLARE_TRACE();
 
     SpellCheckerClient& spellCheckerClient() const;
@@ -60,12 +58,13 @@ public:
     void ignoreSpelling();
     bool isSpellCheckingEnabledInFocusedNode() const;
     bool isSpellCheckingEnabledFor(Node*) const;
+    static bool isSpellCheckingEnabledFor(const VisibleSelection&);
     void markMisspellingsAfterLineBreak(const VisibleSelection& wordSelection);
     void markMisspellingsAfterTypingToWord(const VisiblePosition &wordStart, const VisibleSelection& selectionAfterTyping);
     bool markMisspellings(const VisibleSelection&);
     void markBadGrammar(const VisibleSelection&);
     void markMisspellingsAndBadGrammar(const VisibleSelection& spellingSelection, bool markGrammar, const VisibleSelection& grammarSelection);
-    void markAndReplaceFor(PassRefPtrWillBeRawPtr<SpellCheckRequest>, const Vector<TextCheckingResult>&);
+    void markAndReplaceFor(SpellCheckRequest*, const Vector<TextCheckingResult>&);
     void markAllMisspellingsAndBadGrammarInRanges(TextCheckingTypeMask, const EphemeralRange& spellingRange, const EphemeralRange& grammarRange);
     void advanceToNextMisspelling(bool startBeforeSelection = false);
     void showSpellingGuessPanel();
@@ -103,7 +102,7 @@ private:
 
     LocalFrame& frame() const
     {
-        ASSERT(m_frame);
+        DCHECK(m_frame);
         return *m_frame;
     }
 
@@ -115,8 +114,8 @@ private:
 
     void chunkAndMarkAllMisspellingsAndBadGrammar(TextCheckingTypeMask textCheckingOptions, const TextCheckingParagraph& fullParagraphToCheck);
 
-    RawPtrWillBeMember<LocalFrame> m_frame;
-    const OwnPtrWillBeMember<SpellCheckRequester> m_spellCheckRequester;
+    Member<LocalFrame> m_frame;
+    const Member<SpellCheckRequester> m_spellCheckRequester;
 };
 
 } // namespace blink

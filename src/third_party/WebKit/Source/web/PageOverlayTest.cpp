@@ -5,7 +5,6 @@
 #include "web/PageOverlay.h"
 
 #include "core/frame/FrameView.h"
-#include "core/layout/LayoutView.h"
 #include "platform/graphics/Color.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/paint/DrawingRecorder.h"
@@ -23,6 +22,7 @@
 #include "web/WebLocalFrameImpl.h"
 #include "web/WebViewImpl.h"
 #include "web/tests/FrameTestHelpers.h"
+#include <memory>
 
 using testing::_;
 using testing::AtLeast;
@@ -46,29 +46,6 @@ void disableAcceleratedCompositing(WebSettings* settings)
     settings->setAcceleratedCompositingEnabled(false);
 }
 
-class PageOverlayTest : public ::testing::Test {
-protected:
-    enum CompositingMode { AcceleratedCompositing, UnacceleratedCompositing };
-
-    void initialize(CompositingMode compositingMode)
-    {
-        m_helper.initialize(
-            false /* enableJavascript */, nullptr /* webFrameClient */, nullptr /* webViewClient */,
-            compositingMode == AcceleratedCompositing ? enableAcceleratedCompositing : disableAcceleratedCompositing);
-        webViewImpl()->resize(WebSize(viewportWidth, viewportHeight));
-        webViewImpl()->updateAllLifecyclePhases();
-        ASSERT_EQ(compositingMode == AcceleratedCompositing, webViewImpl()->isAcceleratedCompositingActive());
-    }
-
-    WebViewImpl* webViewImpl() const { return m_helper.webViewImpl(); }
-
-    template <typename OverlayType>
-    void runPageOverlayTestWithAcceleratedCompositing();
-
-private:
-    FrameTestHelpers::WebViewHelper m_helper;
-};
-
 // PageOverlay that paints a solid color.
 class SolidColorOverlay : public PageOverlay::Delegate {
 public:
@@ -85,6 +62,34 @@ public:
 
 private:
     Color m_color;
+};
+
+class PageOverlayTest : public ::testing::Test {
+protected:
+    enum CompositingMode { AcceleratedCompositing, UnacceleratedCompositing };
+
+    void initialize(CompositingMode compositingMode)
+    {
+        m_helper.initialize(
+            false /* enableJavascript */, nullptr /* webFrameClient */, nullptr /* webViewClient */, nullptr /* webWidgetClient */,
+            compositingMode == AcceleratedCompositing ? enableAcceleratedCompositing : disableAcceleratedCompositing);
+        webViewImpl()->resize(WebSize(viewportWidth, viewportHeight));
+        webViewImpl()->updateAllLifecyclePhases();
+        ASSERT_EQ(compositingMode == AcceleratedCompositing, webViewImpl()->isAcceleratedCompositingActive());
+    }
+
+    WebViewImpl* webViewImpl() const { return m_helper.webViewImpl(); }
+
+    std::unique_ptr<PageOverlay> createSolidYellowOverlay()
+    {
+        return PageOverlay::create(webViewImpl(), new SolidColorOverlay(SK_ColorYELLOW));
+    }
+
+    template <typename OverlayType>
+    void runPageOverlayTestWithAcceleratedCompositing();
+
+private:
+    FrameTestHelpers::WebViewHelper m_helper;
 };
 
 template <bool(*getter)(), void(*setter)(bool)>
@@ -107,7 +112,7 @@ TEST_F(PageOverlayTest, PageOverlay_AcceleratedCompositing)
     initialize(AcceleratedCompositing);
     webViewImpl()->layerTreeView()->setViewportSize(WebSize(viewportWidth, viewportHeight));
 
-    OwnPtr<PageOverlay> pageOverlay = PageOverlay::create(webViewImpl(), new SolidColorOverlay(SK_ColorYELLOW));
+    std::unique_ptr<PageOverlay> pageOverlay = createSolidYellowOverlay();
     pageOverlay->update();
     webViewImpl()->updateAllLifecyclePhases();
 
@@ -127,11 +132,20 @@ TEST_F(PageOverlayTest, PageOverlay_AcceleratedCompositing)
     IntRect intRect = rect;
     graphicsLayer->paint(&intRect);
 
-    PaintController& paintController = graphicsLayer->paintController();
+    PaintController& paintController = graphicsLayer->getPaintController();
     GraphicsContext graphicsContext(paintController);
     graphicsContext.beginRecording(intRect);
     paintController.paintArtifact().replay(graphicsContext);
     graphicsContext.endRecording()->playback(&canvas);
+}
+
+TEST_F(PageOverlayTest, PageOverlay_VisualRect)
+{
+    initialize(AcceleratedCompositing);
+    std::unique_ptr<PageOverlay> pageOverlay = createSolidYellowOverlay();
+    pageOverlay->update();
+    webViewImpl()->updateAllLifecyclePhases();
+    EXPECT_EQ(LayoutRect(0, 0, viewportWidth, viewportHeight), pageOverlay->visualRect());
 }
 
 } // namespace

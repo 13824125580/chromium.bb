@@ -7,7 +7,9 @@
 #include <math.h>  // ceil
 #include <stdarg.h>
 #include <stdint.h>
+
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,13 +20,13 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_file_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/auth.h"
 #include "net/base/chunked_upload_data_stream.h"
 #include "net/base/completion_callback.h"
@@ -35,7 +37,6 @@
 #include "net/base/proxy_delegate.h"
 #include "net/base/request_priority.h"
 #include "net/base/test_completion_callback.h"
-#include "net/base/test_data_directory.h"
 #include "net/base/test_proxy_delegate.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_file_element_reader.h"
@@ -52,6 +53,7 @@
 #include "net/http/http_network_session.h"
 #include "net/http/http_network_session_peer.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_info.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/http_stream.h"
 #include "net/http/http_stream_factory.h"
@@ -86,6 +88,7 @@
 #include "net/ssl/ssl_info.h"
 #include "net/ssl/ssl_private_key.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -253,7 +256,7 @@ void AddWebSocketHeaders(HttpRequestHeaders* headers) {
   headers->SetHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 }
 
-scoped_ptr<HttpNetworkSession> CreateSession(
+std::unique_ptr<HttpNetworkSession> CreateSession(
     SpdySessionDependencies* session_deps) {
   return SpdySessionDependencies::SpdyCreateSession(session_deps);
 }
@@ -271,7 +274,6 @@ class HttpNetworkTransactionTest
         HttpNetworkSession::NORMAL_SOCKET_POOL, old_max_pool_sockets_);
     ClientSocketPoolManager::set_max_sockets_per_group(
         HttpNetworkSession::NORMAL_SOCKET_POOL, old_max_group_sockets_);
-    SpdySession::SetPriorityDependencyDefaultForTesting(false);
   }
 
  protected:
@@ -282,8 +284,8 @@ class HttpNetworkTransactionTest
             HttpNetworkSession::NORMAL_SOCKET_POOL)),
         old_max_pool_sockets_(ClientSocketPoolManager::max_sockets_per_pool(
             HttpNetworkSession::NORMAL_SOCKET_POOL)) {
-    SpdySession::SetPriorityDependencyDefaultForTesting(
-        GetDependenciesFromPriority());
+    session_deps_.enable_priority_dependencies = GetDependenciesFromPriority();
+    session_deps_.enable_http2_alternative_service_with_different_host = true;
   }
 
   struct SimpleGetHelperResult {
@@ -299,17 +301,17 @@ class HttpNetworkTransactionTest
 
   void SetUp() override {
     NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void TearDown() override {
     NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     // Empty the current queue.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     PlatformTest::TearDown();
     NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   NextProto GetProtocol() const {
@@ -327,12 +329,7 @@ class HttpNetworkTransactionTest
 
   std::string GetAlternativeServiceHttpHeader() {
     return std::string("Alt-Svc: ") + GetAlternateProtocolFromParam() +
-           "=\"www.example.com:443\"\r\n";
-  }
-
-  std::string GetAlternateProtocolHttpHeader() {
-    return std::string("Alternate-Protocol: 443:") +
-           GetAlternateProtocolFromParam() + "\r\n";
+           "=\"mail.example.org:443\"\r\n";
   }
 
   // Either |write_failure| specifies a write failure or |read_failure|
@@ -361,8 +358,8 @@ class HttpNetworkTransactionTest
 
     BoundTestNetLog log;
     session_deps_.net_log = log.bound().net_log();
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     for (size_t i = 0; i < data_count; ++i) {
@@ -390,7 +387,7 @@ class HttpNetworkTransactionTest
     const HttpResponseInfo* response = trans->GetResponseInfo();
     // Can't use ASSERT_* inside helper functions like this, so
     // return an error.
-    if (response == NULL || response->headers.get() == NULL) {
+    if (!response || !response->headers) {
       out.rv = ERR_UNEXPECTED;
       return out;
     }
@@ -508,19 +505,29 @@ class BeforeNetworkStartHandler {
   DISALLOW_COPY_AND_ASSIGN(BeforeNetworkStartHandler);
 };
 
-class BeforeProxyHeadersSentHandler {
+class BeforeHeadersSentHandler {
  public:
-  BeforeProxyHeadersSentHandler()
-      : observed_before_proxy_headers_sent_(false) {}
+  BeforeHeadersSentHandler()
+      : observed_before_headers_sent_with_proxy_(false),
+        observed_before_headers_sent_(false) {}
 
-  void OnBeforeProxyHeadersSent(const ProxyInfo& proxy_info,
-                                HttpRequestHeaders* request_headers) {
-    observed_before_proxy_headers_sent_ = true;
+  void OnBeforeHeadersSent(const ProxyInfo& proxy_info,
+                           HttpRequestHeaders* request_headers) {
+    observed_before_headers_sent_ = true;
+    if (!proxy_info.is_http() && !proxy_info.is_https() &&
+        !proxy_info.is_quic()) {
+      return;
+    }
+    observed_before_headers_sent_with_proxy_ = true;
     observed_proxy_server_uri_ = proxy_info.proxy_server().ToURI();
   }
 
-  bool observed_before_proxy_headers_sent() const {
-    return observed_before_proxy_headers_sent_;
+  bool observed_before_headers_sent_with_proxy() const {
+    return observed_before_headers_sent_with_proxy_;
+  }
+
+  bool observed_before_headers_sent() const {
+    return observed_before_headers_sent_;
   }
 
   std::string observed_proxy_server_uri() const {
@@ -528,10 +535,11 @@ class BeforeProxyHeadersSentHandler {
   }
 
  private:
-  bool observed_before_proxy_headers_sent_;
+  bool observed_before_headers_sent_with_proxy_;
+  bool observed_before_headers_sent_;
   std::string observed_proxy_server_uri_;
 
-  DISALLOW_COPY_AND_ASSIGN(BeforeProxyHeadersSentHandler);
+  DISALLOW_COPY_AND_ASSIGN(BeforeHeadersSentHandler);
 };
 
 // Fill |str| with a long header list that consumes >= |size| bytes.
@@ -601,7 +609,7 @@ class CaptureGroupNameSocketPool : public ParentPool {
   void CancelRequest(const std::string& group_name,
                      ClientSocketHandle* handle) override {}
   void ReleaseSocket(const std::string& group_name,
-                     scoped_ptr<StreamSocket> socket,
+                     std::unique_ptr<StreamSocket> socket,
                      int id) override {}
   void CloseIdleSockets() override {}
   int IdleSocketCount() const override { return 0; }
@@ -633,8 +641,7 @@ template <typename ParentPool>
 CaptureGroupNameSocketPool<ParentPool>::CaptureGroupNameSocketPool(
     HostResolver* host_resolver,
     CertVerifier* /* cert_verifier */)
-    : ParentPool(0, 0, host_resolver, NULL, NULL) {
-}
+    : ParentPool(0, 0, host_resolver, NULL, NULL, NULL) {}
 
 template <>
 CaptureGroupNameHttpProxySocketPool::CaptureGroupNameSocketPool(
@@ -671,7 +678,7 @@ bool CheckBasicServerAuth(const AuthChallengeInfo* auth_challenge) {
   if (!auth_challenge)
     return false;
   EXPECT_FALSE(auth_challenge->is_proxy);
-  EXPECT_EQ("www.example.org:80", auth_challenge->challenger.ToString());
+  EXPECT_EQ("http://www.example.org", auth_challenge->challenger.Serialize());
   EXPECT_EQ("MyRealm1", auth_challenge->realm);
   EXPECT_EQ(kBasicAuthScheme, auth_challenge->scheme);
   return true;
@@ -681,7 +688,17 @@ bool CheckBasicProxyAuth(const AuthChallengeInfo* auth_challenge) {
   if (!auth_challenge)
     return false;
   EXPECT_TRUE(auth_challenge->is_proxy);
-  EXPECT_EQ("myproxy:70", auth_challenge->challenger.ToString());
+  EXPECT_EQ("http://myproxy:70", auth_challenge->challenger.Serialize());
+  EXPECT_EQ("MyRealm1", auth_challenge->realm);
+  EXPECT_EQ(kBasicAuthScheme, auth_challenge->scheme);
+  return true;
+}
+
+bool CheckBasicSecureProxyAuth(const AuthChallengeInfo* auth_challenge) {
+  if (!auth_challenge)
+    return false;
+  EXPECT_TRUE(auth_challenge->is_proxy);
+  EXPECT_EQ("https://myproxy:70", auth_challenge->challenger.Serialize());
   EXPECT_EQ("MyRealm1", auth_challenge->realm);
   EXPECT_EQ(kBasicAuthScheme, auth_challenge->scheme);
   return true;
@@ -691,7 +708,7 @@ bool CheckDigestServerAuth(const AuthChallengeInfo* auth_challenge) {
   if (!auth_challenge)
     return false;
   EXPECT_FALSE(auth_challenge->is_proxy);
-  EXPECT_EQ("www.example.org:80", auth_challenge->challenger.ToString());
+  EXPECT_EQ("http://www.example.org", auth_challenge->challenger.Serialize());
   EXPECT_EQ("digestive", auth_challenge->realm);
   EXPECT_EQ(kDigestAuthScheme, auth_challenge->scheme);
   return true;
@@ -702,7 +719,7 @@ bool CheckNTLMServerAuth(const AuthChallengeInfo* auth_challenge) {
   if (!auth_challenge)
     return false;
   EXPECT_FALSE(auth_challenge->is_proxy);
-  EXPECT_EQ("172.22.68.17:80", auth_challenge->challenger.ToString());
+  EXPECT_EQ("http://172.22.68.17", auth_challenge->challenger.Serialize());
   EXPECT_EQ(std::string(), auth_challenge->realm);
   EXPECT_EQ(kNtlmAuthScheme, auth_challenge->scheme);
   return true;
@@ -712,8 +729,8 @@ bool CheckNTLMServerAuth(const AuthChallengeInfo* auth_challenge) {
 }  // namespace
 
 TEST_P(HttpNetworkTransactionTest, Basic) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 }
 
@@ -1033,8 +1050,8 @@ TEST_P(HttpNetworkTransactionTest, TwoIdenticalLocationHeaders) {
   request.url = GURL("http://redirect.com/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
@@ -1048,7 +1065,8 @@ TEST_P(HttpNetworkTransactionTest, TwoIdenticalLocationHeaders) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL && response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 302 Redirect", response->headers->GetStatusLine());
   std::string url;
   EXPECT_TRUE(response->headers->IsRedirect(&url));
@@ -1078,13 +1096,13 @@ TEST_P(HttpNetworkTransactionTest, Head) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-  BeforeProxyHeadersSentHandler proxy_headers_handler;
-  trans->SetBeforeProxyHeadersSentCallback(
-      base::Bind(&BeforeProxyHeadersSentHandler::OnBeforeProxyHeadersSent,
-                 base::Unretained(&proxy_headers_handler)));
+  BeforeHeadersSentHandler headers_handler;
+  trans->SetBeforeHeadersSentCallback(
+      base::Bind(&BeforeHeadersSentHandler::OnBeforeHeadersSent,
+                 base::Unretained(&headers_handler)));
 
   MockWrite data_writes1[] = {
       MockWrite("HEAD / HTTP/1.1\r\n"
@@ -1112,14 +1130,15 @@ TEST_P(HttpNetworkTransactionTest, Head) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   // Check that the headers got parsed.
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ(1234, response->headers->GetContentLength());
   EXPECT_EQ("HTTP/1.1 404 Not Found", response->headers->GetStatusLine());
   EXPECT_TRUE(response->proxy_server.IsEmpty());
-  EXPECT_FALSE(proxy_headers_handler.observed_before_proxy_headers_sent());
+  EXPECT_TRUE(headers_handler.observed_before_headers_sent());
+  EXPECT_FALSE(headers_handler.observed_before_headers_sent_with_proxy());
 
   std::string server_header;
   size_t iter = 0;
@@ -1137,7 +1156,7 @@ TEST_P(HttpNetworkTransactionTest, Head) {
 }
 
 TEST_P(HttpNetworkTransactionTest, ReuseConnection) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockRead data_reads[] = {
     MockRead("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"),
@@ -1159,7 +1178,7 @@ TEST_P(HttpNetworkTransactionTest, ReuseConnection) {
     request.url = GURL("http://www.example.org/");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     TestCompletionCallback callback;
@@ -1171,9 +1190,9 @@ TEST_P(HttpNetworkTransactionTest, ReuseConnection) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
 
-    EXPECT_TRUE(response->headers.get() != NULL);
+    EXPECT_TRUE(response->headers);
     EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
     EXPECT_TRUE(response->proxy_server.IsEmpty());
 
@@ -1185,9 +1204,9 @@ TEST_P(HttpNetworkTransactionTest, ReuseConnection) {
 }
 
 TEST_P(HttpNetworkTransactionTest, Ignores100) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -1196,8 +1215,8 @@ TEST_P(HttpNetworkTransactionTest, Ignores100) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1218,9 +1237,9 @@ TEST_P(HttpNetworkTransactionTest, Ignores100) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -1238,8 +1257,8 @@ TEST_P(HttpNetworkTransactionTest, Ignores1xx) {
   request.url = GURL("http://www.foo.com/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1260,9 +1279,9 @@ TEST_P(HttpNetworkTransactionTest, Ignores1xx) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -1277,8 +1296,8 @@ TEST_P(HttpNetworkTransactionTest, Incomplete100ThenEOF) {
   request.url = GURL("http://www.foo.com/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1308,8 +1327,8 @@ TEST_P(HttpNetworkTransactionTest, EmptyResponse) {
   request.url = GURL("http://www.foo.com/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1337,7 +1356,7 @@ void HttpNetworkTransactionTest::KeepAliveConnectionResendRequestTest(
 
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Written data for successfully sending both requests.
   MockWrite data1_writes[] = {
@@ -1384,7 +1403,7 @@ void HttpNetworkTransactionTest::KeepAliveConnectionResendRequestTest(
   for (int i = 0; i < 2; ++i) {
     TestCompletionCallback callback;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -1404,9 +1423,9 @@ void HttpNetworkTransactionTest::KeepAliveConnectionResendRequestTest(
     }
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
 
-    EXPECT_TRUE(response->headers.get() != NULL);
+    EXPECT_TRUE(response->headers);
     EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
     std::string response_data;
@@ -1427,7 +1446,7 @@ void HttpNetworkTransactionTest::PreconnectErrorResendRequestTest(
 
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   SSLSocketDataProvider ssl1(ASYNC, OK);
   SSLSocketDataProvider ssl2(ASYNC, OK);
@@ -1439,11 +1458,11 @@ void HttpNetworkTransactionTest::PreconnectErrorResendRequestTest(
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl2);
 
   // SPDY versions of the request and response.
-  scoped_ptr<SpdyFrame> spdy_request(spdy_util_.ConstructSpdyGet(
+  std::unique_ptr<SpdySerializedFrame> spdy_request(spdy_util_.ConstructSpdyGet(
       request.url.spec().c_str(), 1, DEFAULT_PRIORITY));
-  scoped_ptr<SpdyFrame> spdy_response(
+  std::unique_ptr<SpdySerializedFrame> spdy_response(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> spdy_data(
+  std::unique_ptr<SpdySerializedFrame> spdy_data(
       spdy_util_.ConstructSpdyBodyFrame(1, "hello", 5, true));
 
   // HTTP/1.1 versions of the request and response.
@@ -1496,12 +1515,7 @@ void HttpNetworkTransactionTest::PreconnectErrorResendRequestTest(
   session_deps_.socket_factory->AddSocketDataProvider(&data2);
 
   // Preconnect a socket.
-  SSLConfig ssl_config;
-  session->ssl_config_service()->GetSSLConfig(&ssl_config);
-  session->GetAlpnProtos(&ssl_config.alpn_protos);
-  session->GetNpnProtos(&ssl_config.npn_protos);
-  session->http_stream_factory()->PreconnectStreams(1, request, ssl_config,
-                                                    ssl_config);
+  session->http_stream_factory()->PreconnectStreams(1, request);
   // Wait for the preconnect to complete.
   // TODO(davidben): Some way to wait for an idle socket count might be handy.
   base::RunLoop().RunUntilIdle();
@@ -1510,7 +1524,7 @@ void HttpNetworkTransactionTest::PreconnectErrorResendRequestTest(
   // Make the request.
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -1526,9 +1540,9 @@ void HttpNetworkTransactionTest::PreconnectErrorResendRequestTest(
       CONNECT_TIMING_HAS_DNS_TIMES|CONNECT_TIMING_HAS_SSL_TIMES);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   if (response->was_fetched_via_spdy) {
     EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   } else {
@@ -1628,8 +1642,8 @@ TEST_P(HttpNetworkTransactionTest, NonKeepAliveConnectionReset) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1682,8 +1696,8 @@ TEST_P(HttpNetworkTransactionTest, ThrottleBeforeNetworkStart) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Defer on OnBeforeNetworkStart.
@@ -1705,7 +1719,7 @@ TEST_P(HttpNetworkTransactionTest, ThrottleBeforeNetworkStart) {
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Should have deferred for network start.
   EXPECT_TRUE(net_start_handler.observed_before_network_start());
@@ -1714,7 +1728,7 @@ TEST_P(HttpNetworkTransactionTest, ThrottleBeforeNetworkStart) {
   trans->ResumeNetworkStart();
   rv = callback.WaitForResult();
   EXPECT_EQ(OK, rv);
-  EXPECT_TRUE(trans->GetResponseInfo() != NULL);
+  EXPECT_TRUE(trans->GetResponseInfo());
 
   scoped_refptr<IOBufferWithSize> io_buf(new IOBufferWithSize(100));
   rv = trans->Read(io_buf.get(), io_buf->size(), callback.callback());
@@ -1731,8 +1745,8 @@ TEST_P(HttpNetworkTransactionTest, ThrottleAndCancelBeforeNetworkStart) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Defer on OnBeforeNetworkStart.
@@ -1745,7 +1759,7 @@ TEST_P(HttpNetworkTransactionTest, ThrottleAndCancelBeforeNetworkStart) {
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Should have deferred for network start.
   EXPECT_TRUE(net_start_handler.observed_before_network_start());
@@ -1762,8 +1776,8 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveEarlyClose) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1793,7 +1807,7 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveEarlyClose) {
   EXPECT_EQ(ERR_CONTENT_LENGTH_MISMATCH, rv);
 
   trans.reset();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
 }
 
@@ -1803,8 +1817,8 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveEarlyClose2) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -1831,7 +1845,7 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveEarlyClose2) {
   EXPECT_EQ(ERR_CONTENT_LENGTH_MISMATCH, rv);
 
   trans.reset();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
 }
 
@@ -1845,7 +1859,7 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveAfterUnreadBody) {
 
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   const char* request_data =
       "GET / HTTP/1.1\r\n"
@@ -1912,7 +1926,7 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveAfterUnreadBody) {
   for (size_t i = 0; i < kNumUnreadBodies; ++i) {
     TestCompletionCallback callback;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -1959,7 +1973,7 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveAfterUnreadBody) {
     EXPECT_EQ(kStatusLines[i], response_lines[i]);
 
   TestCompletionCallback callback;
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
   EXPECT_EQ(OK, callback.GetResult(rv));
@@ -1973,6 +1987,286 @@ TEST_P(HttpNetworkTransactionTest, KeepAliveAfterUnreadBody) {
   EXPECT_EQ("hello", response_data);
 }
 
+// Sockets that receive extra data after a response is complete should not be
+// reused.
+TEST_P(HttpNetworkTransactionTest, KeepAliveWithUnusedData1) {
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  MockWrite data_writes1[] = {
+      MockWrite("HEAD / HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads1[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Connection: keep-alive\r\n"
+               "Content-Length: 22\r\n\r\n"
+               "This server is borked."),
+  };
+
+  MockWrite data_writes2[] = {
+      MockWrite("GET /foo HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads2[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Content-Length: 3\r\n\r\n"
+               "foo"),
+  };
+  StaticSocketDataProvider data1(data_reads1, arraysize(data_reads1),
+                                 data_writes1, arraysize(data_writes1));
+  session_deps_.socket_factory->AddSocketDataProvider(&data1);
+  StaticSocketDataProvider data2(data_reads2, arraysize(data_reads2),
+                                 data_writes2, arraysize(data_writes2));
+  session_deps_.socket_factory->AddSocketDataProvider(&data2);
+
+  TestCompletionCallback callback;
+  HttpRequestInfo request1;
+  request1.method = "HEAD";
+  request1.url = GURL("http://www.borked.com/");
+
+  std::unique_ptr<HttpTransaction> trans1(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  int rv = trans1->Start(&request1, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response1 = trans1->GetResponseInfo();
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
+  EXPECT_EQ(200, response1->headers->response_code());
+  EXPECT_TRUE(response1->headers->IsKeepAlive());
+
+  std::string response_data1;
+  EXPECT_EQ(OK, ReadTransaction(trans1.get(), &response_data1));
+  EXPECT_EQ("", response_data1);
+  // Deleting the transaction attempts to release the socket back into the
+  // socket pool.
+  trans1.reset();
+
+  HttpRequestInfo request2;
+  request2.method = "GET";
+  request2.url = GURL("http://www.borked.com/foo");
+
+  std::unique_ptr<HttpTransaction> trans2(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response2 = trans2->GetResponseInfo();
+  ASSERT_TRUE(response2);
+  ASSERT_TRUE(response2->headers);
+  EXPECT_EQ(200, response2->headers->response_code());
+
+  std::string response_data2;
+  EXPECT_EQ(OK, ReadTransaction(trans2.get(), &response_data2));
+  EXPECT_EQ("foo", response_data2);
+}
+
+TEST_P(HttpNetworkTransactionTest, KeepAliveWithUnusedData2) {
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  MockWrite data_writes1[] = {
+      MockWrite("GET / HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads1[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Connection: keep-alive\r\n"
+               "Content-Length: 22\r\n\r\n"
+               "This server is borked."
+               "Bonus data!"),
+  };
+
+  MockWrite data_writes2[] = {
+      MockWrite("GET /foo HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads2[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Content-Length: 3\r\n\r\n"
+               "foo"),
+  };
+  StaticSocketDataProvider data1(data_reads1, arraysize(data_reads1),
+                                 data_writes1, arraysize(data_writes1));
+  session_deps_.socket_factory->AddSocketDataProvider(&data1);
+  StaticSocketDataProvider data2(data_reads2, arraysize(data_reads2),
+                                 data_writes2, arraysize(data_writes2));
+  session_deps_.socket_factory->AddSocketDataProvider(&data2);
+
+  TestCompletionCallback callback;
+  HttpRequestInfo request1;
+  request1.method = "GET";
+  request1.url = GURL("http://www.borked.com/");
+
+  std::unique_ptr<HttpTransaction> trans1(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  int rv = trans1->Start(&request1, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response1 = trans1->GetResponseInfo();
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
+  EXPECT_EQ(200, response1->headers->response_code());
+  EXPECT_TRUE(response1->headers->IsKeepAlive());
+
+  std::string response_data1;
+  EXPECT_EQ(OK, ReadTransaction(trans1.get(), &response_data1));
+  EXPECT_EQ("This server is borked.", response_data1);
+  // Deleting the transaction attempts to release the socket back into the
+  // socket pool.
+  trans1.reset();
+
+  HttpRequestInfo request2;
+  request2.method = "GET";
+  request2.url = GURL("http://www.borked.com/foo");
+
+  std::unique_ptr<HttpTransaction> trans2(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response2 = trans2->GetResponseInfo();
+  ASSERT_TRUE(response2);
+  ASSERT_TRUE(response2->headers);
+  EXPECT_EQ(200, response2->headers->response_code());
+
+  std::string response_data2;
+  EXPECT_EQ(OK, ReadTransaction(trans2.get(), &response_data2));
+  EXPECT_EQ("foo", response_data2);
+}
+
+TEST_P(HttpNetworkTransactionTest, KeepAliveWithUnusedData3) {
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  MockWrite data_writes1[] = {
+      MockWrite("GET / HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads1[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Connection: keep-alive\r\n"
+               "Transfer-Encoding: chunked\r\n\r\n"),
+      MockRead("16\r\nThis server is borked.\r\n"),
+      MockRead("0\r\n\r\nBonus data!"),
+  };
+
+  MockWrite data_writes2[] = {
+      MockWrite("GET /foo HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads2[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Content-Length: 3\r\n\r\n"
+               "foo"),
+  };
+  StaticSocketDataProvider data1(data_reads1, arraysize(data_reads1),
+                                 data_writes1, arraysize(data_writes1));
+  session_deps_.socket_factory->AddSocketDataProvider(&data1);
+  StaticSocketDataProvider data2(data_reads2, arraysize(data_reads2),
+                                 data_writes2, arraysize(data_writes2));
+  session_deps_.socket_factory->AddSocketDataProvider(&data2);
+
+  TestCompletionCallback callback;
+  HttpRequestInfo request1;
+  request1.method = "GET";
+  request1.url = GURL("http://www.borked.com/");
+
+  std::unique_ptr<HttpTransaction> trans1(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  int rv = trans1->Start(&request1, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response1 = trans1->GetResponseInfo();
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
+  EXPECT_EQ(200, response1->headers->response_code());
+  EXPECT_TRUE(response1->headers->IsKeepAlive());
+
+  std::string response_data1;
+  EXPECT_EQ(OK, ReadTransaction(trans1.get(), &response_data1));
+  EXPECT_EQ("This server is borked.", response_data1);
+  // Deleting the transaction attempts to release the socket back into the
+  // socket pool.
+  trans1.reset();
+
+  HttpRequestInfo request2;
+  request2.method = "GET";
+  request2.url = GURL("http://www.borked.com/foo");
+
+  std::unique_ptr<HttpTransaction> trans2(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response2 = trans2->GetResponseInfo();
+  ASSERT_TRUE(response2);
+  ASSERT_TRUE(response2->headers);
+  EXPECT_EQ(200, response2->headers->response_code());
+
+  std::string response_data2;
+  EXPECT_EQ(OK, ReadTransaction(trans2.get(), &response_data2));
+  EXPECT_EQ("foo", response_data2);
+}
+
+// This is a little different from the others - it tests the case that the
+// HttpStreamParser doesn't know if there's extra data on a socket or not when
+// the HttpNetworkTransaction is torn down, because the response body hasn't
+// been read from yet, but the request goes through the HttpResponseBodyDrainer.
+TEST_P(HttpNetworkTransactionTest, KeepAliveWithUnusedData4) {
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  MockWrite data_writes1[] = {
+      MockWrite("GET / HTTP/1.1\r\n"
+                "Host: www.borked.com\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+  };
+
+  MockRead data_reads1[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"
+               "Connection: keep-alive\r\n"
+               "Transfer-Encoding: chunked\r\n\r\n"),
+      MockRead("16\r\nThis server is borked.\r\n"),
+      MockRead("0\r\n\r\nBonus data!"),
+  };
+  StaticSocketDataProvider data1(data_reads1, arraysize(data_reads1),
+                                 data_writes1, arraysize(data_writes1));
+  session_deps_.socket_factory->AddSocketDataProvider(&data1);
+
+  TestCompletionCallback callback;
+  HttpRequestInfo request1;
+  request1.method = "GET";
+  request1.url = GURL("http://www.borked.com/");
+
+  std::unique_ptr<HttpTransaction> trans1(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  int rv = trans1->Start(&request1, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response1 = trans1->GetResponseInfo();
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
+  EXPECT_EQ(200, response1->headers->response_code());
+  EXPECT_TRUE(response1->headers->IsKeepAlive());
+
+  // Deleting the transaction creates an HttpResponseBodyDrainer to read the
+  // response body.
+  trans1.reset();
+
+  // Let the HttpResponseBodyDrainer drain the socket.  It should determine the
+  // socket can't be reused, rather than returning it to the socket pool.
+  base::RunLoop().RunUntilIdle();
+
+  // There should be no idle sockets in the pool.
+  EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
+}
+
 // Test the request-challenge-retry sequence for basic auth.
 // (basic auth is the easiest to mock, because it has no randomness).
 TEST_P(HttpNetworkTransactionTest, BasicAuth) {
@@ -1983,8 +2277,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuth) {
 
   TestNetLog log;
   session_deps_.net_log = &log;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes1[] = {
@@ -2050,7 +2344,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuth) {
   EXPECT_EQ(reads_size1, trans->GetTotalReceivedBytes());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -2077,8 +2371,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuth) {
   EXPECT_EQ(reads_size1 + reads_size2, trans->GetTotalReceivedBytes());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(100, response->headers->GetContentLength());
 }
 
@@ -2094,8 +2388,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthWithAddressChange) {
   MockHostResolver* resolver = new MockHostResolver();
   session_deps_.net_log = &log;
   session_deps_.host_resolver.reset(resolver);
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   resolver->rules()->ClearRules();
@@ -2190,7 +2484,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthWithAddressChange) {
 
   response = trans->GetResponseInfo();
   ASSERT_TRUE(response);
-  EXPECT_FALSE(response->auth_challenge.get());
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(100, response->headers->GetContentLength());
 
   EXPECT_TRUE(trans->GetRemoteEndpoint(&endpoint));
@@ -2204,8 +2498,8 @@ TEST_P(HttpNetworkTransactionTest, DoNotSendAuth) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = LOAD_DO_NOT_SEND_AUTH_DATA;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -2241,8 +2535,8 @@ TEST_P(HttpNetworkTransactionTest, DoNotSendAuth) {
   EXPECT_EQ(reads_size, trans->GetTotalReceivedBytes());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
 }
 
 // Test the request-challenge-retry sequence for basic auth, over a keep-alive
@@ -2259,7 +2553,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAlive) {
 
     TestNetLog log;
     session_deps_.net_log = &log;
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
     MockWrite data_writes[] = {
         MockWrite(ASYNC, 0,
@@ -2297,7 +2591,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAlive) {
 
     TestCompletionCallback callback1;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
     int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
     ASSERT_EQ(OK, callback1.GetResult(rv));
@@ -2348,7 +2642,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveNoBody) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockWrite data_writes1[] = {
       MockWrite(
@@ -2391,7 +2685,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveNoBody) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -2400,7 +2694,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveNoBody) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -2413,8 +2707,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveNoBody) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(5, response->headers->GetContentLength());
 }
 
@@ -2426,7 +2720,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveLargeBody) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockWrite data_writes1[] = {
       MockWrite(
@@ -2477,7 +2771,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveLargeBody) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -2486,7 +2780,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveLargeBody) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -2499,8 +2793,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveLargeBody) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(5, response->headers->GetContentLength());
 }
 
@@ -2512,7 +2806,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveImpatientServer) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockWrite data_writes1[] = {
       MockWrite(
@@ -2566,7 +2860,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveImpatientServer) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -2575,7 +2869,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveImpatientServer) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -2588,8 +2882,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthKeepAliveImpatientServer) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(5, response->headers->GetContentLength());
 }
 
@@ -2607,7 +2901,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp10) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -2659,7 +2953,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp10) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -2677,9 +2971,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp10) {
       NetLog::PHASE_NONE);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_FALSE(response->headers->IsKeepAlive());
-  ASSERT_FALSE(response->headers.get() == NULL);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ(407, response->headers->response_code());
   EXPECT_TRUE(HttpVersion(1, 0) == response->headers->GetHttpVersion());
   EXPECT_TRUE(CheckBasicProxyAuth(response->auth_challenge.get()));
@@ -2699,7 +2993,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp10) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -2707,7 +3001,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp10) {
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   // The password prompt info should not be set.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
   TestLoadTimingNotReusedWithPac(load_timing_info,
@@ -2731,7 +3025,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp11) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -2782,7 +3076,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp11) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -2801,9 +3095,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp11) {
       NetLog::PHASE_NONE);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_FALSE(response->headers->IsKeepAlive());
-  ASSERT_FALSE(response->headers.get() == NULL);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ(407, response->headers->response_code());
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
   EXPECT_TRUE(CheckBasicProxyAuth(response->auth_challenge.get()));
@@ -2823,7 +3117,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp11) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -2831,7 +3125,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyNoKeepAliveHttp11) {
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   // The password prompt info should not be set.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
   TestLoadTimingNotReusedWithPac(load_timing_info,
@@ -2859,9 +3153,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyKeepAliveHttp10) {
     session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
     BoundTestNetLog log;
     session_deps_.net_log = log.bound().net_log();
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     // Since we have proxy, should try to establish tunnel.
@@ -2970,9 +3264,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyKeepAliveHttp11) {
     session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
     BoundTestNetLog log;
     session_deps_.net_log = log.bound().net_log();
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     // Since we have proxy, should try to establish tunnel.
@@ -3077,7 +3371,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyKeepAliveExtraData) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3137,7 +3431,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyKeepAliveExtraData) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -3200,9 +3494,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyKeepAliveHangupDuringBody) {
 
   // Configure against proxy server "myproxy:70".
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Since we have proxy, should try to establish tunnel.
@@ -3290,9 +3584,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyCancelTunnel) {
   // Configure against proxy server "myproxy:70".
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Since we have proxy, should try to establish tunnel.
@@ -3349,9 +3643,9 @@ TEST_P(HttpNetworkTransactionTest, SanitizeProxyAuthHeaders) {
   // Configure against proxy server "myproxy:70".
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Since we have proxy, should try to establish tunnel.
@@ -3409,8 +3703,8 @@ TEST_P(HttpNetworkTransactionTest, UnexpectedProxyAuth) {
   request.load_flags = 0;
 
   // We are using a DIRECT connection (i.e. no proxy) for this session.
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes1[] = {
@@ -3457,7 +3751,7 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3487,7 +3781,7 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -3518,10 +3812,10 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service =
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
 
-  scoped_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
+  std::unique_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
       new HttpAuthHandlerMock::Factory());
   auth_handler_factory->set_do_init_from_challenge(true);
-  scoped_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
+  std::unique_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
   mock_handler->set_allows_default_credentials(true);
   auth_handler_factory->AddMockHandler(mock_handler.release(),
                                        HttpAuth::AUTH_PROXY);
@@ -3530,7 +3824,7 @@ TEST_P(HttpNetworkTransactionTest,
   // Add NetLog just so can verify load timing information gets a NetLog ID.
   NetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3581,7 +3875,7 @@ TEST_P(HttpNetworkTransactionTest,
   SSLSocketDataProvider ssl(ASYNC, OK);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -3595,7 +3889,7 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(407, response->headers->response_code());
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
   EXPECT_TRUE(trans->IsReadyToRestartForAuth());
-  EXPECT_FALSE(response->auth_challenge.get());
+  EXPECT_FALSE(response->auth_challenge);
 
   LoadTimingInfo load_timing_info;
   // CONNECT requests and responses are handled at the connect job level, so
@@ -3635,10 +3929,10 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service =
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
 
-  scoped_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
+  std::unique_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
       new HttpAuthHandlerMock::Factory());
   auth_handler_factory->set_do_init_from_challenge(true);
-  scoped_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
+  std::unique_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
   mock_handler->set_allows_default_credentials(true);
   auth_handler_factory->AddMockHandler(mock_handler.release(),
                                        HttpAuth::AUTH_PROXY);
@@ -3647,7 +3941,7 @@ TEST_P(HttpNetworkTransactionTest,
   // Add NetLog just so can verify load timing information gets a NetLog ID.
   NetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
   // Should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3701,7 +3995,7 @@ TEST_P(HttpNetworkTransactionTest,
   SSLSocketDataProvider ssl(ASYNC, OK);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -3734,7 +4028,7 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   // The password prompt info should not be set.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
   TestLoadTimingNotReusedWithPac(load_timing_info,
@@ -3757,10 +4051,10 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service =
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
 
-  scoped_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
+  std::unique_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
       new HttpAuthHandlerMock::Factory());
   auth_handler_factory->set_do_init_from_challenge(true);
-  scoped_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
+  std::unique_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
   mock_handler->set_allows_default_credentials(true);
   auth_handler_factory->AddMockHandler(mock_handler.release(),
                                        HttpAuth::AUTH_PROXY);
@@ -3769,7 +4063,7 @@ TEST_P(HttpNetworkTransactionTest,
   // Add NetLog just so can verify load timing information gets a NetLog ID.
   NetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
   // Should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3816,7 +4110,7 @@ TEST_P(HttpNetworkTransactionTest,
                                  data_writes2, arraysize(data_writes2));
   session_deps_.socket_factory->AddSocketDataProvider(&data2);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -3855,10 +4149,10 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service =
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
 
-  scoped_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
+  std::unique_ptr<HttpAuthHandlerMock::Factory> auth_handler_factory(
       new HttpAuthHandlerMock::Factory());
   auth_handler_factory->set_do_init_from_challenge(true);
-  scoped_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
+  std::unique_ptr<HttpAuthHandlerMock> mock_handler(new HttpAuthHandlerMock());
   mock_handler->set_allows_default_credentials(true);
   auth_handler_factory->AddMockHandler(mock_handler.release(),
                                        HttpAuth::AUTH_PROXY);
@@ -3873,7 +4167,7 @@ TEST_P(HttpNetworkTransactionTest,
   // Add NetLog just so can verify load timing information gets a NetLog ID.
   NetLog net_log;
   session_deps_.net_log = &net_log;
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
   // Should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3915,7 +4209,7 @@ TEST_P(HttpNetworkTransactionTest,
   SSLSocketDataProvider ssl(ASYNC, OK);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -3960,7 +4254,7 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingNoPacTwoRequests) {
   session_deps_.proxy_service = ProxyService::CreateFixed("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -3998,7 +4292,7 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingNoPacTwoRequests) {
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
   TestCompletionCallback callback1;
-  scoped_ptr<HttpTransaction> trans1(
+  std::unique_ptr<HttpTransaction> trans1(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans1->Start(&request1, callback1.callback(), log.bound());
@@ -4008,8 +4302,8 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingNoPacTwoRequests) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response1 = trans1->GetResponseInfo();
-  ASSERT_TRUE(response1 != NULL);
-  ASSERT_TRUE(response1->headers.get() != NULL);
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
   EXPECT_EQ(1, response1->headers->GetContentLength());
 
   LoadTimingInfo load_timing_info1;
@@ -4019,7 +4313,7 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingNoPacTwoRequests) {
   trans1.reset();
 
   TestCompletionCallback callback2;
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   rv = trans2->Start(&request2, callback2.callback(), log.bound());
@@ -4029,8 +4323,8 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingNoPacTwoRequests) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response2 = trans2->GetResponseInfo();
-  ASSERT_TRUE(response2 != NULL);
-  ASSERT_TRUE(response2->headers.get() != NULL);
+  ASSERT_TRUE(response2);
+  ASSERT_TRUE(response2->headers);
   EXPECT_EQ(2, response2->headers->GetContentLength());
 
   LoadTimingInfo load_timing_info2;
@@ -4058,7 +4352,7 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingWithPacTwoRequests) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes1[] = {
@@ -4096,7 +4390,7 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingWithPacTwoRequests) {
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
   TestCompletionCallback callback1;
-  scoped_ptr<HttpTransaction> trans1(
+  std::unique_ptr<HttpTransaction> trans1(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans1->Start(&request1, callback1.callback(), log.bound());
@@ -4106,8 +4400,8 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingWithPacTwoRequests) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response1 = trans1->GetResponseInfo();
-  ASSERT_TRUE(response1 != NULL);
-  ASSERT_TRUE(response1->headers.get() != NULL);
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
   EXPECT_EQ(1, response1->headers->GetContentLength());
 
   LoadTimingInfo load_timing_info1;
@@ -4118,7 +4412,7 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingWithPacTwoRequests) {
   trans1.reset();
 
   TestCompletionCallback callback2;
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   rv = trans2->Start(&request2, callback2.callback(), log.bound());
@@ -4128,8 +4422,8 @@ TEST_P(HttpNetworkTransactionTest, HttpProxyLoadTimingWithPacTwoRequests) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response2 = trans2->GetResponseInfo();
-  ASSERT_TRUE(response2 != NULL);
-  ASSERT_TRUE(response2->headers.get() != NULL);
+  ASSERT_TRUE(response2);
+  ASSERT_TRUE(response2->headers);
   EXPECT_EQ(2, response2->headers->GetContentLength());
 
   LoadTimingInfo load_timing_info2;
@@ -4152,7 +4446,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyGet) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should use full url
   MockWrite data_writes1[] = {
@@ -4177,7 +4471,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyGet) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -4192,7 +4486,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyGet) {
                           CONNECT_TIMING_HAS_CONNECT_TIMES_ONLY);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -4200,7 +4494,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyGet) {
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   // The password prompt info should not be set.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 }
 
 // Test a SPDY get through an HTTPS Proxy.
@@ -4214,15 +4508,17 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGet) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // fetch http://www.example.org/ via SPDY
-  scoped_ptr<SpdyFrame> req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, false));
+  std::unique_ptr<SpdySerializedFrame> req(
+      spdy_util_.ConstructSpdyGet("http://www.example.org/", 1, LOWEST));
   MockWrite spdy_writes[] = {CreateMockWrite(*req, 0)};
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdyGetSynReply(nullptr, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp, 1), CreateMockRead(*data, 2), MockRead(ASYNC, 0, 3),
   };
@@ -4237,7 +4533,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGet) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -4252,8 +4548,8 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGet) {
                           CONNECT_TIMING_HAS_CONNECT_TIMES_ONLY);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -4274,15 +4570,17 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithSessionRace) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Fetch http://www.example.org/ through the SPDY proxy.
-  scoped_ptr<SpdyFrame> req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, false));
+  std::unique_ptr<SpdySerializedFrame> req(
+      spdy_util_.ConstructSpdyGet("http://www.example.org/", 1, LOWEST));
   MockWrite spdy_writes[] = {CreateMockWrite(*req, 0)};
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp, 1), CreateMockRead(*data, 2), MockRead(ASYNC, 0, 3),
   };
@@ -4297,7 +4595,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithSessionRace) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Stall the hostname resolution begun by the transaction.
@@ -4323,8 +4621,8 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithSessionRace) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -4343,22 +4641,21 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithProxyAuth) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // The first request will be a bare GET, the second request will be a
   // GET with a Proxy-Authorization header.
-  scoped_ptr<SpdyFrame> req_get(
+  spdy_util_.set_default_url(request.url);
+  std::unique_ptr<SpdySerializedFrame> req_get(
       spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, false));
   spdy_util_.UpdateWithStreamDestruction(1);
   const char* const kExtraAuthorizationHeaders[] = {
     "proxy-authorization", "Basic Zm9vOmJhcg=="
   };
-  scoped_ptr<SpdyFrame> req_get_authorization(
+  std::unique_ptr<SpdySerializedFrame> req_get_authorization(
       spdy_util_.ConstructSpdyGet(kExtraAuthorizationHeaders,
-                                  arraysize(kExtraAuthorizationHeaders) / 2,
-                                  3,
-                                  LOWEST,
-                                  false));
+                                  arraysize(kExtraAuthorizationHeaders) / 2, 3,
+                                  LOWEST, false));
   MockWrite spdy_writes[] = {
       CreateMockWrite(*req_get, 0), CreateMockWrite(*req_get_authorization, 3),
   };
@@ -4369,16 +4666,16 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithProxyAuth) {
   const char* const kExtraAuthenticationHeaders[] = {
     "proxy-authenticate", "Basic realm=\"MyRealm1\""
   };
-  scoped_ptr<SpdyFrame> resp_authentication(
+  std::unique_ptr<SpdySerializedFrame> resp_authentication(
       spdy_util_.ConstructSpdySynReplyError(
-          "407 Proxy Authentication Required",
-          kExtraAuthenticationHeaders, arraysize(kExtraAuthenticationHeaders)/2,
-          1));
-  scoped_ptr<SpdyFrame> body_authentication(
+          "407 Proxy Authentication Required", kExtraAuthenticationHeaders,
+          arraysize(kExtraAuthenticationHeaders) / 2, 1));
+  std::unique_ptr<SpdySerializedFrame> body_authentication(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> resp_data(
+  std::unique_ptr<SpdySerializedFrame> resp_data(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> body_data(spdy_util_.ConstructSpdyBodyFrame(3, true));
+  std::unique_ptr<SpdySerializedFrame> body_data(
+      spdy_util_.ConstructSpdyBodyFrame(3, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp_authentication, 1),
       CreateMockRead(*body_authentication, 2),
@@ -4397,7 +4694,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithProxyAuth) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -4408,11 +4705,11 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithProxyAuth) {
 
   const HttpResponseInfo* const response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ(407, response->headers->response_code());
   EXPECT_TRUE(response->was_fetched_via_spdy);
-  EXPECT_TRUE(CheckBasicProxyAuth(response->auth_challenge.get()));
+  EXPECT_TRUE(CheckBasicSecureProxyAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
 
@@ -4425,11 +4722,11 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyGetWithProxyAuth) {
 
   const HttpResponseInfo* const response_restart = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response_restart != NULL);
-  ASSERT_TRUE(response_restart->headers.get() != NULL);
+  ASSERT_TRUE(response_restart);
+  ASSERT_TRUE(response_restart->headers);
   EXPECT_EQ(200, response_restart->headers->response_code());
   // The password prompt info should not be set.
-  EXPECT_TRUE(response_restart->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response_restart->auth_challenge);
 }
 
 // Test a SPDY CONNECT through an HTTPS Proxy to an HTTPS (non-SPDY) Server.
@@ -4443,13 +4740,13 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectHttps) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // CONNECT to www.example.org:443 via SPDY
-  scoped_ptr<SpdyFrame> connect(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> connect(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
   // fetch https://www.example.org/ via HTTP
 
@@ -4457,17 +4754,17 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectHttps) {
       "GET / HTTP/1.1\r\n"
       "Host: www.example.org\r\n"
       "Connection: keep-alive\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get(
       spdy_util_.ConstructSpdyBodyFrame(1, get, strlen(get), false));
-  scoped_ptr<SpdyFrame> conn_resp(
+  std::unique_ptr<SpdySerializedFrame> conn_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
   const char resp[] = "HTTP/1.1 200 OK\r\n"
       "Content-Length: 10\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get_resp(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp(
       spdy_util_.ConstructSpdyBodyFrame(1, resp, strlen(resp), false));
-  scoped_ptr<SpdyFrame> wrapped_body(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body(
       spdy_util_.ConstructSpdyBodyFrame(1, "1234567890", 10, false));
-  scoped_ptr<SpdyFrame> window_update(
+  std::unique_ptr<SpdySerializedFrame> window_update(
       spdy_util_.ConstructSpdyWindowUpdate(1, wrapped_get_resp->size()));
 
   MockWrite spdy_writes[] = {
@@ -4507,8 +4804,8 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectHttps) {
   TestLoadTimingNotReused(load_timing_info, CONNECT_TIMING_HAS_SSL_TIMES);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -4529,32 +4826,33 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectSpdy) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // CONNECT to www.example.org:443 via SPDY
-  scoped_ptr<SpdyFrame> connect(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> connect(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
   // fetch https://www.example.org/ via SPDY
   const char kMyUrl[] = "https://www.example.org/";
-  scoped_ptr<SpdyFrame> get(
+  std::unique_ptr<SpdySerializedFrame> get(
       spdy_util_wrapped.ConstructSpdyGet(kMyUrl, 1, LOWEST));
-  scoped_ptr<SpdyFrame> wrapped_get(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get(
       spdy_util_.ConstructWrappedSpdyFrame(get, 1));
-  scoped_ptr<SpdyFrame> conn_resp(
+  std::unique_ptr<SpdySerializedFrame> conn_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> get_resp(
+  std::unique_ptr<SpdySerializedFrame> get_resp(
       spdy_util_wrapped.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> wrapped_get_resp(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp(
       spdy_util_.ConstructWrappedSpdyFrame(get_resp, 1));
-  scoped_ptr<SpdyFrame> body(spdy_util_wrapped.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> wrapped_body(
+  std::unique_ptr<SpdySerializedFrame> body(
+      spdy_util_wrapped.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> wrapped_body(
       spdy_util_.ConstructWrappedSpdyFrame(body, 1));
-  scoped_ptr<SpdyFrame> window_update_get_resp(
+  std::unique_ptr<SpdySerializedFrame> window_update_get_resp(
       spdy_util_.ConstructSpdyWindowUpdate(1, wrapped_get_resp->size()));
-  scoped_ptr<SpdyFrame> window_update_body(
+  std::unique_ptr<SpdySerializedFrame> window_update_body(
       spdy_util_.ConstructSpdyWindowUpdate(1, wrapped_body->size()));
 
   MockWrite spdy_writes[] = {
@@ -4589,7 +4887,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectSpdy) {
   EXPECT_EQ(ERR_IO_PENDING, rv);
 
   // Allow the SpdyProxyClientSocket's write callback to complete.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Now allow the read of the response to complete.
   spdy_data.Resume();
   rv = callback1.WaitForResult();
@@ -4600,8 +4898,8 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectSpdy) {
   TestLoadTimingNotReused(load_timing_info, CONNECT_TIMING_HAS_SSL_TIMES);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -4620,23 +4918,25 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectFailure) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // CONNECT to www.example.org:443 via SPDY
-  scoped_ptr<SpdyFrame> connect(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> connect(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
-  scoped_ptr<SpdyFrame> get(
+  std::unique_ptr<SpdySerializedFrame> get(
       spdy_util_.ConstructSpdyRstStream(1, RST_STREAM_CANCEL));
 
   MockWrite spdy_writes[] = {
       CreateMockWrite(*connect, 0), CreateMockWrite(*get, 2),
   };
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdySynReplyError(1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdySynReplyError(1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp, 1, ASYNC), MockRead(ASYNC, 0, 3),
   };
@@ -4660,7 +4960,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyConnectFailure) {
   rv = callback1.WaitForResult();
   EXPECT_EQ(ERR_TUNNEL_CONNECTION_FAILED, rv);
 
-  // TODO(ttuttle): Anything else to check here?
+  // TODO(juliatuttle): Anything else to check here?
 }
 
 // Test load timing in the case of two HTTPS (non-SPDY) requests through a SPDY
@@ -4671,7 +4971,7 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(
+  std::unique_ptr<HttpNetworkSession> session(
       SpdySessionDependencies::SpdyCreateSession(&session_deps_));
 
   HttpRequestInfo request1;
@@ -4685,9 +4985,9 @@ TEST_P(HttpNetworkTransactionTest,
   request2.load_flags = 0;
 
   // CONNECT to www.example.org:443 via SPDY.
-  scoped_ptr<SpdyFrame> connect1(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> connect1(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
-  scoped_ptr<SpdyFrame> conn_resp1(
+  std::unique_ptr<SpdySerializedFrame> conn_resp1(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
 
   // Fetch https://www.example.org/ via HTTP.
@@ -4695,15 +4995,15 @@ TEST_P(HttpNetworkTransactionTest,
       "GET / HTTP/1.1\r\n"
       "Host: www.example.org\r\n"
       "Connection: keep-alive\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get1(
       spdy_util_.ConstructSpdyBodyFrame(1, get1, strlen(get1), false));
   const char resp1[] = "HTTP/1.1 200 OK\r\n"
       "Content-Length: 1\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get_resp1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp1(
       spdy_util_.ConstructSpdyBodyFrame(1, resp1, strlen(resp1), false));
-  scoped_ptr<SpdyFrame> wrapped_body1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body1(
       spdy_util_.ConstructSpdyBodyFrame(1, "1", 1, false));
-  scoped_ptr<SpdyFrame> window_update(
+  std::unique_ptr<SpdySerializedFrame> window_update(
       spdy_util_.ConstructSpdyWindowUpdate(1, wrapped_get_resp1->size()));
 
   // CONNECT to mail.example.org:443 via SPDY.
@@ -4716,10 +5016,10 @@ TEST_P(HttpNetworkTransactionTest,
     connect2_block[spdy_util_.GetHostKey()] = "mail.example.org";
     connect2_block[spdy_util_.GetPathKey()] = "mail.example.org:443";
   }
-  scoped_ptr<SpdyFrame> connect2(
-      spdy_util_.ConstructSpdySyn(3, connect2_block, LOWEST, false));
+  std::unique_ptr<SpdySerializedFrame> connect2(
+      spdy_util_.ConstructSpdySyn(3, std::move(connect2_block), LOWEST, false));
 
-  scoped_ptr<SpdyFrame> conn_resp2(
+  std::unique_ptr<SpdySerializedFrame> conn_resp2(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
 
   // Fetch https://mail.example.org/ via HTTP.
@@ -4727,13 +5027,13 @@ TEST_P(HttpNetworkTransactionTest,
       "GET / HTTP/1.1\r\n"
       "Host: mail.example.org\r\n"
       "Connection: keep-alive\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get2(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get2(
       spdy_util_.ConstructSpdyBodyFrame(3, get2, strlen(get2), false));
   const char resp2[] = "HTTP/1.1 200 OK\r\n"
       "Content-Length: 2\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get_resp2(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp2(
       spdy_util_.ConstructSpdyBodyFrame(3, resp2, strlen(resp2), false));
-  scoped_ptr<SpdyFrame> wrapped_body2(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body2(
       spdy_util_.ConstructSpdyBodyFrame(3, "22", 2, false));
 
   MockWrite spdy_writes[] = {
@@ -4767,7 +5067,7 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request1, callback.callback(), BoundNetLog());
   EXPECT_EQ(OK, callback.GetResult(rv));
@@ -4777,8 +5077,8 @@ TEST_P(HttpNetworkTransactionTest,
   TestLoadTimingNotReused(load_timing_info, CONNECT_TIMING_HAS_SSL_TIMES);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -4786,7 +5086,7 @@ TEST_P(HttpNetworkTransactionTest,
   rv = trans->Read(buf.get(), 256, callback.callback());
   EXPECT_EQ(1, callback.GetResult(rv));
 
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
   EXPECT_EQ(OK, callback.GetResult(rv));
@@ -4813,7 +5113,7 @@ TEST_P(HttpNetworkTransactionTest,
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(
+  std::unique_ptr<HttpNetworkSession> session(
       SpdySessionDependencies::SpdyCreateSession(&session_deps_));
 
   HttpRequestInfo request1;
@@ -4827,9 +5127,9 @@ TEST_P(HttpNetworkTransactionTest,
   request2.load_flags = 0;
 
   // CONNECT to www.example.org:443 via SPDY.
-  scoped_ptr<SpdyFrame> connect1(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> connect1(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
-  scoped_ptr<SpdyFrame> conn_resp1(
+  std::unique_ptr<SpdySerializedFrame> conn_resp1(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
 
   // Fetch https://www.example.org/ via HTTP.
@@ -4837,15 +5137,15 @@ TEST_P(HttpNetworkTransactionTest,
       "GET / HTTP/1.1\r\n"
       "Host: www.example.org\r\n"
       "Connection: keep-alive\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get1(
       spdy_util_.ConstructSpdyBodyFrame(1, get1, strlen(get1), false));
   const char resp1[] = "HTTP/1.1 200 OK\r\n"
       "Content-Length: 1\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get_resp1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp1(
       spdy_util_.ConstructSpdyBodyFrame(1, resp1, strlen(resp1), false));
-  scoped_ptr<SpdyFrame> wrapped_body1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body1(
       spdy_util_.ConstructSpdyBodyFrame(1, "1", 1, false));
-  scoped_ptr<SpdyFrame> window_update(
+  std::unique_ptr<SpdySerializedFrame> window_update(
       spdy_util_.ConstructSpdyWindowUpdate(1, wrapped_get_resp1->size()));
 
   // Fetch https://www.example.org/2 via HTTP.
@@ -4853,13 +5153,13 @@ TEST_P(HttpNetworkTransactionTest,
       "GET /2 HTTP/1.1\r\n"
       "Host: www.example.org\r\n"
       "Connection: keep-alive\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get2(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get2(
       spdy_util_.ConstructSpdyBodyFrame(1, get2, strlen(get2), false));
   const char resp2[] = "HTTP/1.1 200 OK\r\n"
       "Content-Length: 2\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get_resp2(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp2(
       spdy_util_.ConstructSpdyBodyFrame(1, resp2, strlen(resp2), false));
-  scoped_ptr<SpdyFrame> wrapped_body2(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body2(
       spdy_util_.ConstructSpdyBodyFrame(1, "22", 2, false));
 
   MockWrite spdy_writes[] = {
@@ -4889,7 +5189,7 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request1, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -4902,8 +5202,8 @@ TEST_P(HttpNetworkTransactionTest,
   TestLoadTimingNotReused(load_timing_info, CONNECT_TIMING_HAS_SSL_TIMES);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -4911,7 +5211,7 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(1, trans->Read(buf.get(), 256, callback.callback()));
   trans.reset();
 
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -4936,7 +5236,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyLoadTimingTwoHttpRequests) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://proxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(
+  std::unique_ptr<HttpNetworkSession> session(
       SpdySessionDependencies::SpdyCreateSession(&session_deps_));
 
   HttpRequestInfo request1;
@@ -4950,24 +5250,24 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyLoadTimingTwoHttpRequests) {
   request2.load_flags = 0;
 
   // http://www.example.org/
-  scoped_ptr<SpdyHeaderBlock> headers(
+  SpdyHeaderBlock headers(
       spdy_util_.ConstructGetHeaderBlockForProxy("http://www.example.org/"));
-  scoped_ptr<SpdyFrame> get1(
-      spdy_util_.ConstructSpdySyn(1, *headers, LOWEST, true));
-  scoped_ptr<SpdyFrame> get_resp1(
+  std::unique_ptr<SpdySerializedFrame> get1(
+      spdy_util_.ConstructSpdySyn(1, std::move(headers), LOWEST, true));
+  std::unique_ptr<SpdySerializedFrame> get_resp1(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> body1(
+  std::unique_ptr<SpdySerializedFrame> body1(
       spdy_util_.ConstructSpdyBodyFrame(1, "1", 1, true));
   spdy_util_.UpdateWithStreamDestruction(1);
 
   // http://mail.example.org/
-  scoped_ptr<SpdyHeaderBlock> headers2(
+  SpdyHeaderBlock headers2(
       spdy_util_.ConstructGetHeaderBlockForProxy("http://mail.example.org/"));
-  scoped_ptr<SpdyFrame> get2(
-      spdy_util_.ConstructSpdySyn(3, *headers2, LOWEST, true));
-  scoped_ptr<SpdyFrame> get_resp2(
+  std::unique_ptr<SpdySerializedFrame> get2(
+      spdy_util_.ConstructSpdySyn(3, std::move(headers2), LOWEST, true));
+  std::unique_ptr<SpdySerializedFrame> get_resp2(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> body2(
+  std::unique_ptr<SpdySerializedFrame> body2(
       spdy_util_.ConstructSpdyBodyFrame(3, "22", 2, true));
 
   MockWrite spdy_writes[] = {
@@ -4993,7 +5293,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyLoadTimingTwoHttpRequests) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans->Start(&request1, callback.callback(), BoundNetLog());
   EXPECT_EQ(OK, callback.GetResult(rv));
@@ -5004,8 +5304,8 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyLoadTimingTwoHttpRequests) {
                           CONNECT_TIMING_HAS_CONNECT_TIMES_ONLY);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -5015,7 +5315,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxySpdyLoadTimingTwoHttpRequests) {
   // Delete the first request, so the second one can reuse the socket.
   trans.reset();
 
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
   EXPECT_EQ(OK, callback.GetResult(rv));
@@ -5043,7 +5343,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyAuthRetry) {
   session_deps_.proxy_service = ProxyService::CreateFixed("https://myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should use full url
   MockWrite data_writes1[] = {
@@ -5084,7 +5384,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyAuthRetry) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -5099,11 +5399,11 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyAuthRetry) {
                           CONNECT_TIMING_HAS_CONNECT_TIMES_ONLY);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_FALSE(response->headers.get() == NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ(407, response->headers->response_code());
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
-  EXPECT_TRUE(CheckBasicProxyAuth(response->auth_challenge.get()));
+  EXPECT_TRUE(CheckBasicSecureProxyAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
 
@@ -5120,7 +5420,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyAuthRetry) {
   TestLoadTimingReused(load_timing_info);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -5128,7 +5428,7 @@ TEST_P(HttpNetworkTransactionTest, HttpsProxyAuthRetry) {
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   // The password prompt info should not be set.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 }
 
 void HttpNetworkTransactionTest::ConnectStatusHelperWithExpectedStatus(
@@ -5140,7 +5440,7 @@ void HttpNetworkTransactionTest::ConnectStatusHelperWithExpectedStatus(
 
   // Configure against proxy server "myproxy:70".
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
   MockWrite data_writes[] = {
@@ -5161,7 +5461,7 @@ void HttpNetworkTransactionTest::ConnectStatusHelperWithExpectedStatus(
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -5356,9 +5656,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyThenServer) {
 
   // Configure against proxy server "myproxy:70".
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes1[] = {
@@ -5442,7 +5742,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyThenServer) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicProxyAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -5455,7 +5755,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyThenServer) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback3;
@@ -5468,7 +5768,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthProxyThenServer) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(100, response->headers->GetContentLength());
 }
 
@@ -5492,7 +5792,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth1) {
 
   HttpAuthHandlerNTLM::ScopedProcSetter proc_setter(MockGenerateRandom1,
                                                     MockGetHostName);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockWrite data_writes1[] = {
     MockWrite("GET /kids/login.aspx HTTP/1.1\r\n"
@@ -5568,7 +5868,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth1) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
@@ -5580,7 +5880,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth1) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_FALSE(response == NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckNTLMServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -5595,8 +5895,8 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth1) {
   EXPECT_TRUE(trans->IsReadyToRestartForAuth());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
 
   TestCompletionCallback callback3;
 
@@ -5607,8 +5907,8 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth1) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(13, response->headers->GetContentLength());
 }
 
@@ -5621,7 +5921,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth2) {
 
   HttpAuthHandlerNTLM::ScopedProcSetter proc_setter(MockGenerateRandom2,
                                                     MockGetHostName);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockWrite data_writes1[] = {
     MockWrite("GET /kids/login.aspx HTTP/1.1\r\n"
@@ -5748,7 +6048,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth2) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
@@ -5760,7 +6060,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth2) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckNTLMServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -5782,7 +6082,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth2) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   response = trans->GetResponseInfo();
-  ASSERT_FALSE(response == NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckNTLMServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback4;
@@ -5807,7 +6107,7 @@ TEST_P(HttpNetworkTransactionTest, NTLMAuth2) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(13, response->headers->GetContentLength());
 }
 #endif  // NTLM_PORTABLE
@@ -5821,8 +6121,8 @@ TEST_P(HttpNetworkTransactionTest, LargeHeadersNoBody) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Respond with 300 kb of headers (we should fail after 256 kb).
@@ -5860,9 +6160,9 @@ TEST_P(HttpNetworkTransactionTest,
   // Configure against proxy server "myproxy:70".
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Since we have proxy, should try to establish tunnel.
@@ -5895,13 +6195,13 @@ TEST_P(HttpNetworkTransactionTest,
 
   // Empty the current queue.  This is necessary because idle sockets are
   // added to the connection pool asynchronously with a PostTask.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now check to make sure the TCPClientSocket was not added back to
   // the pool.
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
   trans.reset();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Make sure that the socket didn't get recycled after calling the destructor.
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
 }
@@ -5913,9 +6213,9 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocket) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -5940,9 +6240,9 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocket) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   std::string status_line = response->headers->GetStatusLine();
   EXPECT_EQ("HTTP/1.1 200 OK", status_line);
 
@@ -5955,7 +6255,7 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocket) {
 
   // Empty the current queue.  This is necessary because idle sockets are
   // added to the connection pool asynchronously with a PostTask.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now check to make sure the socket was added back to the pool.
   EXPECT_EQ(1, GetIdleSocketCountInTransportSocketPool(session.get()));
@@ -5992,8 +6292,8 @@ TEST_P(HttpNetworkTransactionTest, RecycleSSLSocket) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -6002,8 +6302,8 @@ TEST_P(HttpNetworkTransactionTest, RecycleSSLSocket) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
@@ -6015,7 +6315,7 @@ TEST_P(HttpNetworkTransactionTest, RecycleSSLSocket) {
 
   // Empty the current queue.  This is necessary because idle sockets are
   // added to the connection pool asynchronously with a PostTask.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now check to make sure the socket was added back to the pool.
   EXPECT_EQ(1, GetIdleSocketCountInSSLSocketPool(session.get()));
@@ -6058,8 +6358,8 @@ TEST_P(HttpNetworkTransactionTest, RecycleDeadSSLSocket) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -6068,8 +6368,8 @@ TEST_P(HttpNetworkTransactionTest, RecycleDeadSSLSocket) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
@@ -6081,7 +6381,7 @@ TEST_P(HttpNetworkTransactionTest, RecycleDeadSSLSocket) {
 
   // Empty the current queue.  This is necessary because idle sockets are
   // added to the connection pool asynchronously with a PostTask.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now check to make sure the socket was added back to the pool.
   EXPECT_EQ(1, GetIdleSocketCountInSSLSocketPool(session.get()));
@@ -6096,8 +6396,8 @@ TEST_P(HttpNetworkTransactionTest, RecycleDeadSSLSocket) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   EXPECT_EQ(0, GetIdleSocketCountInTransportSocketPool(session.get()));
@@ -6108,7 +6408,7 @@ TEST_P(HttpNetworkTransactionTest, RecycleDeadSSLSocket) {
 
   // Empty the current queue.  This is necessary because idle sockets are
   // added to the connection pool asynchronously with a PostTask.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now check to make sure the socket was added back to the pool.
   EXPECT_EQ(1, GetIdleSocketCountInSSLSocketPool(session.get()));
@@ -6126,7 +6426,7 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocketAfterZeroContentLength) {
       "rt=prt.2642,ol.2649,xjs.2951");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockRead data_reads[] = {
     MockRead("HTTP/1.1 204 No Content\r\n"
@@ -6141,7 +6441,7 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocketAfterZeroContentLength) {
 
   // Transaction must be created after the MockReads, so it's destroyed before
   // them.
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -6153,9 +6453,9 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocketAfterZeroContentLength) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   std::string status_line = response->headers->GetStatusLine();
   EXPECT_EQ("HTTP/1.1 204 No Content", status_line);
 
@@ -6168,16 +6468,16 @@ TEST_P(HttpNetworkTransactionTest, RecycleSocketAfterZeroContentLength) {
 
   // Empty the current queue.  This is necessary because idle sockets are
   // added to the connection pool asynchronously with a PostTask.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now check to make sure the socket was added back to the pool.
   EXPECT_EQ(1, GetIdleSocketCountInTransportSocketPool(session.get()));
 }
 
 TEST_P(HttpNetworkTransactionTest, ResendRequestOnWriteBodyError) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request[2];
@@ -6195,7 +6495,7 @@ TEST_P(HttpNetworkTransactionTest, ResendRequestOnWriteBodyError) {
   request[1].upload_data_stream = &upload_data_stream;
   request[1].load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // The first socket is used for transaction 1 and the first attempt of
   // transaction 2.
@@ -6240,7 +6540,7 @@ TEST_P(HttpNetworkTransactionTest, ResendRequestOnWriteBodyError) {
   };
 
   for (int i = 0; i < 2; ++i) {
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     TestCompletionCallback callback;
@@ -6252,9 +6552,9 @@ TEST_P(HttpNetworkTransactionTest, ResendRequestOnWriteBodyError) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
 
-    EXPECT_TRUE(response->headers.get() != NULL);
+    EXPECT_TRUE(response->headers);
     EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
     std::string response_data;
@@ -6273,8 +6573,8 @@ TEST_P(HttpNetworkTransactionTest, AuthIdentityInURL) {
   request.url = GURL("http://foo:b@r@www.example.org/");
   request.load_flags = LOAD_NORMAL;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // The password contains an escaped character -- for this test to pass it
@@ -6333,15 +6633,15 @@ TEST_P(HttpNetworkTransactionTest, AuthIdentityInURL) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   // There is no challenge info, since the identity in URL worked.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 
   EXPECT_EQ(100, response->headers->GetContentLength());
 
   // Empty the current queue.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test the request-challenge-retry sequence for basic auth when there is an
@@ -6356,8 +6656,8 @@ TEST_P(HttpNetworkTransactionTest, WrongAuthIdentityInURL) {
 
   request.load_flags = LOAD_NORMAL;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes1[] = {
@@ -6434,7 +6734,7 @@ TEST_P(HttpNetworkTransactionTest, WrongAuthIdentityInURL) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback3;
@@ -6446,15 +6746,15 @@ TEST_P(HttpNetworkTransactionTest, WrongAuthIdentityInURL) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   // There is no challenge info, since the identity worked.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 
   EXPECT_EQ(100, response->headers->GetContentLength());
 
   // Empty the current queue.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 
@@ -6467,8 +6767,8 @@ TEST_P(HttpNetworkTransactionTest, AuthIdentityInURLSuppressed) {
   request.url = GURL("http://foo:bar@www.example.org/");
   request.load_flags = LOAD_DO_NOT_USE_EMBEDDED_IDENTITY;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes1[] = {
@@ -6517,7 +6817,7 @@ TEST_P(HttpNetworkTransactionTest, AuthIdentityInURLSuppressed) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback3;
@@ -6529,19 +6829,19 @@ TEST_P(HttpNetworkTransactionTest, AuthIdentityInURLSuppressed) {
   EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   // There is no challenge info, since the identity worked.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(100, response->headers->GetContentLength());
 
   // Empty the current queue.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test that previously tried username/passwords for a realm get re-used.
 TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Transaction 1: authenticate (foo, bar) on MyRealm1
   {
@@ -6550,7 +6850,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     request.url = GURL("http://www.example.org/x/y/z");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -6599,7 +6899,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
     EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
     TestCompletionCallback callback2;
@@ -6612,8 +6912,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_EQ(OK, rv);
 
     response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    ASSERT_TRUE(response);
+    EXPECT_FALSE(response->auth_challenge);
     EXPECT_EQ(100, response->headers->GetContentLength());
   }
 
@@ -6628,7 +6928,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     request.url = GURL("http://www.example.org/x/y/a/b");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -6681,11 +6981,11 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    ASSERT_TRUE(response->auth_challenge.get());
+    ASSERT_TRUE(response);
+    ASSERT_TRUE(response->auth_challenge);
     EXPECT_FALSE(response->auth_challenge->is_proxy);
-    EXPECT_EQ("www.example.org:80",
-              response->auth_challenge->challenger.ToString());
+    EXPECT_EQ("http://www.example.org",
+              response->auth_challenge->challenger.Serialize());
     EXPECT_EQ("MyRealm2", response->auth_challenge->realm);
     EXPECT_EQ(kBasicAuthScheme, response->auth_challenge->scheme);
 
@@ -6699,8 +6999,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_EQ(OK, rv);
 
     response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    ASSERT_TRUE(response);
+    EXPECT_FALSE(response->auth_challenge);
     EXPECT_EQ(100, response->headers->GetContentLength());
   }
 
@@ -6714,7 +7014,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     request.url = GURL("http://www.example.org/x/y/z2");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -6747,9 +7047,9 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
 
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    EXPECT_FALSE(response->auth_challenge);
     EXPECT_EQ(100, response->headers->GetContentLength());
   }
 
@@ -6763,7 +7063,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     request.url = GURL("http://www.example.org/x/1");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -6820,8 +7120,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    ASSERT_TRUE(response);
+    EXPECT_FALSE(response->auth_challenge);
     EXPECT_EQ(100, response->headers->GetContentLength());
   }
 
@@ -6835,7 +7135,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     request.url = GURL("http://www.example.org/p/q/t");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -6913,7 +7213,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_FALSE(trans->IsReadyToRestartForAuth());
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
     EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
     TestCompletionCallback callback3;
@@ -6926,8 +7226,8 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthCacheAndPreauth) {
     EXPECT_EQ(OK, rv);
 
     response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    ASSERT_TRUE(response);
+    EXPECT_FALSE(response->auth_challenge);
     EXPECT_EQ(100, response->headers->GetContentLength());
   }
 }
@@ -6941,7 +7241,7 @@ TEST_P(HttpNetworkTransactionTest, DigestPreAuthNonceCount) {
       new HttpAuthHandlerDigest::FixedNonceGenerator("0123456789abcdef");
   digest_factory->set_nonce_generator(nonce_generator);
   session_deps_.http_auth_handler_factory.reset(digest_factory);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Transaction 1: authenticate (foo, bar) on MyRealm1
   {
@@ -6950,7 +7250,7 @@ TEST_P(HttpNetworkTransactionTest, DigestPreAuthNonceCount) {
     request.url = GURL("http://www.example.org/x/y/z");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -7001,7 +7301,7 @@ TEST_P(HttpNetworkTransactionTest, DigestPreAuthNonceCount) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
     EXPECT_TRUE(CheckDigestServerAuth(response->auth_challenge.get()));
 
     TestCompletionCallback callback2;
@@ -7014,8 +7314,8 @@ TEST_P(HttpNetworkTransactionTest, DigestPreAuthNonceCount) {
     EXPECT_EQ(OK, rv);
 
     response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    ASSERT_TRUE(response);
+    EXPECT_FALSE(response->auth_challenge);
   }
 
   // ------------------------------------------------------------------------
@@ -7031,7 +7331,7 @@ TEST_P(HttpNetworkTransactionTest, DigestPreAuthNonceCount) {
     request.url = GURL("http://www.example.org/x/y/a/b");
     request.load_flags = 0;
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     MockWrite data_writes1[] = {
@@ -7065,16 +7365,16 @@ TEST_P(HttpNetworkTransactionTest, DigestPreAuthNonceCount) {
     EXPECT_EQ(OK, rv);
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->auth_challenge.get() == NULL);
+    ASSERT_TRUE(response);
+    EXPECT_FALSE(response->auth_challenge);
   }
 }
 
 // Test the ResetStateForRestart() private method.
 TEST_P(HttpNetworkTransactionTest, ResetStateForRestart) {
   // Create a transaction (the dependencies aren't important).
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpNetworkTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Setup some state (which we expect ResetStateForRestart() will clear).
@@ -7103,11 +7403,11 @@ TEST_P(HttpNetworkTransactionTest, ResetStateForRestart) {
   trans->ResetStateForRestart();
 
   // Verify that the state that needed to be reset, has been reset.
-  EXPECT_TRUE(trans->read_buf_.get() == NULL);
+  EXPECT_FALSE(trans->read_buf_);
   EXPECT_EQ(0, trans->read_buf_len_);
   EXPECT_TRUE(trans->request_headers_.IsEmpty());
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
-  EXPECT_TRUE(response->headers.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
+  EXPECT_FALSE(response->headers);
   EXPECT_FALSE(response->was_cached);
   EXPECT_EQ(0U, response->ssl_info.cert_status);
   EXPECT_FALSE(response->vary_data.is_valid());
@@ -7120,8 +7420,8 @@ TEST_P(HttpNetworkTransactionTest, HTTPSBadCertificate) {
   request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -7165,7 +7465,7 @@ TEST_P(HttpNetworkTransactionTest, HTTPSBadCertificate) {
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_EQ(100, response->headers->GetContentLength());
 }
 
@@ -7225,8 +7525,8 @@ TEST_P(HttpNetworkTransactionTest, HTTPSBadCertificateViaProxy) {
   for (int i = 0; i < 2; i++) {
     session_deps_.socket_factory->ResetNextMockIndexes();
 
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -7243,7 +7543,7 @@ TEST_P(HttpNetworkTransactionTest, HTTPSBadCertificateViaProxy) {
 
     const HttpResponseInfo* response = trans->GetResponseInfo();
 
-    ASSERT_TRUE(response != NULL);
+    ASSERT_TRUE(response);
     EXPECT_EQ(100, response->headers->GetContentLength());
   }
 }
@@ -7289,8 +7589,8 @@ TEST_P(HttpNetworkTransactionTest, HTTPSViaHttpsProxy) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -7300,7 +7600,7 @@ TEST_P(HttpNetworkTransactionTest, HTTPSViaHttpsProxy) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -7347,8 +7647,8 @@ TEST_P(HttpNetworkTransactionTest, RedirectOfHttpsConnectViaHttpsProxy) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -7358,7 +7658,7 @@ TEST_P(HttpNetworkTransactionTest, RedirectOfHttpsConnectViaHttpsProxy) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_EQ(302, response->headers->response_code());
   std::string url;
@@ -7398,9 +7698,9 @@ TEST_P(HttpNetworkTransactionTest, RedirectOfHttpsConnectViaSpdyProxy) {
   request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<SpdyFrame> conn(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> conn(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
-  scoped_ptr<SpdyFrame> goaway(
+  std::unique_ptr<SpdySerializedFrame> goaway(
       spdy_util_.ConstructSpdyRstStream(1, RST_STREAM_CANCEL));
   MockWrite data_writes[] = {
       CreateMockWrite(*conn.get(), 0, SYNCHRONOUS),
@@ -7411,9 +7711,9 @@ TEST_P(HttpNetworkTransactionTest, RedirectOfHttpsConnectViaSpdyProxy) {
     "location",
     "http://login.example.com/",
   };
-  scoped_ptr<SpdyFrame> resp(
+  std::unique_ptr<SpdySerializedFrame> resp(
       spdy_util_.ConstructSpdySynReplyError("302 Redirect", kExtraHeaders,
-                                 arraysize(kExtraHeaders)/2, 1));
+                                            arraysize(kExtraHeaders) / 2, 1));
   MockRead data_reads[] = {
       CreateMockRead(*resp.get(), 1), MockRead(ASYNC, 0, 3),  // EOF
   };
@@ -7428,8 +7728,8 @@ TEST_P(HttpNetworkTransactionTest, RedirectOfHttpsConnectViaSpdyProxy) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -7439,7 +7739,7 @@ TEST_P(HttpNetworkTransactionTest, RedirectOfHttpsConnectViaSpdyProxy) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_EQ(302, response->headers->response_code());
   std::string url;
@@ -7479,8 +7779,8 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -7489,7 +7789,7 @@ TEST_P(HttpNetworkTransactionTest,
   rv = callback.WaitForResult();
   EXPECT_EQ(ERR_TUNNEL_CONNECTION_FAILED, rv);
 
-  // TODO(ttuttle): Anything else to check here?
+  // TODO(juliatuttle): Anything else to check here?
 }
 
 // Test that a SPDY proxy's response to a CONNECT request is filtered.
@@ -7502,9 +7802,9 @@ TEST_P(HttpNetworkTransactionTest,
   request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<SpdyFrame> conn(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> conn(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
-  scoped_ptr<SpdyFrame> rst(
+  std::unique_ptr<SpdySerializedFrame> rst(
       spdy_util_.ConstructSpdyRstStream(1, RST_STREAM_CANCEL));
   MockWrite data_writes[] = {
       CreateMockWrite(*conn.get(), 0), CreateMockWrite(*rst.get(), 3),
@@ -7514,12 +7814,11 @@ TEST_P(HttpNetworkTransactionTest,
     "location",
     "http://login.example.com/",
   };
-  scoped_ptr<SpdyFrame> resp(
+  std::unique_ptr<SpdySerializedFrame> resp(
       spdy_util_.ConstructSpdySynReplyError("404 Not Found", kExtraHeaders,
-                                 arraysize(kExtraHeaders)/2, 1));
-  scoped_ptr<SpdyFrame> body(
-      spdy_util_.ConstructSpdyBodyFrame(
-          1, "The host does not exist", 23, true));
+                                            arraysize(kExtraHeaders) / 2, 1));
+  std::unique_ptr<SpdySerializedFrame> body(spdy_util_.ConstructSpdyBodyFrame(
+      1, "The host does not exist", 23, true));
   MockRead data_reads[] = {
       CreateMockRead(*resp.get(), 1),
       CreateMockRead(*body.get(), 2),
@@ -7536,8 +7835,8 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -7546,7 +7845,7 @@ TEST_P(HttpNetworkTransactionTest,
   rv = callback.WaitForResult();
   EXPECT_EQ(ERR_TUNNEL_CONNECTION_FAILED, rv);
 
-  // TODO(ttuttle): Anything else to check here?
+  // TODO(juliatuttle): Anything else to check here?
 }
 
 // Test the request-challenge-retry sequence for basic auth, through
@@ -7563,12 +7862,12 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
       ProxyService::CreateFixedFromPacResult("HTTPS myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since we have proxy, should try to establish tunnel.
-  scoped_ptr<SpdyFrame> req(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> req(spdy_util_.ConstructSpdyConnect(
       NULL, 0, 1, LOWEST, HostPortPair("www.example.org", 443)));
-  scoped_ptr<SpdyFrame> rst(
+  std::unique_ptr<SpdySerializedFrame> rst(
       spdy_util_.ConstructSpdyRstStream(1, RST_STREAM_CANCEL));
   spdy_util_.UpdateWithStreamDestruction(1);
 
@@ -7577,7 +7876,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
   const char* const kAuthCredentials[] = {
       "proxy-authorization", "Basic Zm9vOmJhcg==",
   };
-  scoped_ptr<SpdyFrame> connect2(spdy_util_.ConstructSpdyConnect(
+  std::unique_ptr<SpdySerializedFrame> connect2(spdy_util_.ConstructSpdyConnect(
       kAuthCredentials, arraysize(kAuthCredentials) / 2, 3, LOWEST,
       HostPortPair("www.example.org", 443)));
   // fetch https://www.example.org/ via HTTP
@@ -7585,7 +7884,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
       "GET / HTTP/1.1\r\n"
       "Host: www.example.org\r\n"
       "Connection: keep-alive\r\n\r\n";
-  scoped_ptr<SpdyFrame> wrapped_get(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get(
       spdy_util_.ConstructSpdyBodyFrame(3, get, strlen(get), false));
 
   MockWrite spdy_writes[] = {
@@ -7601,17 +7900,18 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
   const char* const kAuthChallenge[] = {
     "proxy-authenticate", "Basic realm=\"MyRealm1\"",
   };
-  scoped_ptr<SpdyFrame> conn_auth_resp(spdy_util_.ConstructSpdySynReplyError(
-      kAuthStatus, kAuthChallenge, arraysize(kAuthChallenge) / 2, 1));
+  std::unique_ptr<SpdySerializedFrame> conn_auth_resp(
+      spdy_util_.ConstructSpdySynReplyError(kAuthStatus, kAuthChallenge,
+                                            arraysize(kAuthChallenge) / 2, 1));
 
-  scoped_ptr<SpdyFrame> conn_resp(
+  std::unique_ptr<SpdySerializedFrame> conn_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
   const char resp[] = "HTTP/1.1 200 OK\r\n"
       "Content-Length: 5\r\n\r\n";
 
-  scoped_ptr<SpdyFrame> wrapped_get_resp(
+  std::unique_ptr<SpdySerializedFrame> wrapped_get_resp(
       spdy_util_.ConstructSpdyBodyFrame(3, resp, strlen(resp), false));
-  scoped_ptr<SpdyFrame> wrapped_body(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body(
       spdy_util_.ConstructSpdyBodyFrame(3, "hello", 5, false));
   MockRead spdy_reads[] = {
       CreateMockRead(*conn_auth_resp, 1, ASYNC),
@@ -7634,7 +7934,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -7653,12 +7953,12 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
       NetLog::PHASE_NONE);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_FALSE(response->headers.get() == NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ(407, response->headers->response_code());
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
-  EXPECT_TRUE(response->auth_challenge.get() != NULL);
-  EXPECT_TRUE(CheckBasicProxyAuth(response->auth_challenge.get()));
+  EXPECT_TRUE(response->auth_challenge);
+  EXPECT_TRUE(CheckBasicSecureProxyAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
 
@@ -7670,7 +7970,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -7678,7 +7978,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   // The password prompt info should not be set.
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  EXPECT_FALSE(response->auth_challenge);
 
   LoadTimingInfo load_timing_info;
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
@@ -7693,7 +7993,7 @@ TEST_P(HttpNetworkTransactionTest, BasicAuthSpdyProxy) {
 // origin that is different from that of its associated resource.
 TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
   // Configure the proxy delegate to allow cross-origin SPDY pushes.
-  scoped_ptr<TestProxyDelegate> proxy_delegate(new TestProxyDelegate());
+  std::unique_ptr<TestProxyDelegate> proxy_delegate(new TestProxyDelegate());
   proxy_delegate->set_trusted_spdy_proxy(net::ProxyServer::FromURI(
       "https://myproxy:443", net::ProxyServer::SCHEME_HTTP));
   HttpRequestInfo request;
@@ -7712,31 +8012,27 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
 
   session_deps_.proxy_delegate.reset(proxy_delegate.release());
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<SpdyFrame> stream1_syn(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, false));
+  std::unique_ptr<SpdySerializedFrame> stream1_syn(
+      spdy_util_.ConstructSpdyGet("http://www.example.org/", 1, LOWEST));
 
   MockWrite spdy_writes[] = {
       CreateMockWrite(*stream1_syn, 0, ASYNC),
   };
 
-  scoped_ptr<SpdyFrame>
-      stream1_reply(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> stream1_reply(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
 
-  scoped_ptr<SpdyFrame>
-      stream1_body(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> stream1_body(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
 
-  scoped_ptr<SpdyFrame>
-      stream2_syn(spdy_util_.ConstructSpdyPush(NULL,
-                                    0,
-                                    2,
-                                    1,
-                                    "http://www.another-origin.com/foo.dat"));
+  std::unique_ptr<SpdySerializedFrame> stream2_syn(spdy_util_.ConstructSpdyPush(
+      NULL, 0, 2, 1, "http://www.another-origin.com/foo.dat"));
   const char kPushedData[] = "pushed";
-  scoped_ptr<SpdyFrame> stream2_body(
-      spdy_util_.ConstructSpdyBodyFrame(
-          2, kPushedData, strlen(kPushedData), true));
+  std::unique_ptr<SpdySerializedFrame> stream2_body(
+      spdy_util_.ConstructSpdyBodyFrame(2, kPushedData, strlen(kPushedData),
+                                        true));
 
   MockRead spdy_reads[] = {
       CreateMockRead(*stream1_reply, 1, ASYNC),
@@ -7754,7 +8050,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
   proxy.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&proxy);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
   int rv = trans->Start(&request, callback.callback(), log.bound());
@@ -7764,7 +8060,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  scoped_ptr<HttpTransaction> push_trans(
+  std::unique_ptr<HttpTransaction> push_trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   rv = push_trans->Start(&push_request, callback.callback(), log.bound());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -7773,7 +8069,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* push_response = push_trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(response->headers->IsKeepAlive());
 
   EXPECT_EQ(200, response->headers->response_code());
@@ -7790,7 +8086,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
                                  CONNECT_TIMING_HAS_CONNECT_TIMES_ONLY);
 
   // Verify the pushed stream.
-  EXPECT_TRUE(push_response->headers.get() != NULL);
+  EXPECT_TRUE(push_response->headers);
   EXPECT_EQ(200, push_response->headers->response_code());
 
   rv = ReadTransaction(push_trans.get(), &response_data);
@@ -7813,7 +8109,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginSPDYProxyPush) {
 // Test that an explicitly trusted SPDY proxy cannot push HTTPS content.
 TEST_P(HttpNetworkTransactionTest, CrossOriginProxyPushCorrectness) {
   // Configure the proxy delegate to allow cross-origin SPDY pushes.
-  scoped_ptr<TestProxyDelegate> proxy_delegate(new TestProxyDelegate());
+  std::unique_ptr<TestProxyDelegate> proxy_delegate(new TestProxyDelegate());
   proxy_delegate->set_trusted_spdy_proxy(net::ProxyServer::FromURI(
       "https://myproxy:443", net::ProxyServer::SCHEME_HTTP));
   HttpRequestInfo request;
@@ -7829,30 +8125,26 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginProxyPushCorrectness) {
   // Enable cross-origin push.
   session_deps_.proxy_delegate.reset(proxy_delegate.release());
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<SpdyFrame> stream1_syn(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, false));
+  std::unique_ptr<SpdySerializedFrame> stream1_syn(
+      spdy_util_.ConstructSpdyGet("http://www.example.org/", 1, LOWEST));
 
-  scoped_ptr<SpdyFrame> push_rst(
+  std::unique_ptr<SpdySerializedFrame> push_rst(
       spdy_util_.ConstructSpdyRstStream(2, RST_STREAM_REFUSED_STREAM));
 
   MockWrite spdy_writes[] = {
       CreateMockWrite(*stream1_syn, 0, ASYNC), CreateMockWrite(*push_rst, 3),
   };
 
-  scoped_ptr<SpdyFrame>
-      stream1_reply(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> stream1_reply(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
 
-  scoped_ptr<SpdyFrame>
-      stream1_body(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> stream1_body(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
 
-  scoped_ptr<SpdyFrame>
-      stream2_syn(spdy_util_.ConstructSpdyPush(NULL,
-                                    0,
-                                    2,
-                                    1,
-                                    "https://www.another-origin.com/foo.dat"));
+  std::unique_ptr<SpdySerializedFrame> stream2_syn(spdy_util_.ConstructSpdyPush(
+      NULL, 0, 2, 1, "https://www.another-origin.com/foo.dat"));
 
   MockRead spdy_reads[] = {
       CreateMockRead(*stream1_reply, 1, ASYNC),
@@ -7869,7 +8161,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginProxyPushCorrectness) {
   proxy.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&proxy);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
   int rv = trans->Start(&request, callback.callback(), log.bound());
@@ -7879,7 +8171,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginProxyPushCorrectness) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(response->headers->IsKeepAlive());
 
   EXPECT_EQ(200, response->headers->response_code());
@@ -7898,7 +8190,7 @@ TEST_P(HttpNetworkTransactionTest, CrossOriginProxyPushCorrectness) {
 // resources.
 TEST_P(HttpNetworkTransactionTest, SameOriginProxyPushCorrectness) {
   // Configure the proxy delegate to allow cross-origin SPDY pushes.
-  scoped_ptr<TestProxyDelegate> proxy_delegate(new TestProxyDelegate());
+  std::unique_ptr<TestProxyDelegate> proxy_delegate(new TestProxyDelegate());
   proxy_delegate->set_trusted_spdy_proxy(
       net::ProxyServer::FromURI("myproxy:70", net::ProxyServer::SCHEME_HTTP));
 
@@ -7915,28 +8207,28 @@ TEST_P(HttpNetworkTransactionTest, SameOriginProxyPushCorrectness) {
   // Enable cross-origin push.
   session_deps_.proxy_delegate.reset(proxy_delegate.release());
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<SpdyFrame> stream1_syn(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, false));
+  std::unique_ptr<SpdySerializedFrame> stream1_syn(
+      spdy_util_.ConstructSpdyGet("http://www.example.org/", 1, LOWEST));
 
   MockWrite spdy_writes[] = {
       CreateMockWrite(*stream1_syn, 0, ASYNC),
   };
 
-  scoped_ptr<SpdyFrame> stream1_reply(
+  std::unique_ptr<SpdySerializedFrame> stream1_reply(
       spdy_util_.ConstructSpdyGetSynReply(nullptr, 0, 1));
 
-  scoped_ptr<SpdyFrame> stream2_syn(spdy_util_.ConstructSpdyPush(
+  std::unique_ptr<SpdySerializedFrame> stream2_syn(spdy_util_.ConstructSpdyPush(
       nullptr, 0, 2, 1, "https://myproxy:70/foo.dat"));
 
-  scoped_ptr<SpdyFrame> stream1_body(
+  std::unique_ptr<SpdySerializedFrame> stream1_body(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
 
-  scoped_ptr<SpdyFrame> stream2_reply(
+  std::unique_ptr<SpdySerializedFrame> stream2_reply(
       spdy_util_.ConstructSpdyGetSynReply(nullptr, 0, 1));
 
-  scoped_ptr<SpdyFrame> stream2_body(
+  std::unique_ptr<SpdySerializedFrame> stream2_body(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
 
   MockRead spdy_reads[] = {
@@ -7955,7 +8247,7 @@ TEST_P(HttpNetworkTransactionTest, SameOriginProxyPushCorrectness) {
   proxy.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&proxy);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
   int rv = trans->Start(&request, callback.callback(), log.bound());
@@ -7965,7 +8257,7 @@ TEST_P(HttpNetworkTransactionTest, SameOriginProxyPushCorrectness) {
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != nullptr);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(response->headers->IsKeepAlive());
 
   EXPECT_EQ(200, response->headers->response_code());
@@ -8040,8 +8332,8 @@ TEST_P(HttpNetworkTransactionTest, HTTPSBadCertificateViaHttpsProxy) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -8058,7 +8350,7 @@ TEST_P(HttpNetworkTransactionTest, HTTPSBadCertificateViaHttpsProxy) {
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
 
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_EQ(100, response->headers->GetContentLength());
 }
 
@@ -8069,8 +8361,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_UserAgent) {
   request.extra_headers.SetHeader(HttpRequestHeaders::kUserAgent,
                                   "Chromium Ultra Awesome X Edition");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8110,8 +8402,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_UserAgentOverTunnel) {
                                   "Chromium Ultra Awesome X Edition");
 
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8149,8 +8441,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_Referer) {
   request.extra_headers.SetHeader(HttpRequestHeaders::kReferer,
                                   "http://the.previous.site.com/");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8187,8 +8479,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_PostContentLengthZero) {
   request.method = "POST";
   request.url = GURL("http://www.example.org/");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8225,8 +8517,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_PutContentLengthZero) {
   request.method = "PUT";
   request.url = GURL("http://www.example.org/");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8263,8 +8555,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_HeadContentLengthZero) {
   request.method = "HEAD";
   request.url = GURL("http://www.example.org/");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8300,8 +8592,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_CacheControlNoCache) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = LOAD_BYPASS_CACHE;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8341,8 +8633,8 @@ TEST_P(HttpNetworkTransactionTest,
   request.url = GURL("http://www.example.org/");
   request.load_flags = LOAD_VALIDATE_CACHE;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8380,8 +8672,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_ExtraHeaders) {
   request.url = GURL("http://www.example.org/");
   request.extra_headers.SetHeader("FooHeader", "Bar");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8421,8 +8713,8 @@ TEST_P(HttpNetworkTransactionTest, BuildRequest_ExtraHeadersStripped) {
   request.extra_headers.SetHeader("hEllo", "Kitty");
   request.extra_headers.SetHeader("FoO", "bar");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -8467,8 +8759,8 @@ TEST_P(HttpNetworkTransactionTest, SOCKS4_HTTP_GET) {
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   char write_buffer[] = { 0x04, 0x01, 0x00, 0x50, 127, 0, 0, 1, 0 };
@@ -8502,7 +8794,7 @@ TEST_P(HttpNetworkTransactionTest, SOCKS4_HTTP_GET) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   LoadTimingInfo load_timing_info;
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
@@ -8526,8 +8818,8 @@ TEST_P(HttpNetworkTransactionTest, SOCKS4_SSL_GET) {
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   unsigned char write_buffer[] = { 0x04, 0x01, 0x01, 0xBB, 127, 0, 0, 1, 0 };
@@ -8571,7 +8863,7 @@ TEST_P(HttpNetworkTransactionTest, SOCKS4_SSL_GET) {
                                  CONNECT_TIMING_HAS_SSL_TIMES);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   std::string response_text;
   rv = ReadTransaction(trans.get(), &response_text);
@@ -8590,8 +8882,8 @@ TEST_P(HttpNetworkTransactionTest, SOCKS4_HTTP_GET_no_PAC) {
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   char write_buffer[] = { 0x04, 0x01, 0x00, 0x50, 127, 0, 0, 1, 0 };
@@ -8625,7 +8917,7 @@ TEST_P(HttpNetworkTransactionTest, SOCKS4_HTTP_GET_no_PAC) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   LoadTimingInfo load_timing_info;
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
@@ -8649,8 +8941,8 @@ TEST_P(HttpNetworkTransactionTest, SOCKS5_HTTP_GET) {
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   const char kSOCKS5GreetRequest[] = { 0x05, 0x01, 0x00 };
@@ -8697,7 +8989,7 @@ TEST_P(HttpNetworkTransactionTest, SOCKS5_HTTP_GET) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   LoadTimingInfo load_timing_info;
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
@@ -8721,8 +9013,8 @@ TEST_P(HttpNetworkTransactionTest, SOCKS5_SSL_GET) {
   TestNetLog net_log;
   session_deps_.net_log = &net_log;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   const char kSOCKS5GreetRequest[] = { 0x05, 0x01, 0x00 };
@@ -8774,7 +9066,7 @@ TEST_P(HttpNetworkTransactionTest, SOCKS5_SSL_GET) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   LoadTimingInfo load_timing_info;
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
@@ -8798,19 +9090,19 @@ struct GroupNameTest {
   bool ssl;
 };
 
-scoped_ptr<HttpNetworkSession> SetupSessionForGroupNameTests(
+std::unique_ptr<HttpNetworkSession> SetupSessionForGroupNameTests(
     NextProto next_proto,
     SpdySessionDependencies* session_deps_) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   AlternativeService alternative_service(
-      AlternateProtocolFromNextProto(next_proto), "", 443);
+      AlternateProtocolFromNextProto(next_proto), "", 444);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair("host.with.alternate", 80), alternative_service, 1.0,
-      expiration);
+      url::SchemeHostPort("https", "host.with.alternate", 443),
+      alternative_service, expiration);
 
   return session;
 }
@@ -8822,7 +9114,7 @@ int GroupNameTransactionHelper(const std::string& url,
   request.url = GURL(url);
   request.load_flags = 0;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session));
 
   TestCompletionCallback callback;
@@ -8863,19 +9155,16 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForDirectConnections) {
       },
       {
        "",  // unused
-       "http://host.with.alternate/direct",
+       "https://host.with.alternate/direct",
        "ssl/host.with.alternate:443",
        true,
       },
   };
 
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   for (size_t i = 0; i < arraysize(tests); ++i) {
     session_deps_.proxy_service =
         ProxyService::CreateFixed(tests[i].proxy_server);
-    scoped_ptr<HttpNetworkSession> session(
+    std::unique_ptr<HttpNetworkSession> session(
         SetupSessionForGroupNameTests(GetProtocol(), &session_deps_));
 
     HttpNetworkSessionPeer peer(session.get());
@@ -8883,7 +9172,7 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForDirectConnections) {
         new CaptureGroupNameTransportSocketPool(NULL, NULL);
     CaptureGroupNameSSLSocketPool* ssl_conn_pool =
         new CaptureGroupNameSSLSocketPool(NULL, NULL);
-    scoped_ptr<MockClientSocketPoolManager> mock_pool_manager(
+    std::unique_ptr<MockClientSocketPoolManager> mock_pool_manager(
         new MockClientSocketPoolManager);
     mock_pool_manager->SetTransportSocketPool(transport_conn_pool);
     mock_pool_manager->SetSSLSocketPool(ssl_conn_pool);
@@ -8919,7 +9208,7 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForHTTPProxyConnections) {
 
       {
        "http_proxy",
-       "http://host.with.alternate/direct",
+       "https://host.with.alternate/direct",
        "ssl/host.with.alternate:443",
        true,
       },
@@ -8932,13 +9221,10 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForHTTPProxyConnections) {
       },
   };
 
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   for (size_t i = 0; i < arraysize(tests); ++i) {
     session_deps_.proxy_service =
         ProxyService::CreateFixed(tests[i].proxy_server);
-    scoped_ptr<HttpNetworkSession> session(
+    std::unique_ptr<HttpNetworkSession> session(
         SetupSessionForGroupNameTests(GetProtocol(), &session_deps_));
 
     HttpNetworkSessionPeer peer(session.get());
@@ -8949,7 +9235,7 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForHTTPProxyConnections) {
     CaptureGroupNameSSLSocketPool* ssl_conn_pool =
         new CaptureGroupNameSSLSocketPool(NULL, NULL);
 
-    scoped_ptr<MockClientSocketPoolManager> mock_pool_manager(
+    std::unique_ptr<MockClientSocketPoolManager> mock_pool_manager(
         new MockClientSocketPoolManager);
     mock_pool_manager->SetSocketPoolForHTTPProxy(proxy_host, http_proxy_pool);
     mock_pool_manager->SetSocketPoolForSSLWithProxy(proxy_host, ssl_conn_pool);
@@ -8997,19 +9283,16 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForSOCKSConnections) {
 
       {
        "socks4://socks_proxy:1080",
-       "http://host.with.alternate/direct",
+       "https://host.with.alternate/direct",
        "socks4/ssl/host.with.alternate:443",
        true,
       },
   };
 
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   for (size_t i = 0; i < arraysize(tests); ++i) {
     session_deps_.proxy_service =
         ProxyService::CreateFixed(tests[i].proxy_server);
-    scoped_ptr<HttpNetworkSession> session(
+    std::unique_ptr<HttpNetworkSession> session(
         SetupSessionForGroupNameTests(GetProtocol(), &session_deps_));
 
     HttpNetworkSessionPeer peer(session.get());
@@ -9020,13 +9303,13 @@ TEST_P(HttpNetworkTransactionTest, GroupNameForSOCKSConnections) {
     CaptureGroupNameSSLSocketPool* ssl_conn_pool =
         new CaptureGroupNameSSLSocketPool(NULL, NULL);
 
-    scoped_ptr<MockClientSocketPoolManager> mock_pool_manager(
+    std::unique_ptr<MockClientSocketPoolManager> mock_pool_manager(
         new MockClientSocketPoolManager);
     mock_pool_manager->SetSocketPoolForSOCKSProxy(proxy_host, socks_conn_pool);
     mock_pool_manager->SetSocketPoolForSSLWithProxy(proxy_host, ssl_conn_pool);
     peer.SetClientSocketPoolManager(std::move(mock_pool_manager));
 
-    scoped_ptr<HttpTransaction> trans(
+    std::unique_ptr<HttpTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     EXPECT_EQ(ERR_IO_PENDING,
@@ -9052,8 +9335,8 @@ TEST_P(HttpNetworkTransactionTest, ReconsiderProxyAfterFailedConnection) {
   // connecting to both proxies (myproxy:70 and foobar:80).
   session_deps_.host_resolver->rules()->AddSimulatedFailure("*");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -9078,8 +9361,8 @@ void HttpNetworkTransactionTest::BypassHostCacheOnRefreshHelper(
   // Select a host resolver that does caching.
   session_deps_.host_resolver.reset(new MockCachingHostResolver);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Warm up the host cache so it has an entry for "www.example.org".
@@ -9147,11 +9430,11 @@ TEST_P(HttpNetworkTransactionTest, RequestWriteError) {
   StaticSocketDataProvider data(NULL, 0,
                                 write_failure, arraysize(write_failure));
   session_deps_.socket_factory->AddSocketDataProvider(&data);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -9179,11 +9462,11 @@ TEST_P(HttpNetworkTransactionTest, ConnectionClosedAfterStartOfHeaders) {
 
   StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&data);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -9193,9 +9476,9 @@ TEST_P(HttpNetworkTransactionTest, ConnectionClosedAfterStartOfHeaders) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -9257,11 +9540,11 @@ TEST_P(HttpNetworkTransactionTest, DrainResetOK) {
   StaticSocketDataProvider data2(data_reads2, arraysize(data_reads2),
                                  data_writes2, arraysize(data_writes2));
   session_deps_.socket_factory->AddSocketDataProvider(&data2);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), BoundNetLog());
@@ -9271,7 +9554,7 @@ TEST_P(HttpNetworkTransactionTest, DrainResetOK) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   EXPECT_TRUE(CheckBasicServerAuth(response->auth_challenge.get()));
 
   TestCompletionCallback callback2;
@@ -9284,8 +9567,8 @@ TEST_P(HttpNetworkTransactionTest, DrainResetOK) {
   EXPECT_EQ(OK, rv);
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(100, response->headers->GetContentLength());
 }
 
@@ -9313,8 +9596,8 @@ TEST_P(HttpNetworkTransactionTest, HTTPSViaProxyWithExtraData) {
 
   session_deps_.socket_factory->ResetNextMockIndexes();
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -9330,8 +9613,8 @@ TEST_P(HttpNetworkTransactionTest, LargeContentLengthThenClose) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -9350,9 +9633,9 @@ TEST_P(HttpNetworkTransactionTest, LargeContentLengthThenClose) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -9367,8 +9650,8 @@ TEST_P(HttpNetworkTransactionTest, UploadFileSmallerThanLength) {
   UploadFileElementReader::ScopedOverridingContentLengthForTests
       overriding_content_length(kFakeSize);
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
-  element_readers.push_back(make_scoped_ptr(new UploadFileElementReader(
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
+  element_readers.push_back(base::WrapUnique(new UploadFileElementReader(
       base::ThreadTaskRunnerHandle::Get().get(), temp_file_path, 0,
       std::numeric_limits<uint64_t>::max(), base::Time())));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
@@ -9379,8 +9662,8 @@ TEST_P(HttpNetworkTransactionTest, UploadFileSmallerThanLength) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockRead data_reads[] = {
@@ -9397,18 +9680,12 @@ TEST_P(HttpNetworkTransactionTest, UploadFileSmallerThanLength) {
   EXPECT_EQ(ERR_IO_PENDING, rv);
 
   rv = callback.WaitForResult();
-  EXPECT_EQ(OK, rv);
+  EXPECT_EQ(ERR_UPLOAD_FILE_CHANGED, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
-  EXPECT_EQ("HTTP/1.0 200 OK", response->headers->GetStatusLine());
-
-  std::string response_data;
-  rv = ReadTransaction(trans.get(), &response_data);
-  EXPECT_EQ(OK, rv);
-  EXPECT_EQ("hello world", response_data);
+  EXPECT_FALSE(response->headers);
 
   base::DeleteFile(temp_file_path, false);
 }
@@ -9421,8 +9698,8 @@ TEST_P(HttpNetworkTransactionTest, UploadUnreadableFile) {
                                    temp_file_content.length()));
   ASSERT_TRUE(base::MakeFileUnreadable(temp_file));
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
-  element_readers.push_back(make_scoped_ptr(new UploadFileElementReader(
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
+  element_readers.push_back(base::WrapUnique(new UploadFileElementReader(
       base::ThreadTaskRunnerHandle::Get().get(), temp_file, 0,
       std::numeric_limits<uint64_t>::max(), base::Time())));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
@@ -9434,8 +9711,8 @@ TEST_P(HttpNetworkTransactionTest, UploadUnreadableFile) {
   request.load_flags = 0;
 
   // If we try to upload an unreadable file, the transaction should fail.
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   StaticSocketDataProvider data(NULL, 0, NULL, 0);
@@ -9478,8 +9755,8 @@ TEST_P(HttpNetworkTransactionTest, CancelDuringInitRequestBody) {
   };
 
   FakeUploadElementReader* fake_reader = new FakeUploadElementReader;
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
-  element_readers.push_back(make_scoped_ptr(fake_reader));
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
+  element_readers.push_back(base::WrapUnique(fake_reader));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -9488,8 +9765,8 @@ TEST_P(HttpNetworkTransactionTest, CancelDuringInitRequestBody) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   StaticSocketDataProvider data;
@@ -9498,7 +9775,7 @@ TEST_P(HttpNetworkTransactionTest, CancelDuringInitRequestBody) {
   TestCompletionCallback callback;
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Transaction is pending on request body initialization.
   ASSERT_FALSE(fake_reader->callback().is_null());
@@ -9595,8 +9872,8 @@ TEST_P(HttpNetworkTransactionTest, ChangeAuthRealms) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Issue the first request with Authorize headers. There should be a
@@ -9607,11 +9884,11 @@ TEST_P(HttpNetworkTransactionTest, ChangeAuthRealms) {
   rv = callback1.WaitForResult();
   EXPECT_EQ(OK, rv);
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   const AuthChallengeInfo* challenge = response->auth_challenge.get();
-  ASSERT_FALSE(challenge == NULL);
+  ASSERT_TRUE(challenge);
   EXPECT_FALSE(challenge->is_proxy);
-  EXPECT_EQ("www.example.org:80", challenge->challenger.ToString());
+  EXPECT_EQ("http://www.example.org", challenge->challenger.Serialize());
   EXPECT_EQ("first_realm", challenge->realm);
   EXPECT_EQ(kBasicAuthScheme, challenge->scheme);
 
@@ -9625,11 +9902,11 @@ TEST_P(HttpNetworkTransactionTest, ChangeAuthRealms) {
   rv = callback2.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   challenge = response->auth_challenge.get();
-  ASSERT_FALSE(challenge == NULL);
+  ASSERT_TRUE(challenge);
   EXPECT_FALSE(challenge->is_proxy);
-  EXPECT_EQ("www.example.org:80", challenge->challenger.ToString());
+  EXPECT_EQ("http://www.example.org", challenge->challenger.Serialize());
   EXPECT_EQ("second_realm", challenge->realm);
   EXPECT_EQ(kBasicAuthScheme, challenge->scheme);
 
@@ -9644,11 +9921,11 @@ TEST_P(HttpNetworkTransactionTest, ChangeAuthRealms) {
   rv = callback3.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
   challenge = response->auth_challenge.get();
-  ASSERT_FALSE(challenge == NULL);
+  ASSERT_TRUE(challenge);
   EXPECT_FALSE(challenge->is_proxy);
-  EXPECT_EQ("www.example.org:80", challenge->challenger.ToString());
+  EXPECT_EQ("http://www.example.org", challenge->challenger.Serialize());
   EXPECT_EQ("first_realm", challenge->realm);
   EXPECT_EQ(kBasicAuthScheme, challenge->scheme);
 
@@ -9660,14 +9937,74 @@ TEST_P(HttpNetworkTransactionTest, ChangeAuthRealms) {
   rv = callback4.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
 }
 
 TEST_P(HttpNetworkTransactionTest, HonorAlternativeServiceHeader) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
+  MockRead data_reads[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"),
+      MockRead(alternative_service_http_header.c_str()),
+      MockRead("\r\n"),
+      MockRead("hello world"),
+      MockRead(SYNCHRONOUS, OK),
+  };
+
+  HttpRequestInfo request;
+  request.method = "GET";
+  request.url = GURL("https://www.example.org/");
+  request.load_flags = 0;
+
+  StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
+  session_deps_.socket_factory->AddSocketDataProvider(&data);
+
+  SSLSocketDataProvider ssl(ASYNC, OK);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+
+  TestCompletionCallback callback;
+
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+
+  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  EXPECT_EQ(ERR_IO_PENDING, rv);
+
+  url::SchemeHostPort test_server(request.url);
+  HttpServerProperties* http_server_properties =
+      session->http_server_properties();
+  AlternativeServiceVector alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  EXPECT_TRUE(alternative_service_vector.empty());
+
+  EXPECT_EQ(OK, callback.WaitForResult());
+
+  const HttpResponseInfo* response = trans->GetResponseInfo();
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
+  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
+  EXPECT_FALSE(response->was_fetched_via_spdy);
+  EXPECT_FALSE(response->was_npn_negotiated);
+
+  std::string response_data;
+  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
+  EXPECT_EQ("hello world", response_data);
+
+  alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  ASSERT_EQ(1u, alternative_service_vector.size());
+  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
+            alternative_service_vector[0].protocol);
+  EXPECT_EQ("mail.example.org", alternative_service_vector[0].host);
+  EXPECT_EQ(443, alternative_service_vector[0].port);
+}
+
+// Regression test for https://crbug.com/615497.
+TEST_P(HttpNetworkTransactionTest,
+       DoNotParseAlternativeServiceHeaderOnInsecureRequest) {
   std::string alternative_service_http_header =
       GetAlternativeServiceHttpHeader();
 
@@ -9685,30 +10022,28 @@ TEST_P(HttpNetworkTransactionTest, HonorAlternativeServiceHeader) {
   request.load_flags = 0;
 
   StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
-
   session_deps_.socket_factory->AddSocketDataProvider(&data);
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+
+  url::SchemeHostPort test_server(request.url);
+  HttpServerProperties* http_server_properties =
+      session->http_server_properties();
+  AlternativeServiceVector alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  EXPECT_TRUE(alternative_service_vector.empty());
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
-
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
   EXPECT_FALSE(response->was_fetched_via_spdy);
   EXPECT_FALSE(response->was_npn_negotiated);
@@ -9718,391 +10053,62 @@ TEST_P(HttpNetworkTransactionTest, HonorAlternativeServiceHeader) {
   EXPECT_EQ("hello world", response_data);
 
   alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  ASSERT_EQ(1u, alternative_service_vector.size());
-  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
-            alternative_service_vector[0].protocol);
-  EXPECT_EQ("www.example.com", alternative_service_vector[0].host);
-  EXPECT_EQ(443, alternative_service_vector[0].port);
+      http_server_properties->GetAlternativeServices(test_server);
+  EXPECT_TRUE(alternative_service_vector.empty());
 }
 
-TEST_P(HttpNetworkTransactionTest, ClearAlternativeServices) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
+// HTTP/2 Alternative Services should be disabled if alternative service
+// hostname is different from that of origin.
+// TODO(bnc): Remove when https://crbug.com/615413 is fixed.
+TEST_P(HttpNetworkTransactionTest,
+       DisableHTTP2AlternativeServicesWithDifferentHost) {
+  session_deps_.enable_http2_alternative_service_with_different_host = false;
 
-  // Set an alternative service for origin.
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  AlternativeService alternative_service(QUIC, "", 80);
+  HttpRequestInfo request;
+  request.method = "GET";
+  request.url = GURL("https://www.example.org/");
+  request.load_flags = 0;
+
+  MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
+  StaticSocketDataProvider first_data;
+  first_data.set_connect_data(mock_connect);
+  session_deps_.socket_factory->AddSocketDataProvider(&first_data);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
+
+  MockRead data_reads[] = {
+      MockRead("HTTP/1.1 200 OK\r\n\r\n"), MockRead("hello world"),
+      MockRead(ASYNC, OK),
+  };
+  StaticSocketDataProvider second_data(data_reads, arraysize(data_reads), NULL,
+                                       0);
+  session_deps_.socket_factory->AddSocketDataProvider(&second_data);
+
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+
+  HttpServerProperties* http_server_properties =
+      session->http_server_properties();
+  AlternativeService alternative_service(
+      AlternateProtocolFromNextProto(GetProtocol()), "different.example.org",
+      444);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties.SetAlternativeService(
-      http_host_port_pair, alternative_service, 1.0, expiration);
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_EQ(1u, alternative_service_vector.size());
+  http_server_properties->SetAlternativeService(
+      url::SchemeHostPort(request.url), alternative_service, expiration);
 
-  // Send a clear header.
-  MockRead data_reads[] = {
-      MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead("Alt-Svc: clear\r\n"),
-      MockRead("\r\n"),
-      MockRead("hello world"),
-      MockRead(SYNCHRONOUS, OK),
-  };
-  StaticSocketDataProvider data(data_reads, arraysize(data_reads), nullptr, 0);
-  session_deps_.socket_factory->AddSocketDataProvider(&data);
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org/");
-  request.load_flags = 0;
-
+  std::unique_ptr<HttpTransaction> trans(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, callback.GetResult(rv));
-
-  const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != nullptr);
-  ASSERT_TRUE(response->headers.get() != nullptr);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
-  EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
-
-  std::string response_data;
-  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
-  EXPECT_EQ("hello world", response_data);
-
-  alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
+  // Alternative service is not used, request fails.
+  EXPECT_EQ(ERR_CONNECTION_REFUSED, callback.GetResult(rv));
 }
 
-// Alternative Service headers must be ignored when
-// |parse_alternative_services| is false.
-TEST_P(HttpNetworkTransactionTest, DoNotHonorAlternativeServiceHeader) {
-  session_deps_.parse_alternative_services = false;
-
-  std::string alternative_service_http_header =
-      GetAlternativeServiceHttpHeader();
-
-  MockRead data_reads[] = {
-      MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternative_service_http_header.c_str()),
-      MockRead("\r\n"),
-      MockRead("hello world"),
-      MockRead(SYNCHRONOUS, OK),
-  };
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org/");
-  request.load_flags = 0;
-
-  StaticSocketDataProvider data(data_reads, arraysize(data_reads), nullptr, 0);
-
-  session_deps_.socket_factory->AddSocketDataProvider(&data);
-
-  TestCompletionCallback callback;
-
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
-  scoped_ptr<HttpTransaction> trans(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-
-  EXPECT_EQ(OK, callback.WaitForResult());
-
-  const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != nullptr);
-  ASSERT_TRUE(response->headers.get() != nullptr);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
-  EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
-
-  std::string response_data;
-  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
-  EXPECT_EQ("hello world", response_data);
-
-  alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-}
-
-TEST_P(HttpNetworkTransactionTest, HonorMultipleAlternativeServiceHeader) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
-  MockRead data_reads[] = {
-      MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead("Alt-Svc: "),
-      MockRead(GetAlternateProtocolFromParam()),
-      MockRead("=\"www.example.com:443\";p=\"1.0\","),
-      MockRead(GetAlternateProtocolFromParam()),
-      MockRead("=\":1234\"\r\n\r\n"),
-      MockRead("hello world"),
-      MockRead(SYNCHRONOUS, OK),
-  };
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org/");
-  request.load_flags = 0;
-
-  StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
-
-  session_deps_.socket_factory->AddSocketDataProvider(&data);
-
-  TestCompletionCallback callback;
-
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-
-  EXPECT_EQ(OK, callback.WaitForResult());
-
-  const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
-  EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
-
-  std::string response_data;
-  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
-  EXPECT_EQ("hello world", response_data);
-
-  alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  ASSERT_EQ(2u, alternative_service_vector.size());
-  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
-            alternative_service_vector[0].protocol);
-  EXPECT_EQ("www.example.com", alternative_service_vector[0].host);
-  EXPECT_EQ(443, alternative_service_vector[0].port);
-  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
-            alternative_service_vector[1].protocol);
-  EXPECT_EQ("www.example.org", alternative_service_vector[1].host);
-  EXPECT_EQ(1234, alternative_service_vector[1].port);
-}
-
-// Alternate Protocol headers must be honored even if
-// |parse_alternative_services| is false.
-TEST_P(HttpNetworkTransactionTest, HonorAlternateProtocolHeader) {
-  session_deps_.parse_alternative_services = false;
-
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
-
-  MockRead data_reads[] = {
-      MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
-      MockRead("\r\n"),
-      MockRead("hello world"),
-      MockRead(SYNCHRONOUS, OK),
-  };
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org/");
-  request.load_flags = 0;
-
-  StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
-
-  session_deps_.socket_factory->AddSocketDataProvider(&data);
-
-  TestCompletionCallback callback;
-
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-
-  EXPECT_EQ(OK, callback.WaitForResult());
-
-  const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
-  EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
-
-  std::string response_data;
-  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
-  EXPECT_EQ("hello world", response_data);
-
-  alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  ASSERT_EQ(1u, alternative_service_vector.size());
-  EXPECT_EQ(443, alternative_service_vector[0].port);
-  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
-            alternative_service_vector[0].protocol);
-}
-
-TEST_P(HttpNetworkTransactionTest, EmptyAlternateProtocolHeader) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
-  MockRead data_reads[] = {
-      MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead("Alternate-Protocol: \r\n\r\n"),
-      MockRead("hello world"),
-      MockRead(SYNCHRONOUS, OK),
-  };
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org/");
-  request.load_flags = 0;
-
-  StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
-
-  session_deps_.socket_factory->AddSocketDataProvider(&data);
-
-  TestCompletionCallback callback;
-
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  AlternativeService alternative_service(QUIC, "", 80);
-  base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties.SetAlternativeService(
-      http_host_port_pair, alternative_service, 1.0, expiration);
-
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  ASSERT_EQ(1u, alternative_service_vector.size());
-  EXPECT_EQ(QUIC, alternative_service_vector[0].protocol);
-
-  scoped_ptr<HttpTransaction> trans(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-
-  EXPECT_EQ(OK, callback.WaitForResult());
-
-  const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
-  EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
-
-  std::string response_data;
-  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
-  EXPECT_EQ("hello world", response_data);
-
-  alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-}
-
-// When |session_deps_.parse_alternative_services = true| and the response has
-// an Alt-Svc header, then the Alternate-Protocol header is not parsed.
-TEST_P(HttpNetworkTransactionTest, AltSvcOverwritesAlternateProtocol) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
-  std::string alternative_service_http_header =
-      GetAlternativeServiceHttpHeader();
-  std::string alternate_protocol_http_header = GetAlternateProtocolHttpHeader();
-
-  MockRead data_reads[] = {
-      MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternative_service_http_header.c_str()),
-      MockRead(alternate_protocol_http_header.c_str()),
-      MockRead("\r\n"),
-      MockRead("hello world"),
-      MockRead(SYNCHRONOUS, OK),
-  };
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org/");
-  request.load_flags = 0;
-
-  StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
-
-  session_deps_.socket_factory->AddSocketDataProvider(&data);
-
-  TestCompletionCallback callback;
-
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-
-  HostPortPair http_host_port_pair("www.example.org", 80);
-  HttpServerProperties& http_server_properties =
-      *session->http_server_properties();
-  AlternativeServiceVector alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  EXPECT_TRUE(alternative_service_vector.empty());
-
-  EXPECT_EQ(OK, callback.WaitForResult());
-
-  const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
-  EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
-
-  std::string response_data;
-  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
-  EXPECT_EQ("hello world", response_data);
-
-  alternative_service_vector =
-      http_server_properties.GetAlternativeServices(http_host_port_pair);
-  ASSERT_EQ(1u, alternative_service_vector.size());
-  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
-            alternative_service_vector[0].protocol);
-  EXPECT_EQ("www.example.com", alternative_service_vector[0].host);
-  EXPECT_EQ(443, alternative_service_vector[0].port);
-}
-
-// When |enable_alternative_service_with_different_host| is false, do not
-// observe alternative service entries that point to a different host.
-TEST_P(HttpNetworkTransactionTest, DisableAlternativeServiceToDifferentHost) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
+// Regression test for https://crbug.com/615497:
+// Alternative Services should be disabled for http origin.
+TEST_P(HttpNetworkTransactionTest,
+       DisableAlternativeServicesForInsecureOrigin) {
   HttpRequestInfo request;
   request.method = "GET";
   request.url = GURL("http://www.example.org/");
@@ -10117,34 +10123,153 @@ TEST_P(HttpNetworkTransactionTest, DisableAlternativeServiceToDifferentHost) {
       MockRead("HTTP/1.1 200 OK\r\n\r\n"), MockRead("hello world"),
       MockRead(ASYNC, OK),
   };
-  StaticSocketDataProvider second_data(data_reads, arraysize(data_reads),
-                                       nullptr, 0);
+  StaticSocketDataProvider second_data(data_reads, arraysize(data_reads), NULL,
+                                       0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
 
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   AlternativeService alternative_service(
-      AlternateProtocolFromNextProto(GetProtocol()), "different.example.org",
-      80);
+      AlternateProtocolFromNextProto(GetProtocol()), "", 444);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(request.url), alternative_service, 1.0, expiration);
+      url::SchemeHostPort(request.url), alternative_service, expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  // The connetion to origin was refused, and the alternative service should not
-  // be used (even though mock data are there), therefore the request should
-  // fail.
+  // Alternative service is not used, request fails.
   EXPECT_EQ(ERR_CONNECTION_REFUSED, callback.GetResult(rv));
 }
 
+TEST_P(HttpNetworkTransactionTest, ClearAlternativeServices) {
+  // Set an alternative service for origin.
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  HttpServerProperties* http_server_properties =
+      session->http_server_properties();
+  url::SchemeHostPort test_server("https", "www.example.org", 443);
+  AlternativeService alternative_service(QUIC, "", 80);
+  base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
+  http_server_properties->SetAlternativeService(
+      test_server, alternative_service, expiration);
+  AlternativeServiceVector alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  EXPECT_EQ(1u, alternative_service_vector.size());
+
+  // Send a clear header.
+  MockRead data_reads[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"),
+      MockRead("Alt-Svc: clear\r\n"),
+      MockRead("\r\n"),
+      MockRead("hello world"),
+      MockRead(SYNCHRONOUS, OK),
+  };
+  StaticSocketDataProvider data(data_reads, arraysize(data_reads), nullptr, 0);
+  session_deps_.socket_factory->AddSocketDataProvider(&data);
+
+  SSLSocketDataProvider ssl(ASYNC, OK);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+
+  HttpRequestInfo request;
+  request.method = "GET";
+  request.url = GURL("https://www.example.org/");
+  request.load_flags = 0;
+
+  TestCompletionCallback callback;
+
+  std::unique_ptr<HttpTransaction> trans(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+
+  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  EXPECT_EQ(OK, callback.GetResult(rv));
+
+  const HttpResponseInfo* response = trans->GetResponseInfo();
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
+  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
+  EXPECT_FALSE(response->was_fetched_via_spdy);
+  EXPECT_FALSE(response->was_npn_negotiated);
+
+  std::string response_data;
+  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
+  EXPECT_EQ("hello world", response_data);
+
+  alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  EXPECT_TRUE(alternative_service_vector.empty());
+}
+
+TEST_P(HttpNetworkTransactionTest, HonorMultipleAlternativeServiceHeaders) {
+  MockRead data_reads[] = {
+      MockRead("HTTP/1.1 200 OK\r\n"),
+      MockRead("Alt-Svc: "),
+      MockRead(GetAlternateProtocolFromParam()),
+      MockRead("=\"www.example.com:443\","),
+      MockRead(GetAlternateProtocolFromParam()),
+      MockRead("=\":1234\"\r\n\r\n"),
+      MockRead("hello world"),
+      MockRead(SYNCHRONOUS, OK),
+  };
+
+  HttpRequestInfo request;
+  request.method = "GET";
+  request.url = GURL("https://www.example.org/");
+  request.load_flags = 0;
+
+  StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
+  session_deps_.socket_factory->AddSocketDataProvider(&data);
+
+  SSLSocketDataProvider ssl(ASYNC, OK);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+
+  TestCompletionCallback callback;
+
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+
+  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  EXPECT_EQ(ERR_IO_PENDING, rv);
+
+  url::SchemeHostPort test_server("https", "www.example.org", 443);
+  HttpServerProperties* http_server_properties =
+      session->http_server_properties();
+  AlternativeServiceVector alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  EXPECT_TRUE(alternative_service_vector.empty());
+
+  EXPECT_EQ(OK, callback.WaitForResult());
+
+  const HttpResponseInfo* response = trans->GetResponseInfo();
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
+  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
+  EXPECT_FALSE(response->was_fetched_via_spdy);
+  EXPECT_FALSE(response->was_npn_negotiated);
+
+  std::string response_data;
+  ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
+  EXPECT_EQ("hello world", response_data);
+
+  alternative_service_vector =
+      http_server_properties->GetAlternativeServices(test_server);
+  ASSERT_EQ(2u, alternative_service_vector.size());
+  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
+            alternative_service_vector[0].protocol);
+  EXPECT_EQ("www.example.com", alternative_service_vector[0].host);
+  EXPECT_EQ(443, alternative_service_vector[0].port);
+  EXPECT_EQ(AlternateProtocolFromNextProto(GetProtocol()),
+            alternative_service_vector[1].protocol);
+  EXPECT_EQ("www.example.org", alternative_service_vector[1].host);
+  EXPECT_EQ(1234, alternative_service_vector[1].port);
+}
+
 TEST_P(HttpNetworkTransactionTest, IdentifyQuicBroken) {
-  HostPortPair origin("origin.example.org", 443);
+  url::SchemeHostPort server("https", "origin.example.org", 443);
   HostPortPair alternative("alternative.example.org", 443);
   std::string origin_url = "https://origin.example.org:443";
   std::string alternative_url = "https://alternative.example.org:443";
@@ -10175,20 +10300,18 @@ TEST_P(HttpNetworkTransactionTest, IdentifyQuicBroken) {
   data_refused.set_connect_data(MockConnect(ASYNC, ERR_CONNECTION_REFUSED));
   session_deps_.socket_factory->AddSocketDataProvider(&data_refused);
 
-  // Set up a QUIC alternative service for origin.
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  // Set up a QUIC alternative service for server.
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   AlternativeService alternative_service(QUIC, alternative);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties->SetAlternativeService(origin, alternative_service,
-                                                1.0, expiration);
+  http_server_properties->SetAlternativeService(server, alternative_service,
+                                                expiration);
   // Mark the QUIC alternative service as broken.
   http_server_properties->MarkAlternativeServiceBroken(alternative_service);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   HttpRequestInfo request;
   request.method = "GET";
@@ -10204,7 +10327,7 @@ TEST_P(HttpNetworkTransactionTest, IdentifyQuicBroken) {
 }
 
 TEST_P(HttpNetworkTransactionTest, IdentifyQuicNotBroken) {
-  HostPortPair origin("origin.example.org", 443);
+  url::SchemeHostPort server("https", "origin.example.org", 443);
   HostPortPair alternative1("alternative1.example.org", 443);
   HostPortPair alternative2("alternative2.example.org", 443);
   std::string origin_url = "https://origin.example.org:443";
@@ -10237,35 +10360,33 @@ TEST_P(HttpNetworkTransactionTest, IdentifyQuicNotBroken) {
   data_refused.set_connect_data(MockConnect(ASYNC, ERR_CONNECTION_REFUSED));
   session_deps_.socket_factory->AddSocketDataProvider(&data_refused);
 
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = true;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
 
-  // Set up two QUIC alternative services for origin.
+  // Set up two QUIC alternative services for server.
   AlternativeServiceInfoVector alternative_service_info_vector;
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
 
   AlternativeService alternative_service1(QUIC, alternative1);
-  AlternativeServiceInfo alternative_service_info1(alternative_service1, 1.0,
+  AlternativeServiceInfo alternative_service_info1(alternative_service1,
                                                    expiration);
   alternative_service_info_vector.push_back(alternative_service_info1);
   AlternativeService alternative_service2(QUIC, alternative2);
-  AlternativeServiceInfo alternative_service_info2(alternative_service2, 1.0,
+  AlternativeServiceInfo alternative_service_info2(alternative_service2,
                                                    expiration);
   alternative_service_info_vector.push_back(alternative_service_info2);
 
   http_server_properties->SetAlternativeServices(
-      origin, alternative_service_info_vector);
+      server, alternative_service_info_vector);
 
   // Mark one of the QUIC alternative service as broken.
   http_server_properties->MarkAlternativeServiceBroken(alternative_service1);
 
   const AlternativeServiceVector alternative_service_vector =
-      http_server_properties->GetAlternativeServices(origin);
+      http_server_properties->GetAlternativeServices(server);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   HttpRequestInfo request;
   request.method = "GET";
@@ -10282,18 +10403,18 @@ TEST_P(HttpNetworkTransactionTest, IdentifyQuicNotBroken) {
 
 TEST_P(HttpNetworkTransactionTest,
        MarkBrokenAlternateProtocolAndFallback) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("http://www.example.org/");
+  request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
   MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
   StaticSocketDataProvider first_data;
   first_data.set_connect_data(mock_connect);
   session_deps_.socket_factory->AddSocketDataProvider(&first_data);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
   MockRead data_reads[] = {
     MockRead("HTTP/1.1 200 OK\r\n\r\n"),
@@ -10304,21 +10425,21 @@ TEST_P(HttpNetworkTransactionTest,
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
-  const HostPortPair host_port_pair = HostPortPair::FromURL(request.url);
+  const url::SchemeHostPort server(request.url);
   // Port must be < 1024, or the header will be ignored (since initial port was
   // port 80 (another restricted port).
   const AlternativeService alternative_service(
       AlternateProtocolFromNextProto(GetProtocol()), "www.example.org",
       666);  // Port is ignored by MockConnect anyway.
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties->SetAlternativeService(
-      host_port_pair, alternative_service, 1.0, expiration);
+  http_server_properties->SetAlternativeService(server, alternative_service,
+                                                expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10327,8 +10448,8 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -10336,7 +10457,7 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ("hello world", response_data);
 
   const AlternativeServiceVector alternative_service_vector =
-      http_server_properties->GetAlternativeServices(host_port_pair);
+      http_server_properties->GetAlternativeServices(server);
   ASSERT_EQ(1u, alternative_service_vector.size());
   EXPECT_EQ(alternative_service, alternative_service_vector[0]);
   EXPECT_TRUE(http_server_properties->IsAlternativeServiceBroken(
@@ -10349,12 +10470,9 @@ TEST_P(HttpNetworkTransactionTest,
 // cases.
 TEST_P(HttpNetworkTransactionTest,
        AlternateProtocolPortRestrictedBlocked) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo restricted_port_request;
   restricted_port_request.method = "GET";
-  restricted_port_request.url = GURL("http://www.example.org:1023/");
+  restricted_port_request.url = GURL("https://www.example.org:1023/");
   restricted_port_request.load_flags = 0;
 
   MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
@@ -10370,10 +10488,13 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider second_data(
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   const int kUnrestrictedAlternatePort = 1024;
   AlternativeService alternative_service(
@@ -10381,10 +10502,10 @@ TEST_P(HttpNetworkTransactionTest,
       kUnrestrictedAlternatePort);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(restricted_port_request.url), alternative_service,
-      1.0, expiration);
+      url::SchemeHostPort(restricted_port_request.url), alternative_service,
+      expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10401,13 +10522,11 @@ TEST_P(HttpNetworkTransactionTest,
 // port (port < 1024) if we set |enable_user_alternate_protocol_ports|.
 TEST_P(HttpNetworkTransactionTest,
        AlternateProtocolPortRestrictedPermitted) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
   session_deps_.enable_user_alternate_protocol_ports = true;
 
   HttpRequestInfo restricted_port_request;
   restricted_port_request.method = "GET";
-  restricted_port_request.url = GURL("http://www.example.org:1023/");
+  restricted_port_request.url = GURL("https://www.example.org:1023/");
   restricted_port_request.load_flags = 0;
 
   MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
@@ -10423,10 +10542,13 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider second_data(
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   const int kUnrestrictedAlternatePort = 1024;
   AlternativeService alternative_service(
@@ -10434,10 +10556,10 @@ TEST_P(HttpNetworkTransactionTest,
       kUnrestrictedAlternatePort);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(restricted_port_request.url), alternative_service,
-      1.0, expiration);
+      url::SchemeHostPort(restricted_port_request.url), alternative_service,
+      expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10454,12 +10576,9 @@ TEST_P(HttpNetworkTransactionTest,
 // cases.
 TEST_P(HttpNetworkTransactionTest,
        AlternateProtocolPortRestrictedAllowed) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo restricted_port_request;
   restricted_port_request.method = "GET";
-  restricted_port_request.url = GURL("http://www.example.org:1023/");
+  restricted_port_request.url = GURL("https://www.example.org:1023/");
   restricted_port_request.load_flags = 0;
 
   MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
@@ -10476,9 +10595,12 @@ TEST_P(HttpNetworkTransactionTest,
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  SSLSocketDataProvider ssl(ASYNC, OK);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   const int kRestrictedAlternatePort = 80;
   AlternativeService alternative_service(
@@ -10486,10 +10608,10 @@ TEST_P(HttpNetworkTransactionTest,
       kRestrictedAlternatePort);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(restricted_port_request.url), alternative_service,
-      1.0, expiration);
+      url::SchemeHostPort(restricted_port_request.url), alternative_service,
+      expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10507,12 +10629,9 @@ TEST_P(HttpNetworkTransactionTest,
 // cases.
 TEST_P(HttpNetworkTransactionTest,
        AlternateProtocolPortUnrestrictedAllowed1) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo unrestricted_port_request;
   unrestricted_port_request.method = "GET";
-  unrestricted_port_request.url = GURL("http://www.example.org:1024/");
+  unrestricted_port_request.url = GURL("https://www.example.org:1024/");
   unrestricted_port_request.load_flags = 0;
 
   MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
@@ -10528,10 +10647,13 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider second_data(
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   const int kRestrictedAlternatePort = 80;
   AlternativeService alternative_service(
@@ -10539,10 +10661,10 @@ TEST_P(HttpNetworkTransactionTest,
       kRestrictedAlternatePort);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(unrestricted_port_request.url), alternative_service,
-      1.0, expiration);
+      url::SchemeHostPort(unrestricted_port_request.url), alternative_service,
+      expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10559,12 +10681,9 @@ TEST_P(HttpNetworkTransactionTest,
 // cases.
 TEST_P(HttpNetworkTransactionTest,
        AlternateProtocolPortUnrestrictedAllowed2) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo unrestricted_port_request;
   unrestricted_port_request.method = "GET";
-  unrestricted_port_request.url = GURL("http://www.example.org:1024/");
+  unrestricted_port_request.url = GURL("https://www.example.org:1024/");
   unrestricted_port_request.load_flags = 0;
 
   MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
@@ -10581,9 +10700,12 @@ TEST_P(HttpNetworkTransactionTest,
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  SSLSocketDataProvider ssl(ASYNC, OK);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   const int kUnrestrictedAlternatePort = 1025;
   AlternativeService alternative_service(
@@ -10591,10 +10713,10 @@ TEST_P(HttpNetworkTransactionTest,
       kUnrestrictedAlternatePort);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(unrestricted_port_request.url), alternative_service,
-      1.0, expiration);
+      url::SchemeHostPort(unrestricted_port_request.url), alternative_service,
+      expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10609,9 +10731,6 @@ TEST_P(HttpNetworkTransactionTest,
 // to an unsafe port, and that we resume the second HttpStreamFactoryImpl::Job
 // once the alternate protocol request fails.
 TEST_P(HttpNetworkTransactionTest, AlternateProtocolUnsafeBlocked) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo request;
   request.method = "GET";
   request.url = GURL("http://www.example.org/");
@@ -10628,9 +10747,9 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolUnsafeBlocked) {
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   const int kUnsafePort = 7;
   AlternativeService alternative_service(
@@ -10638,9 +10757,9 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolUnsafeBlocked) {
       kUnsafePort);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   http_server_properties->SetAlternativeService(
-      HostPortPair::FromURL(request.url), alternative_service, 1.0, expiration);
+      url::SchemeHostPort(request.url), alternative_service, expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -10650,8 +10769,8 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolUnsafeBlocked) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -10660,20 +10779,17 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolUnsafeBlocked) {
 }
 
 TEST_P(HttpNetworkTransactionTest, UseAlternateProtocolForNpnSpdy) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("http://www.example.org/");
+  request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
   MockRead data_reads[] = {
       MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
+      MockRead(alternative_service_http_header.c_str()),
       MockRead("\r\n"),
       MockRead("hello world"),
       MockRead(SYNCHRONOUS, ERR_TEST_PEER_CLOSE_AFTER_NEXT_MOCK_READ),
@@ -10682,19 +10798,25 @@ TEST_P(HttpNetworkTransactionTest, UseAlternateProtocolForNpnSpdy) {
   StaticSocketDataProvider first_transaction(
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&first_transaction);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
-  SSLSocketDataProvider ssl(ASYNC, OK);
-  ssl.SetNextProto(GetProtocol());
-  ssl.cert = ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
-  ASSERT_TRUE(ssl.cert.get());
-  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+  SSLSocketDataProvider ssl_http2(ASYNC, OK);
+  ssl_http2.SetNextProto(GetProtocol());
+  ssl_http2.cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
+  ASSERT_TRUE(ssl_http2.cert.get());
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http2);
 
-  scoped_ptr<SpdyFrame> req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, true));
+  std::unique_ptr<SpdySerializedFrame> req(
+      spdy_util_.ConstructSpdyGet("https://www.example.org/", 1, LOWEST));
   MockWrite spdy_writes[] = {CreateMockWrite(*req, 0)};
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp, 1), CreateMockRead(*data, 2), MockRead(ASYNC, 0, 3),
   };
@@ -10713,8 +10835,8 @@ TEST_P(HttpNetworkTransactionTest, UseAlternateProtocolForNpnSpdy) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -10722,8 +10844,8 @@ TEST_P(HttpNetworkTransactionTest, UseAlternateProtocolForNpnSpdy) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -10737,8 +10859,8 @@ TEST_P(HttpNetworkTransactionTest, UseAlternateProtocolForNpnSpdy) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -10748,59 +10870,60 @@ TEST_P(HttpNetworkTransactionTest, UseAlternateProtocolForNpnSpdy) {
 }
 
 TEST_P(HttpNetworkTransactionTest, AlternateProtocolWithSpdyLateBinding) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("http://www.example.org/");
+  request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
+  // First transaction receives Alt-Svc header over HTTP/1.1.
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
   MockRead data_reads[] = {
       MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
+      MockRead(alternative_service_http_header.c_str()),
       MockRead("\r\n"),
       MockRead("hello world"),
       MockRead(SYNCHRONOUS, ERR_TEST_PEER_CLOSE_AFTER_NEXT_MOCK_READ),
       MockRead(ASYNC, OK),
   };
 
-  StaticSocketDataProvider first_transaction(
-      data_reads, arraysize(data_reads), NULL, 0);
-  // Socket 1 is the HTTP transaction with the Alternate-Protocol header.
-  session_deps_.socket_factory->AddSocketDataProvider(&first_transaction);
+  StaticSocketDataProvider http11_data(data_reads, arraysize(data_reads), NULL,
+                                       0);
+  session_deps_.socket_factory->AddSocketDataProvider(&http11_data);
 
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
+
+  // Second transaction starts an alternative and a non-alternative Job.
+  // Both sockets hang.
   MockConnect never_finishing_connect(SYNCHRONOUS, ERR_IO_PENDING);
   StaticSocketDataProvider hanging_socket1(NULL, 0, NULL, 0);
   hanging_socket1.set_connect_data(never_finishing_connect);
-  // Socket 2 and 3 are the hanging Alternate-Protocol and
-  // non-Alternate-Protocol jobs from the 2nd transaction.
   session_deps_.socket_factory->AddSocketDataProvider(&hanging_socket1);
 
   StaticSocketDataProvider hanging_socket2(NULL, 0, NULL, 0);
   hanging_socket2.set_connect_data(never_finishing_connect);
   session_deps_.socket_factory->AddSocketDataProvider(&hanging_socket2);
 
-  SSLSocketDataProvider ssl(ASYNC, OK);
-  ssl.SetNextProto(GetProtocol());
-  ssl.cert = ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
-  ASSERT_TRUE(ssl.cert.get());
-  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
-
-  scoped_ptr<SpdyFrame> req1(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, true));
-  scoped_ptr<SpdyFrame> req2(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 3, LOWEST, true));
+  // Third transaction starts an alternative and a non-alternative job.
+  // The non-alternative job hangs, but the alternative one succeeds.
+  // The second transaction, still pending, binds to this socket.
+  std::unique_ptr<SpdySerializedFrame> req1(
+      spdy_util_.ConstructSpdyGet("https://www.example.org/", 1, LOWEST));
+  std::unique_ptr<SpdySerializedFrame> req2(
+      spdy_util_.ConstructSpdyGet("https://www.example.org/", 3, LOWEST));
   MockWrite spdy_writes[] = {
       CreateMockWrite(*req1, 0), CreateMockWrite(*req2, 1),
   };
-  scoped_ptr<SpdyFrame> resp1(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data1(spdy_util_.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> resp2(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> data2(spdy_util_.ConstructSpdyBodyFrame(3, true));
+  std::unique_ptr<SpdySerializedFrame> resp1(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data1(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp2(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
+  std::unique_ptr<SpdySerializedFrame> data2(
+      spdy_util_.ConstructSpdyBodyFrame(3, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp1, 2),
       CreateMockRead(*data1, 3),
@@ -10811,15 +10934,20 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolWithSpdyLateBinding) {
 
   SequencedSocketData spdy_data(spdy_reads, arraysize(spdy_reads), spdy_writes,
                                 arraysize(spdy_writes));
-  // Socket 4 is the successful Alternate-Protocol for transaction 3.
   session_deps_.socket_factory->AddSocketDataProvider(&spdy_data);
 
-  // Socket 5 is the unsuccessful non-Alternate-Protocol for transaction 3.
+  SSLSocketDataProvider ssl_http2(ASYNC, OK);
+  ssl_http2.SetNextProto(GetProtocol());
+  ssl_http2.cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
+  ASSERT_TRUE(ssl_http2.cert);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http2);
+
   StaticSocketDataProvider hanging_socket3(NULL, 0, NULL, 0);
   hanging_socket3.set_connect_data(never_finishing_connect);
   session_deps_.socket_factory->AddSocketDataProvider(&hanging_socket3);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   TestCompletionCallback callback1;
   HttpNetworkTransaction trans1(DEFAULT_PRIORITY, session.get());
 
@@ -10828,8 +10956,8 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolWithSpdyLateBinding) {
   EXPECT_EQ(OK, callback1.WaitForResult());
 
   const HttpResponseInfo* response = trans1.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -10850,8 +10978,8 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolWithSpdyLateBinding) {
   EXPECT_EQ(OK, callback3.WaitForResult());
 
   response = trans2.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -10859,8 +10987,8 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolWithSpdyLateBinding) {
   EXPECT_EQ("hello!", response_data);
 
   response = trans3.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -10868,21 +10996,18 @@ TEST_P(HttpNetworkTransactionTest, AlternateProtocolWithSpdyLateBinding) {
   EXPECT_EQ("hello!", response_data);
 }
 
-TEST_P(HttpNetworkTransactionTest, StallAlternateProtocolForNpnSpdy) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
+TEST_P(HttpNetworkTransactionTest, StallAlternativeServiceForNpnSpdy) {
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("http://www.example.org/");
+  request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
   MockRead data_reads[] = {
       MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
+      MockRead(alternative_service_http_header.c_str()),
       MockRead("\r\n"),
       MockRead("hello world"),
       MockRead(SYNCHRONOUS, ERR_TEST_PEER_CLOSE_AFTER_NEXT_MOCK_READ),
@@ -10894,7 +11019,6 @@ TEST_P(HttpNetworkTransactionTest, StallAlternateProtocolForNpnSpdy) {
   session_deps_.socket_factory->AddSocketDataProvider(&first_transaction);
 
   SSLSocketDataProvider ssl(ASYNC, OK);
-  ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
   MockConnect never_finishing_connect(SYNCHRONOUS, ERR_IO_PENDING);
@@ -10905,15 +11029,16 @@ TEST_P(HttpNetworkTransactionTest, StallAlternateProtocolForNpnSpdy) {
   session_deps_.socket_factory->AddSocketDataProvider(
       &hanging_alternate_protocol_socket);
 
-  // 2nd request is just a copy of the first one, over HTTP again.
+  // 2nd request is just a copy of the first one, over HTTP/1.1 again.
   StaticSocketDataProvider second_transaction(data_reads, arraysize(data_reads),
                                               NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&second_transaction);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -10921,8 +11046,8 @@ TEST_P(HttpNetworkTransactionTest, StallAlternateProtocolForNpnSpdy) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -10936,8 +11061,8 @@ TEST_P(HttpNetworkTransactionTest, StallAlternateProtocolForNpnSpdy) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
   EXPECT_FALSE(response->was_fetched_via_spdy);
   EXPECT_FALSE(response->was_npn_negotiated);
@@ -10985,9 +11110,9 @@ class CapturingProxyResolverFactory : public ProxyResolverFactory {
 
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& pac_script,
-      scoped_ptr<ProxyResolver>* resolver,
+      std::unique_ptr<ProxyResolver>* resolver,
       const net::CompletionCallback& callback,
-      scoped_ptr<Request>* request) override {
+      std::unique_ptr<Request>* request) override {
     resolver->reset(new ForwardingProxyResolver(resolver_));
     return OK;
   }
@@ -10996,19 +11121,15 @@ class CapturingProxyResolverFactory : public ProxyResolverFactory {
   ProxyResolver* resolver_;
 };
 
-TEST_P(HttpNetworkTransactionTest,
-       UseAlternateProtocolForTunneledNpnSpdy) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
+TEST_P(HttpNetworkTransactionTest, UseAlternativeServiceForTunneledNpnSpdy) {
   ProxyConfig proxy_config;
   proxy_config.set_auto_detect(true);
   proxy_config.set_pac_url(GURL("http://fooproxyurl"));
 
   CapturingProxyResolver capturing_proxy_resolver;
   session_deps_.proxy_service.reset(new ProxyService(
-      make_scoped_ptr(new ProxyConfigServiceFixed(proxy_config)),
-      make_scoped_ptr(
+      base::WrapUnique(new ProxyConfigServiceFixed(proxy_config)),
+      base::WrapUnique(
           new CapturingProxyResolverFactory(&capturing_proxy_resolver)),
       NULL));
   TestNetLog net_log;
@@ -11016,15 +11137,15 @@ TEST_P(HttpNetworkTransactionTest,
 
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("http://www.example.org/");
+  request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
   MockRead data_reads[] = {
       MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
+      MockRead(alternative_service_http_header.c_str()),
       MockRead("\r\n"),
       MockRead("hello world"),
       MockRead(SYNCHRONOUS, ERR_TEST_PEER_CLOSE_AFTER_NEXT_MOCK_READ),
@@ -11034,15 +11155,19 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider first_transaction(
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&first_transaction);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
-  SSLSocketDataProvider ssl(ASYNC, OK);
-  ssl.SetNextProto(GetProtocol());
-  ssl.cert = ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
-  ASSERT_TRUE(ssl.cert.get());
-  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+  SSLSocketDataProvider ssl_http2(ASYNC, OK);
+  ssl_http2.SetNextProto(GetProtocol());
+  ssl_http2.cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
+  ASSERT_TRUE(ssl_http2.cert);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http2);
 
-  scoped_ptr<SpdyFrame> req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, true));
+  std::unique_ptr<SpdySerializedFrame> req(
+      spdy_util_.ConstructSpdyGet("https://www.example.org/", 1, LOWEST));
   MockWrite spdy_writes[] = {
       MockWrite(ASYNC, 0,
                 "CONNECT www.example.org:443 HTTP/1.1\r\n"
@@ -11053,8 +11178,10 @@ TEST_P(HttpNetworkTransactionTest,
 
   const char kCONNECTResponse[] = "HTTP/1.1 200 Connected\r\n\r\n";
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       MockRead(ASYNC, 1, kCONNECTResponse), CreateMockRead(*resp.get(), 3),
       CreateMockRead(*data.get(), 4), MockRead(SYNCHRONOUS, ERR_IO_PENDING, 5),
@@ -11074,8 +11201,8 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -11083,11 +11210,11 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
-  EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
+  EXPECT_EQ("HTTP/0.9 200 OK", response->headers->GetStatusLine());
   EXPECT_FALSE(response->was_fetched_via_spdy);
-  EXPECT_FALSE(response->was_npn_negotiated);
+  EXPECT_TRUE(response->was_npn_negotiated);
 
   std::string response_data;
   ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
@@ -11100,16 +11227,16 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
 
   ASSERT_EQ(OK, ReadTransaction(trans.get(), &response_data));
   EXPECT_EQ("hello!", response_data);
-  ASSERT_EQ(3u, capturing_proxy_resolver.resolved().size());
-  EXPECT_EQ("http://www.example.org/",
+  ASSERT_EQ(2u, capturing_proxy_resolver.resolved().size());
+  EXPECT_EQ("https://www.example.org/",
             capturing_proxy_resolver.resolved()[0].spec());
   EXPECT_EQ("https://www.example.org/",
             capturing_proxy_resolver.resolved()[1].spec());
@@ -11121,21 +11248,18 @@ TEST_P(HttpNetworkTransactionTest,
 }
 
 TEST_P(HttpNetworkTransactionTest,
-       UseAlternateProtocolForNpnSpdyWithExistingSpdySession) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
+       UseAlternativeServiceForNpnSpdyWithExistingSpdySession) {
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("http://www.example.org/");
+  request.url = GURL("https://www.example.org/");
   request.load_flags = 0;
 
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
   MockRead data_reads[] = {
       MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
+      MockRead(alternative_service_http_header.c_str()),
       MockRead("\r\n"),
       MockRead("hello world"),
       MockRead(ASYNC, OK),
@@ -11144,19 +11268,25 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider first_transaction(
       data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&first_transaction);
+  SSLSocketDataProvider ssl_http11(ASYNC, OK);
+  ssl_http11.SetNextProto(kProtoHTTP11);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http11);
 
-  SSLSocketDataProvider ssl(ASYNC, OK);
-  ssl.SetNextProto(GetProtocol());
-  ssl.cert = ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
-  ASSERT_TRUE(ssl.cert.get());
-  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+  SSLSocketDataProvider ssl_http2(ASYNC, OK);
+  ssl_http2.SetNextProto(GetProtocol());
+  ssl_http2.cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
+  ASSERT_TRUE(ssl_http2.cert);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_http2);
 
-  scoped_ptr<SpdyFrame> req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, true));
+  std::unique_ptr<SpdySerializedFrame> req(
+      spdy_util_.ConstructSpdyGet("https://www.example.org/", 1, LOWEST));
   MockWrite spdy_writes[] = {CreateMockWrite(*req, 0)};
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp, 1), CreateMockRead(*data, 2), MockRead(ASYNC, 0, 3),
   };
@@ -11167,9 +11297,9 @@ TEST_P(HttpNetworkTransactionTest,
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -11177,8 +11307,8 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -11199,8 +11329,8 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -11516,6 +11646,7 @@ TEST_P(HttpNetworkTransactionTest, GenerateAuthToken) {
     HttpAuthHandlerMock::Factory* auth_factory(
         new HttpAuthHandlerMock::Factory());
     session_deps_.http_auth_handler_factory.reset(auth_factory);
+    SSLInfo empty_ssl_info;
     const TestConfig& test_config = test_configs[i];
 
     // Set up authentication handlers as necessary.
@@ -11527,7 +11658,7 @@ TEST_P(HttpNetworkTransactionTest, GenerateAuthToken) {
         HttpAuthChallengeTokenizer tokenizer(auth_challenge.begin(),
                                              auth_challenge.end());
         auth_handler->InitFromChallenge(&tokenizer, HttpAuth::AUTH_PROXY,
-                                        origin, BoundNetLog());
+                                        empty_ssl_info, origin, BoundNetLog());
         auth_handler->SetGenerateExpectation(
             test_config.proxy_auth_timing == AUTH_ASYNC,
             test_config.proxy_auth_rv);
@@ -11541,7 +11672,7 @@ TEST_P(HttpNetworkTransactionTest, GenerateAuthToken) {
       HttpAuthChallengeTokenizer tokenizer(auth_challenge.begin(),
                                            auth_challenge.end());
       auth_handler->InitFromChallenge(&tokenizer, HttpAuth::AUTH_SERVER,
-                                      origin, BoundNetLog());
+                                      empty_ssl_info, origin, BoundNetLog());
       auth_handler->SetGenerateExpectation(
           test_config.server_auth_timing == AUTH_ASYNC,
           test_config.server_auth_rv);
@@ -11559,7 +11690,7 @@ TEST_P(HttpNetworkTransactionTest, GenerateAuthToken) {
     request.url = GURL(test_config.server_url);
     request.load_flags = 0;
 
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
     SSLSocketDataProvider ssl_socket_data_provider(SYNCHRONOUS, OK);
 
@@ -11592,9 +11723,9 @@ TEST_P(HttpNetworkTransactionTest, GenerateAuthToken) {
             &ssl_socket_data_provider);
     }
 
-    std::vector<scoped_ptr<StaticSocketDataProvider>> data_providers;
+    std::vector<std::unique_ptr<StaticSocketDataProvider>> data_providers;
     for (size_t i = 0; i < mock_reads.size(); ++i) {
-      data_providers.push_back(make_scoped_ptr(new StaticSocketDataProvider(
+      data_providers.push_back(base::WrapUnique(new StaticSocketDataProvider(
           mock_reads[i].data(), mock_reads[i].size(), mock_writes[i].data(),
           mock_writes[i].size())));
       session_deps_.socket_factory->AddSocketDataProvider(
@@ -11627,9 +11758,9 @@ TEST_P(HttpNetworkTransactionTest, GenerateAuthToken) {
         continue;
       }
       if (round + 1 < test_config.num_auth_rounds) {
-        EXPECT_FALSE(response->auth_challenge.get() == NULL);
+        EXPECT_TRUE(response->auth_challenge);
       } else {
-        EXPECT_TRUE(response->auth_challenge.get() == NULL);
+        EXPECT_FALSE(response->auth_challenge);
       }
     }
   }
@@ -11650,8 +11781,9 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
   GURL origin("http://www.example.com");
   HttpAuthChallengeTokenizer tokenizer(auth_challenge.begin(),
                                        auth_challenge.end());
+  SSLInfo empty_ssl_info;
   auth_handler->InitFromChallenge(&tokenizer, HttpAuth::AUTH_SERVER,
-                                  origin, BoundNetLog());
+                                  empty_ssl_info, origin, BoundNetLog());
   auth_factory->AddMockHandler(auth_handler, HttpAuth::AUTH_SERVER);
 
   int rv = OK;
@@ -11661,7 +11793,7 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
   request.url = origin;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Use a TCP Socket Pool with only one connection per group. This is used
   // to validate that the TCP socket is not released to the pool between
@@ -11670,15 +11802,14 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
   TransportClientSocketPool* transport_pool = new TransportClientSocketPool(
       50,  // Max sockets for pool
       1,   // Max sockets per group
-      session_deps_.host_resolver.get(),
-      session_deps_.socket_factory.get(),
-      session_deps_.net_log);
-  scoped_ptr<MockClientSocketPoolManager> mock_pool_manager(
+      session_deps_.host_resolver.get(), session_deps_.socket_factory.get(),
+      NULL, session_deps_.net_log);
+  std::unique_ptr<MockClientSocketPoolManager> mock_pool_manager(
       new MockClientSocketPoolManager);
   mock_pool_manager->SetTransportSocketPool(transport_pool);
   session_peer.SetClientSocketPoolManager(std::move(mock_pool_manager));
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback;
 
@@ -11741,14 +11872,14 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
     rv = callback.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_FALSE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_TRUE(response->auth_challenge);
   EXPECT_EQ(0, transport_pool->IdleSocketCountInGroup(kSocketGroup));
 
   // In between rounds, another request comes in for the same domain.
   // It should not be able to grab the TCP socket that trans has already
   // claimed.
-  scoped_ptr<HttpTransaction> trans_compete(
+  std::unique_ptr<HttpTransaction> trans_compete(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   TestCompletionCallback callback_compete;
   rv = trans_compete->Start(
@@ -11765,8 +11896,8 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
     rv = callback.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(0, transport_pool->IdleSocketCountInGroup(kSocketGroup));
 
   // Third round of authentication.
@@ -11776,8 +11907,8 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
     rv = callback.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(0, transport_pool->IdleSocketCountInGroup(kSocketGroup));
 
   // Fourth round of authentication, which completes successfully.
@@ -11787,8 +11918,8 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
     rv = callback.WaitForResult();
   EXPECT_EQ(OK, rv);
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  EXPECT_TRUE(response->auth_challenge.get() == NULL);
+  ASSERT_TRUE(response);
+  EXPECT_FALSE(response->auth_challenge);
   EXPECT_EQ(0, transport_pool->IdleSocketCountInGroup(kSocketGroup));
 
   // Read the body since the fourth round was successful. This will also
@@ -11822,9 +11953,6 @@ TEST_P(HttpNetworkTransactionTest, MultiRoundAuth) {
 // This tests the case that a request is issued via http instead of spdy after
 // npn is negotiated.
 TEST_P(HttpNetworkTransactionTest, NpnWithHttpOverSSL) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo request;
   request.method = "GET";
   request.url = GURL("https://www.example.org/");
@@ -11837,12 +11965,12 @@ TEST_P(HttpNetworkTransactionTest, NpnWithHttpOverSSL) {
           "Connection: keep-alive\r\n\r\n"),
   };
 
-  std::string alternate_protocol_http_header =
-      GetAlternateProtocolHttpHeader();
+  std::string alternative_service_http_header =
+      GetAlternativeServiceHttpHeader();
 
   MockRead data_reads[] = {
       MockRead("HTTP/1.1 200 OK\r\n"),
-      MockRead(alternate_protocol_http_header.c_str()),
+      MockRead(alternative_service_http_header.c_str()),
       MockRead("\r\n"),
       MockRead("hello world"),
       MockRead(SYNCHRONOUS, OK),
@@ -11859,8 +11987,8 @@ TEST_P(HttpNetworkTransactionTest, NpnWithHttpOverSSL) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -11869,8 +11997,8 @@ TEST_P(HttpNetworkTransactionTest, NpnWithHttpOverSSL) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -11885,9 +12013,6 @@ TEST_P(HttpNetworkTransactionTest, NpnWithHttpOverSSL) {
 // immediate server closing of the socket.
 // Regression test for https://crbug.com/46369.
 TEST_P(HttpNetworkTransactionTest, SpdyPostNPNServerHangup) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   HttpRequestInfo request;
   request.method = "GET";
   request.url = GURL("https://www.example.org/");
@@ -11897,7 +12022,7 @@ TEST_P(HttpNetworkTransactionTest, SpdyPostNPNServerHangup) {
   ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<SpdyFrame> req(
+  std::unique_ptr<SpdySerializedFrame> req(
       spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, true));
   MockWrite spdy_writes[] = {CreateMockWrite(*req, 1)};
 
@@ -11911,8 +12036,8 @@ TEST_P(HttpNetworkTransactionTest, SpdyPostNPNServerHangup) {
 
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback.callback(), BoundNetLog());
@@ -11943,167 +12068,6 @@ class UrlRecordingHttpAuthHandlerMock : public HttpAuthHandlerMock {
   GURL* url_;
 };
 
-// This test ensures that the URL passed into the proxy is upgraded to https
-// when doing an Alternate Protocol upgrade.
-TEST_P(HttpNetworkTransactionTest, SpdyAlternateProtocolThroughProxy) {
-  session_deps_.parse_alternative_services = false;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
-  session_deps_.proxy_service =
-      ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
-  TestNetLog net_log;
-  session_deps_.net_log = &net_log;
-  GURL request_url;
-  {
-    HttpAuthHandlerMock::Factory* auth_factory =
-        new HttpAuthHandlerMock::Factory();
-    UrlRecordingHttpAuthHandlerMock* auth_handler =
-        new UrlRecordingHttpAuthHandlerMock(&request_url);
-    auth_factory->AddMockHandler(auth_handler, HttpAuth::AUTH_PROXY);
-    auth_factory->set_do_init_from_challenge(true);
-    session_deps_.http_auth_handler_factory.reset(auth_factory);
-  }
-
-  HttpRequestInfo request;
-  request.method = "GET";
-  request.url = GURL("http://www.example.org");
-  request.load_flags = 0;
-
-  // First round goes unauthenticated through the proxy.
-  MockWrite data_writes_1[] = {
-      MockWrite(
-          "GET http://www.example.org/ HTTP/1.1\r\n"
-          "Host: www.example.org\r\n"
-          "Proxy-Connection: keep-alive\r\n"
-          "\r\n"),
-  };
-  MockRead data_reads_1[] = {
-    MockRead(SYNCHRONOUS, ERR_TEST_PEER_CLOSE_AFTER_NEXT_MOCK_READ),
-    MockRead("HTTP/1.1 200 OK\r\n"),
-    MockRead("Alternate-Protocol: 443:"),
-    MockRead(GetAlternateProtocolFromParam()),
-    MockRead("\r\n"),
-    MockRead("Proxy-Connection: close\r\n"),
-    MockRead("\r\n"),
-  };
-  StaticSocketDataProvider data_1(data_reads_1, arraysize(data_reads_1),
-                                  data_writes_1, arraysize(data_writes_1));
-
-  // Second round tries to tunnel to www.example.org due to the
-  // Alternate-Protocol announcement in the first round. It fails due
-  // to a proxy authentication challenge.
-  // After the failure, a tunnel is established to www.example.org using
-  // Proxy-Authorization headers. There is then a SPDY request round.
-  //
-  // NOTE: Despite the "Proxy-Connection: Close", these are done on the
-  // same MockTCPClientSocket since the underlying HttpNetworkClientSocket
-  // does a Disconnect and Connect on the same socket, rather than trying
-  // to obtain a new one.
-  //
-  // NOTE: Originally, the proxy response to the second CONNECT request
-  // simply returned another 407 so the unit test could skip the SSL connection
-  // establishment and SPDY framing issues. Alas, the
-  // retry-http-when-alternate-protocol fails logic kicks in, which was more
-  // complicated to set up expectations for than the SPDY session.
-
-  scoped_ptr<SpdyFrame> req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, 1, LOWEST, true));
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
-
-  MockWrite data_writes_2[] = {
-      // First connection attempt without Proxy-Authorization.
-      MockWrite(ASYNC, 0,
-                "CONNECT www.example.org:443 HTTP/1.1\r\n"
-                "Host: www.example.org:443\r\n"
-                "Proxy-Connection: keep-alive\r\n"
-                "\r\n"),
-
-      // Second connection attempt with Proxy-Authorization.
-      MockWrite(ASYNC, 2,
-                "CONNECT www.example.org:443 HTTP/1.1\r\n"
-                "Host: www.example.org:443\r\n"
-                "Proxy-Connection: keep-alive\r\n"
-                "Proxy-Authorization: auth_token\r\n"
-                "\r\n"),
-
-      // SPDY request
-      CreateMockWrite(*req, 4),
-  };
-  MockRead data_reads_2[] = {
-      // First connection attempt fails
-      MockRead(ASYNC, 1,
-               "HTTP/1.1 407 Unauthorized\r\n"
-               "Proxy-Authenticate: Mock\r\n"
-               "Content-Length: 0\r\n"
-               "Proxy-Connection: keep-alive\r\n"
-               "\r\n"),
-
-      // Second connection attempt passes
-      MockRead(ASYNC, 3, "HTTP/1.1 200 Connected\r\n\r\n"),
-
-      // SPDY response
-      CreateMockRead(*resp.get(), 5), CreateMockRead(*data.get(), 6),
-      MockRead(ASYNC, 0, 0, 7),
-  };
-  SequencedSocketData data_2(data_reads_2, arraysize(data_reads_2),
-                             data_writes_2, arraysize(data_writes_2));
-
-  SSLSocketDataProvider ssl(ASYNC, OK);
-  ssl.SetNextProto(GetProtocol());
-  ssl.cert = ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
-  ASSERT_TRUE(ssl.cert.get());
-
-  MockConnect never_finishing_connect(SYNCHRONOUS, ERR_IO_PENDING);
-  StaticSocketDataProvider hanging_non_alternate_protocol_socket(
-      NULL, 0, NULL, 0);
-  hanging_non_alternate_protocol_socket.set_connect_data(
-      never_finishing_connect);
-
-  session_deps_.socket_factory->AddSocketDataProvider(&data_1);
-  session_deps_.socket_factory->AddSocketDataProvider(&data_2);
-  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
-  session_deps_.socket_factory->AddSocketDataProvider(
-      &hanging_non_alternate_protocol_socket);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-
-  // First round should work and provide the Alternate-Protocol state.
-  TestCompletionCallback callback_1;
-  scoped_ptr<HttpTransaction> trans_1(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-  int rv = trans_1->Start(&request, callback_1.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback_1.WaitForResult());
-
-  // Second round should attempt a tunnel connect and get an auth challenge.
-  TestCompletionCallback callback_2;
-  scoped_ptr<HttpTransaction> trans_2(
-      new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-  rv = trans_2->Start(&request, callback_2.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback_2.WaitForResult());
-  const HttpResponseInfo* response = trans_2->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_FALSE(response->auth_challenge.get() == NULL);
-
-  // Restart with auth. Tunnel should work and response received.
-  TestCompletionCallback callback_3;
-  rv = trans_2->RestartWithAuth(
-      AuthCredentials(kFoo, kBar), callback_3.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback_3.WaitForResult());
-
-  // After all that work, these two lines (or actually, just the scheme) are
-  // what this test is all about. Make sure it happens correctly.
-  EXPECT_EQ("https", request_url.scheme());
-  EXPECT_EQ("www.example.org", request_url.host());
-
-  LoadTimingInfo load_timing_info;
-  EXPECT_TRUE(trans_2->GetLoadTimingInfo(&load_timing_info));
-  TestLoadTimingNotReusedWithPac(load_timing_info,
-                                 CONNECT_TIMING_HAS_SSL_TIMES);
-}
-
 // Test that if we cancel the transaction as the connection is completing, that
 // everything tears down correctly.
 TEST_P(HttpNetworkTransactionTest, SimpleCancel) {
@@ -12125,8 +12089,8 @@ TEST_P(HttpNetworkTransactionTest, SimpleCancel) {
   request.load_flags = 0;
 
   session_deps_.host_resolver->set_synchronous_mode(true);
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
@@ -12140,7 +12104,7 @@ TEST_P(HttpNetworkTransactionTest, SimpleCancel) {
   EXPECT_EQ(ERR_IO_PENDING, rv);
   trans.reset();  // Cancel the transaction here.
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test that if a transaction is cancelled after receiving the headers, the
@@ -12163,7 +12127,7 @@ TEST_P(HttpNetworkTransactionTest, CancelAfterHeaders) {
   StaticSocketDataProvider data(data_reads, arraysize(data_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   {
     HttpRequestInfo request;
@@ -12179,15 +12143,15 @@ TEST_P(HttpNetworkTransactionTest, CancelAfterHeaders) {
     callback.WaitForResult();
 
     const HttpResponseInfo* response = trans.GetResponseInfo();
-    ASSERT_TRUE(response != NULL);
-    EXPECT_TRUE(response->headers.get() != NULL);
+    ASSERT_TRUE(response);
+    EXPECT_TRUE(response->headers);
     EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
 
     // The transaction and HttpRequestInfo are deleted.
   }
 
   // Let the HttpResponseBodyDrainer drain the socket.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Socket should now be idle, waiting to be reused.
   EXPECT_EQ(1, GetIdleSocketCountInTransportSocketPool(session.get()));
@@ -12199,7 +12163,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyGet) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   HttpRequestInfo request;
   request.method = "GET";
@@ -12225,12 +12189,12 @@ TEST_P(HttpNetworkTransactionTest, ProxyGet) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
-  BeforeProxyHeadersSentHandler proxy_headers_handler;
-  trans->SetBeforeProxyHeadersSentCallback(
-      base::Bind(&BeforeProxyHeadersSentHandler::OnBeforeProxyHeadersSent,
-                 base::Unretained(&proxy_headers_handler)));
+  BeforeHeadersSentHandler headers_handler;
+  trans->SetBeforeHeadersSentCallback(
+      base::Bind(&BeforeHeadersSentHandler::OnBeforeHeadersSent,
+                 base::Unretained(&headers_handler)));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -12239,7 +12203,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyGet) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -12247,8 +12211,9 @@ TEST_P(HttpNetworkTransactionTest, ProxyGet) {
   EXPECT_TRUE(response->was_fetched_via_proxy);
   EXPECT_TRUE(
       response->proxy_server.Equals(HostPortPair::FromString("myproxy:70")));
-  EXPECT_TRUE(proxy_headers_handler.observed_before_proxy_headers_sent());
-  EXPECT_EQ("myproxy:70", proxy_headers_handler.observed_proxy_server_uri());
+  EXPECT_TRUE(headers_handler.observed_before_headers_sent());
+  EXPECT_TRUE(headers_handler.observed_before_headers_sent_with_proxy());
+  EXPECT_EQ("myproxy:70", headers_handler.observed_proxy_server_uri());
   EXPECT_TRUE(HttpVersion(1, 1) == response->headers->GetHttpVersion());
 
   LoadTimingInfo load_timing_info;
@@ -12263,7 +12228,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGet) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   HttpRequestInfo request;
   request.method = "GET";
@@ -12297,8 +12262,12 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGet) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
+  BeforeHeadersSentHandler headers_handler;
+  trans->SetBeforeHeadersSentCallback(
+      base::Bind(&BeforeHeadersSentHandler::OnBeforeHeadersSent,
+                 base::Unretained(&headers_handler)));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -12316,7 +12285,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGet) {
       NetLog::PHASE_NONE);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -12325,6 +12294,9 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGet) {
   EXPECT_TRUE(response->was_fetched_via_proxy);
   EXPECT_TRUE(
       response->proxy_server.Equals(HostPortPair::FromString("myproxy:70")));
+  EXPECT_TRUE(headers_handler.observed_before_headers_sent());
+  EXPECT_TRUE(headers_handler.observed_before_headers_sent_with_proxy());
+  EXPECT_EQ("myproxy:70", headers_handler.observed_proxy_server_uri());
 
   LoadTimingInfo load_timing_info;
   EXPECT_TRUE(trans->GetLoadTimingInfo(&load_timing_info));
@@ -12339,7 +12311,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGetIPv6) {
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   HttpRequestInfo request;
   request.method = "GET";
@@ -12373,7 +12345,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGetIPv6) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -12391,7 +12363,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGetIPv6) {
       NetLog::PHASE_NONE);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
   EXPECT_TRUE(response->headers->IsKeepAlive());
   EXPECT_EQ(200, response->headers->response_code());
@@ -12413,7 +12385,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGetHangup) {
   session_deps_.proxy_service = ProxyService::CreateFixed("myproxy:70");
   BoundTestNetLog log;
   session_deps_.net_log = log.bound().net_log();
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   HttpRequestInfo request;
   request.method = "GET";
@@ -12444,7 +12416,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGetHangup) {
 
   TestCompletionCallback callback1;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request, callback1.callback(), log.bound());
@@ -12465,12 +12437,14 @@ TEST_P(HttpNetworkTransactionTest, ProxyTunnelGetHangup) {
 
 // Test for crbug.com/55424.
 TEST_P(HttpNetworkTransactionTest, PreconnectWithExistingSpdySession) {
-  scoped_ptr<SpdyFrame> req(
+  std::unique_ptr<SpdySerializedFrame> req(
       spdy_util_.ConstructSpdyGet("https://www.example.org", 1, LOWEST));
   MockWrite spdy_writes[] = {CreateMockWrite(*req, 0)};
 
-  scoped_ptr<SpdyFrame> resp(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> data(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> data(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*resp, 1), CreateMockRead(*data, 2), MockRead(ASYNC, 0, 3),
   };
@@ -12483,7 +12457,7 @@ TEST_P(HttpNetworkTransactionTest, PreconnectWithExistingSpdySession) {
   ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Set up an initial SpdySession in the pool to reuse.
   HostPortPair host_port_pair("www.example.org", 443);
@@ -12500,7 +12474,7 @@ TEST_P(HttpNetworkTransactionTest, PreconnectWithExistingSpdySession) {
   // This is the important line that marks this as a preconnect.
   request.motivation = HttpRequestInfo::PRECONNECT_MOTIVATED;
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -12526,8 +12500,8 @@ void HttpNetworkTransactionTest::CheckErrorIsPassedBack(
   session_deps_.socket_factory->AddSocketDataProvider(&data);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   TestCompletionCallback callback;
@@ -12613,8 +12587,8 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider data4(NULL, 0, NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&data4);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Begin the SSL handshake with the peer. This consumes ssl_data1.
@@ -12640,7 +12614,7 @@ TEST_P(HttpNetworkTransactionTest,
   scoped_refptr<SSLPrivateKey> client_private_key;
   ASSERT_TRUE(session->ssl_client_auth_cache()->Lookup(
       HostPortPair("www.example.com", 443), &client_cert, &client_private_key));
-  ASSERT_EQ(NULL, client_cert.get());
+  ASSERT_FALSE(client_cert);
 
   // Restart the handshake. This will consume ssl_data2, which fails, and
   // then consume ssl_data3 and ssl_data4, both of which should also fail.
@@ -12731,8 +12705,8 @@ TEST_P(HttpNetworkTransactionTest,
   StaticSocketDataProvider data5(data2_reads, arraysize(data2_reads), NULL, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&data5);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   // Begin the initial SSL handshake.
@@ -12758,7 +12732,7 @@ TEST_P(HttpNetworkTransactionTest,
   scoped_refptr<SSLPrivateKey> client_private_key;
   ASSERT_TRUE(session->ssl_client_auth_cache()->Lookup(
       HostPortPair("www.example.com", 443), &client_cert, &client_private_key));
-  ASSERT_EQ(NULL, client_cert.get());
+  ASSERT_FALSE(client_cert);
 
   // Restart the handshake. This will consume ssl_data2, which fails, and
   // then consume ssl_data3 and ssl_data4, both of which should also fail.
@@ -12824,8 +12798,8 @@ TEST_P(HttpNetworkTransactionTest, ClientAuthCertCache_Proxy_Fail) {
 
   for (size_t i = 0; i < arraysize(requests); ++i) {
     session_deps_.socket_factory->ResetNextMockIndexes();
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-    scoped_ptr<HttpNetworkTransaction> trans(
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpNetworkTransaction> trans(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
     // Begin the SSL handshake with the proxy.
@@ -12851,7 +12825,7 @@ TEST_P(HttpNetworkTransactionTest, ClientAuthCertCache_Proxy_Fail) {
     scoped_refptr<SSLPrivateKey> client_private_key;
     ASSERT_TRUE(session->ssl_client_auth_cache()->Lookup(
         HostPortPair("proxy", 70), &client_cert, &client_private_key));
-    ASSERT_EQ(NULL, client_cert.get());
+    ASSERT_FALSE(client_cert);
     // Ensure the certificate was NOT cached for the endpoint. This only
     // applies to HTTPS requests, but is fine to check for HTTP requests.
     ASSERT_FALSE(session->ssl_client_auth_cache()->Lookup(
@@ -12875,12 +12849,9 @@ TEST_P(HttpNetworkTransactionTest, ClientAuthCertCache_Proxy_Fail) {
 }
 
 TEST_P(HttpNetworkTransactionTest, UseIPConnectionPooling) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   // Set up a special HttpNetworkSession with a MockCachingHostResolver.
   session_deps_.host_resolver.reset(new MockCachingHostResolver());
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   SpdySessionPoolPeer pool_peer(session->spdy_session_pool());
   pool_peer.DisableDomainAuthenticationVerification();
 
@@ -12888,21 +12859,21 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPooling) {
   ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<SpdyFrame> host1_req(
+  std::unique_ptr<SpdySerializedFrame> host1_req(
       spdy_util_.ConstructSpdyGet("https://www.example.org", 1, LOWEST));
   spdy_util_.UpdateWithStreamDestruction(1);
-  scoped_ptr<SpdyFrame> host2_req(
+  std::unique_ptr<SpdySerializedFrame> host2_req(
       spdy_util_.ConstructSpdyGet("https://www.gmail.com", 3, LOWEST));
   MockWrite spdy_writes[] = {
       CreateMockWrite(*host1_req, 0), CreateMockWrite(*host2_req, 3),
   };
-  scoped_ptr<SpdyFrame> host1_resp(
+  std::unique_ptr<SpdySerializedFrame> host1_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> host1_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host1_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> host2_resp(
+  std::unique_ptr<SpdySerializedFrame> host2_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> host2_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host2_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(3, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*host1_resp, 1),
@@ -12912,9 +12883,7 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPooling) {
       MockRead(ASYNC, 0, 6),
   };
 
-  IPAddress ip;
-  ASSERT_TRUE(ip.AssignFromIPLiteral("127.0.0.1"));
-  IPEndPoint peer_addr = IPEndPoint(ip, 443);
+  IPEndPoint peer_addr(IPAddress::IPv4Localhost(), 443);
   MockConnect connect(ASYNC, OK, peer_addr);
   SequencedSocketData spdy_data(connect, spdy_reads, arraysize(spdy_reads),
                                 spdy_writes, arraysize(spdy_writes));
@@ -12932,8 +12901,8 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPooling) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans1.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -12965,8 +12934,8 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPooling) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans2.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -12975,12 +12944,9 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPooling) {
 }
 
 TEST_P(HttpNetworkTransactionTest, UseIPConnectionPoolingAfterResolution) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   // Set up a special HttpNetworkSession with a MockCachingHostResolver.
   session_deps_.host_resolver.reset(new MockCachingHostResolver());
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   SpdySessionPoolPeer pool_peer(session->spdy_session_pool());
   pool_peer.DisableDomainAuthenticationVerification();
 
@@ -12988,21 +12954,21 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPoolingAfterResolution) {
   ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<SpdyFrame> host1_req(
+  std::unique_ptr<SpdySerializedFrame> host1_req(
       spdy_util_.ConstructSpdyGet("https://www.example.org", 1, LOWEST));
   spdy_util_.UpdateWithStreamDestruction(1);
-  scoped_ptr<SpdyFrame> host2_req(
+  std::unique_ptr<SpdySerializedFrame> host2_req(
       spdy_util_.ConstructSpdyGet("https://www.gmail.com", 3, LOWEST));
   MockWrite spdy_writes[] = {
       CreateMockWrite(*host1_req, 0), CreateMockWrite(*host2_req, 3),
   };
-  scoped_ptr<SpdyFrame> host1_resp(
+  std::unique_ptr<SpdySerializedFrame> host1_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> host1_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host1_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> host2_resp(
+  std::unique_ptr<SpdySerializedFrame> host2_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> host2_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host2_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(3, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*host1_resp, 1),
@@ -13012,9 +12978,7 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPoolingAfterResolution) {
       MockRead(ASYNC, 0, 6),
   };
 
-  IPAddress ip;
-  ASSERT_TRUE(ip.AssignFromIPLiteral("127.0.0.1"));
-  IPEndPoint peer_addr = IPEndPoint(ip, 443);
+  IPEndPoint peer_addr(IPAddress::IPv4Localhost(), 443);
   MockConnect connect(ASYNC, OK, peer_addr);
   SequencedSocketData spdy_data(connect, spdy_reads, arraysize(spdy_reads),
                                 spdy_writes, arraysize(spdy_writes));
@@ -13032,8 +12996,8 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPoolingAfterResolution) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans1.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -13051,8 +13015,8 @@ TEST_P(HttpNetworkTransactionTest, UseIPConnectionPoolingAfterResolution) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans2.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -13103,15 +13067,12 @@ class OneTimeCachingHostResolver : public HostResolver {
 
 TEST_P(HttpNetworkTransactionTest,
        UseIPConnectionPoolingWithHostCacheExpiration) {
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-
   // Set up a special HttpNetworkSession with a OneTimeCachingHostResolver.
   OneTimeCachingHostResolver host_resolver(HostPortPair("www.gmail.com", 443));
   HttpNetworkSession::Params params =
       SpdySessionDependencies::CreateSessionParams(&session_deps_);
   params.host_resolver = &host_resolver;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   SpdySessionPoolPeer pool_peer(session->spdy_session_pool());
   pool_peer.DisableDomainAuthenticationVerification();
 
@@ -13119,21 +13080,21 @@ TEST_P(HttpNetworkTransactionTest,
   ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<SpdyFrame> host1_req(
+  std::unique_ptr<SpdySerializedFrame> host1_req(
       spdy_util_.ConstructSpdyGet("https://www.example.org", 1, LOWEST));
   spdy_util_.UpdateWithStreamDestruction(1);
-  scoped_ptr<SpdyFrame> host2_req(
+  std::unique_ptr<SpdySerializedFrame> host2_req(
       spdy_util_.ConstructSpdyGet("https://www.gmail.com", 3, LOWEST));
   MockWrite spdy_writes[] = {
       CreateMockWrite(*host1_req, 0), CreateMockWrite(*host2_req, 3),
   };
-  scoped_ptr<SpdyFrame> host1_resp(
+  std::unique_ptr<SpdySerializedFrame> host1_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> host1_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host1_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> host2_resp(
+  std::unique_ptr<SpdySerializedFrame> host2_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> host2_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host2_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(3, true));
   MockRead spdy_reads[] = {
       CreateMockRead(*host1_resp, 1),
@@ -13143,9 +13104,7 @@ TEST_P(HttpNetworkTransactionTest,
       MockRead(ASYNC, 0, 6),
   };
 
-  IPAddress ip;
-  ASSERT_TRUE(ip.AssignFromIPLiteral("127.0.0.1"));
-  IPEndPoint peer_addr = IPEndPoint(ip, 443);
+  IPEndPoint peer_addr(IPAddress::IPv4Localhost(), 443);
   MockConnect connect(ASYNC, OK, peer_addr);
   SequencedSocketData spdy_data(connect, spdy_reads, arraysize(spdy_reads),
                                 spdy_writes, arraysize(spdy_writes));
@@ -13163,8 +13122,8 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans1.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -13195,8 +13154,8 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans2.GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -13209,15 +13168,17 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttp) {
   const std::string http_url = "http://www.example.org:8080/";
 
   // SPDY GET for HTTPS URL
-  scoped_ptr<SpdyFrame> req1(
+  std::unique_ptr<SpdySerializedFrame> req1(
       spdy_util_.ConstructSpdyGet(https_url.c_str(), 1, LOWEST));
 
   MockWrite writes1[] = {
     CreateMockWrite(*req1, 0),
   };
 
-  scoped_ptr<SpdyFrame> resp1(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> body1(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp1(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> body1(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead reads1[] = {CreateMockRead(*resp1, 1), CreateMockRead(*body1, 2),
                        MockRead(SYNCHRONOUS, ERR_IO_PENDING, 3)};
 
@@ -13249,7 +13210,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttp) {
   session_deps_.socket_factory->AddSocketDataProvider(&data1);
   session_deps_.socket_factory->AddSocketDataProvider(&data2);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Start the first transaction to set up the SpdySession
   HttpRequestInfo request1;
@@ -13260,7 +13221,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttp) {
   TestCompletionCallback callback1;
   EXPECT_EQ(ERR_IO_PENDING,
             trans1.Start(&request1, callback1.callback(), BoundNetLog()));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(OK, callback1.WaitForResult());
   EXPECT_TRUE(trans1.GetResponseInfo()->was_fetched_via_spdy);
@@ -13274,7 +13235,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttp) {
   TestCompletionCallback callback2;
   EXPECT_EQ(ERR_IO_PENDING,
             trans2.Start(&request2, callback2.callback(), BoundNetLog()));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(OK, callback2.WaitForResult());
   EXPECT_FALSE(trans2.GetResponseInfo()->was_fetched_via_spdy);
@@ -13283,17 +13244,17 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttp) {
 class AltSvcCertificateVerificationTest : public HttpNetworkTransactionTest {
  public:
   void Run(bool pooling, bool valid) {
-    HostPortPair origin(valid ? "mail.example.org" : "invalid.example.org",
-                        443);
+    url::SchemeHostPort server(GURL(valid ? "https://mail.example.org:443"
+                                          : "https://invalid.example.org:443"));
     HostPortPair alternative("www.example.org", 443);
 
     base::FilePath certs_dir = GetTestCertsDirectory();
     scoped_refptr<X509Certificate> cert(
         ImportCertFromFile(certs_dir, "spdy_pooling.pem"));
-    ASSERT_TRUE(cert.get());
+    ASSERT_TRUE(cert);
     bool common_name_fallback_used;
     EXPECT_EQ(valid,
-              cert->VerifyNameMatch(origin.host(), &common_name_fallback_used));
+              cert->VerifyNameMatch(server.host(), &common_name_fallback_used));
     EXPECT_TRUE(
         cert->VerifyNameMatch(alternative.host(), &common_name_fallback_used));
     SSLSocketDataProvider ssl(ASYNC, OK);
@@ -13304,18 +13265,18 @@ class AltSvcCertificateVerificationTest : public HttpNetworkTransactionTest {
     // If pooling, then start a request to alternative first to create a
     // SpdySession.
     std::string url0 = "https://www.example.org:443";
-    // Second request to origin, which has an alternative service, and could
+    // Second request to server, which has an alternative service, and could
     // open a connection to the alternative host or pool to the existing one.
     std::string url1("https://");
-    url1.append(origin.host());
+    url1.append(server.host());
     url1.append(":443");
 
-    scoped_ptr<SpdyFrame> req0;
-    scoped_ptr<SpdyFrame> req1;
-    scoped_ptr<SpdyFrame> resp0;
-    scoped_ptr<SpdyFrame> body0;
-    scoped_ptr<SpdyFrame> resp1;
-    scoped_ptr<SpdyFrame> body1;
+    std::unique_ptr<SpdySerializedFrame> req0;
+    std::unique_ptr<SpdySerializedFrame> req1;
+    std::unique_ptr<SpdySerializedFrame> resp0;
+    std::unique_ptr<SpdySerializedFrame> body0;
+    std::unique_ptr<SpdySerializedFrame> resp1;
+    std::unique_ptr<SpdySerializedFrame> body1;
     std::vector<MockWrite> writes;
     std::vector<MockRead> reads;
 
@@ -13355,26 +13316,24 @@ class AltSvcCertificateVerificationTest : public HttpNetworkTransactionTest {
                              writes.size());
     session_deps_.socket_factory->AddSocketDataProvider(&data);
 
-    // Connection to the origin fails.
+    // Connection to the server fails.
     MockConnect mock_connect(ASYNC, ERR_CONNECTION_REFUSED);
     StaticSocketDataProvider data_refused;
     data_refused.set_connect_data(mock_connect);
     session_deps_.socket_factory->AddSocketDataProvider(&data_refused);
 
-    session_deps_.parse_alternative_services = true;
-    session_deps_.enable_alternative_service_with_different_host = true;
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-    base::WeakPtr<HttpServerProperties> http_server_properties =
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    HttpServerProperties* http_server_properties =
         session->http_server_properties();
     AlternativeService alternative_service(
         AlternateProtocolFromNextProto(GetProtocol()), alternative);
     base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-    http_server_properties->SetAlternativeService(origin, alternative_service,
-                                                  1.0, expiration);
+    http_server_properties->SetAlternativeService(server, alternative_service,
+                                                  expiration);
 
     // First request to alternative.
     if (pooling) {
-      scoped_ptr<HttpTransaction> trans0(
+      std::unique_ptr<HttpTransaction> trans0(
           new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
       HttpRequestInfo request0;
       request0.method = "GET";
@@ -13389,7 +13348,7 @@ class AltSvcCertificateVerificationTest : public HttpNetworkTransactionTest {
     }
 
     // Second request to origin.
-    scoped_ptr<HttpTransaction> trans1(
+    std::unique_ptr<HttpTransaction> trans1(
         new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
     HttpRequestInfo request1;
     request1.method = "GET";
@@ -13399,7 +13358,7 @@ class AltSvcCertificateVerificationTest : public HttpNetworkTransactionTest {
 
     int rv = trans1->Start(&request1, callback1.callback(), BoundNetLog());
     EXPECT_EQ(ERR_IO_PENDING, rv);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     if (data.IsPaused())
       data.Resume();
     rv = callback1.WaitForResult();
@@ -13438,17 +13397,18 @@ TEST_P(AltSvcCertificateVerificationTest, NewConnectionValid) {
   Run(false, true);
 }
 
-TEST_P(AltSvcCertificateVerificationTest, NewConnectionInvalid) {
+// TODO(bnc): Re-enable when https://crbug.com/615413 is fixed.
+TEST_P(AltSvcCertificateVerificationTest, DISABLED_NewConnectionInvalid) {
   Run(false, false);
 }
 
 // Alternative service requires HTTP/2 (or SPDY), but HTTP/1.1 is negotiated
 // with the alternative server.  That connection should not be used.
 TEST_P(HttpNetworkTransactionTest, AlternativeServiceNotOnHttp11) {
-  HostPortPair origin("origin.example.org", 443);
-  HostPortPair alternative("alternative.example.org", 443);
+  url::SchemeHostPort server("https", "www.example.org", 443);
+  HostPortPair alternative("www.example.org", 444);
 
-  // Negotiate HTTP/1.1 with alternative.example.org.
+  // Negotiate HTTP/1.1 with alternative.
   SSLSocketDataProvider ssl(ASYNC, OK);
   ssl.SetNextProto(kProtoHTTP11);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
@@ -13459,29 +13419,27 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceNotOnHttp11) {
   session_deps_.socket_factory->AddSocketDataProvider(&data);
 
   // This test documents that an alternate Job should not be used if HTTP/1.1 is
-  // negotiated.  In order to test this, a failed connection to the origin is
+  // negotiated.  In order to test this, a failed connection to the server is
   // mocked.  This way the request relies on the alternate Job.
   StaticSocketDataProvider data_refused;
   data_refused.set_connect_data(MockConnect(ASYNC, ERR_CONNECTION_REFUSED));
   session_deps_.socket_factory->AddSocketDataProvider(&data_refused);
 
-  // Set up alternative service for origin.
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = true;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  // Set up alternative service for server.
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   AlternativeService alternative_service(
       AlternateProtocolFromNextProto(GetProtocol()), alternative);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties->SetAlternativeService(origin, alternative_service,
-                                                1.0, expiration);
+  http_server_properties->SetAlternativeService(server, alternative_service,
+                                                expiration);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   HttpRequestInfo request;
   request.method = "GET";
-  request.url = GURL("https://origin.example.org:443");
+  request.url = GURL("https://www.example.org:443");
   request.load_flags = 0;
   TestCompletionCallback callback;
 
@@ -13492,12 +13450,12 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceNotOnHttp11) {
 }
 
 // A request to a server with an alternative service fires two Jobs: one to the
-// origin, and an alternate one to the alternative server.  If the former
+// server, and an alternate one to the alternative server.  If the former
 // succeeds, the request should succeed,  even if the latter fails because
 // HTTP/1.1 is negotiated which is insufficient for alternative service.
 TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
-  HostPortPair origin("origin.example.org", 443);
-  HostPortPair alternative("alternative.example.org", 443);
+  url::SchemeHostPort server("https", "www.example.org", 443);
+  HostPortPair alternative("www.example.org", 444);
 
   // Negotiate HTTP/1.1 with alternative.
   SSLSocketDataProvider alternative_ssl(ASYNC, OK);
@@ -13509,20 +13467,18 @@ TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
   StaticSocketDataProvider data;
   session_deps_.socket_factory->AddSocketDataProvider(&data);
 
-  // Negotiate HTTP/1.1 with origin.
+  // Negotiate HTTP/1.1 with server.
   SSLSocketDataProvider origin_ssl(ASYNC, OK);
   origin_ssl.SetNextProto(kProtoHTTP11);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&origin_ssl);
 
   MockWrite http_writes[] = {
-      MockWrite(
-          "GET / HTTP/1.1\r\n"
-          "Host: origin.example.org\r\n"
-          "Connection: keep-alive\r\n\r\n"),
-      MockWrite(
-          "GET /second HTTP/1.1\r\n"
-          "Host: origin.example.org\r\n"
-          "Connection: keep-alive\r\n\r\n"),
+      MockWrite("GET / HTTP/1.1\r\n"
+                "Host: www.example.org\r\n"
+                "Connection: keep-alive\r\n\r\n"),
+      MockWrite("GET /second HTTP/1.1\r\n"
+                "Host: www.example.org\r\n"
+                "Connection: keep-alive\r\n\r\n"),
   };
 
   MockRead http_reads[] = {
@@ -13539,22 +13495,20 @@ TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
                                      http_writes, arraysize(http_writes));
   session_deps_.socket_factory->AddSocketDataProvider(&http_data);
 
-  // Set up alternative service for origin.
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = true;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  // Set up alternative service for server.
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   AlternativeService alternative_service(
       AlternateProtocolFromNextProto(GetProtocol()), alternative);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties->SetAlternativeService(origin, alternative_service,
-                                                1.0, expiration);
+  http_server_properties->SetAlternativeService(server, alternative_service,
+                                                expiration);
 
   HttpNetworkTransaction trans1(DEFAULT_PRIORITY, session.get());
   HttpRequestInfo request1;
   request1.method = "GET";
-  request1.url = GURL("https://origin.example.org:443");
+  request1.url = GURL("https://www.example.org:443");
   request1.load_flags = 0;
   TestCompletionCallback callback1;
 
@@ -13563,8 +13517,8 @@ TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response1 = trans1.GetResponseInfo();
-  ASSERT_TRUE(response1 != nullptr);
-  ASSERT_TRUE(response1->headers.get() != nullptr);
+  ASSERT_TRUE(response1);
+  ASSERT_TRUE(response1->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response1->headers->GetStatusLine());
 
   std::string response_data1;
@@ -13576,13 +13530,13 @@ TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
   EXPECT_TRUE(
       http_server_properties->IsAlternativeServiceBroken(alternative_service));
 
-  // Since |alternative_service| is broken, a second transaction to origin
+  // Since |alternative_service| is broken, a second transaction to server
   // should not start an alternate Job.  It should pool to existing connection
-  // to origin.
+  // to server.
   HttpNetworkTransaction trans2(DEFAULT_PRIORITY, session.get());
   HttpRequestInfo request2;
   request2.method = "GET";
-  request2.url = GURL("https://origin.example.org:443/second");
+  request2.url = GURL("https://www.example.org:443/second");
   request2.load_flags = 0;
   TestCompletionCallback callback2;
 
@@ -13591,8 +13545,8 @@ TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response2 = trans2.GetResponseInfo();
-  ASSERT_TRUE(response2 != nullptr);
-  ASSERT_TRUE(response2->headers.get() != nullptr);
+  ASSERT_TRUE(response2);
+  ASSERT_TRUE(response2->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response2->headers->GetStatusLine());
 
   std::string response_data2;
@@ -13604,7 +13558,7 @@ TEST_P(HttpNetworkTransactionTest, FailedAlternativeServiceIsNotUserVisible) {
 // HTTP/1.1 socket open to the alternative server.  That socket should not be
 // used.
 TEST_P(HttpNetworkTransactionTest, AlternativeServiceShouldNotPoolToHttp11) {
-  HostPortPair origin("origin.example.org", 443);
+  url::SchemeHostPort server("https", "origin.example.org", 443);
   HostPortPair alternative("alternative.example.org", 443);
   std::string origin_url = "https://origin.example.org:443";
   std::string alternative_url = "https://alternative.example.org:443";
@@ -13644,25 +13598,23 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceShouldNotPoolToHttp11) {
 
   // This test documents that an alternate Job should not pool to an already
   // existing HTTP/1.1 connection.  In order to test this, a failed connection
-  // to the origin is mocked.  This way |request2| relies on the alternate Job.
+  // to the server is mocked.  This way |request2| relies on the alternate Job.
   StaticSocketDataProvider data_refused;
   data_refused.set_connect_data(MockConnect(ASYNC, ERR_CONNECTION_REFUSED));
   session_deps_.socket_factory->AddSocketDataProvider(&data_refused);
 
-  // Set up alternative service for origin.
-  session_deps_.parse_alternative_services = true;
-  session_deps_.enable_alternative_service_with_different_host = false;
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  base::WeakPtr<HttpServerProperties> http_server_properties =
+  // Set up alternative service for server.
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  HttpServerProperties* http_server_properties =
       session->http_server_properties();
   AlternativeService alternative_service(
       AlternateProtocolFromNextProto(GetProtocol()), alternative);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  http_server_properties->SetAlternativeService(origin, alternative_service,
-                                                1.0, expiration);
+  http_server_properties->SetAlternativeService(server, alternative_service,
+                                                expiration);
 
   // First transaction to alternative to open an HTTP/1.1 socket.
-  scoped_ptr<HttpTransaction> trans1(
+  std::unique_ptr<HttpTransaction> trans1(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   HttpRequestInfo request1;
   request1.method = "GET";
@@ -13674,7 +13626,7 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceShouldNotPoolToHttp11) {
   EXPECT_EQ(OK, callback1.GetResult(rv));
   const HttpResponseInfo* response1 = trans1->GetResponseInfo();
   ASSERT_TRUE(response1);
-  ASSERT_TRUE(response1->headers.get());
+  ASSERT_TRUE(response1->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response1->headers->GetStatusLine());
   EXPECT_TRUE(response1->was_npn_negotiated);
   EXPECT_FALSE(response1->was_fetched_via_spdy);
@@ -13685,9 +13637,9 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceShouldNotPoolToHttp11) {
   // Request for origin.example.org, which has an alternative service.  This
   // will start two Jobs: the alternative looks for connections to pool to,
   // finds one which is HTTP/1.1, and should ignore it, and should not try to
-  // open other connections to alternative server.  The Job to origin fails, so
+  // open other connections to alternative server.  The Job to server fails, so
   // this request fails.
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   HttpRequestInfo request2;
   request2.method = "GET";
@@ -13700,7 +13652,7 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceShouldNotPoolToHttp11) {
 
   // Another transaction to alternative.  This is to test that the HTTP/1.1
   // socket is still open and in the pool.
-  scoped_ptr<HttpTransaction> trans3(
+  std::unique_ptr<HttpTransaction> trans3(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   HttpRequestInfo request3;
   request3.method = "GET";
@@ -13712,7 +13664,7 @@ TEST_P(HttpNetworkTransactionTest, AlternativeServiceShouldNotPoolToHttp11) {
   EXPECT_EQ(OK, callback3.GetResult(rv));
   const HttpResponseInfo* response3 = trans3->GetResponseInfo();
   ASSERT_TRUE(response3);
-  ASSERT_TRUE(response3->headers.get());
+  ASSERT_TRUE(response3->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response3->headers->GetStatusLine());
   EXPECT_TRUE(response3->was_npn_negotiated);
   EXPECT_FALSE(response3->was_fetched_via_spdy);
@@ -13730,11 +13682,11 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttpOverTunnel) {
 
   // SPDY GET for HTTPS URL (through CONNECT tunnel)
   const HostPortPair host_port_pair("www.example.org", 8080);
-  scoped_ptr<SpdyFrame> connect(
+  std::unique_ptr<SpdySerializedFrame> connect(
       spdy_util_.ConstructSpdyConnect(NULL, 0, 1, LOWEST, host_port_pair));
-  scoped_ptr<SpdyFrame> req1(
+  std::unique_ptr<SpdySerializedFrame> req1(
       spdy_util_wrapped.ConstructSpdyGet(https_url.c_str(), 1, LOWEST));
-  scoped_ptr<SpdyFrame> wrapped_req1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_req1(
       spdy_util_.ConstructWrappedSpdyFrame(req1, 1));
 
   // SPDY GET for HTTP URL (through the proxy, but not the tunnel).
@@ -13744,26 +13696,28 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttpOverTunnel) {
   req2_block[spdy_util_.GetHostKey()] = "www.example.org:8080";
   req2_block[spdy_util_.GetSchemeKey()] = "http";
   req2_block[spdy_util_.GetPathKey()] = "/";
-  scoped_ptr<SpdyFrame> req2(
-      spdy_util_.ConstructSpdySyn(3, req2_block, MEDIUM, true));
+  std::unique_ptr<SpdySerializedFrame> req2(
+      spdy_util_.ConstructSpdySyn(3, std::move(req2_block), MEDIUM, true));
 
   MockWrite writes1[] = {
       CreateMockWrite(*connect, 0), CreateMockWrite(*wrapped_req1, 2),
       CreateMockWrite(*req2, 6),
   };
 
-  scoped_ptr<SpdyFrame> conn_resp(
+  std::unique_ptr<SpdySerializedFrame> conn_resp(
       spdy_util_.ConstructSpdyGetSynReply(nullptr, 0, 1));
-  scoped_ptr<SpdyFrame> resp1(
+  std::unique_ptr<SpdySerializedFrame> resp1(
       spdy_util_wrapped.ConstructSpdyGetSynReply(nullptr, 0, 1));
-  scoped_ptr<SpdyFrame> body1(
+  std::unique_ptr<SpdySerializedFrame> body1(
       spdy_util_wrapped.ConstructSpdyBodyFrame(1, true));
-  scoped_ptr<SpdyFrame> wrapped_resp1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_resp1(
       spdy_util_wrapped.ConstructWrappedSpdyFrame(resp1, 1));
-  scoped_ptr<SpdyFrame> wrapped_body1(
+  std::unique_ptr<SpdySerializedFrame> wrapped_body1(
       spdy_util_wrapped.ConstructWrappedSpdyFrame(body1, 1));
-  scoped_ptr<SpdyFrame> resp2(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
-  scoped_ptr<SpdyFrame> body2(spdy_util_.ConstructSpdyBodyFrame(3, true));
+  std::unique_ptr<SpdySerializedFrame> resp2(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 3));
+  std::unique_ptr<SpdySerializedFrame> body2(
+      spdy_util_.ConstructSpdyBodyFrame(3, true));
   MockRead reads1[] = {
       CreateMockRead(*conn_resp, 1),
       MockRead(ASYNC, ERR_IO_PENDING, 3),
@@ -13792,7 +13746,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionForHttpOverTunnel) {
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl2);
   session_deps_.socket_factory->AddSocketDataProvider(&data1);
 
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
   // Start the first transaction to set up the SpdySession
   HttpRequestInfo request1;
@@ -13854,17 +13808,19 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionIfCertDoesNotMatch) {
   SpdyTestUtil spdy_util_secure(GetProtocol(), GetDependenciesFromPriority());
 
   // SPDY GET for HTTP URL (through SPDY proxy)
-  scoped_ptr<SpdyHeaderBlock> headers(
+  SpdyHeaderBlock headers(
       spdy_util_.ConstructGetHeaderBlockForProxy("http://www.example.org/"));
-  scoped_ptr<SpdyFrame> req1(
-      spdy_util_.ConstructSpdySyn(1, *headers, LOWEST, true));
+  std::unique_ptr<SpdySerializedFrame> req1(
+      spdy_util_.ConstructSpdySyn(1, std::move(headers), LOWEST, true));
 
   MockWrite writes1[] = {
     CreateMockWrite(*req1, 0),
   };
 
-  scoped_ptr<SpdyFrame> resp1(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> body1(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp1(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> body1(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead reads1[] = {
       MockRead(ASYNC, ERR_IO_PENDING, 1), CreateMockRead(*resp1, 2),
       CreateMockRead(*body1, 3), MockRead(ASYNC, OK, 4),  // EOF
@@ -13879,16 +13835,17 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionIfCertDoesNotMatch) {
   data1.set_connect_data(connect_data1);
 
   // SPDY GET for HTTPS URL (direct)
-  scoped_ptr<SpdyFrame> req2(
+  std::unique_ptr<SpdySerializedFrame> req2(
       spdy_util_secure.ConstructSpdyGet(url2.c_str(), 1, MEDIUM));
 
   MockWrite writes2[] = {
     CreateMockWrite(*req2, 0),
   };
 
-  scoped_ptr<SpdyFrame> resp2(
+  std::unique_ptr<SpdySerializedFrame> resp2(
       spdy_util_secure.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> body2(spdy_util_secure.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> body2(
+      spdy_util_secure.ConstructSpdyBodyFrame(1, true));
   MockRead reads2[] = {CreateMockRead(*resp2, 1), CreateMockRead(*body2, 2),
                        MockRead(ASYNC, OK, 3)};
 
@@ -13902,7 +13859,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionIfCertDoesNotMatch) {
   ProxyConfig proxy_config;
   proxy_config.proxy_rules().ParseFromString("http=https://proxy:443");
   session_deps_.proxy_service.reset(new ProxyService(
-      make_scoped_ptr(new ProxyConfigServiceFixed(proxy_config)), nullptr,
+      base::WrapUnique(new ProxyConfigServiceFixed(proxy_config)), nullptr,
       NULL));
 
   SSLSocketDataProvider ssl1(ASYNC, OK);  // to the proxy
@@ -13912,7 +13869,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionIfCertDoesNotMatch) {
   // not actually verify it.  But SpdySession will use this
   // to see if it is valid for the new origin
   ssl1.cert = ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(ssl1.cert.get());
+  ASSERT_TRUE(ssl1.cert);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl1);
   session_deps_.socket_factory->AddSocketDataProvider(&data1);
 
@@ -13925,7 +13882,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionIfCertDoesNotMatch) {
   session_deps_.host_resolver->rules()->AddRule("news.example.org", ip_addr);
   session_deps_.host_resolver->rules()->AddRule("proxy", ip_addr);
 
-  scoped_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
+  std::unique_ptr<HttpNetworkSession> session = CreateSession(&session_deps_);
 
   // Start the first transaction to set up the SpdySession
   HttpRequestInfo request1;
@@ -13953,7 +13910,7 @@ TEST_P(HttpNetworkTransactionTest, DoNotUseSpdySessionIfCertDoesNotMatch) {
   TestCompletionCallback callback2;
   EXPECT_EQ(ERR_IO_PENDING,
             trans2.Start(&request2, callback2.callback(), BoundNetLog()));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ASSERT_TRUE(callback2.have_result());
   EXPECT_EQ(OK, callback2.WaitForResult());
@@ -13973,14 +13930,16 @@ TEST_P(HttpNetworkTransactionTest, ErrorSocketNotConnected) {
 
   SequencedSocketData data1(reads1, arraysize(reads1), NULL, 0);
 
-  scoped_ptr<SpdyFrame> req2(
+  std::unique_ptr<SpdySerializedFrame> req2(
       spdy_util_.ConstructSpdyGet(https_url.c_str(), 1, MEDIUM));
   MockWrite writes2[] = {
     CreateMockWrite(*req2, 0),
   };
 
-  scoped_ptr<SpdyFrame> resp2(spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> body2(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> resp2(
+      spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
+  std::unique_ptr<SpdySerializedFrame> body2(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead reads2[] = {
     CreateMockRead(*resp2, 1),
     CreateMockRead(*body2, 2),
@@ -14000,7 +13959,7 @@ TEST_P(HttpNetworkTransactionTest, ErrorSocketNotConnected) {
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl2);
   session_deps_.socket_factory->AddSocketDataProvider(&data2);
 
-  scoped_ptr<HttpNetworkSession> session(
+  std::unique_ptr<HttpNetworkSession> session(
       SpdySessionDependencies::SpdyCreateSession(&session_deps_));
 
   // Start the first transaction to set up the SpdySession and verify that
@@ -14038,7 +13997,7 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   // Use two different hosts with different IPs so they don't get pooled.
   session_deps_.host_resolver->rules()->AddRule("www.a.com", "10.0.0.1");
   session_deps_.host_resolver->rules()->AddRule("www.b.com", "10.0.0.2");
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   SSLSocketDataProvider ssl1(ASYNC, OK);
   ssl1.SetNextProto(GetProtocol());
@@ -14047,14 +14006,14 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl1);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl2);
 
-  scoped_ptr<SpdyFrame> host1_req(
+  std::unique_ptr<SpdySerializedFrame> host1_req(
       spdy_util_.ConstructSpdyGet("https://www.a.com", 1, DEFAULT_PRIORITY));
   MockWrite spdy1_writes[] = {
       CreateMockWrite(*host1_req, 0),
   };
-  scoped_ptr<SpdyFrame> host1_resp(
+  std::unique_ptr<SpdySerializedFrame> host1_resp(
       spdy_util_.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> host1_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host1_resp_body(
       spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead spdy1_reads[] = {
       CreateMockRead(*host1_resp, 1), CreateMockRead(*host1_resp_body, 2),
@@ -14064,26 +14023,26 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   // Use a separate test instance for the separate SpdySession that will be
   // created.
   SpdyTestUtil spdy_util_2(GetProtocol(), GetDependenciesFromPriority());
-  scoped_ptr<SequencedSocketData> spdy1_data(
+  std::unique_ptr<SequencedSocketData> spdy1_data(
       new SequencedSocketData(spdy1_reads, arraysize(spdy1_reads), spdy1_writes,
                               arraysize(spdy1_writes)));
   session_deps_.socket_factory->AddSocketDataProvider(spdy1_data.get());
 
-  scoped_ptr<SpdyFrame> host2_req(
+  std::unique_ptr<SpdySerializedFrame> host2_req(
       spdy_util_2.ConstructSpdyGet("https://www.b.com", 1, DEFAULT_PRIORITY));
   MockWrite spdy2_writes[] = {
       CreateMockWrite(*host2_req, 0),
   };
-  scoped_ptr<SpdyFrame> host2_resp(
+  std::unique_ptr<SpdySerializedFrame> host2_resp(
       spdy_util_2.ConstructSpdyGetSynReply(NULL, 0, 1));
-  scoped_ptr<SpdyFrame> host2_resp_body(
+  std::unique_ptr<SpdySerializedFrame> host2_resp_body(
       spdy_util_2.ConstructSpdyBodyFrame(1, true));
   MockRead spdy2_reads[] = {
       CreateMockRead(*host2_resp, 1), CreateMockRead(*host2_resp_body, 2),
       MockRead(SYNCHRONOUS, ERR_IO_PENDING, 3),
   };
 
-  scoped_ptr<SequencedSocketData> spdy2_data(
+  std::unique_ptr<SequencedSocketData> spdy2_data(
       new SequencedSocketData(spdy2_reads, arraysize(spdy2_reads), spdy2_writes,
                               arraysize(spdy2_writes)));
   session_deps_.socket_factory->AddSocketDataProvider(spdy2_data.get());
@@ -14115,7 +14074,7 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   request1.method = "GET";
   request1.url = GURL("https://www.a.com/");
   request1.load_flags = 0;
-  scoped_ptr<HttpNetworkTransaction> trans(
+  std::unique_ptr<HttpNetworkTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   int rv = trans->Start(&request1, callback.callback(), BoundNetLog());
@@ -14123,8 +14082,8 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -14152,8 +14111,8 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200", response->headers->GetStatusLine());
   EXPECT_TRUE(response->was_fetched_via_spdy);
   EXPECT_TRUE(response->was_npn_negotiated);
@@ -14180,8 +14139,8 @@ TEST_P(HttpNetworkTransactionTest, CloseIdleSpdySessionToOpenNewOne) {
   EXPECT_EQ(OK, callback.WaitForResult());
 
   response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
-  ASSERT_TRUE(response->headers.get() != NULL);
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.1 200 OK", response->headers->GetStatusLine());
   EXPECT_FALSE(response->was_fetched_via_spdy);
   EXPECT_FALSE(response->was_npn_negotiated);
@@ -14199,8 +14158,8 @@ TEST_P(HttpNetworkTransactionTest, HttpSyncConnectError) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockConnect mock_connect(SYNCHRONOUS, ERR_NAME_NOT_RESOLVED);
@@ -14236,8 +14195,8 @@ TEST_P(HttpNetworkTransactionTest, HttpAsyncConnectError) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockConnect mock_connect(ASYNC, ERR_NAME_NOT_RESOLVED);
@@ -14273,8 +14232,8 @@ TEST_P(HttpNetworkTransactionTest, HttpSyncWriteError) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -14307,8 +14266,8 @@ TEST_P(HttpNetworkTransactionTest, HttpAsyncWriteError) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -14341,8 +14300,8 @@ TEST_P(HttpNetworkTransactionTest, HttpSyncReadError) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -14378,8 +14337,8 @@ TEST_P(HttpNetworkTransactionTest, HttpAsyncReadError) {
   request.url = GURL("http://www.example.org/");
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -14416,8 +14375,8 @@ TEST_P(HttpNetworkTransactionTest, GetFullRequestHeadersIncludesExtraHeader) {
   request.load_flags = 0;
   request.extra_headers.SetHeader("X-Foo", "bar");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -14643,7 +14602,7 @@ class FakeStreamFactory : public HttpStreamFactory {
     return fake_request;
   }
 
-  HttpStreamRequest* RequestBidirectionalStreamJob(
+  HttpStreamRequest* RequestBidirectionalStreamImpl(
       const HttpRequestInfo& info,
       RequestPriority priority,
       const SSLConfig& server_ssl_config,
@@ -14669,9 +14628,7 @@ class FakeStreamFactory : public HttpStreamFactory {
   }
 
   void PreconnectStreams(int num_streams,
-                         const HttpRequestInfo& info,
-                         const SSLConfig& server_ssl_config,
-                         const SSLConfig& proxy_ssl_config) override {
+                         const HttpRequestInfo& info) override {
     ADD_FAILURE();
   }
 
@@ -14690,8 +14647,9 @@ class FakeStreamFactory : public HttpStreamFactory {
 // url_request_http_job_unittest.cc ?
 class FakeWebSocketBasicHandshakeStream : public WebSocketHandshakeStreamBase {
  public:
-  FakeWebSocketBasicHandshakeStream(scoped_ptr<ClientSocketHandle> connection,
-                                    bool using_proxy)
+  FakeWebSocketBasicHandshakeStream(
+      std::unique_ptr<ClientSocketHandle> connection,
+      bool using_proxy)
       : state_(connection.release(), using_proxy) {}
 
   // Fake implementation of HttpStreamBase methods.
@@ -14789,9 +14747,9 @@ class FakeWebSocketBasicHandshakeStream : public WebSocketHandshakeStreamBase {
   }
 
   // Fake implementation of WebSocketHandshakeStreamBase method(s)
-  scoped_ptr<WebSocketStream> Upgrade() override {
+  std::unique_ptr<WebSocketStream> Upgrade() override {
     NOTREACHED();
-    return scoped_ptr<WebSocketStream>();
+    return std::unique_ptr<WebSocketStream>();
   }
 
  private:
@@ -14807,7 +14765,7 @@ class FakeWebSocketStreamCreateHelper :
       public WebSocketHandshakeStreamBase::CreateHelper {
  public:
   WebSocketHandshakeStreamBase* CreateBasicStream(
-      scoped_ptr<ClientSocketHandle> connection,
+      std::unique_ptr<ClientSocketHandle> connection,
       bool using_proxy) override {
     return new FakeWebSocketBasicHandshakeStream(std::move(connection),
                                                  using_proxy);
@@ -14822,9 +14780,9 @@ class FakeWebSocketStreamCreateHelper :
 
   ~FakeWebSocketStreamCreateHelper() override {}
 
-  virtual scoped_ptr<WebSocketStream> Upgrade() {
+  virtual std::unique_ptr<WebSocketStream> Upgrade() {
     NOTREACHED();
-    return scoped_ptr<WebSocketStream>();
+    return std::unique_ptr<WebSocketStream>();
   }
 };
 
@@ -14833,14 +14791,14 @@ class FakeWebSocketStreamCreateHelper :
 // Make sure that HttpNetworkTransaction passes on its priority to its
 // stream request on start.
 TEST_P(HttpNetworkTransactionTest, SetStreamRequestPriorityOnStart) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   HttpNetworkSessionPeer peer(session.get());
   FakeStreamFactory* fake_factory = new FakeStreamFactory();
-  peer.SetHttpStreamFactory(scoped_ptr<HttpStreamFactory>(fake_factory));
+  peer.SetHttpStreamFactory(std::unique_ptr<HttpStreamFactory>(fake_factory));
 
   HttpNetworkTransaction trans(LOW, session.get());
 
-  ASSERT_TRUE(fake_factory->last_stream_request() == NULL);
+  ASSERT_FALSE(fake_factory->last_stream_request());
 
   HttpRequestInfo request;
   TestCompletionCallback callback;
@@ -14849,17 +14807,17 @@ TEST_P(HttpNetworkTransactionTest, SetStreamRequestPriorityOnStart) {
 
   base::WeakPtr<FakeStreamRequest> fake_request =
       fake_factory->last_stream_request();
-  ASSERT_TRUE(fake_request != NULL);
+  ASSERT_TRUE(fake_request);
   EXPECT_EQ(LOW, fake_request->priority());
 }
 
 // Make sure that HttpNetworkTransaction passes on its priority
 // updates to its stream request.
 TEST_P(HttpNetworkTransactionTest, SetStreamRequestPriority) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   HttpNetworkSessionPeer peer(session.get());
   FakeStreamFactory* fake_factory = new FakeStreamFactory();
-  peer.SetHttpStreamFactory(scoped_ptr<HttpStreamFactory>(fake_factory));
+  peer.SetHttpStreamFactory(std::unique_ptr<HttpStreamFactory>(fake_factory));
 
   HttpNetworkTransaction trans(LOW, session.get());
 
@@ -14870,21 +14828,21 @@ TEST_P(HttpNetworkTransactionTest, SetStreamRequestPriority) {
 
   base::WeakPtr<FakeStreamRequest> fake_request =
       fake_factory->last_stream_request();
-  ASSERT_TRUE(fake_request != NULL);
+  ASSERT_TRUE(fake_request);
   EXPECT_EQ(LOW, fake_request->priority());
 
   trans.SetPriority(LOWEST);
-  ASSERT_TRUE(fake_request != NULL);
+  ASSERT_TRUE(fake_request);
   EXPECT_EQ(LOWEST, fake_request->priority());
 }
 
 // Make sure that HttpNetworkTransaction passes on its priority
 // updates to its stream.
 TEST_P(HttpNetworkTransactionTest, SetStreamPriority) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   HttpNetworkSessionPeer peer(session.get());
   FakeStreamFactory* fake_factory = new FakeStreamFactory();
-  peer.SetHttpStreamFactory(scoped_ptr<HttpStreamFactory>(fake_factory));
+  peer.SetHttpStreamFactory(std::unique_ptr<HttpStreamFactory>(fake_factory));
 
   HttpNetworkTransaction trans(LOW, session.get());
 
@@ -14895,9 +14853,9 @@ TEST_P(HttpNetworkTransactionTest, SetStreamPriority) {
 
   base::WeakPtr<FakeStreamRequest> fake_request =
       fake_factory->last_stream_request();
-  ASSERT_TRUE(fake_request != NULL);
+  ASSERT_TRUE(fake_request);
   base::WeakPtr<FakeStream> fake_stream = fake_request->FinishStreamRequest();
-  ASSERT_TRUE(fake_stream != NULL);
+  ASSERT_TRUE(fake_stream);
   EXPECT_EQ(LOW, fake_stream->priority());
 
   trans.SetPriority(LOWEST);
@@ -14911,12 +14869,12 @@ TEST_P(HttpNetworkTransactionTest, CreateWebSocketHandshakeStream) {
   std::string test_cases[] = {"ws://www.example.org/",
                               "wss://www.example.org/"};
   for (size_t i = 0; i < arraysize(test_cases); ++i) {
-    scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+    std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
     HttpNetworkSessionPeer peer(session.get());
     FakeStreamFactory* fake_factory = new FakeStreamFactory();
     FakeWebSocketStreamCreateHelper websocket_stream_create_helper;
     peer.SetHttpStreamFactoryForWebSocket(
-        scoped_ptr<HttpStreamFactory>(fake_factory));
+        std::unique_ptr<HttpStreamFactory>(fake_factory));
 
     HttpNetworkTransaction trans(LOW, session.get());
     trans.SetWebSocketHandshakeStreamCreateHelper(
@@ -14932,7 +14890,7 @@ TEST_P(HttpNetworkTransactionTest, CreateWebSocketHandshakeStream) {
 
     base::WeakPtr<FakeStreamRequest> fake_request =
         fake_factory->last_stream_request();
-    ASSERT_TRUE(fake_request != NULL);
+    ASSERT_TRUE(fake_request);
     EXPECT_EQ(&websocket_stream_create_helper,
               fake_request->websocket_stream_create_helper());
   }
@@ -14993,11 +14951,11 @@ TEST_P(HttpNetworkTransactionTest, CloseSSLSocketOnIdleForHttpRequest) {
                                      http_writes, arraysize(http_writes));
   session_deps_.socket_factory->AddSocketDataProvider(&http_data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Start the SSL request.
   TestCompletionCallback ssl_callback;
-  scoped_ptr<HttpTransaction> ssl_trans(
+  std::unique_ptr<HttpTransaction> ssl_trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   ASSERT_EQ(ERR_IO_PENDING,
             ssl_trans->Start(&ssl_request, ssl_callback.callback(),
@@ -15005,7 +14963,7 @@ TEST_P(HttpNetworkTransactionTest, CloseSSLSocketOnIdleForHttpRequest) {
 
   // Start the HTTP request.  Pool should stall.
   TestCompletionCallback http_callback;
-  scoped_ptr<HttpTransaction> http_trans(
+  std::unique_ptr<HttpTransaction> http_trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   ASSERT_EQ(ERR_IO_PENDING,
             http_trans->Start(&http_request, http_callback.callback(),
@@ -15075,20 +15033,17 @@ TEST_P(HttpNetworkTransactionTest, CloseSSLSocketOnIdleForHttpRequest2) {
                                      http_writes, arraysize(http_writes));
   session_deps_.socket_factory->AddSocketDataProvider(&http_data);
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Preconnect an SSL socket.  A preconnect is needed because connect jobs are
   // cancelled when a normal transaction is cancelled.
   HttpStreamFactory* http_stream_factory = session->http_stream_factory();
-  SSLConfig ssl_config;
-  session->ssl_config_service()->GetSSLConfig(&ssl_config);
-  http_stream_factory->PreconnectStreams(1, ssl_request, ssl_config,
-                                         ssl_config);
+  http_stream_factory->PreconnectStreams(1, ssl_request);
   EXPECT_EQ(0, GetIdleSocketCountInSSLSocketPool(session.get()));
 
   // Start the HTTP request.  Pool should stall.
   TestCompletionCallback http_callback;
-  scoped_ptr<HttpTransaction> http_trans(
+  std::unique_ptr<HttpTransaction> http_trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   ASSERT_EQ(ERR_IO_PENDING,
             http_trans->Start(&http_request, http_callback.callback(),
@@ -15106,9 +15061,9 @@ TEST_P(HttpNetworkTransactionTest, CloseSSLSocketOnIdleForHttpRequest2) {
 }
 
 TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterReset) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15117,8 +15072,8 @@ TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterReset) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15147,9 +15102,9 @@ TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterReset) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 400 Not OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -15162,7 +15117,7 @@ TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterReset) {
 // response from a server that rejected a POST with a CONNECTION_RESET.
 TEST_P(HttpNetworkTransactionTest,
        PostReadsErrorResponseAfterResetOnReusedSocket) {
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   MockWrite data_writes[] = {
     MockWrite("GET / HTTP/1.1\r\n"
               "Host: www.foo.com\r\n"
@@ -15193,7 +15148,7 @@ TEST_P(HttpNetworkTransactionTest,
   request1.url = GURL("http://www.foo.com/");
   request1.load_flags = 0;
 
-  scoped_ptr<HttpTransaction> trans1(
+  std::unique_ptr<HttpTransaction> trans1(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   int rv = trans1->Start(&request1, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -15202,9 +15157,9 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response1 = trans1->GetResponseInfo();
-  ASSERT_TRUE(response1 != NULL);
+  ASSERT_TRUE(response1);
 
-  EXPECT_TRUE(response1->headers.get() != NULL);
+  EXPECT_TRUE(response1->headers);
   EXPECT_EQ("HTTP/1.1 200 Peachy", response1->headers->GetStatusLine());
 
   std::string response_data1;
@@ -15214,9 +15169,9 @@ TEST_P(HttpNetworkTransactionTest,
   // Delete the transaction to release the socket back into the socket pool.
   trans1.reset();
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request2;
@@ -15225,7 +15180,7 @@ TEST_P(HttpNetworkTransactionTest,
   request2.upload_data_stream = &upload_data_stream;
   request2.load_flags = 0;
 
-  scoped_ptr<HttpTransaction> trans2(
+  std::unique_ptr<HttpTransaction> trans2(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   rv = trans2->Start(&request2, callback.callback(), BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
@@ -15234,9 +15189,9 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response2 = trans2->GetResponseInfo();
-  ASSERT_TRUE(response2 != NULL);
+  ASSERT_TRUE(response2);
 
-  EXPECT_TRUE(response2->headers.get() != NULL);
+  EXPECT_TRUE(response2->headers);
   EXPECT_EQ("HTTP/1.1 400 Not OK", response2->headers->GetStatusLine());
 
   std::string response_data2;
@@ -15247,9 +15202,9 @@ TEST_P(HttpNetworkTransactionTest,
 
 TEST_P(HttpNetworkTransactionTest,
        PostReadsErrorResponseAfterResetPartialBodySent) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15258,8 +15213,8 @@ TEST_P(HttpNetworkTransactionTest,
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15289,9 +15244,9 @@ TEST_P(HttpNetworkTransactionTest,
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 400 Not OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -15311,8 +15266,8 @@ TEST_P(HttpNetworkTransactionTest, ChunkedPostReadsErrorResponseAfterReset) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15348,9 +15303,9 @@ TEST_P(HttpNetworkTransactionTest, ChunkedPostReadsErrorResponseAfterReset) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 400 Not OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -15360,9 +15315,9 @@ TEST_P(HttpNetworkTransactionTest, ChunkedPostReadsErrorResponseAfterReset) {
 }
 
 TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterResetAnd100) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15371,8 +15326,8 @@ TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterResetAnd100) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
 
   MockWrite data_writes[] = {
@@ -15402,9 +15357,9 @@ TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterResetAnd100) {
   EXPECT_EQ(OK, rv);
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
-  ASSERT_TRUE(response != NULL);
+  ASSERT_TRUE(response);
 
-  EXPECT_TRUE(response->headers.get() != NULL);
+  EXPECT_TRUE(response->headers);
   EXPECT_EQ("HTTP/1.0 400 Not OK", response->headers->GetStatusLine());
 
   std::string response_data;
@@ -15414,9 +15369,9 @@ TEST_P(HttpNetworkTransactionTest, PostReadsErrorResponseAfterResetAnd100) {
 }
 
 TEST_P(HttpNetworkTransactionTest, PostIgnoresNonErrorResponseAfterReset) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15425,8 +15380,8 @@ TEST_P(HttpNetworkTransactionTest, PostIgnoresNonErrorResponseAfterReset) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15457,9 +15412,9 @@ TEST_P(HttpNetworkTransactionTest, PostIgnoresNonErrorResponseAfterReset) {
 
 TEST_P(HttpNetworkTransactionTest,
        PostIgnoresNonErrorResponseAfterResetAnd100) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15468,8 +15423,8 @@ TEST_P(HttpNetworkTransactionTest,
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15501,9 +15456,9 @@ TEST_P(HttpNetworkTransactionTest,
 }
 
 TEST_P(HttpNetworkTransactionTest, PostIgnoresHttp09ResponseAfterReset) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15512,8 +15467,8 @@ TEST_P(HttpNetworkTransactionTest, PostIgnoresHttp09ResponseAfterReset) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15542,9 +15497,9 @@ TEST_P(HttpNetworkTransactionTest, PostIgnoresHttp09ResponseAfterReset) {
 }
 
 TEST_P(HttpNetworkTransactionTest, PostIgnoresPartial400HeadersAfterReset) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15553,8 +15508,8 @@ TEST_P(HttpNetworkTransactionTest, PostIgnoresPartial400HeadersAfterReset) {
   request.upload_data_stream = &upload_data_stream;
   request.load_flags = 0;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15594,7 +15549,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWssTunnel) {
   session_deps_.proxy_service =
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   // Since a proxy is configured, try to establish a tunnel.
   MockWrite data_writes[] = {
@@ -15641,7 +15596,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWssTunnel) {
   SSLSocketDataProvider ssl(ASYNC, OK);
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   FakeWebSocketStreamCreateHelper websocket_stream_create_helper;
   trans->SetWebSocketHandshakeStreamCreateHelper(
@@ -15659,7 +15614,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWssTunnel) {
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
   ASSERT_TRUE(response);
-  ASSERT_TRUE(response->headers.get());
+  ASSERT_TRUE(response->headers);
   EXPECT_EQ(407, response->headers->response_code());
 
   {
@@ -15675,7 +15630,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWssTunnel) {
 
   response = trans->GetResponseInfo();
   ASSERT_TRUE(response);
-  ASSERT_TRUE(response->headers.get());
+  ASSERT_TRUE(response->headers);
 
   EXPECT_EQ(101, response->headers->response_code());
 
@@ -15698,7 +15653,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWsTunnel) {
   session_deps_.proxy_service =
       ProxyService::CreateFixedFromPacResult("PROXY myproxy:70");
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   MockWrite data_writes[] = {
       // Try to establish a tunnel for the WebSocket connection, with
@@ -15740,7 +15695,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWsTunnel) {
       GURL("http://myproxy:70/"), "MyRealm1", HttpAuth::AUTH_SCHEME_BASIC,
       "Basic realm=MyRealm1", AuthCredentials(kFoo, kBar), "/");
 
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   FakeWebSocketStreamCreateHelper websocket_stream_create_helper;
   trans->SetWebSocketHandshakeStreamCreateHelper(
@@ -15756,7 +15711,7 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWsTunnel) {
 
   const HttpResponseInfo* response = trans->GetResponseInfo();
   ASSERT_TRUE(response);
-  ASSERT_TRUE(response->headers.get());
+  ASSERT_TRUE(response->headers);
 
   EXPECT_EQ(101, response->headers->response_code());
 
@@ -15765,9 +15720,9 @@ TEST_P(HttpNetworkTransactionTest, ProxyHeadersNotSentOverWsTunnel) {
 }
 
 TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesPost) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15775,8 +15730,8 @@ TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesPost) {
   request.url = GURL("http://www.foo.com/");
   request.upload_data_stream = &upload_data_stream;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   MockWrite data_writes[] = {
       MockWrite("POST / HTTP/1.1\r\n"
@@ -15810,9 +15765,9 @@ TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesPost) {
 }
 
 TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesPost100Continue) {
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("foo", 3)));
+      base::WrapUnique(new UploadBytesElementReader("foo", 3)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   HttpRequestInfo request;
@@ -15820,8 +15775,8 @@ TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesPost100Continue) {
   request.url = GURL("http://www.foo.com/");
   request.upload_data_stream = &upload_data_stream;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   MockWrite data_writes[] = {
       MockWrite("POST / HTTP/1.1\r\n"
@@ -15863,8 +15818,8 @@ TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesChunkedPost) {
   request.url = GURL("http://www.foo.com/");
   request.upload_data_stream = &upload_data_stream;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
-  scoped_ptr<HttpTransaction> trans(
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpTransaction> trans(
       new HttpNetworkTransaction(DEFAULT_PRIORITY, session.get()));
   // Send headers successfully, but get an error while sending the body.
   MockWrite data_writes[] = {
@@ -15908,8 +15863,12 @@ TEST_P(HttpNetworkTransactionTest, TotalNetworkBytesChunkedPost) {
 TEST_P(HttpNetworkTransactionTest, EnableNPN) {
   session_deps_.enable_npn = true;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   HttpNetworkTransaction trans(DEFAULT_PRIORITY, session.get());
+  HttpRequestInfo request;
+  TestCompletionCallback callback;
+  EXPECT_EQ(ERR_IO_PENDING,
+            trans.Start(&request, callback.callback(), BoundNetLog()));
 
   EXPECT_THAT(trans.server_ssl_config_.alpn_protos,
               testing::ElementsAre(kProtoHTTP2, kProtoSPDY31, kProtoHTTP11));
@@ -15920,8 +15879,12 @@ TEST_P(HttpNetworkTransactionTest, EnableNPN) {
 TEST_P(HttpNetworkTransactionTest, DisableNPN) {
   session_deps_.enable_npn = false;
 
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
   HttpNetworkTransaction trans(DEFAULT_PRIORITY, session.get());
+  HttpRequestInfo request;
+  TestCompletionCallback callback;
+  EXPECT_EQ(ERR_IO_PENDING,
+            trans.Start(&request, callback.callback(), BoundNetLog()));
 
   EXPECT_THAT(trans.server_ssl_config_.alpn_protos,
               testing::ElementsAre(kProtoHTTP2, kProtoSPDY31, kProtoHTTP11));
@@ -15941,22 +15904,23 @@ TEST_P(HttpNetworkTransactionTest, TokenBindingSpdy) {
   ssl.SetNextProto(GetProtocol());
   session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
 
-  scoped_ptr<SpdyFrame> resp(
+  std::unique_ptr<SpdySerializedFrame> resp(
       spdy_util_.ConstructSpdyGetSynReply(nullptr, 0, 1));
-  scoped_ptr<SpdyFrame> body(spdy_util_.ConstructSpdyBodyFrame(1, true));
+  std::unique_ptr<SpdySerializedFrame> body(
+      spdy_util_.ConstructSpdyBodyFrame(1, true));
   MockRead reads[] = {CreateMockRead(*resp), CreateMockRead(*body),
                       MockRead(ASYNC, ERR_IO_PENDING)};
   StaticSocketDataProvider data(reads, arraysize(reads), nullptr, 0);
   session_deps_.socket_factory->AddSocketDataProvider(&data);
   session_deps_.channel_id_service.reset(new ChannelIDService(
       new DefaultChannelIDStore(nullptr), base::ThreadTaskRunnerHandle::Get()));
-  scoped_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
+  std::unique_ptr<HttpNetworkSession> session(CreateSession(&session_deps_));
 
   HttpNetworkTransaction trans(DEFAULT_PRIORITY, session.get());
   TestCompletionCallback callback;
   EXPECT_EQ(ERR_IO_PENDING,
             trans.Start(&request, callback.callback(), BoundNetLog()));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(trans.GetResponseInfo()->was_fetched_via_spdy);
   HttpRequestHeaders headers;

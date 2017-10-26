@@ -6,11 +6,12 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace autofill {
@@ -20,16 +21,17 @@ namespace {
 // Test class which overrides specific behavior for testing.
 class TestPopupViewCommon : public PopupViewCommon {
  public:
-  explicit TestPopupViewCommon(const gfx::Display& display)
+  explicit TestPopupViewCommon(const display::Display& display)
       : display_(display) {}
 
-  gfx::Display GetDisplayNearestPoint(const gfx::Point& point,
-                                      gfx::NativeView container_view) override {
+  display::Display GetDisplayNearestPoint(
+      const gfx::Point& point,
+      gfx::NativeView container_view) override {
     return display_;
   }
 
  private:
-  gfx::Display display_;
+  display::Display display_;
 };
 
 }  // namespace
@@ -48,8 +50,8 @@ TEST_F(PopupViewCommonTest, CalculatePopupBounds) {
   int desired_height = 16;
 
   // Set up the visible screen space.
-  gfx::Display display(0,
-                       gfx::Rect(0, 0, 2 * desired_width, 2 * desired_height));
+  display::Display display(
+      0, gfx::Rect(0, 0, 2 * desired_width, 2 * desired_height));
   TestPopupViewCommon view_common(display);
 
   struct {

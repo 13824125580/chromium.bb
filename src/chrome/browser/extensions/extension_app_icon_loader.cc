@@ -15,6 +15,10 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image_skia_operations.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/extensions/gfx_utils.h"
+#endif
+
 namespace {
 
 const extensions::Extension* GetExtensionByID(Profile* profile,
@@ -54,13 +58,9 @@ void ExtensionAppIconLoader::FetchImage(const std::string& id) {
   if (!extension)
     return;
 
-  scoped_ptr<extensions::IconImage> image(new extensions::IconImage(
-      profile(),
-      extension,
-      extensions::IconsInfo::GetIcons(extension),
-      icon_size(),
-      extensions::util::GetDefaultAppIcon(),
-      this));
+  std::unique_ptr<extensions::IconImage> image(new extensions::IconImage(
+      profile(), extension, extensions::IconsInfo::GetIcons(extension),
+      icon_size(), extensions::util::GetDefaultAppIcon(), this));
 
   // Triggers image loading now instead of depending on paint message. This
   // makes the temp blank image be shown for shorter time and improves user
@@ -95,6 +95,10 @@ void ExtensionAppIconLoader::OnExtensionIconImageChanged(
 void ExtensionAppIconLoader::BuildImage(const std::string& id,
                                         const gfx::ImageSkia& icon) {
   gfx::ImageSkia image = icon;
+
+#if defined(OS_CHROMEOS)
+  util::MaybeApplyChromeBadge(profile(), id, &image);
+#endif
 
   if (!util::IsAppLaunchable(id, profile())) {
     const color_utils::HSL shift = {-1, 0, 0.6};

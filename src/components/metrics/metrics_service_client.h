@@ -6,12 +6,14 @@
 #define COMPONENTS_METRICS_METRICS_SERVICE_CLIENT_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "components/metrics/metrics_reporting_default_state.h"
 #include "components/metrics/proto/system_profile.pb.h"
 
 namespace base {
@@ -80,7 +82,7 @@ class MetricsServiceClient {
 
   // Creates a MetricsLogUploader with the specified parameters (see comments on
   // MetricsLogUploader for details).
-  virtual scoped_ptr<MetricsLogUploader> CreateUploader(
+  virtual std::unique_ptr<MetricsLogUploader> CreateUploader(
       const base::Callback<void(int)>& on_upload_complete) = 0;
 
   // Returns the standard interval between upload attempts.
@@ -97,6 +99,16 @@ class MetricsServiceClient {
   // //content and thus do not have //content's notification system available
   // as a mechanism for observing renderer crashes).
   virtual void OnRendererProcessCrash() {}
+
+  // Returns whether metrics reporting is managed by policy.
+  virtual bool IsReportingPolicyManaged();
+
+  // Gets information about the default value for the metrics reporting checkbox
+  // shown during first-run.
+  virtual EnableMetricsDefault GetMetricsReportingDefaultState();
+
+  // Returns whether cellular logic is enabled for metrics reporting.
+  virtual bool IsUMACellularUploadLogicEnabled();
 };
 
 }  // namespace metrics

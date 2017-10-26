@@ -1,30 +1,73 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [334, 42, 466, 170],
-        [334, 42, 466, 170],
-        [334, 42, 466, 170],
-        [16, 42, 784, 170],
-        [16, 42, 318, 170],
-        [0, 0, 334, 500]
-      ],
-      "paintInvalidationClients": [
-        "RootInlineBox",
-        "InlineTextBox 'Clipped. INVISIBLE.'",
-        "LayoutSVGRoot svg id='svg-root'",
-        "LayoutSVGContainer g id='content'",
-        "LayoutSVGText text",
-        "RootInlineBox",
-        "LayoutSVGInlineText #text",
-        "InlineTextBox 'Clipped. INVISIBLE.'",
-        "LayoutSVGResourceClipper clipPath id='dynClip'",
-        "LayoutSVGPath path"
+      "paintInvalidations": [
+        {
+          "object": "LayoutSVGContainer g id='content'",
+          "rect": [16, 42, 784, 170],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [16, 42, 784, 170],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutSVGText text",
+          "rect": [16, 42, 784, 170],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGRoot svg id='svg-root'",
+          "rect": [334, 42, 466, 170],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutSVGPath path",
+          "rect": [0, 0, 334, 500],
+          "reason": "layoutObject insertion"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGRoot svg id='svg-root'",
+      "reason": "incremental"
+    },
+    {
+      "object": "LayoutSVGContainer g id='content'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGText text",
+      "reason": "style change"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "style change"
+    },
+    {
+      "object": "LayoutSVGInlineText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'Clipped. INVISIBLE.'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutSVGResourceClipper clipPath id='dynClip'",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutSVGPath path",
+      "reason": "layoutObject insertion"
     }
   ]
 }

@@ -38,10 +38,12 @@
 #include "platform/fonts/VDMXParser.h"
 #include "platform/geometry/FloatRect.h"
 #include "wtf/MathExtras.h"
-#include "wtf/Partitions.h"
+#include "wtf/PtrUtil.h"
+#include "wtf/allocator/Partitions.h"
 #include "wtf/text/CharacterNames.h"
 #include "wtf/text/Unicode.h"
-#include <unicode/normlzr.h>
+#include <memory>
+#include <unicode/unorm.h>
 #include <unicode/utf16.h>
 
 namespace blink {
@@ -78,8 +80,6 @@ SimpleFontData::SimpleFontData(PassRefPtr<CustomFontData> customData, float font
     , m_hasVerticalGlyphs(false)
     , m_customFontData(customData)
 {
-    if (m_customFontData)
-        m_customFontData->initializeFontData(this, fontSize);
 }
 
 void SimpleFontData::platformInit()
@@ -104,7 +104,6 @@ void SimpleFontData::platformInit()
 
 #if OS(LINUX) || OS(ANDROID)
     // Manually digging up VDMX metrics is only applicable when bytecode hinting using FreeType.
-    // With GDI, the metrics will already have taken this into account (as needed).
     // With DirectWrite or CoreText, no bytecode hinting is ever done.
     // This code should be pushed into FreeType (hinted font metrics).
     static const uint32_t vdmxTag = SkSetFourByteTag('V', 'D', 'M', 'X');
@@ -141,7 +140,7 @@ void SimpleFontData::platformInit()
         // of the glyph may be truncated when displayed in a 'overflow: hidden' container.
         // To avoid that, borrow 1 unit from the ascent when possible.
         // FIXME: This can be removed if sub-pixel ascent/descent is supported.
-        if (platformData().fontRenderStyle().useSubpixelPositioning && descent < SkScalarToFloat(metrics.fDescent) && ascent >= 1) {
+        if (platformData().getFontRenderStyle().useSubpixelPositioning && descent < SkScalarToFloat(metrics.fDescent) && ascent >= 1) {
             ++descent;
             --ascent;
         }
@@ -156,9 +155,9 @@ void SimpleFontData::platformInit()
     // web standard. The AppKit adjustment of 20% is too big and is
     // incorrectly added to line spacing, so we use a 15% adjustment instead
     // and add it to the ascent.
-    DEFINE_STATIC_LOCAL(AtomicString, timesName, ("Times", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(AtomicString, helveticaName, ("Helvetica", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(AtomicString, courierName, ("Courier", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(AtomicString, timesName, ("Times"));
+    DEFINE_STATIC_LOCAL(AtomicString, helveticaName, ("Helvetica"));
+    DEFINE_STATIC_LOCAL(AtomicString, courierName, ("Courier"));
     String familyName = m_platformData.fontFamilyName();
     if (familyName == timesName || familyName == helveticaName || familyName == courierName)
         ascent += floorf(((ascent + descent) * 0.15f) + 0.5f);
@@ -346,9 +345,9 @@ bool SimpleFontData::isTextOrientationFallbackOf(const SimpleFontData* fontData)
         || fontData->m_derivedFontData->verticalRightOrientation == this;
 }
 
-PassOwnPtr<SimpleFontData::DerivedFontData> SimpleFontData::DerivedFontData::create(bool forCustomFont)
+std::unique_ptr<SimpleFontData::DerivedFontData> SimpleFontData::DerivedFontData::create(bool forCustomFont)
 {
-    return adoptPtr(new DerivedFontData(forCustomFont));
+    return wrapUnique(new DerivedFontData(forCustomFont));
 }
 
 SimpleFontData::DerivedFontData::~DerivedFontData()
@@ -367,11 +366,6 @@ SimpleFontData::DerivedFontData::~DerivedFontData()
 }
 
 PassRefPtr<SimpleFontData> SimpleFontData::createScaledFontData(const FontDescription& fontDescription, float scaleFactor) const
-{
-    return platformCreateScaledFontData(fontDescription, scaleFactor);
-}
-
-PassRefPtr<SimpleFontData> SimpleFontData::platformCreateScaledFontData(const FontDescription& fontDescription, float scaleFactor) const
 {
     const float scaledSize = lroundf(fontDescription.computedSize() * scaleFactor);
     return SimpleFontData::create(FontPlatformData(m_platformData, scaledSize), isCustomFont() ? CustomFontData::create() : nullptr);
@@ -428,13 +422,13 @@ float SimpleFontData::platformWidthForGlyph(Glyph glyph) const
 bool SimpleFontData::fillGlyphPage(GlyphPage* pageToFill, unsigned offset, unsigned length, UChar* buffer, unsigned bufferLength) const
 {
     if (U16_IS_LEAD(buffer[bufferLength-1])) {
-        WTF_LOG_ERROR("Last UTF-16 code unit is high-surrogate.");
+        DLOG(ERROR) << "Last UTF-16 code unit is high-surrogate.";
         return false;
     }
 
     SkTypeface* typeface = platformData().typeface();
     if (!typeface) {
-        WTF_LOG_ERROR("fillGlyphPage called on an empty Skia typeface.");
+        DLOG(ERROR) << "fillGlyphPage called on an empty Skia typeface.";
         return false;
     }
 

@@ -12,12 +12,15 @@
 namespace content {
 
 class NavigationURLLoaderImplCore;
+class ResourceDispatcherHostDelegate;
 
 // PlzNavigate: The leaf ResourceHandler used with NavigationURLLoaderImplCore.
 class NavigationResourceHandler : public ResourceHandler {
  public:
-  NavigationResourceHandler(net::URLRequest* request,
-                            NavigationURLLoaderImplCore* core);
+  NavigationResourceHandler(
+      net::URLRequest* request,
+      NavigationURLLoaderImplCore* core,
+      ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate);
   ~NavigationResourceHandler() override;
 
   // Called by the loader the cancel the request.
@@ -25,6 +28,9 @@ class NavigationResourceHandler : public ResourceHandler {
 
   // Called to the loader to resume a paused redirect.
   void FollowRedirect();
+
+  // Called to proceed with the response.
+  void ProceedWithResponse();
 
   // ResourceHandler implementation.
   void SetController(ResourceController* controller) override;
@@ -50,6 +56,7 @@ class NavigationResourceHandler : public ResourceHandler {
 
   NavigationURLLoaderImplCore* core_;
   StreamWriter writer_;
+  ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationResourceHandler);
 };

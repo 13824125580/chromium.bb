@@ -4,7 +4,7 @@
 
 #include "chrome/test/base/in_process_browser_test.h"
 
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -18,8 +18,8 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/test_file_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/after_startup_task_utils.h"
 #include "chrome/browser/browser_process.h"
@@ -38,7 +38,6 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
@@ -48,10 +47,9 @@
 #include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/test/base/chrome_test_suite.h"
 #include "chrome/test/base/test_launcher_utils.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/google/core/browser/google_util.h"
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/os_crypt_mocker.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -137,7 +135,6 @@ InProcessBrowserTest::InProcessBrowserTest()
     : browser_(NULL),
       exit_when_last_browser_closes_(true),
       open_about_blank_on_browser_launch_(true),
-      multi_desktop_test_(false),
       run_accessibility_checks_for_test_case_(false)
 #if defined(OS_MACOSX)
       , autorelease_pool_(NULL)
@@ -198,7 +195,7 @@ void InProcessBrowserTest::SetUp() {
   // Allow subclasses to change the command line before running any tests.
   SetUpCommandLine(command_line);
   // Add command line arguments that are used by all InProcessBrowserTests.
-  PrepareTestCommandLine(command_line);
+  SetUpDefaultCommandLine(command_line);
 
   // Create a temporary user data directory if required.
   ASSERT_TRUE(CreateUserDataDirectory())
@@ -223,12 +220,10 @@ void InProcessBrowserTest::SetUp() {
   }
 #endif  // defined(OS_CHROMEOS)
 
-#if defined(OS_MACOSX)
-  // Always use the MockKeychain if OS encription is used (which is when
-  // anything sensitive gets stored, including Cookies).  Without this,
-  // many tests will hang waiting for a user to approve KeyChain access.
-  OSCrypt::UseMockKeychain(true);
-#endif
+  // Always use a mocked password storage if OS encryption is used (which is
+  // when anything sensitive gets stored, including Cookies). Without this on
+  // Mac, many tests will hang waiting for a user to approve KeyChain access.
+  OSCryptMocker::SetUpWithSingleton();
 
 #if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
   CaptivePortalService::set_state_for_testing(
@@ -240,22 +235,10 @@ void InProcessBrowserTest::SetUp() {
 
   google_util::SetMockLinkDoctorBaseURLForTesting();
 
-#if defined(OS_WIN)
-  base::win::Version version = base::win::GetVersion();
-  // Although Ash officially is only supported for users on Win7+, we still run
-  // ash_unittests on Vista builders, so we still need to initialize COM.
-  if (version >= base::win::VERSION_VISTA &&
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    com_initializer_.reset(new base::win::ScopedCOMInitializer());
-    ui::win::CreateATLModuleIfNeeded();
-  }
-#endif
-
   BrowserTestBase::SetUp();
 }
 
-void InProcessBrowserTest::PrepareTestCommandLine(
+void InProcessBrowserTest::SetUpDefaultCommandLine(
     base::CommandLine* command_line) {
   // Propagate commandline settings from test_launcher_utils.
   test_launcher_utils::PrepareBrowserCommandLineForTests(command_line);
@@ -360,6 +343,7 @@ void InProcessBrowserTest::TearDown() {
   com_initializer_.reset();
 #endif
   BrowserTestBase::TearDown();
+  OSCryptMocker::TearDown();
 }
 
 void InProcessBrowserTest::CloseBrowserSynchronously(Browser* browser) {

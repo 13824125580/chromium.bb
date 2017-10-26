@@ -30,6 +30,9 @@
 
 #include "platform/image-decoders/bmp/BMPImageReader.h"
 
+#include "platform/Histogram.h"
+#include "wtf/Threading.h"
+
 namespace {
 
 // See comments on m_lookupTableAddresses in the header.
@@ -115,7 +118,7 @@ bool BMPImageReader::decodeBMP(bool onlySize)
 
     // Initialize the framebuffer if needed.
     ASSERT(m_buffer);  // Parent should set this before asking us to decode!
-    if (m_buffer->status() == ImageFrame::FrameEmpty) {
+    if (m_buffer->getStatus() == ImageFrame::FrameEmpty) {
         if (!m_buffer->setSize(m_parent->size().width(), m_parent->size().height()))
             return m_parent->setFailed(); // Unable to allocate.
         m_buffer->setStatus(ImageFrame::FramePartial);
@@ -204,6 +207,11 @@ bool BMPImageReader::processInfoHeader()
     if ((m_decodedOffset > m_data->size()) || ((m_data->size() - m_decodedOffset) < m_infoHeader.biSize) || !readInfoHeader())
         return false;
     m_decodedOffset += m_infoHeader.biSize;
+
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(blink::CustomCountHistogram,
+        dimensionsLocationHistogram,
+        new blink::CustomCountHistogram("Blink.DecodedImage.EffectiveDimensionsLocation.BMP", 0, 50000, 50));
+    dimensionsLocationHistogram.count(m_decodedOffset - 1);
 
     // Sanity-check header values.
     if (!isInfoHeaderValid())

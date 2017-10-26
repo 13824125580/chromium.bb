@@ -8,22 +8,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 
 #include "base/i18n/icu_encoding_detection.h"
 #include "base/i18n/icu_string_conversions.h"
-#include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/values.h"
 #include "gin/array_buffer.h"
 #include "gin/public/gin_embedders.h"
 #include "gin/public/isolate_holder.h"
@@ -67,46 +65,48 @@ namespace chrome_pdf {
 
 namespace {
 
-#define kPageShadowTop    3
-#define kPageShadowBottom 7
-#define kPageShadowLeft   5
-#define kPageShadowRight  5
+const int32_t kPageShadowTop = 3;
+const int32_t kPageShadowBottom = 7;
+const int32_t kPageShadowLeft = 5;
+const int32_t kPageShadowRight = 5;
 
-#define kPageSeparatorThickness 4
-#define kHighlightColorR 153
-#define kHighlightColorG 193
-#define kHighlightColorB 218
+const int32_t kPageSeparatorThickness = 4;
+const int32_t kHighlightColorR = 153;
+const int32_t kHighlightColorG = 193;
+const int32_t kHighlightColorB = 218;
 
 const uint32_t kPendingPageColor = 0xFFEEEEEE;
 
-#define kFormHighlightColor 0xFFE4DD
-#define kFormHighlightAlpha 100
+const uint32_t kFormHighlightColor = 0xFFE4DD;
+const int32_t kFormHighlightAlpha = 100;
 
-#define kMaxPasswordTries 3
+const int32_t kMaxPasswordTries = 3;
 
 // See Table 3.20 in
 // http://www.adobe.com/devnet/acrobat/pdfs/pdf_reference_1-7.pdf
-#define kPDFPermissionPrintLowQualityMask  1 << 2
-#define kPDFPermissionPrintHighQualityMask 1 << 11
-#define kPDFPermissionCopyMask             1 << 4
-#define kPDFPermissionCopyAccessibleMask   1 << 9
+const uint32_t kPDFPermissionPrintLowQualityMask = 1 << 2;
+const uint32_t kPDFPermissionPrintHighQualityMask = 1 << 11;
+const uint32_t kPDFPermissionCopyMask = 1 << 4;
+const uint32_t kPDFPermissionCopyAccessibleMask = 1 << 9;
 
-#define kLoadingTextVerticalOffset 50
+const int32_t kLoadingTextVerticalOffset = 50;
 
 // The maximum amount of time we'll spend doing a paint before we give back
 // control of the thread.
-#define kMaxProgressivePaintTimeMs 50
+const int32_t kMaxProgressivePaintTimeMs = 300;
 
 // The maximum amount of time we'll spend doing the first paint. This is less
-// than the above to keep things smooth if the user is scrolling quickly. We
-// try painting a little because with accelerated compositing, we get flushes
-// only every 16 ms. If we were to wait until the next flush to paint the rest
-// of the pdf, we would never get to draw the pdf and would only draw the
-// scrollbars. This value is picked to give enough time for gpu related code to
-// do its thing and still fit within the timelimit for 60Hz. For the
-// non-composited case, this doesn't make things worse since we're still
-// painting the scrollbars > 60 Hz.
-#define kMaxInitialProgressivePaintTimeMs 10
+// than the above to keep things smooth if the user is scrolling quickly. This
+// is set to 250 ms to give enough time for most PDFs to render, while avoiding
+// adding too much latency to the display of the final image when the user
+// stops scrolling.
+// Setting a higher value has minimal benefit (scrolling at less than 4 fps will
+// never be a great experience) and there is some cost, since when the user
+// stops scrolling the in-progress painting has to complete or timeout before
+// the final painting can start.
+// The scrollbar will always be responsive since it is managed by a separate
+// process.
+const int32_t kMaxInitialProgressivePaintTimeMs = 250;
 
 std::vector<uint32_t> GetPageNumbersFromPrintPageNumberRange(
     const PP_PrintPageNumberRange_Dev* page_ranges,
@@ -298,7 +298,7 @@ FPDF_SYSFONTINFO g_font_info = {
 };
 #endif  // defined(OS_LINUX)
 
-PDFiumEngine* g_engine_for_unsupported;
+PDFiumEngine* g_engine_for_unsupported = nullptr;
 
 void Unsupported_Handler(UNSUPPORT_INFO*, int type) {
   if (!g_engine_for_unsupported) {
@@ -1055,6 +1055,7 @@ void PDFiumEngine::OnPartialDocumentLoaded() {
 
 void PDFiumEngine::OnPendingRequestComplete() {
   if (!doc_ || !form_) {
+    DCHECK(fpdf_availability_);
     LoadDocument();
     return;
   }
@@ -2276,6 +2277,10 @@ pp::Rect PDFiumEngine::GetPageRect(int index) {
   return rc;
 }
 
+pp::Rect PDFiumEngine::GetPageBoundsRect(int index) {
+  return pages_[index]->rect();
+}
+
 pp::Rect PDFiumEngine::GetPageContentsRect(int index) {
   return GetScreenRect(pages_[index]->rect());
 }
@@ -2293,20 +2298,29 @@ void PDFiumEngine::OnCallback(int id) {
     client_->ScheduleCallback(id, timers_[id].first);
 }
 
-std::string PDFiumEngine::GetPageAsJSON(int index) {
-  if (!(HasPermission(PERMISSION_COPY) ||
-        HasPermission(PERMISSION_COPY_ACCESSIBLE))) {
-    return "{}";
-  }
+int PDFiumEngine::GetCharCount(int page_index) {
+  DCHECK(page_index >= 0 && page_index < static_cast<int>(pages_.size()));
+  return pages_[page_index]->GetCharCount();
+}
 
-  if (index < 0 || static_cast<size_t>(index) > pages_.size() - 1)
-    return "{}";
+pp::FloatRect PDFiumEngine::GetCharBounds(int page_index, int char_index) {
+  DCHECK(page_index >= 0 && page_index < static_cast<int>(pages_.size()));
+  return pages_[page_index]->GetCharBounds(char_index);
+}
 
-  scoped_ptr<base::Value> node(
-      pages_[index]->GetAccessibleContentAsValue(current_rotation_));
-  std::string page_json;
-  base::JSONWriter::Write(*node, &page_json);
-  return page_json;
+uint32_t PDFiumEngine::GetCharUnicode(int page_index, int char_index) {
+  DCHECK(page_index >= 0 && page_index < static_cast<int>(pages_.size()));
+  return pages_[page_index]->GetCharUnicode(char_index);
+}
+
+void PDFiumEngine::GetTextRunInfo(int page_index,
+                                  int start_char_index,
+                                  uint32_t* out_len,
+                                  double* out_font_size,
+                                  pp::FloatRect* out_bounds) {
+  DCHECK(page_index >= 0 && page_index < static_cast<int>(pages_.size()));
+  return pages_[page_index]->GetTextRunInfo(start_char_index, out_len,
+                                            out_font_size, out_bounds);
 }
 
 bool PDFiumEngine::GetPrintScaling() {
@@ -2409,8 +2423,8 @@ void PDFiumEngine::LoadDocument() {
 
   ScopedUnsupportedFeature scoped_unsupported_feature(this);
   bool needs_password = false;
-  if (TryLoadingDoc(false, std::string(), &needs_password)) {
-    ContinueLoadingDocument(false, std::string());
+  if (TryLoadingDoc(std::string(), &needs_password)) {
+    ContinueLoadingDocument(std::string());
     return;
   }
   if (needs_password)
@@ -2419,15 +2433,19 @@ void PDFiumEngine::LoadDocument() {
     client_->DocumentLoadFailed();
 }
 
-bool PDFiumEngine::TryLoadingDoc(bool with_password,
-                                 const std::string& password,
+bool PDFiumEngine::TryLoadingDoc(const std::string& password,
                                  bool* needs_password) {
   *needs_password = false;
-  if (doc_)
+  if (doc_) {
+    // This is probably not necessary, because it should have already been
+    // called below in the |doc_| initialization path. However, the previous
+    // call may have failed, so call it again for good measure.
+    FPDFAvail_IsDocAvail(fpdf_availability_, &download_hints_);
     return true;
+  }
 
   const char* password_cstr = nullptr;
-  if (with_password) {
+  if (!password.empty()) {
     password_cstr = password.c_str();
     password_tries_remaining_--;
   }
@@ -2437,11 +2455,16 @@ bool PDFiumEngine::TryLoadingDoc(bool with_password,
   } else {
     doc_ = FPDFAvail_GetDocument(fpdf_availability_, password_cstr);
   }
-
-  if (!doc_ && FPDF_GetLastError() == FPDF_ERR_PASSWORD)
+  if (!doc_) {
+    if (FPDF_GetLastError() == FPDF_ERR_PASSWORD)
     *needs_password = true;
+    return false;
+  }
 
-  return !!doc_;
+  // Always call FPDFAvail_IsDocAvail() so PDFium initializes internal data
+  // structures.
+  FPDFAvail_IsDocAvail(fpdf_availability_, &download_hints_);
+  return true;
 }
 
 void PDFiumEngine::GetPasswordAndLoad() {
@@ -2455,24 +2478,18 @@ void PDFiumEngine::OnGetPasswordComplete(int32_t result,
                                          const pp::Var& password) {
   getting_password_ = false;
 
-  bool password_given = false;
   std::string password_text;
-  if (result == PP_OK && password.is_string()) {
+  if (result == PP_OK && password.is_string())
     password_text = password.AsString();
-    if (!password_text.empty())
-      password_given = true;
-  }
-  ContinueLoadingDocument(password_given, password_text);
+  ContinueLoadingDocument(password_text);
 }
 
-void PDFiumEngine::ContinueLoadingDocument(
-    bool has_password,
-    const std::string& password) {
+void PDFiumEngine::ContinueLoadingDocument(const std::string& password) {
   ScopedUnsupportedFeature scoped_unsupported_feature(this);
 
   bool needs_password = false;
-  bool loaded = TryLoadingDoc(has_password, password, &needs_password);
-  bool password_incorrect = !loaded && has_password && needs_password;
+  bool loaded = TryLoadingDoc(password, &needs_password);
+  bool password_incorrect = !loaded && needs_password && !password.empty();
   if (password_incorrect && password_tries_remaining_ > 0) {
     GetPasswordAndLoad();
     return;
@@ -2528,17 +2545,27 @@ void PDFiumEngine::LoadPageInfo(bool reload) {
   std::vector<pp::Rect> page_rects;
   int page_count = FPDF_GetPageCount(doc_);
   bool doc_complete = doc_loader_.IsDocumentComplete();
+  bool is_linear = FPDFAvail_IsLinearized(fpdf_availability_) == PDF_LINEARIZED;
   for (int i = 0; i < page_count; ++i) {
     if (i != 0) {
       // Add space for horizontal separator.
       document_size_.Enlarge(0, kPageSeparatorThickness);
     }
 
-    // Get page availability. If reload==false, and document is not loaded yet
-    // (we are using async loading) - mark all pages as unavailable.
-    // If reload==true (we have document constructed already), get page
-    // availability flag from already existing PDFiumPage class.
-    bool page_available = reload ? pages_[i]->available() : doc_complete;
+    // Get page availability. If |reload| == true, then the document has been
+    // constructed already. Get page availability flag from already existing
+    // PDFiumPage class.
+    // If |reload| == false, then the document may not be fully loaded yet.
+    bool page_available;
+    if (reload) {
+      page_available = pages_[i]->available();
+    } else if (is_linear) {
+      int linear_page_avail =
+          FPDFAvail_IsPageAvail(fpdf_availability_, i, &download_hints_);
+      page_available = linear_page_avail == PDF_DATA_AVAIL;
+    } else {
+      page_available = doc_complete;
+    }
 
     pp::Size size = page_available ? GetPageSize(i) : default_page_size_;
     size.Enlarge(kPageShadowLeft + kPageShadowRight,
@@ -2638,20 +2665,14 @@ bool PDFiumEngine::CheckPageAvailable(int index, std::vector<int>* pending) {
     return true;
 
   if (!FPDFAvail_IsPageAvail(fpdf_availability_, index, &download_hints_)) {
-    size_t j;
-    for (j = 0; j < pending->size(); ++j) {
-      if ((*pending)[j] == index)
-        break;
-    }
-
-    if (j == pending->size())
+    if (!ContainsValue(*pending, index))
       pending->push_back(index);
     return false;
   }
 
   if (index < num_pages)
     pages_[index]->set_available(true);
-  if (!default_page_size_.GetArea())
+  if (default_page_size_.IsEmpty())
     default_page_size_ = GetPageSize(index);
   return true;
 }
@@ -3191,8 +3212,8 @@ void PDFiumEngine::TransformPDFPageForPrinting(
           gfx_content_rect, src_page_width, src_page_height, rotated) : 1.0;
 
   // Calculate positions for the clip box.
-  printing::ClipBox media_box;
-  printing::ClipBox crop_box;
+  printing::PdfRectangle media_box;
+  printing::PdfRectangle crop_box;
   bool has_media_box = !!FPDFPage_GetMediaBox(page,
                                               &media_box.left,
                                               &media_box.bottom,
@@ -3205,9 +3226,9 @@ void PDFiumEngine::TransformPDFPageForPrinting(
                                             &crop_box.top);
   printing::CalculateMediaBoxAndCropBox(
       rotated, has_media_box, has_crop_box, &media_box, &crop_box);
-  printing::ClipBox source_clip_box =
+  printing::PdfRectangle source_clip_box =
       printing::CalculateClipBoxBoundary(media_box, crop_box);
-  printing::ScaleClipBox(scale_factor, &source_clip_box);
+  printing::ScalePdfRectangle(scale_factor, &source_clip_box);
 
   // Calculate the translation offset values.
   double offset_x = 0;

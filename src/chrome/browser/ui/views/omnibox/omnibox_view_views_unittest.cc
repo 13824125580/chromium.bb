@@ -6,8 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_edit_controller.h"
@@ -65,7 +66,6 @@ class TestingOmniboxEditController : public ChromeOmniboxEditController {
   // ChromeOmniboxEditController:
   void UpdateWithoutTabRestore() override {}
   void OnChanged() override {}
-  void OnSetFocus() override {}
   void ShowURL() override {}
   ToolbarModel* GetToolbarModel() override { return nullptr; }
   const ToolbarModel* GetToolbarModel() const override { return nullptr; }
@@ -115,7 +115,7 @@ class OmniboxViewViewsTest : public testing::Test {
   TestingProfile profile_;
   CommandUpdater command_updater_;
   TestingOmniboxEditController omnibox_edit_controller_;
-  scoped_ptr<TestingOmniboxViewViews> omnibox_view_;
+  std::unique_ptr<TestingOmniboxViewViews> omnibox_view_;
 };
 
 // Checks that a single change of the text in the omnibox invokes

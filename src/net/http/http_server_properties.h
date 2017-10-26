@@ -14,7 +14,6 @@
 
 #include "base/containers/mru_cache.h"
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
@@ -23,6 +22,7 @@
 #include "net/socket/next_proto.h"
 #include "net/spdy/spdy_framer.h"  // TODO(willchan): Reconsider this.
 #include "net/spdy/spdy_protocol.h"
+#include "url/scheme_host_port.h"
 
 namespace base {
 class Value;
@@ -138,22 +138,18 @@ struct NET_EXPORT AlternativeService {
 };
 
 struct NET_EXPORT AlternativeServiceInfo {
-  AlternativeServiceInfo() : alternative_service(), probability(0.0) {}
+  AlternativeServiceInfo() : alternative_service() {}
 
   AlternativeServiceInfo(const AlternativeService& alternative_service,
-                         double probability,
                          base::Time expiration)
       : alternative_service(alternative_service),
-        probability(probability),
         expiration(expiration) {}
 
   AlternativeServiceInfo(AlternateProtocol protocol,
                          const std::string& host,
                          uint16_t port,
-                         double probability,
                          base::Time expiration)
       : alternative_service(protocol, host, port),
-        probability(probability),
         expiration(expiration) {}
 
   AlternativeServiceInfo(
@@ -163,7 +159,7 @@ struct NET_EXPORT AlternativeServiceInfo {
 
   bool operator==(const AlternativeServiceInfo& other) const {
     return alternative_service == other.alternative_service &&
-           probability == other.probability && expiration == other.expiration;
+           expiration == other.expiration;
   }
 
   bool operator!=(const AlternativeServiceInfo& other) const {
@@ -173,7 +169,6 @@ struct NET_EXPORT AlternativeServiceInfo {
   std::string ToString() const;
 
   AlternativeService alternative_service;
-  double probability;
   base::Time expiration;
 };
 
@@ -208,16 +203,16 @@ struct NET_EXPORT ServerNetworkStats {
 
 typedef std::vector<AlternativeService> AlternativeServiceVector;
 typedef std::vector<AlternativeServiceInfo> AlternativeServiceInfoVector;
-typedef base::MRUCache<HostPortPair, AlternativeServiceInfoVector>
+typedef base::MRUCache<url::SchemeHostPort, AlternativeServiceInfoVector>
     AlternativeServiceMap;
-typedef base::MRUCache<HostPortPair, SettingsMap> SpdySettingsMap;
-typedef base::MRUCache<HostPortPair, ServerNetworkStats> ServerNetworkStatsMap;
+typedef base::MRUCache<url::SchemeHostPort, SettingsMap> SpdySettingsMap;
+typedef base::MRUCache<url::SchemeHostPort, ServerNetworkStats>
+    ServerNetworkStatsMap;
 typedef base::MRUCache<QuicServerId, std::string> QuicServerInfoMap;
 
 // Persist 5 QUIC Servers. This is mainly used by cronet.
 const int kMaxQuicServersToPersist = 5;
 
-extern const char kAlternateProtocolHeader[];
 extern const char kAlternativeServiceHeader[];
 
 // The interface for setting/retrieving the HTTP server properties.
@@ -234,22 +229,19 @@ class NET_EXPORT HttpServerProperties {
   HttpServerProperties() {}
   virtual ~HttpServerProperties() {}
 
-  // Gets a weak pointer for this object.
-  virtual base::WeakPtr<HttpServerProperties> GetWeakPtr() = 0;
-
   // Deletes all data.
   virtual void Clear() = 0;
 
   // Returns true if |server| supports a network protocol which honors
   // request prioritization.
-  virtual bool SupportsRequestPriority(const HostPortPair& server) = 0;
+  virtual bool SupportsRequestPriority(const url::SchemeHostPort& server) = 0;
 
   // Returns the value set by SetSupportsSpdy(). If not set, returns false.
-  virtual bool GetSupportsSpdy(const HostPortPair& server) = 0;
+  virtual bool GetSupportsSpdy(const url::SchemeHostPort& server) = 0;
 
   // Add |server| into the persistent store. Should only be called from IO
   // thread.
-  virtual void SetSupportsSpdy(const HostPortPair& server,
+  virtual void SetSupportsSpdy(const url::SchemeHostPort& server,
                                bool support_spdy) = 0;
 
   // Returns true if |server| has required HTTP/1.1 via HTTP/2 error code.
@@ -265,20 +257,18 @@ class NET_EXPORT HttpServerProperties {
   virtual void MaybeForceHTTP11(const HostPortPair& server,
                                 SSLConfig* ssl_config) = 0;
 
-  // Return all alternative services for |origin| with probability greater than
-  // or equal to the threshold, including broken ones.
+  // Return all alternative services for |origin|, including broken ones.
   // Returned alternative services never have empty hostnames.
   virtual AlternativeServiceVector GetAlternativeServices(
-      const HostPortPair& origin) = 0;
+      const url::SchemeHostPort& origin) = 0;
 
   // Set a single alternative service for |origin|.  Previous alternative
   // services for |origin| are discarded.
   // |alternative_service.host| may be empty.
   // Return true if |alternative_service_map_| is changed.
   virtual bool SetAlternativeService(
-      const HostPortPair& origin,
+      const url::SchemeHostPort& origin,
       const AlternativeService& alternative_service,
-      double alternative_probability,
       base::Time expiration) = 0;
 
   // Set alternative services for |origin|.  Previous alternative services for
@@ -286,7 +276,7 @@ class NET_EXPORT HttpServerProperties {
   // Hostnames in |alternative_service_info_vector| may be empty.
   // Return true if |alternative_service_map_| is changed.
   virtual bool SetAlternativeServices(
-      const HostPortPair& origin,
+      const url::SchemeHostPort& origin,
       const AlternativeServiceInfoVector& alternative_service_info_vector) = 0;
 
   // Marks |alternative_service| as broken.
@@ -314,38 +304,29 @@ class NET_EXPORT HttpServerProperties {
   virtual void ConfirmAlternativeService(
       const AlternativeService& alternative_service) = 0;
 
-  // Clear all alternative services for |origin|.
-  virtual void ClearAlternativeServices(const HostPortPair& origin) = 0;
-
   // Returns all alternative service mappings.
   // Returned alternative services may have empty hostnames.
   virtual const AlternativeServiceMap& alternative_service_map() const = 0;
 
   // Returns all alternative service mappings as human readable strings.
   // Empty alternative service hostnames will be printed as such.
-  virtual scoped_ptr<base::Value> GetAlternativeServiceInfoAsValue() const = 0;
-
-  // Sets the threshold to be used when evaluating alternative service
-  // advertisments. Only advertisements with a probability greater than or equal
-  // to |threshold| will be honored. |threshold| must be between 0.0 and 1.0
-  // inclusive. Hence, a threshold of 0.0 implies that all advertisements will
-  // be honored.
-  virtual void SetAlternativeServiceProbabilityThreshold(double threshold) = 0;
+  virtual std::unique_ptr<base::Value> GetAlternativeServiceInfoAsValue()
+      const = 0;
 
   // Gets a reference to the SettingsMap stored for a host.
   // If no settings are stored, returns an empty SettingsMap.
   virtual const SettingsMap& GetSpdySettings(
-      const HostPortPair& host_port_pair) = 0;
+      const url::SchemeHostPort& server) = 0;
 
   // Saves an individual SPDY setting for a host. Returns true if SPDY setting
   // is to be persisted.
-  virtual bool SetSpdySetting(const HostPortPair& host_port_pair,
+  virtual bool SetSpdySetting(const url::SchemeHostPort& server,
                               SpdySettingsIds id,
                               SpdySettingsFlags flags,
                               uint32_t value) = 0;
 
   // Clears all SPDY settings for a host.
-  virtual void ClearSpdySettings(const HostPortPair& host_port_pair) = 0;
+  virtual void ClearSpdySettings(const url::SchemeHostPort& server) = 0;
 
   // Clears all SPDY settings for all hosts.
   virtual void ClearAllSpdySettings() = 0;
@@ -359,11 +340,11 @@ class NET_EXPORT HttpServerProperties {
                                const IPAddress& last_address) = 0;
 
   // Sets |stats| for |host_port_pair|.
-  virtual void SetServerNetworkStats(const HostPortPair& host_port_pair,
+  virtual void SetServerNetworkStats(const url::SchemeHostPort& server,
                                      ServerNetworkStats stats) = 0;
 
   virtual const ServerNetworkStats* GetServerNetworkStats(
-      const HostPortPair& host_port_pair) = 0;
+      const url::SchemeHostPort& server) = 0;
 
   virtual const ServerNetworkStatsMap& server_network_stats_map() const = 0;
 

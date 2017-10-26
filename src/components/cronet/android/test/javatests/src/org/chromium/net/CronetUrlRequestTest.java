@@ -10,6 +10,7 @@ import android.test.suitebuilder.annotation.SmallTest;
 import android.util.Log;
 
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.net.TestUrlRequestCallback.FailureType;
 import org.chromium.net.TestUrlRequestCallback.ResponseStep;
 import org.chromium.net.test.FailurePhase;
@@ -149,6 +150,42 @@ public class CronetUrlRequestTest extends CronetTestBase {
                 Arrays.asList(urls), statusCode, message, headersList, false, "unknown", ":0");
         unknown.setReceivedBytesCount(receivedBytes);
         return unknown;
+    }
+
+    void runConnectionMigrationTest(boolean disableConnectionMigration) {
+        // URLRequest load flags at net/base/load_flags_list.h.
+        int connectionMigrationLoadFlag = 1 << 18;
+        TestUrlRequestCallback callback = new TestUrlRequestCallback();
+        callback.setAutoAdvance(false);
+        // Create builder, start a request, and check if default load_flags are set correctly.
+        UrlRequest.Builder builder =
+                new UrlRequest.Builder(NativeTestServer.getFileURL("/success.txt"), callback,
+                        callback.getExecutor(), mTestFramework.mCronetEngine);
+        // Disable connection migration.
+        if (disableConnectionMigration) builder.disableConnectionMigration();
+        UrlRequest urlRequest = builder.build();
+        urlRequest.start();
+        callback.waitForNextStep();
+        int loadFlags = CronetTestUtil.getLoadFlags(urlRequest);
+        if (disableConnectionMigration) {
+            assertEquals(connectionMigrationLoadFlag, loadFlags & connectionMigrationLoadFlag);
+        } else {
+            assertEquals(0, loadFlags & connectionMigrationLoadFlag);
+        }
+        callback.setAutoAdvance(true);
+        callback.startNextRead(urlRequest);
+        callback.blockForDone();
+    }
+
+    /**
+     * Tests that disabling connection migration sets the URLRequest load flag correctly.
+     */
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet
+    public void testLoadFlagsWithConnectionMigration() throws Exception {
+        runConnectionMigrationTest(/*disableConnectionMigration=*/false);
+        runConnectionMigrationTest(/*disableConnectionMigration=*/true);
     }
 
     /**
@@ -763,7 +800,7 @@ public class CronetUrlRequestTest extends CronetTestBase {
         try {
             ByteBuffer readBuffer = ByteBuffer.allocateDirect(4);
             readBuffer.put("full".getBytes());
-            urlRequest.readNew(readBuffer);
+            urlRequest.read(readBuffer);
             fail("Exception not thrown");
         } catch (IllegalArgumentException e) {
             assertEquals("ByteBuffer is already full.",
@@ -773,7 +810,7 @@ public class CronetUrlRequestTest extends CronetTestBase {
         // Try to read using a non-direct buffer.
         try {
             ByteBuffer readBuffer = ByteBuffer.allocate(5);
-            urlRequest.readNew(readBuffer);
+            urlRequest.read(readBuffer);
             fail("Exception not thrown");
         } catch (IllegalArgumentException e) {
             assertEquals("byteBuffer must be a direct ByteBuffer.",
@@ -783,7 +820,7 @@ public class CronetUrlRequestTest extends CronetTestBase {
         // Finish the request with a direct ByteBuffer.
         callback.setAutoAdvance(true);
         ByteBuffer readBuffer = ByteBuffer.allocateDirect(5);
-        urlRequest.readNew(readBuffer);
+        urlRequest.read(readBuffer);
         callback.blockForDone();
         assertEquals(200, callback.mResponseInfo.getHttpStatusCode());
         assertEquals("GET", callback.mResponseAsString);
@@ -1515,8 +1552,11 @@ public class CronetUrlRequestTest extends CronetTestBase {
                 callback.mOnCanceledCalled);
     }
 
+    /*
     @SmallTest
     @Feature({"Cronet"})
+    */
+    @FlakyTest(message = "https://crbug.com/592444")
     public void testFailures() throws Exception {
         throwOrCancel(FailureType.CANCEL_SYNC, ResponseStep.ON_RECEIVED_REDIRECT,
                 false, false);
@@ -1590,7 +1630,7 @@ public class CronetUrlRequestTest extends CronetTestBase {
         // Shutdown the executor, so posting the task will throw an exception.
         callback.shutdownExecutor();
         ByteBuffer readBuffer = ByteBuffer.allocateDirect(5);
-        urlRequest.readNew(readBuffer);
+        urlRequest.read(readBuffer);
         // Callback will never be called again because executor is shutdown,
         // but request will be destroyed from network thread.
         requestDestroyed.block();
@@ -1717,6 +1757,43 @@ public class CronetUrlRequestTest extends CronetTestBase {
         checkSpecificErrorCode(
                 -109, UrlRequestException.ERROR_ADDRESS_UNREACHABLE, "ADDRESS_UNREACHABLE", false);
         checkSpecificErrorCode(-2, UrlRequestException.ERROR_OTHER, "FAILED", false);
+    }
+
+    /*
+     * Verifies no cookies are saved or sent by default.
+     */
+    @SmallTest
+    @Feature({"Cronet"})
+    public void testCookiesArentSavedOrSent() throws Exception {
+        // Make a request to a url that sets the cookie
+        String url = NativeTestServer.getFileURL("/set_cookie.html");
+        TestUrlRequestCallback callback = startAndWaitForComplete(url);
+        assertEquals(200, callback.mResponseInfo.getHttpStatusCode());
+        assertEquals("A=B", callback.mResponseInfo.getAllHeaders().get("Set-Cookie").get(0));
+
+        // Make a request that check that cookie header isn't sent.
+        String headerName = "Cookie";
+        String url2 = NativeTestServer.getEchoHeaderURL(headerName);
+        TestUrlRequestCallback callback2 = startAndWaitForComplete(url2);
+        assertEquals(200, callback2.mResponseInfo.getHttpStatusCode());
+        assertEquals("Header not found. :(", callback2.mResponseAsString);
+    }
+
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet
+    public void testQuicErrorCode() throws Exception {
+        TestUrlRequestCallback callback =
+                startAndWaitForComplete(MockUrlRequestJobFactory.getMockUrlWithFailure(
+                        FailurePhase.START, NetError.ERR_QUIC_PROTOCOL_ERROR));
+        assertNull(callback.mResponseInfo);
+        assertNotNull(callback.mError);
+        assertEquals(
+                UrlRequestException.ERROR_QUIC_PROTOCOL_FAILED, callback.mError.getErrorCode());
+        assertTrue(callback.mError instanceof QuicException);
+        QuicException quicException = (QuicException) callback.mError;
+        // 1 is QUIC_INTERNAL_ERROR
+        assertEquals(1, quicException.getQuicDetailedErrorCode());
     }
 
     private void checkSpecificErrorCode(int netError, int errorCode, String name,

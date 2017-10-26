@@ -4,9 +4,9 @@
 
 #include "core/dom/URLSearchParams.h"
 
+#include "core/dom/DOMURL.h"
 #include "platform/network/FormDataEncoder.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/text/StringBuilder.h"
 #include "wtf/text/TextEncoding.h"
 
 namespace blink {
@@ -37,16 +37,21 @@ private:
 
 URLSearchParams* URLSearchParams::create(const URLSearchParamsInit& init)
 {
-    if (init.isUSVString())
-        return new URLSearchParams(init.getAsUSVString());
+    if (init.isUSVString()) {
+        const String& queryString = init.getAsUSVString();
+        if (queryString.startsWith('?'))
+            return new URLSearchParams(queryString.substring(1));
+        return new URLSearchParams(queryString);
+    }
     if (init.isURLSearchParams())
         return new URLSearchParams(init.getAsURLSearchParams());
 
-    ASSERT(init.isNull());
+    DCHECK(init.isNull());
     return new URLSearchParams(String());
 }
 
-URLSearchParams::URLSearchParams(const String& queryString)
+URLSearchParams::URLSearchParams(const String& queryString, DOMURL* urlObject)
+    : m_urlObject(urlObject)
 {
     if (!queryString.isEmpty())
         setInput(queryString);
@@ -54,12 +59,35 @@ URLSearchParams::URLSearchParams(const String& queryString)
 
 URLSearchParams::URLSearchParams(URLSearchParams* searchParams)
 {
-    ASSERT(searchParams);
+    DCHECK(searchParams);
     m_params = searchParams->m_params;
 }
 
 URLSearchParams::~URLSearchParams()
 {
+}
+
+DEFINE_TRACE(URLSearchParams)
+{
+    visitor->trace(m_urlObject);
+}
+
+#if ENABLE(ASSERT)
+DOMURL* URLSearchParams::urlObject() const
+{
+    return m_urlObject;
+}
+#endif
+
+void URLSearchParams::runUpdateSteps()
+{
+    if (!m_urlObject)
+        return;
+
+    if (m_urlObject->isInUpdate())
+        return;
+
+    m_urlObject->setSearchInternal(toString());
 }
 
 static String decodeString(String input)
@@ -69,7 +97,8 @@ static String decodeString(String input)
 
 void URLSearchParams::setInput(const String& queryString)
 {
-    ASSERT(m_params.isEmpty());
+    m_params.clear();
+
     size_t start = 0;
     size_t queryStringLength = queryString.length();
     while (start < queryStringLength) {
@@ -91,28 +120,20 @@ void URLSearchParams::setInput(const String& queryString)
         }
         start = nameValueEnd + 1;
     }
-}
-static String encodeString(const String& input)
-{
-    return encodeWithURLEscapeSequences(input).replace("%20", "+");
+    runUpdateSteps();
 }
 
 String URLSearchParams::toString() const
 {
-    StringBuilder result;
-    for (size_t i = 0; i < m_params.size(); ++i) {
-        if (i)
-            result.append('&');
-        result.append(encodeString(m_params[i].first));
-        result.append('=');
-        result.append(encodeString(m_params[i].second));
-    }
-    return result.toString();
+    Vector<char> encodedData;
+    encodeAsFormData(encodedData);
+    return String(encodedData.data(), encodedData.size());
 }
 
 void URLSearchParams::append(const String& name, const String& value)
 {
     m_params.append(std::make_pair(name, value));
+    runUpdateSteps();
 }
 
 void URLSearchParams::deleteAllWithName(const String& name)
@@ -123,6 +144,7 @@ void URLSearchParams::deleteAllWithName(const String& name)
         else
             i++;
     }
+    runUpdateSteps();
 }
 
 String URLSearchParams::get(const String& name) const
@@ -174,18 +196,21 @@ void URLSearchParams::set(const String& name, const String& value)
     // Otherwise, append a new name-value pair to the list.
     if (!foundMatch)
         append(name, value);
+    else
+        runUpdateSteps();
 }
 
-PassRefPtr<EncodedFormData> URLSearchParams::encodeFormData() const
+void URLSearchParams::encodeAsFormData(Vector<char>& encodedData) const
+{
+    for (const auto& param : m_params)
+        FormDataEncoder::addKeyValuePairAsFormData(encodedData, param.first.utf8(), param.second.utf8(), EncodedFormData::FormURLEncoded, FormDataEncoder::DoNotNormalizeCRLF);
+}
+
+PassRefPtr<EncodedFormData> URLSearchParams::toEncodedFormData() const
 {
     Vector<char> encodedData;
-    for (const auto& param : m_params)
-        FormDataEncoder::addKeyValuePairAsFormData(encodedData, param.first.utf8(), param.second.utf8(), EncodedFormData::FormURLEncoded);
+    encodeAsFormData(encodedData);
     return EncodedFormData::create(encodedData.data(), encodedData.size());
-}
-
-DEFINE_TRACE(URLSearchParams)
-{
 }
 
 PairIterable<String, String>::IterationSource* URLSearchParams::startIteration(ScriptState*, ExceptionState&)

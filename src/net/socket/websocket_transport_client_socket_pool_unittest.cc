@@ -15,7 +15,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/load_timing_info.h"
@@ -100,14 +100,14 @@ class WebSocketTransportClientSocketPoolTest : public ::testing::Test {
 
   TestSocketRequest* request(int i) { return test_base_.request(i); }
 
-  std::vector<scoped_ptr<TestSocketRequest>>* requests() {
+  std::vector<std::unique_ptr<TestSocketRequest>>* requests() {
     return test_base_.requests();
   }
   size_t completion_count() const { return test_base_.completion_count(); }
 
   TestNetLog net_log_;
   scoped_refptr<TransportSocketParams> params_;
-  scoped_ptr<MockHostResolver> host_resolver_;
+  std::unique_ptr<MockHostResolver> host_resolver_;
   MockTransportClientSocketFactory client_socket_factory_;
   WebSocketTransportClientSocketPool pool_;
   ClientSocketPoolTest test_base_;
@@ -463,7 +463,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest, LockReleasedOnHandleReset) {
 // The lock on the endpoint is released when a ClientSocketHandle is deleted.
 TEST_F(WebSocketTransportClientSocketPoolTest, LockReleasedOnHandleDelete) {
   TestCompletionCallback callback;
-  scoped_ptr<ClientSocketHandle> handle(new ClientSocketHandle);
+  std::unique_ptr<ClientSocketHandle> handle(new ClientSocketHandle);
   int rv =
       handle->Init("a", params_, LOW, ClientSocketPool::RespectLimits::ENABLED,
                    callback.callback(), &pool_, BoundNetLog());
@@ -544,7 +544,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest,
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv4AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv4());
   EXPECT_EQ(2, client_socket_factory_.allocation_count());
 }
 
@@ -567,7 +567,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest,
 
   client_socket_factory_.set_client_socket_types(case_types, 2);
   client_socket_factory_.set_delay(base::TimeDelta::FromMilliseconds(
-      TransportConnectJobHelper::kIPv6FallbackTimerInMs + 50));
+      TransportConnectJob::kIPv6FallbackTimerInMs + 50));
 
   // Resolve an AddressList with an IPv6 address first and then an IPv4 address.
   host_resolver_->rules()->AddIPLiteralRule(
@@ -587,7 +587,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest,
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv6AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv6());
   EXPECT_EQ(2, client_socket_factory_.allocation_count());
 }
 
@@ -620,7 +620,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest,
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv6AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv6());
   EXPECT_EQ(1, client_socket_factory_.allocation_count());
 }
 
@@ -651,7 +651,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest, IPv4HasNoFallback) {
   EXPECT_TRUE(handle.socket());
   IPEndPoint endpoint;
   handle.socket()->GetLocalAddress(&endpoint);
-  EXPECT_EQ(kIPv4AddressSize, endpoint.address().size());
+  EXPECT_TRUE(endpoint.address().IsIPv4());
   EXPECT_EQ(1, client_socket_factory_.allocation_count());
 }
 
@@ -728,7 +728,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest, IPv6RapidFail) {
   EXPECT_EQ(OK, callback.WaitForResult());
   EXPECT_LT(base::TimeTicks::Now() - start,
             base::TimeDelta::FromMilliseconds(
-                TransportConnectJobHelper::kIPv6FallbackTimerInMs));
+                TransportConnectJob::kIPv6FallbackTimerInMs));
   ASSERT_TRUE(handle.socket());
 
   IPEndPoint endpoint;
@@ -788,7 +788,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest, LastFailureWins) {
   client_socket_factory_.set_default_client_socket_type(
       MockTransportClientSocketFactory::MOCK_DELAYED_FAILING_CLIENT_SOCKET);
   base::TimeDelta delay = base::TimeDelta::FromMilliseconds(
-      TransportConnectJobHelper::kIPv6FallbackTimerInMs / 3);
+      TransportConnectJob::kIPv6FallbackTimerInMs / 3);
   client_socket_factory_.set_delay(delay);
 
   // Resolve an AddressList with 4 IPv6 addresses and 2 IPv4 addresses.
@@ -1019,7 +1019,7 @@ TEST_F(WebSocketTransportClientSocketPoolTest,
   // Now we have |kMaxSockets| IPv6 sockets stalled in connect. No IPv4 sockets
   // are started yet.
   RunLoopForTimePeriod(base::TimeDelta::FromMilliseconds(
-      TransportConnectJobHelper::kIPv6FallbackTimerInMs));
+      TransportConnectJob::kIPv6FallbackTimerInMs));
   // Now we have |kMaxSockets| IPv6 sockets and one IPv4 socket stalled in
   // connect, and |kMaxSockets - 1| IPv4 sockets waiting for the endpoint lock.
   pool_.FlushWithError(ERR_FAILED);

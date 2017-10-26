@@ -11,10 +11,12 @@
 #include "platform/UserGestureIndicator.h"
 #include "public/platform/WebVector.h"
 #include "public/web/WebScriptExecutionCallback.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-void SuspendableScriptExecutor::createAndRun(LocalFrame* frame, int worldID, const WillBeHeapVector<ScriptSourceCode>& sources, int extensionGroup, bool userGesture, WebScriptExecutionCallback* callback)
+void SuspendableScriptExecutor::createAndRun(LocalFrame* frame, int worldID, const HeapVector<ScriptSourceCode>& sources, int extensionGroup, bool userGesture, WebScriptExecutionCallback* callback)
 {
     SuspendableScriptExecutor* executor = new SuspendableScriptExecutor(frame, worldID, sources, extensionGroup, userGesture, callback);
     executor->run();
@@ -27,7 +29,7 @@ void SuspendableScriptExecutor::contextDestroyed()
     dispose();
 }
 
-SuspendableScriptExecutor::SuspendableScriptExecutor(LocalFrame* frame, int worldID, const WillBeHeapVector<ScriptSourceCode>& sources, int extensionGroup, bool userGesture, WebScriptExecutionCallback* callback)
+SuspendableScriptExecutor::SuspendableScriptExecutor(LocalFrame* frame, int worldID, const HeapVector<ScriptSourceCode>& sources, int extensionGroup, bool userGesture, WebScriptExecutionCallback* callback)
     : SuspendableTimer(frame->document())
     , m_frame(frame)
     , m_sources(sources)
@@ -50,8 +52,8 @@ void SuspendableScriptExecutor::fired()
 
 void SuspendableScriptExecutor::run()
 {
-    ExecutionContext* context = executionContext();
-    ASSERT(context);
+    ExecutionContext* context = getExecutionContext();
+    DCHECK(context);
     if (!context->activeDOMObjectsAreSuspended()) {
         suspendIfNeeded();
         executeAndDestroySelf();
@@ -65,9 +67,9 @@ void SuspendableScriptExecutor::executeAndDestroySelf()
 {
     // after calling the destructor of object - object will be unsubscribed from
     // resumed and contextDestroyed LifecycleObserver methods
-    OwnPtr<UserGestureIndicator> indicator;
+    std::unique_ptr<UserGestureIndicator> indicator;
     if (m_userGesture)
-        indicator = adoptPtr(new UserGestureIndicator(DefinitelyProcessingNewUserGesture));
+        indicator = wrapUnique(new UserGestureIndicator(DefinitelyProcessingNewUserGesture));
 
     v8::HandleScope scope(v8::Isolate::GetCurrent());
     Vector<v8::Local<v8::Value>> results;

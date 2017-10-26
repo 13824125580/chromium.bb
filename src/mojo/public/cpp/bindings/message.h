@@ -9,12 +9,14 @@
 #include <stdint.h>
 
 #include <limits>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "mojo/public/cpp/bindings/lib/message_buffer.h"
 #include "mojo/public/cpp/bindings/lib/message_internal.h"
-#include "mojo/public/cpp/bindings/lib/pickle_buffer.h"
+#include "mojo/public/cpp/system/message.h"
 
 namespace mojo {
 
@@ -24,18 +26,25 @@ namespace mojo {
 // followed by payload.
 class Message {
  public:
+  static const uint32_t kFlagExpectsResponse = 1 << 0;
+  static const uint32_t kFlagIsResponse = 1 << 1;
+  static const uint32_t kFlagIsSync = 1 << 2;
+
   Message();
   ~Message();
 
+  // Initializes a Message with enough space for |capacity| bytes.
   void Initialize(size_t capacity, bool zero_initialized);
+
+  // Initializes a Message from an existing Mojo MessageHandle.
+  void InitializeFromMojoMessage(ScopedMessageHandle message,
+                                 uint32_t num_bytes,
+                                 std::vector<Handle>* handles);
 
   // Transfers data and handles to |destination|.
   void MoveTo(Message* destination);
 
-  uint32_t data_num_bytes() const {
-    DCHECK(buffer_->data_num_bytes() <= std::numeric_limits<uint32_t>::max());
-    return static_cast<uint32_t>(buffer_->data_num_bytes());
-  }
+  uint32_t data_num_bytes() const { return buffer_->data_num_bytes(); }
 
   // Access the raw bytes of the message.
   const uint8_t* data() const {
@@ -90,13 +99,22 @@ class Message {
   // Access the underlying Buffer interface.
   internal::Buffer* buffer() { return buffer_.get(); }
 
+  // Takes a scoped MessageHandle which may be passed to |WriteMessageNew()| for
+  // transmission. Note that this invalidates this Message object, taking
+  // ownership of its internal storage and any attached handles.
+  ScopedMessageHandle TakeMojoMessage();
+
+  // Notifies the system that this message is "bad," in this case meaning it was
+  // rejected by bindings validation code.
+  void NotifyBadMessage(const std::string& error);
+
  private:
   void CloseHandles();
 
-  scoped_ptr<internal::PickleBuffer> buffer_;
+  std::unique_ptr<internal::MessageBuffer> buffer_;
   std::vector<Handle> handles_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(Message);
+  DISALLOW_COPY_AND_ASSIGN(Message);
 };
 
 class MessageReceiver {
@@ -106,7 +124,7 @@ class MessageReceiver {
   // The receiver may mutate the given message.  Returns true if the message
   // was accepted and false otherwise, indicating that the message was invalid
   // or malformed.
-  virtual bool Accept(Message* message) MOJO_WARN_UNUSED_RESULT = 0;
+  virtual bool Accept(Message* message) WARN_UNUSED_RESULT = 0;
 };
 
 class MessageReceiverWithResponder : public MessageReceiver {
@@ -122,9 +140,10 @@ class MessageReceiverWithResponder : public MessageReceiver {
   // |responder| and will delete it after calling |responder->Accept| or upon
   // its own destruction.
   //
-  // TODO(yzshen): consider changing |responder| to scoped_ptr<MessageReceiver>.
+  // TODO(yzshen): consider changing |responder| to
+  // std::unique_ptr<MessageReceiver>.
   virtual bool AcceptWithResponder(Message* message, MessageReceiver* responder)
-      MOJO_WARN_UNUSED_RESULT = 0;
+      WARN_UNUSED_RESULT = 0;
 };
 
 // A MessageReceiver that is also able to provide status about the state
@@ -137,6 +156,11 @@ class MessageReceiverWithStatus : public MessageReceiver {
   // Returns |true| if this MessageReceiver is currently bound to a MessagePipe,
   // the pipe has not been closed, and the pipe has not encountered an error.
   virtual bool IsValid() = 0;
+
+  // DCHECKs if this MessageReceiver is currently bound to a MessagePipe, the
+  // pipe has not been closed, and the pipe has not encountered an error.
+  // This function may be called on any thread.
+  virtual void DCheckInvalid(const std::string& message) = 0;
 };
 
 // An alternative to MessageReceiverWithResponder for cases in which it
@@ -155,10 +179,11 @@ class MessageReceiverWithResponderStatus : public MessageReceiver {
   // |responder| and will delete it after calling |responder->Accept| or upon
   // its own destruction.
   //
-  // TODO(yzshen): consider changing |responder| to scoped_ptr<MessageReceiver>.
+  // TODO(yzshen): consider changing |responder| to
+  // std::unique_ptr<MessageReceiver>.
   virtual bool AcceptWithResponder(Message* message,
                                    MessageReceiverWithStatus* responder)
-      MOJO_WARN_UNUSED_RESULT = 0;
+      WARN_UNUSED_RESULT = 0;
 };
 
 // Read a single message from the pipe. The caller should have created the

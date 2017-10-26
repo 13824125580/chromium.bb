@@ -9,6 +9,7 @@
  */
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -27,7 +28,7 @@ class VerifyingAudioReceiver : public NullRtpData {
  public:
   int32_t OnReceivedPayloadData(
       const uint8_t* payloadData,
-      const size_t payloadSize,
+      size_t payloadSize,
       const webrtc::WebRtcRTPHeader* rtpHeader) override {
     if (rtpHeader->header.payloadType == 98 ||
         rtpHeader->header.payloadType == 99) {
@@ -86,7 +87,6 @@ class RtpRtcpAudioTest : public ::testing::Test {
   ~RtpRtcpAudioTest() {}
 
   void SetUp() override {
-    audioFeedback = new NullRtpAudioFeedback();
     data_receiver1 = new VerifyingAudioReceiver();
     data_receiver2 = new VerifyingAudioReceiver();
     rtp_callback = new RTPCallback();
@@ -106,21 +106,17 @@ class RtpRtcpAudioTest : public ::testing::Test {
     configuration.clock = &fake_clock;
     configuration.receive_statistics = receive_statistics1_.get();
     configuration.outgoing_transport = transport1;
-    configuration.audio_messages = audioFeedback;
 
     module1 = RtpRtcp::CreateRtpRtcp(configuration);
     rtp_receiver1_.reset(RtpReceiver::CreateAudioReceiver(
-        &fake_clock, audioFeedback, data_receiver1, NULL,
-        rtp_payload_registry1_.get()));
+        &fake_clock, data_receiver1, NULL, rtp_payload_registry1_.get()));
 
     configuration.receive_statistics = receive_statistics2_.get();
     configuration.outgoing_transport = transport2;
-    configuration.audio_messages = audioFeedback;
 
     module2 = RtpRtcp::CreateRtpRtcp(configuration);
     rtp_receiver2_.reset(RtpReceiver::CreateAudioReceiver(
-        &fake_clock, audioFeedback, data_receiver2, NULL,
-        rtp_payload_registry2_.get()));
+        &fake_clock, data_receiver2, NULL, rtp_payload_registry2_.get()));
 
     transport1->SetSendModule(module2, rtp_payload_registry2_.get(),
                               rtp_receiver2_.get(), receive_statistics2_.get());
@@ -133,7 +129,6 @@ class RtpRtcpAudioTest : public ::testing::Test {
     delete module2;
     delete transport1;
     delete transport2;
-    delete audioFeedback;
     delete data_receiver1;
     delete data_receiver2;
     delete rtp_callback;
@@ -141,17 +136,16 @@ class RtpRtcpAudioTest : public ::testing::Test {
 
   RtpRtcp* module1;
   RtpRtcp* module2;
-  rtc::scoped_ptr<ReceiveStatistics> receive_statistics1_;
-  rtc::scoped_ptr<ReceiveStatistics> receive_statistics2_;
-  rtc::scoped_ptr<RtpReceiver> rtp_receiver1_;
-  rtc::scoped_ptr<RtpReceiver> rtp_receiver2_;
-  rtc::scoped_ptr<RTPPayloadRegistry> rtp_payload_registry1_;
-  rtc::scoped_ptr<RTPPayloadRegistry> rtp_payload_registry2_;
+  std::unique_ptr<ReceiveStatistics> receive_statistics1_;
+  std::unique_ptr<ReceiveStatistics> receive_statistics2_;
+  std::unique_ptr<RtpReceiver> rtp_receiver1_;
+  std::unique_ptr<RtpReceiver> rtp_receiver2_;
+  std::unique_ptr<RTPPayloadRegistry> rtp_payload_registry1_;
+  std::unique_ptr<RTPPayloadRegistry> rtp_payload_registry2_;
   VerifyingAudioReceiver* data_receiver1;
   VerifyingAudioReceiver* data_receiver2;
   LoopBackTransport* transport1;
   LoopBackTransport* transport2;
-  NullRtpAudioFeedback* audioFeedback;
   RTPCallback* rtp_callback;
   uint32_t test_ssrc;
   uint32_t test_timestamp;
@@ -322,7 +316,7 @@ TEST_F(RtpRtcpAudioTest, DTMF) {
         (voice_codec.rate < 0) ? 0 : voice_codec.rate));
 
   // Start DTMF test.
-  uint32_t timeStamp = 160;
+  int timeStamp = 160;
 
   // Send a DTMF tone using RFC 2833 (4733).
   for (int i = 0; i < 16; i++) {

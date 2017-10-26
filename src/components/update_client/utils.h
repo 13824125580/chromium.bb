@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_UPDATE_CLIENT_UTILS_H_
 #define COMPONENTS_UPDATE_CLIENT_UTILS_H_
 
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
-#include "base/memory/scoped_ptr.h"
 
 class GURL;
 
@@ -26,6 +28,11 @@ namespace update_client {
 class Configurator;
 struct CrxComponent;
 struct CrxUpdateItem;
+
+// Defines a name-value pair that represents an installer attribute.
+// Installer attributes are component-specific metadata, which may be serialized
+// in an update check request.
+using InstallerAttribute = std::pair<std::string, std::string>;
 
 // An update protocol request starts with a common preamble which includes
 // version and platform information for Chrome and the operating system,
@@ -60,7 +67,7 @@ std::string BuildProtocolRequest(const std::string& browser_version,
 // Sends a protocol request to the the service endpoint specified by |url|.
 // The body of the request is provided by |protocol_request| and it is
 // expected to contain XML data. The caller owns the returned object.
-scoped_ptr<net::URLFetcher> SendProtocolRequest(
+std::unique_ptr<net::URLFetcher> SendProtocolRequest(
     const GURL& url,
     const std::string& protocol_request,
     net::URLFetcherDelegate* url_fetcher_delegate,
@@ -94,6 +101,17 @@ std::string GetCrxComponentID(const CrxComponent& component);
 // |expected_hash|.
 bool VerifyFileHash256(const base::FilePath& filepath,
                        const std::string& expected_hash);
+
+// Returns true if the |brand| parameter matches ^[a-zA-Z]{4}?$ .
+bool IsValidBrand(const std::string& brand);
+
+// Returns true if the name part of the |attr| parameter matches
+// ^[-_a-zA-Z0-9]{1,256}$ and the value part of the |attr| parameter
+// matches ^[-.,;+_=a-zA-Z0-9]{0,256}$ .
+bool IsValidInstallerAttribute(const InstallerAttribute& attr);
+
+// Removes the unsecure urls in the |urls| parameter.
+void RemoveUnsecureUrls(std::vector<GURL>* urls);
 
 }  // namespace update_client
 

@@ -31,65 +31,45 @@
 #ifndef JavaScriptCallFrame_h
 #define JavaScriptCallFrame_h
 
-#include "wtf/RefCounted.h"
-#include "wtf/text/WTFString.h"
+#include "platform/inspector_protocol/Collections.h"
+#include "platform/inspector_protocol/Platform.h"
+#include "platform/inspector_protocol/String16.h"
 #include <v8.h>
+
+#include <vector>
 
 namespace blink {
 
-class V8DebuggerClient;
-
-class JavaScriptCallFrame : public RefCounted<JavaScriptCallFrame> {
+class JavaScriptCallFrame {
 public:
-    static PassRefPtr<JavaScriptCallFrame> create(V8DebuggerClient* client, v8::Local<v8::Context> debuggerContext, v8::Local<v8::Object> callFrame)
+    static std::unique_ptr<JavaScriptCallFrame> create(v8::Local<v8::Context> debuggerContext, v8::Local<v8::Object> callFrame)
     {
-        return adoptRef(new JavaScriptCallFrame(client, debuggerContext, callFrame));
+        return wrapUnique(new JavaScriptCallFrame(debuggerContext, callFrame));
     }
     ~JavaScriptCallFrame();
-
-    JavaScriptCallFrame* caller();
 
     int sourceID() const;
     int line() const;
     int column() const;
-    String scriptName() const;
-    String functionName() const;
-    int functionLine() const;
-    int functionColumn() const;
+    int contextId() const;
 
-    v8::Local<v8::Value> scopeChain() const;
-    int scopeType(int scopeIndex) const;
-    v8::Local<v8::String> scopeName(int scopeIndex) const;
-    v8::Local<v8::Value> thisObject() const;
-    String stepInPositions() const;
     bool isAtReturn() const;
-    v8::Local<v8::Value> returnValue() const;
+    v8::Local<v8::Object> details() const;
 
-    v8::Local<v8::Value> evaluateWithExceptionDetails(v8::Local<v8::Value> expression, v8::Local<v8::Value> scopeExtension);
+    v8::MaybeLocal<v8::Value> evaluate(v8::Local<v8::Value> expression);
     v8::MaybeLocal<v8::Value> restart();
     v8::MaybeLocal<v8::Value> setVariableValue(int scopeNumber, v8::Local<v8::Value> variableName, v8::Local<v8::Value> newValue);
-
-    static v8::Local<v8::Object> createExceptionDetails(v8::Isolate*, v8::Local<v8::Message>);
-
-    // FIXME: store this template in per isolate data
-    void setWrapperTemplate(v8::Local<v8::FunctionTemplate> wrapperTemplate, v8::Isolate* isolate) { m_wrapperTemplate.Reset(isolate, wrapperTemplate); }
-    v8::Local<v8::FunctionTemplate> wrapperTemplate(v8::Isolate* isolate) { return v8::Local<v8::FunctionTemplate>::New(isolate, m_wrapperTemplate); }
-
-    V8DebuggerClient* client() { return m_client; }
-
 private:
-    JavaScriptCallFrame(V8DebuggerClient*, v8::Local<v8::Context> debuggerContext, v8::Local<v8::Object> callFrame);
+    JavaScriptCallFrame(v8::Local<v8::Context> debuggerContext, v8::Local<v8::Object> callFrame);
 
     int callV8FunctionReturnInt(const char* name) const;
-    String callV8FunctionReturnString(const char* name) const;
 
-    V8DebuggerClient* m_client;
     v8::Isolate* m_isolate;
-    RefPtr<JavaScriptCallFrame> m_caller;
     v8::Global<v8::Context> m_debuggerContext;
     v8::Global<v8::Object> m_callFrame;
-    v8::Global<v8::FunctionTemplate> m_wrapperTemplate;
 };
+
+using JavaScriptCallFrames = std::vector<std::unique_ptr<JavaScriptCallFrame>>;
 
 } // namespace blink
 

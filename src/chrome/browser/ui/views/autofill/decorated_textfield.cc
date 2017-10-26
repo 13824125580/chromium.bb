@@ -6,9 +6,9 @@
 
 #include <utility>
 
-#include "chrome/browser/ui/autofill/autofill_dialog_types.h"
 #include "chrome/browser/ui/views/autofill/tooltip_icon.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/focusable_border.h"
@@ -41,7 +41,7 @@ DecoratedTextfield::DecoratedTextfield(
   set_controller(controller);
 
   SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
+      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 }
 
 DecoratedTextfield::~DecoratedTextfield() {}
@@ -149,9 +149,9 @@ void DecoratedTextfield::UpdateBackground() {
 }
 
 void DecoratedTextfield::UpdateBorder() {
-  scoped_ptr<views::FocusableBorder> border(new views::FocusableBorder());
+  std::unique_ptr<views::FocusableBorder> border(new views::FocusableBorder());
   if (invalid_)
-    border->SetColor(kWarningColor);
+    border->SetColor(gfx::kGoogleRed700);
   else if (!editable_)
     border->SetColor(SK_ColorTRANSPARENT);
 

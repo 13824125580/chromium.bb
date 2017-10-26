@@ -41,6 +41,7 @@
 #include "platform/heap/Handle.h"
 #include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -90,6 +91,7 @@ public:
     void clearOutdatedAnimation(Animation*);
     bool hasOutdatedAnimation() const { return m_outdatedAnimationCount > 0; }
     bool needsAnimationTimingUpdate();
+    void invalidateKeyframeEffects();
 
     void setPlaybackRate(double);
     double playbackRate() const;
@@ -97,9 +99,6 @@ public:
     CompositorAnimationTimeline* compositorTimeline() const { return m_compositorTimeline.get(); }
 
     Document* document() { return m_document.get(); }
-#if !ENABLE(OILPAN)
-    void detachFromDocument();
-#endif
     void wake();
     void resetForTesting();
 
@@ -109,7 +108,7 @@ protected:
     AnimationTimeline(Document*, PlatformTiming*);
 
 private:
-    RawPtrWillBeMember<Document> m_document;
+    Member<Document> m_document;
     double m_zeroTime;
     bool m_zeroTimeInitialized;
     unsigned m_outdatedAnimationCount;
@@ -126,7 +125,7 @@ private:
     Member<PlatformTiming> m_timing;
     double m_lastCurrentTimeInternal;
 
-    OwnPtr<CompositorAnimationTimeline> m_compositorTimeline;
+    std::unique_ptr<CompositorAnimationTimeline> m_compositorTimeline;
 
     class AnimationTimelineTiming final : public PlatformTiming {
     public:

@@ -17,6 +17,10 @@
         '../../components/components.gyp:favicon_base',
         '../../components/components.gyp:metrics',
         '../../components/components.gyp:metrics_test_support',
+        '../../components/components.gyp:password_manager_core_browser',
+        '../../components/components.gyp:password_manager_core_browser_test_support',
+        '../../components/components.gyp:password_manager_core_common',
+        '../../components/components.gyp:syncable_prefs_test_support',
         '../../components/components.gyp:update_client',
         '../../components/components.gyp:version_info',
         '../../components/prefs/prefs.gyp:prefs_test_support',
@@ -24,6 +28,7 @@
         '../../skia/skia.gyp:skia',
         '../../testing/gmock.gyp:gmock',
         '../../testing/gtest.gyp:gtest',
+        '../../third_party/google_toolbox_for_mac/google_toolbox_for_mac.gyp:google_toolbox_for_mac',
         '../../third_party/ocmock/ocmock.gyp:ocmock',
         '../../ui/gfx/gfx.gyp:gfx',
         '../../ui/gfx/gfx.gyp:gfx_test_support',
@@ -38,6 +43,7 @@
         'browser/ui/native_content_controller_test.xib'
       ],
       'sources': [
+        'app/application_delegate/memory_warning_helper_unittest.mm',
         'app/safe_mode_util_unittest.cc',
         'browser/chrome_url_util_unittest.mm',
         'browser/crash_loop_detection_util_unittest.mm',
@@ -55,6 +61,8 @@
         'browser/net/image_fetcher_unittest.mm',
         'browser/net/metrics_network_client_unittest.mm',
         'browser/net/retryable_url_fetcher_unittest.mm',
+        'browser/notification_promo_unittest.cc',
+        'browser/passwords/password_controller_unittest.mm',
         'browser/reading_list/reading_list_entry_unittest.cc',
         'browser/reading_list/reading_list_model_unittest.cc',
         'browser/signin/chrome_identity_service_observer_bridge_unittest.mm',
@@ -62,8 +70,10 @@
         'browser/snapshots/lru_cache_unittest.mm',
         'browser/snapshots/snapshot_cache_unittest.mm',
         'browser/snapshots/snapshots_util_unittest.mm',
+        'browser/ssl/ios_ssl_error_handler_unittest.mm',
         'browser/translate/translate_service_ios_unittest.cc',
         'browser/ui/commands/set_up_for_testing_command_unittest.mm',
+        'browser/ui/context_menu/context_menu_coordinator_unittest.mm',
         'browser/ui/keyboard/UIKeyCommand+ChromeTest.mm',
         'browser/ui/keyboard/hardware_keyboard_watcher_unittest.mm',
         'browser/ui/native_content_controller_unittest.mm',
@@ -72,25 +82,20 @@
         'browser/update_client/ios_chrome_update_query_params_delegate_unittest.cc',
         'browser/web_resource/web_resource_util_unittest.cc',
         'common/string_util_unittest.mm',
+        'test/google_toolbox_unittest.mm',
       ],
       'actions': [
         {
           'action_name': 'copy_ios_chrome_test_data',
           'variables': {
             'test_data_files': [
+              '../../net/data/ssl/certificates/',
               'test/data/webdata/bookmarkimages',
             ],
             'test_data_prefix': 'ios/chrome',
           },
           'includes': [ '../../build/copy_test_data_ios.gypi' ]
         },
-      ],
-      'conditions': [
-        ['safe_browsing!=0', {
-          'sources': [
-            'browser/safe_browsing/util_unittest.cc',
-          ],
-        }],
       ],
       'includes': ['ios_chrome_resources_bundle.gypi'],
     },

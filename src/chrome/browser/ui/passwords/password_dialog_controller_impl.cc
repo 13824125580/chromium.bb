@@ -13,6 +13,7 @@
 #include "components/autofill/core/common/password_form.h"
 #include "components/browser_sync/browser/profile_sync_service.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -42,8 +43,8 @@ PasswordDialogControllerImpl::~PasswordDialogControllerImpl() {
 
 void PasswordDialogControllerImpl::ShowAccountChooser(
     AccountChooserPrompt* dialog,
-    std::vector<scoped_ptr<autofill::PasswordForm>> locals,
-    std::vector<scoped_ptr<autofill::PasswordForm>> federations) {
+    std::vector<std::unique_ptr<autofill::PasswordForm>> locals,
+    std::vector<std::unique_ptr<autofill::PasswordForm>> federations) {
   DCHECK(!account_chooser_dialog_);
   DCHECK(!autosignin_dialog_);
   DCHECK(dialog);
@@ -77,9 +78,14 @@ PasswordDialogControllerImpl::GetAccoutChooserTitle() const {
   std::pair<base::string16, gfx::Range> result;
   GetAccountChooserDialogTitleTextAndLinkRange(
       IsSmartLockBrandingEnabled(profile_),
+      local_credentials_.size() > 1,
       &result.first,
       &result.second);
   return result;
+}
+
+bool PasswordDialogControllerImpl::ShouldShowSignInButton() const {
+  return local_credentials_.size() == 1;
 }
 
 base::string16 PasswordDialogControllerImpl::GetAutoSigninPromoTitle() const {
@@ -106,13 +112,32 @@ void PasswordDialogControllerImpl::OnSmartLockLinkClicked() {
 void PasswordDialogControllerImpl::OnChooseCredentials(
     const autofill::PasswordForm& password_form,
     password_manager::CredentialType credential_type) {
+  if (local_credentials_.size() == 1) {
+    password_manager::metrics_util::LogAccountChooserUserActionOneAccount(
+        password_manager::metrics_util::ACCOUNT_CHOOSER_CREDENTIAL_CHOSEN);
+  } else {
+    password_manager::metrics_util::LogAccountChooserUserActionManyAccounts(
+        password_manager::metrics_util::ACCOUNT_CHOOSER_CREDENTIAL_CHOSEN);
+  }
   ResetDialog();
   delegate_->ChooseCredential(password_form, credential_type);
+}
+
+void PasswordDialogControllerImpl::OnSignInClicked() {
+  DCHECK_EQ(1u, local_credentials_.size());
+  password_manager::metrics_util::LogAccountChooserUserActionOneAccount(
+      password_manager::metrics_util::ACCOUNT_CHOOSER_SIGN_IN);
+  ResetDialog();
+  delegate_->ChooseCredential(
+      *local_credentials_[0],
+      password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD);
 }
 
 void PasswordDialogControllerImpl::OnAutoSigninOK() {
   password_bubble_experiment::RecordAutoSignInPromptFirstRunExperienceWasShown(
       profile_->GetPrefs());
+  password_manager::metrics_util::LogAutoSigninPromoUserAction(
+      password_manager::metrics_util::AUTO_SIGNIN_OK_GOT_IT);
   ResetDialog();
   OnCloseDialog();
 }
@@ -122,13 +147,28 @@ void PasswordDialogControllerImpl::OnAutoSigninTurnOff() {
       password_manager::prefs::kCredentialsEnableAutosignin, false);
   password_bubble_experiment::RecordAutoSignInPromptFirstRunExperienceWasShown(
       profile_->GetPrefs());
+  password_manager::metrics_util::LogAutoSigninPromoUserAction(
+      password_manager::metrics_util::AUTO_SIGNIN_TURN_OFF);
   ResetDialog();
   OnCloseDialog();
 }
 
 void PasswordDialogControllerImpl::OnCloseDialog() {
-  account_chooser_dialog_ = nullptr;
-  autosignin_dialog_ = nullptr;
+  if (account_chooser_dialog_) {
+    if (local_credentials_.size() == 1) {
+      password_manager::metrics_util::LogAccountChooserUserActionOneAccount(
+          password_manager::metrics_util::ACCOUNT_CHOOSER_DISMISSED);
+    } else {
+      password_manager::metrics_util::LogAccountChooserUserActionManyAccounts(
+          password_manager::metrics_util::ACCOUNT_CHOOSER_DISMISSED);
+    }
+    account_chooser_dialog_ = nullptr;
+  }
+  if (autosignin_dialog_) {
+    password_manager::metrics_util::LogAutoSigninPromoUserAction(
+        password_manager::metrics_util::AUTO_SIGNIN_NO_ACTION);
+    autosignin_dialog_ = nullptr;
+  }
   delegate_->OnDialogHidden();
 }
 

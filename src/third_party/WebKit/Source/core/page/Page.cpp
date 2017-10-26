@@ -21,12 +21,12 @@
 
 #include "core/css/resolver/ViewportStyleResolver.h"
 #include "core/dom/ClientRectList.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/dom/VisitedLinkState.h"
 #include "core/editing/DragCaretController.h"
 #include "core/editing/commands/UndoStack.h"
 #include "core/editing/markers/DocumentMarkerController.h"
 #include "core/events/Event.h"
-#include "core/fetch/MemoryCache.h"
 #include "core/fetch/ResourceFetcher.h"
 #include "core/frame/DOMTimer.h"
 #include "core/frame/FrameConsole.h"
@@ -35,9 +35,9 @@
 #include "core/frame/RemoteFrame.h"
 #include "core/frame/RemoteFrameView.h"
 #include "core/frame/Settings.h"
+#include "core/frame/VisualViewport.h"
 #include "core/html/HTMLMediaElement.h"
 #include "core/inspector/InspectorInstrumentation.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/TextAutosizer.h"
 #include "core/page/AutoscrollController.h"
 #include "core/page/ChromeClient.h"
@@ -45,6 +45,7 @@
 #include "core/page/DragController.h"
 #include "core/page/FocusController.h"
 #include "core/page/PointerLockController.h"
+#include "core/page/ScopedPageLoadDeferrer.h"
 #include "core/page/ValidationMessageClient.h"
 #include "core/page/scrolling/ScrollingCoordinator.h"
 #include "core/paint/PaintLayer.h"
@@ -71,7 +72,7 @@ Page::PageSet& Page::ordinaryPages()
 
 void Page::networkStateChanged(bool online)
 {
-    WillBeHeapVector<RefPtrWillBeMember<LocalFrame>> frames;
+    HeapVector<Member<LocalFrame>> frames;
 
     // Get all the frames of all the pages in all the page groups
     for (Page* page : allPages()) {
@@ -89,12 +90,6 @@ void Page::networkStateChanged(bool online)
     }
 }
 
-void Page::onMemoryPressure()
-{
-    for (Page* page : ordinaryPages())
-        page->memoryPurgeController().purgeMemory();
-}
-
 float deviceScaleFactor(LocalFrame* frame)
 {
     if (!frame)
@@ -105,12 +100,13 @@ float deviceScaleFactor(LocalFrame* frame)
     return page->deviceScaleFactor();
 }
 
-PassOwnPtrWillBeRawPtr<Page> Page::createOrdinary(PageClients& pageClients)
+Page* Page::createOrdinary(PageClients& pageClients)
 {
-    OwnPtrWillBeRawPtr<Page> page = create(pageClients);
-    ordinaryPages().add(page.get());
-    page->memoryPurgeController().registerClient(page.get());
-    return page.release();
+    Page* page = create(pageClients);
+    ordinaryPages().add(page);
+    if (ScopedPageLoadDeferrer::isActive())
+        page->setDefersLoading(true);
+    return page;
 }
 
 Page::Page(PageClients& pageClients)
@@ -119,7 +115,7 @@ Page::Page(PageClients& pageClients)
     , m_autoscrollController(AutoscrollController::create(*this))
     , m_chromeClient(pageClients.chromeClient)
     , m_dragCaretController(DragCaretController::create())
-    , m_dragController(DragController::create(this, pageClients.dragClient))
+    , m_dragController(DragController::create(this))
     , m_focusController(FocusController::create(this))
     , m_contextMenuController(ContextMenuController::create(this, pageClients.contextMenuClient))
     , m_pointerLockController(PointerLockController::create(this))
@@ -147,9 +143,6 @@ Page::Page(PageClients& pageClients)
 
 Page::~Page()
 {
-#if !ENABLE(OILPAN)
-    ASSERT(!ordinaryPages().contains(this));
-#endif
     // willBeDestroyed() must be called before Page destruction.
     ASSERT(!m_mainFrame);
 }
@@ -165,14 +158,6 @@ ScrollingCoordinator* Page::scrollingCoordinator()
         m_scrollingCoordinator = ScrollingCoordinator::create(this);
 
     return m_scrollingCoordinator.get();
-}
-
-MemoryPurgeController& Page::memoryPurgeController()
-{
-    if (!m_memoryPurgeController)
-        m_memoryPurgeController = MemoryPurgeController::create();
-
-    return *m_memoryPurgeController;
 }
 
 String Page::mainThreadScrollingReasonsAsText()
@@ -210,12 +195,11 @@ void Page::setMainFrame(Frame* mainFrame)
 
 void Page::documentDetached(Document* document)
 {
-    m_multisamplingChangedObservers.clear();
     m_pointerLockController->documentDetached(document);
     m_contextMenuController->documentDetached(document);
     if (m_validationMessageClient)
         m_validationMessageClient->documentDetached(*document);
-    m_originsUsingFeatures.documentDetached(*document);
+    m_hostsUsingFeatures.documentDetached(*document);
 }
 
 bool Page::openedByDOM() const
@@ -241,7 +225,7 @@ void Page::setNeedsRecalcStyleInAllFrames()
 {
     for (Frame* frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
         if (frame->isLocalFrame())
-            toLocalFrame(frame)->document()->styleEngine().resolverChanged(FullStyleUpdate);
+            toLocalFrame(frame)->document()->setNeedsStyleRecalc(SubtreeStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::Settings));
     }
 }
 
@@ -261,28 +245,12 @@ void Page::refreshPlugins()
 
 PluginData* Page::pluginData() const
 {
-    if (!mainFrame()->isLocalFrame()
-        || !deprecatedLocalMainFrame()->loader().allowPlugins(NotAboutToInstantiatePlugin))
-        return nullptr;
     if (!m_pluginData)
         m_pluginData = PluginData::create(this);
     return m_pluginData.get();
 }
 
-void Page::unmarkAllTextMatches()
-{
-    if (!mainFrame())
-        return;
-
-    Frame* frame = mainFrame();
-    do {
-        if (frame->isLocalFrame())
-            toLocalFrame(frame)->document()->markers().removeMarkers(DocumentMarker::TextMatch);
-        frame = frame->tree().traverseNextWithWrap(false);
-    } while (frame);
-}
-
-void Page::setValidationMessageClient(PassOwnPtrWillBeRawPtr<ValidationMessageClient> client)
+void Page::setValidationMessageClient(ValidationMessageClient* client)
 {
     m_validationMessageClient = client;
 }
@@ -315,7 +283,6 @@ void Page::setDeviceScaleFactor(float scaleFactor)
         return;
 
     m_deviceScaleFactor = scaleFactor;
-    setNeedsRecalcStyleInAllFrames();
 
     if (mainFrame() && mainFrame()->isLocalFrame())
         deprecatedLocalMainFrame()->deviceScaleFactorChanged();
@@ -368,8 +335,8 @@ void Page::setVisibilityState(PageVisibilityState visibilityState, bool isInitia
     if (!isInitialState)
         notifyPageVisibilityChanged();
 
-    if (!isInitialState && m_mainFrame && m_mainFrame->isLocalFrame())
-        deprecatedLocalMainFrame()->didChangeVisibilityState();
+    if (!isInitialState && m_mainFrame)
+        m_mainFrame->didChangeVisibilityState();
 
     // Compress CompressibleStrings when 10 seconds have passed since the page
     // went to background.
@@ -396,19 +363,6 @@ bool Page::isCursorVisible() const
     return m_isCursorVisible && settings().deviceSupportsMouse();
 }
 
-void Page::addMultisamplingChangedObserver(MultisamplingChangedObserver* observer)
-{
-    m_multisamplingChangedObservers.add(observer);
-}
-
-// For Oilpan, unregistration is handled by the GC and weak references.
-#if !ENABLE(OILPAN)
-void Page::removeMultisamplingChangedObserver(MultisamplingChangedObserver* observer)
-{
-    m_multisamplingChangedObservers.remove(observer);
-}
-#endif
-
 void Page::settingsChanged(SettingsDelegate::ChangeType changeType)
 {
     switch (changeType) {
@@ -425,11 +379,6 @@ void Page::settingsChanged(SettingsDelegate::ChangeType changeType)
                 toLocalFrame(frame)->document()->initDNSPrefetch();
         }
         break;
-    case SettingsDelegate::MultisamplingChange: {
-        for (MultisamplingChangedObserver* observer : m_multisamplingChangedObservers)
-            observer->multisamplingChanged(m_settings->openGLMultisamplingEnabled());
-        break;
-    }
     case SettingsDelegate::ImageLoadingChange:
         for (Frame* frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
             if (frame->isLocalFrame()) {
@@ -449,7 +398,6 @@ void Page::settingsChanged(SettingsDelegate::ChangeType changeType)
             if (frame->isLocalFrame())
                 toLocalFrame(frame)->document()->styleEngine().updateGenericFontFamilySettings();
         }
-        setNeedsRecalcStyleInAllFrames();
         break;
     case SettingsDelegate::AcceleratedCompositingChange:
         updateAcceleratedCompositingSettings();
@@ -501,18 +449,17 @@ void Page::didCommitLoad(LocalFrame* frame)
 {
     notifyDidCommitLoad(frame);
     if (m_mainFrame == frame) {
-        frame->console().clearMessages();
         useCounter().didCommitLoad();
         deprecation().clearSuppression();
         frameHost().visualViewport().sendUMAMetrics();
-        m_originsUsingFeatures.updateMeasurementsAndClear();
+        m_hostsUsingFeatures.updateMeasurementsAndClear();
         UserGestureIndicator::clearProcessedUserGestureSinceLoad();
     }
 }
 
 void Page::acceptLanguagesChanged()
 {
-    WillBeHeapVector<RefPtrWillBeMember<LocalFrame>> frames;
+    HeapVector<Member<LocalFrame>> frames;
 
     // Even though we don't fire an event from here, the LocalDOMWindow's will fire
     // an event so we keep the frames alive until we are done.
@@ -525,15 +472,8 @@ void Page::acceptLanguagesChanged()
         frames[i]->localDOMWindow()->acceptLanguagesChanged();
 }
 
-void Page::purgeMemory(DeviceKind deviceKind)
-{
-    if (deviceKind == DeviceKind::LowEnd)
-        memoryCache()->pruneAll();
-}
-
 DEFINE_TRACE(Page)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_animator);
     visitor->trace(m_autoscrollController);
     visitor->trace(m_chromeClient);
@@ -546,13 +486,9 @@ DEFINE_TRACE(Page)
     visitor->trace(m_undoStack);
     visitor->trace(m_mainFrame);
     visitor->trace(m_validationMessageClient);
-    visitor->trace(m_multisamplingChangedObservers);
     visitor->trace(m_frameHost);
-    visitor->trace(m_memoryPurgeController);
-    HeapSupplementable<Page>::trace(visitor);
-#endif
+    Supplementable<Page>::trace(visitor);
     PageLifecycleNotifier::trace(visitor);
-    MemoryPurgeClient::trace(visitor);
 }
 
 void Page::layerTreeViewInitialized(WebLayerTreeView& layerTreeView)
@@ -574,17 +510,13 @@ void Page::willBeClosed()
 
 void Page::willBeDestroyed()
 {
-    RefPtrWillBeRawPtr<Frame> mainFrame = m_mainFrame;
+    Frame* mainFrame = m_mainFrame;
 
     mainFrame->detach(FrameDetachType::Remove);
 
     ASSERT(allPages().contains(this));
     allPages().remove(this);
     ordinaryPages().remove(this);
-#if !ENABLE(OILPAN)
-    if (m_memoryPurgeController)
-        m_memoryPurgeController->unregisterClient(this);
-#endif
 
     if (m_scrollingCoordinator)
         m_scrollingCoordinator->willBeDestroyed();
@@ -608,7 +540,6 @@ Page::PageClients::PageClients()
     : chromeClient(nullptr)
     , contextMenuClient(nullptr)
     , editorClient(nullptr)
-    , dragClient(nullptr)
     , spellCheckerClient(nullptr)
 {
 }
@@ -617,6 +548,6 @@ Page::PageClients::~PageClients()
 {
 }
 
-template class CORE_TEMPLATE_EXPORT WillBeHeapSupplement<Page>;
+template class CORE_TEMPLATE_EXPORT Supplement<Page>;
 
 } // namespace blink

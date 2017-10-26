@@ -23,7 +23,7 @@ public:
     }
 
     void setCSSPropertyValue(CSSPropertyID, const String& value, Element*, StyleSheetContents*);
-    void setCSSPropertyValue(CSSPropertyID, PassRefPtrWillBeRawPtr<CSSValue>);
+    void setCSSPropertyValue(CSSPropertyID, CSSValue*);
     void setPresentationAttributeValue(CSSPropertyID, const String& value, Element*, StyleSheetContents*);
     void setSVGAttributeValue(const QualifiedName&, const String& value);
 
@@ -63,7 +63,6 @@ public:
 
         bool isNeutral() const final { return !m_value; }
         PassRefPtr<Keyframe::PropertySpecificKeyframe> neutralKeyframe(double offset, PassRefPtr<TimingFunction> easing) const final;
-        PassRefPtr<Interpolation> maybeCreateInterpolation(PropertyHandle, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle* baseStyle) const final;
 
     private:
         CSSPropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, CSSValue* value, EffectModel::CompositeOperation composite)
@@ -74,12 +73,9 @@ public:
         virtual PassRefPtr<Keyframe::PropertySpecificKeyframe> cloneWithOffset(double offset) const;
         bool isCSSPropertySpecificKeyframe() const override { return true; }
 
-        PassRefPtr<Interpolation> createLegacyStyleInterpolation(CSSPropertyID, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle* baseStyle) const;
-        static bool createInterpolationsFromCSSValues(CSSPropertyID, CSSValue* fromCSSValue, CSSValue* toCSSValue, Element*, OwnPtr<Vector<RefPtr<Interpolation>>>& interpolations);
-
         void populateAnimatableValueCaches(CSSPropertyID, Keyframe::PropertySpecificKeyframe&, Element*, CSSValue& fromCSSValue, CSSValue& toCSSValue) const;
 
-        RefPtrWillBePersistent<CSSValue> m_value;
+        Persistent<CSSValue> m_value;
         mutable RefPtr<AnimatableValue> m_animatableValueCache;
     };
 
@@ -98,7 +94,6 @@ public:
 
         bool isNeutral() const final { return m_value.isNull(); }
         PassRefPtr<PropertySpecificKeyframe> neutralKeyframe(double offset, PassRefPtr<TimingFunction> easing) const final;
-        PassRefPtr<Interpolation> maybeCreateInterpolation(PropertyHandle, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle* baseStyle) const final;
 
     private:
         SVGPropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, const String& value, EffectModel::CompositeOperation composite)
@@ -124,8 +119,8 @@ private:
 
     bool isStringKeyframe() const override { return true; }
 
-    RefPtrWillBePersistent<MutableStylePropertySet> m_cssPropertyMap;
-    RefPtrWillBePersistent<MutableStylePropertySet> m_presentationAttributeMap;
+    Persistent<MutableStylePropertySet> m_cssPropertyMap;
+    Persistent<MutableStylePropertySet> m_presentationAttributeMap;
     HashMap<const QualifiedName*, String> m_svgAttributeMap;
 };
 

@@ -5,8 +5,9 @@
 #ifndef DEVICE_BATTERY_BATTERY_MONITOR_IMPL_H_
 #define DEVICE_BATTERY_BATTERY_MONITOR_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "device/battery/battery_export.h"
 #include "device/battery/battery_monitor.mojom.h"
 #include "device/battery/battery_status_service.h"
@@ -20,21 +21,20 @@ class BatteryMonitorImpl : public BatteryMonitor {
       mojo::InterfaceRequest<BatteryMonitor> request);
 
  private:
-  typedef mojo::Callback<void(BatteryStatusPtr)> BatteryStatusCallback;
-
   explicit BatteryMonitorImpl(mojo::InterfaceRequest<BatteryMonitor> request);
   ~BatteryMonitorImpl() override;
 
   // BatteryMonitor methods:
-  void QueryNextStatus(const BatteryStatusCallback& callback) override;
+  void QueryNextStatus(const QueryNextStatusCallback& callback) override;
 
   void RegisterSubscription();
   void DidChange(const BatteryStatus& battery_status);
   void ReportStatus();
 
   mojo::StrongBinding<BatteryMonitor> binding_;
-  scoped_ptr<BatteryStatusService::BatteryUpdateSubscription> subscription_;
-  BatteryStatusCallback callback_;
+  std::unique_ptr<BatteryStatusService::BatteryUpdateSubscription>
+      subscription_;
+  QueryNextStatusCallback callback_;
   BatteryStatus status_;
   bool status_to_report_;
 

@@ -28,7 +28,6 @@
 #include "core/svg/SVGAnimatedTypeAnimator.h"
 #include "core/svg/SVGAnimationElement.h"
 #include "platform/heap/Handle.h"
-#include "wtf/OwnPtr.h"
 #include <base/gtest_prod_util.h>
 
 namespace blink {
@@ -38,7 +37,7 @@ class SVGAnimatedTypeAnimator;
 class CORE_EXPORT SVGAnimateElement : public SVGAnimationElement {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static PassRefPtrWillBeRawPtr<SVGAnimateElement> create(Document&);
+    static SVGAnimateElement* create(Document&);
     ~SVGAnimateElement() override;
 
     DECLARE_VIRTUAL_TRACE();
@@ -74,10 +73,10 @@ private:
 
     bool hasValidAttributeType() override;
 
-    RefPtrWillBeMember<SVGPropertyBase> m_fromProperty;
-    RefPtrWillBeMember<SVGPropertyBase> m_toProperty;
-    RefPtrWillBeMember<SVGPropertyBase> m_toAtEndOfDurationProperty;
-    RefPtrWillBeMember<SVGPropertyBase> m_animatedProperty;
+    Member<SVGPropertyBase> m_fromProperty;
+    Member<SVGPropertyBase> m_toProperty;
+    Member<SVGPropertyBase> m_toAtEndOfDurationProperty;
+    Member<SVGPropertyBase> m_animatedProperty;
 
     SVGAnimatedTypeAnimator m_animator;
 };

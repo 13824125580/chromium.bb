@@ -4,16 +4,19 @@
 
 #include "content/public/test/mock_render_thread.h"
 
+#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/common/frame_messages.h"
 #include "content/common/view_messages.h"
-#include "content/public/renderer/render_process_observer.h"
+#include "content/public/renderer/render_thread_observer.h"
 #include "content/renderer/render_view_impl.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/ipc_sync_message.h"
 #include "ipc/message_filter.h"
+#include "services/shell/public/cpp/interface_provider.h"
+#include "services/shell/public/cpp/interface_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/web/WebScriptController.h"
 
@@ -108,19 +111,16 @@ void MockRenderThread::RemoveFilter(IPC::MessageFilter* filter) {
   NOTREACHED() << "filter to be removed not found";
 }
 
-void MockRenderThread::AddObserver(RenderProcessObserver* observer) {
+void MockRenderThread::AddObserver(RenderThreadObserver* observer) {
   observers_.AddObserver(observer);
 }
 
-void MockRenderThread::RemoveObserver(RenderProcessObserver* observer) {
+void MockRenderThread::RemoveObserver(RenderThreadObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
 void MockRenderThread::SetResourceDispatcherDelegate(
     ResourceDispatcherDelegate* delegate) {
-}
-
-void MockRenderThread::EnsureWebKitInitialized() {
 }
 
 void MockRenderThread::RecordAction(const base::UserMetricsAction& action) {
@@ -129,16 +129,15 @@ void MockRenderThread::RecordAction(const base::UserMetricsAction& action) {
 void MockRenderThread::RecordComputedAction(const std::string& action) {
 }
 
-scoped_ptr<base::SharedMemory>
-    MockRenderThread::HostAllocateSharedMemoryBuffer(
-        size_t buffer_size) {
-  scoped_ptr<base::SharedMemory> shared_buf(new base::SharedMemory);
+std::unique_ptr<base::SharedMemory>
+MockRenderThread::HostAllocateSharedMemoryBuffer(size_t buffer_size) {
+  std::unique_ptr<base::SharedMemory> shared_buf(new base::SharedMemory);
   if (!shared_buf->CreateAnonymous(buffer_size)) {
     NOTREACHED() << "Cannot map shared memory buffer";
-    return scoped_ptr<base::SharedMemory>();
+    return std::unique_ptr<base::SharedMemory>();
   }
 
-  return scoped_ptr<base::SharedMemory>(shared_buf.release());
+  return std::unique_ptr<base::SharedMemory>(shared_buf.release());
 }
 
 cc::SharedBitmapManager* MockRenderThread::GetSharedBitmapManager() {
@@ -185,8 +184,25 @@ void MockRenderThread::ReleaseCachedFonts() {
 
 #endif  // OS_WIN
 
-ServiceRegistry* MockRenderThread::GetServiceRegistry() {
-  return NULL;
+MojoShellConnection* MockRenderThread::GetMojoShellConnection() {
+  return nullptr;
+}
+
+shell::InterfaceRegistry* MockRenderThread::GetInterfaceRegistry() {
+  if (!interface_registry_)
+    interface_registry_.reset(new shell::InterfaceRegistry(nullptr));
+  return interface_registry_.get();
+}
+
+shell::InterfaceProvider* MockRenderThread::GetRemoteInterfaces() {
+  if (!remote_interfaces_) {
+    shell::mojom::InterfaceProviderPtr remote_interface_provider;
+    pending_remote_interface_provider_request_ =
+        GetProxy(&remote_interface_provider);
+    remote_interfaces_.reset(new shell::InterfaceProvider);
+    remote_interfaces_->Bind(std::move(remote_interface_provider));
+  }
+  return remote_interfaces_.get();
 }
 
 void MockRenderThread::SendCloseMessage() {
@@ -220,8 +236,8 @@ void MockRenderThread::OnCreateChildFrame(
 }
 
 bool MockRenderThread::OnControlMessageReceived(const IPC::Message& msg) {
-  base::ObserverListBase<RenderProcessObserver>::Iterator it(&observers_);
-  RenderProcessObserver* observer;
+  base::ObserverListBase<RenderThreadObserver>::Iterator it(&observers_);
+  RenderThreadObserver* observer;
   while ((observer = it.GetNext()) != NULL) {
     if (observer->OnControlMessageReceived(msg))
       return true;

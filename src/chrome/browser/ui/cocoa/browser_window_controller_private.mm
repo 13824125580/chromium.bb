@@ -15,7 +15,6 @@
 #import "base/mac/sdk_forward_declarations.h"
 #include "base/metrics/histogram.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/fullscreen.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
@@ -31,10 +30,11 @@
 #import "chrome/browser/ui/cocoa/find_bar/find_bar_cocoa_controller.h"
 #import "chrome/browser/ui/cocoa/floating_bar_backing_view.h"
 #import "chrome/browser/ui/cocoa/framed_browser_window.h"
+#include "chrome/browser/ui/cocoa/fullscreen_low_power_coordinator.h"
 #import "chrome/browser/ui/cocoa/fullscreen_window.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_container_controller.h"
 #include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
-#import "chrome/browser/ui/cocoa/presentation_mode_controller.h"
+#import "chrome/browser/ui/cocoa/fullscreen_toolbar_controller.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_button_controller.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_icon_controller.h"
 #import "chrome/browser/ui/cocoa/status_bubble_mac.h"
@@ -70,11 +70,10 @@ enum WindowLocation {
 };
 
 // There are 2 mechanisms for invoking fullscreen: AppKit and Immersive.
-// There are 2 types of AppKit Fullscreen: Presentation Mode and Canonical
-// Fullscreen.
+// PRESENTATION_MODE = 1 had been removed, but the enums aren't renumbered
+// since they are associated with a histogram.
 enum FullscreenStyle {
   IMMERSIVE_FULLSCREEN = 0,
-  PRESENTATION_MODE = 1,
   CANONICAL_FULLSCREEN = 2,
   FULLSCREEN_STYLE_COUNT = 3
 };
@@ -106,9 +105,7 @@ void RecordFullscreenStyle(FullscreenStyle style) {
 @interface NSWindow (NSPrivateApis)
 // Note: These functions are private, use -[NSObject respondsToSelector:]
 // before calling them.
-
 - (NSWindow*)_windowForToolbar;
-
 @end
 
 @implementation BrowserWindowController(Private)
@@ -122,6 +119,28 @@ void RecordFullscreenStyle(FullscreenStyle style) {
         switchView:[overlayableContentsController_ activeContainer]
            browser:browser_.get()
           delegate:self]);
+}
+
+- (void)updateFullscreenCollectionBehavior {
+  // Set the window to participate in Lion Fullscreen mode.  Setting this flag
+  // has no effect on Snow Leopard or earlier.  Panels can share a fullscreen
+  // space with a tabbed window, but they can not be primary fullscreen
+  // windows.
+  // This ensures the fullscreen button is appropriately positioned. It must
+  // be done before calling layoutSubviews because the new avatar button's
+  // position depends on the fullscreen button's position, as well as
+  // TabStripController's rightIndentForControls.
+  // The fullscreen button's position may depend on the old avatar button's
+  // width, but that does not require calling layoutSubviews first.
+  NSWindow* window = [self window];
+  NSUInteger collectionBehavior = [window collectionBehavior];
+  collectionBehavior &= ~NSWindowCollectionBehaviorFullScreenAuxiliary;
+  collectionBehavior &= ~NSWindowCollectionBehaviorFullScreenPrimary;
+  collectionBehavior |= browser_->type() == Browser::TYPE_TABBED ||
+                                browser_->type() == Browser::TYPE_POPUP
+                            ? NSWindowCollectionBehaviorFullScreenPrimary
+                            : NSWindowCollectionBehaviorFullScreenAuxiliary;
+  [window setCollectionBehavior:collectionBehavior];
 }
 
 - (void)saveWindowPositionIfNeeded {
@@ -167,7 +186,7 @@ void RecordFullscreenStyle(FullscreenStyle style) {
   gfx::Rect workArea(NSRectToCGRect([windowScreen visibleFrame]));
   workArea.set_y(monitorFrame.size.height - workArea.y() - workArea.height());
 
-  scoped_ptr<DictionaryPrefUpdate> update =
+  std::unique_ptr<DictionaryPrefUpdate> update =
       chrome::GetWindowPlacementDictionaryReadWrite(
           chrome::GetWindowName(browser_.get()),
           browser_->profile()->GetPrefs());
@@ -310,22 +329,8 @@ willPositionSheet:(NSWindow*)sheet
   NSView* tabContentView = [self tabContentArea];
   NSRect tabContentFrame = [tabContentView frame];
 
-  bool contentShifted =
-      NSMaxY(tabContentFrame) != NSMaxY(newFrame) ||
-      NSMinX(tabContentFrame) != NSMinX(newFrame);
-
   tabContentFrame = newFrame;
   [tabContentView setFrame:tabContentFrame];
-
-  // If the relayout shifts the content area up or down, let the renderer know.
-  if (contentShifted) {
-    WebContents* contents = [self webContents];
-    if (contents) {
-      RenderWidgetHostView* rwhv = contents->GetRenderWidgetHostView();
-      if (rwhv)
-        rwhv->WindowFrameChanged();
-    }
-  }
 }
 
 - (void)adjustToolbarAndBookmarkBarForCompression:(CGFloat)compression {
@@ -345,7 +350,7 @@ willPositionSheet:(NSWindow*)sheet
   [self layoutSubviews];
 }
 
-// Fullscreen and presentation mode methods
+// Fullscreen methods
 
 - (void)moveViewsForImmersiveFullscreen:(BOOL)fullscreen
                           regularWindow:(NSWindow*)regularWindow
@@ -456,8 +461,8 @@ willPositionSheet:(NSWindow*)sheet
                                delay:YES];
 }
 
-- (void)configurePresentationModeController {
-  BOOL fullscreenForTab = [self isFullscreenForTabContent];
+- (void)configureFullscreenToolbarController {
+  BOOL fullscreenForTab = [self isFullscreenForTabContentOrExtension];
   BOOL kioskMode =
       base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kKioskMode);
   BOOL showDropdown =
@@ -481,14 +486,14 @@ willPositionSheet:(NSWindow*)sheet
   }
 
   NSView* contentView = [[self window] contentView];
-  [presentationModeController_
-      enterPresentationModeForContentView:contentView
-                             showDropdown:showDropdown];
+  [fullscreenToolbarController_
+      setupFullscreenToolbarForContentView:contentView
+                              showDropdown:showDropdown];
 }
 
 - (void)adjustUIForExitingFullscreenAndStopOmniboxSliding {
-  [presentationModeController_ exitPresentationMode];
-  presentationModeController_.reset();
+  [fullscreenToolbarController_ exitFullscreenMode];
+  fullscreenToolbarController_.reset();
 
   // Force the bookmark bar z-order to update.
   [[bookmarkBarController_ view] removeFromSuperview];
@@ -496,12 +501,12 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)adjustUIForSlidingFullscreenStyle:(fullscreen_mac::SlidingStyle)style {
-  if (!presentationModeController_) {
-    presentationModeController_.reset(
-        [self newPresentationModeControllerWithStyle:style]);
-    [self configurePresentationModeController];
+  if (!fullscreenToolbarController_) {
+    fullscreenToolbarController_.reset(
+        [self newFullscreenToolbarControllerWithStyle:style]);
+    [self configureFullscreenToolbarController];
   } else {
-    presentationModeController_.get().slidingStyle = style;
+    fullscreenToolbarController_.get().slidingStyle = style;
   }
 
   if (!floatingBarBackingView_.get() &&
@@ -517,10 +522,10 @@ willPositionSheet:(NSWindow*)sheet
   [self layoutSubviews];
 }
 
-- (PresentationModeController*)newPresentationModeControllerWithStyle:
+- (FullscreenToolbarController*)newFullscreenToolbarControllerWithStyle:
     (fullscreen_mac::SlidingStyle)style {
-  return [[PresentationModeController alloc] initWithBrowserController:self
-                                                                 style:style];
+  return [[FullscreenToolbarController alloc] initWithBrowserController:self
+                                                                  style:style];
 }
 
 - (void)enterImmersiveFullscreen {
@@ -677,8 +682,7 @@ willPositionSheet:(NSWindow*)sheet
 
 - (void)windowWillEnterFullScreen:(NSNotification*)notification {
   RecordFullscreenWindowLocation([self window]);
-  RecordFullscreenStyle(enteringPresentationMode_ ? PRESENTATION_MODE
-                                                  : CANONICAL_FULLSCREEN);
+  RecordFullscreenStyle(CANONICAL_FULLSCREEN);
 
   if (notification)  // For System Fullscreen when non-nil.
     [self registerForContentViewResizeNotifications];
@@ -698,6 +702,8 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)windowDidEnterFullScreen:(NSNotification*)notification {
+  [tabStripController_ setVisualEffectsDisabledForFullscreen:YES];
+
   // In Yosemite, some combination of the titlebar and toolbar always show in
   // full-screen mode. We do not want either to show. Search for the window that
   // contains the views, and hide it. There is no need to ever unhide the view.
@@ -742,13 +748,10 @@ willPositionSheet:(NSWindow*)sheet
     base::MessageLoop::current()->PostTask(FROM_HERE, callback);
   }
 
-  [self setSheetHiddenForFullscreenTransition:NO];
-
   if (notification)  // For System Fullscreen when non-nil.
     [self deregisterForContentViewResizeNotifications];
 
   enteringImmersiveFullscreen_ = NO;
-  enteringPresentationMode_ = NO;
 
   [self resetCustomAppKitFullscreenVariables];
   [[tabStripController_ activeTabContentsController]
@@ -756,9 +759,22 @@ willPositionSheet:(NSWindow*)sheet
 
   [self showFullscreenExitBubbleIfNecessary];
   browser_->WindowFullscreenStateChanged();
+
+  if (fullscreenLowPowerCoordinator_)
+    fullscreenLowPowerCoordinator_->SetInFullscreenTransition(false);
+
+  if (shouldExitAfterEnteringFullscreen_) {
+    shouldExitAfterEnteringFullscreen_ = NO;
+    [self exitAppKitFullscreen];
+  }
 }
 
 - (void)windowWillExitFullScreen:(NSNotification*)notification {
+  [tabStripController_ setVisualEffectsDisabledForFullscreen:NO];
+
+  if (fullscreenLowPowerCoordinator_)
+    fullscreenLowPowerCoordinator_->SetInFullscreenTransition(true);
+
   if (notification)  // For System Fullscreen when non-nil.
     [self registerForContentViewResizeNotifications];
   exitingAppKitFullscreen_ = YES;
@@ -787,6 +803,9 @@ willPositionSheet:(NSWindow*)sheet
     return;
   }
 
+  // Destroy the NSWindow used for fullscreen low power mode.
+  fullscreenLowPowerCoordinator_.reset();
+
   if (notification)  // For System Fullscreen when non-nil.
     [self deregisterForContentViewResizeNotifications];
 
@@ -811,6 +830,7 @@ willPositionSheet:(NSWindow*)sheet
   [self deregisterForContentViewResizeNotifications];
   [self resetCustomAppKitFullscreenVariables];
   [self adjustUIForExitingFullscreenAndStopOmniboxSliding];
+  fullscreenLowPowerCoordinator_.reset();
 }
 
 - (void)windowDidFailToExitFullScreen:(NSWindow*)window {
@@ -841,9 +861,9 @@ willPositionSheet:(NSWindow*)sheet
 
 - (void)adjustUIForEnteringFullscreen {
   fullscreen_mac::SlidingStyle style;
-  if ([self isFullscreenForTabContent]) {
+  if ([self isFullscreenForTabContentOrExtension]) {
     style = fullscreen_mac::OMNIBOX_TABS_NONE;
-  } else if (enteringPresentationMode_ || [self shouldHideFullscreenToolbar]) {
+  } else if (!shouldShowFullscreenToolbar_) {
     style = fullscreen_mac::OMNIBOX_TABS_HIDDEN;
   } else {
     style = fullscreen_mac::OMNIBOX_TABS_PRESENT;
@@ -860,9 +880,9 @@ willPositionSheet:(NSWindow*)sheet
   barVisibilityUpdatesEnabled_ = YES;
 
   if ([barVisibilityLocks_ count])
-    [presentationModeController_ ensureOverlayShownWithAnimation:NO delay:NO];
+    [fullscreenToolbarController_ ensureOverlayShownWithAnimation:NO delay:NO];
   else
-    [presentationModeController_ ensureOverlayHiddenWithAnimation:NO delay:NO];
+    [fullscreenToolbarController_ ensureOverlayHiddenWithAnimation:NO delay:NO];
 }
 
 - (void)disableBarVisibilityUpdates {
@@ -871,14 +891,14 @@ willPositionSheet:(NSWindow*)sheet
     return;
 
   barVisibilityUpdatesEnabled_ = NO;
-  [presentationModeController_ cancelAnimationAndTimers];
+  [fullscreenToolbarController_ cancelAnimationAndTimers];
 }
 
 - (void)hideOverlayIfPossibleWithAnimation:(BOOL)animation delay:(BOOL)delay {
   if (!barVisibilityUpdatesEnabled_ || [barVisibilityLocks_ count])
     return;
-  [presentationModeController_ ensureOverlayHiddenWithAnimation:animation
-                                                          delay:delay];
+  [fullscreenToolbarController_ ensureOverlayHiddenWithAnimation:animation
+                                                           delay:delay];
 }
 
 - (CGFloat)toolbarDividerOpacity {
@@ -905,26 +925,22 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)enterAppKitFullscreen {
-  DCHECK(base::mac::IsOSLionOrLater());
-  if (FramedBrowserWindow* framedBrowserWindow =
-          base::mac::ObjCCast<FramedBrowserWindow>([self window])) {
-    [framedBrowserWindow toggleSystemFullScreen];
-  }
+  [[self window] toggleFullScreen:nil];
 }
 
 - (void)exitAppKitFullscreen {
-  DCHECK(base::mac::IsOSLionOrLater());
-  if (FramedBrowserWindow* framedBrowserWindow =
-          base::mac::ObjCCast<FramedBrowserWindow>([self window])) {
-    [framedBrowserWindow toggleSystemFullScreen];
+  // If we're in the process of entering fullscreen, toggleSystemFullscreen
+  // will get ignored. Set |shouldExitAfterEnteringFullscreen_| to true so
+  // the browser will exit fullscreen immediately after it enters it.
+  if (enteringAppKitFullscreen_) {
+    shouldExitAfterEnteringFullscreen_ = YES;
+    return;
   }
+
+  [[self window] toggleFullScreen:nil];
 }
 
 - (NSRect)fullscreenButtonFrame {
-  // NSWindowFullScreenButton is 10.7+ and results in log spam on 10.6 if used.
-  if (base::mac::IsOSSnowLeopard())
-    return NSZeroRect;
-
   NSButton* fullscreenButton =
       [[self window] standardWindowButton:NSWindowFullScreenButton];
   if (!fullscreenButton)
@@ -952,12 +968,12 @@ willPositionSheet:(NSWindow*)sheet
   [layout setWindowSize:windowSize];
 
   [layout setInAnyFullscreen:[self isInAnyFullscreenMode]];
-  [layout setFullscreenSlidingStyle:
-      presentationModeController_.get().slidingStyle];
-  [layout setFullscreenMenubarOffset:
-      [presentationModeController_ menubarOffset]];
-  [layout setFullscreenToolbarFraction:
-      [presentationModeController_ toolbarFraction]];
+  [layout setFullscreenSlidingStyle:fullscreenToolbarController_.get()
+                                        .slidingStyle];
+  [layout
+      setFullscreenMenubarOffset:[fullscreenToolbarController_ menubarOffset]];
+  [layout setFullscreenToolbarFraction:[fullscreenToolbarController_
+                                           toolbarFraction]];
 
   [layout setHasTabStrip:[self hasTabStrip]];
   [layout setFullscreenButtonFrame:[self fullscreenButtonFrame]];
@@ -1022,7 +1038,7 @@ willPositionSheet:(NSWindow*)sheet
 
   if (!NSIsEmptyRect(output.fullscreenBackingBarFrame)) {
     [floatingBarBackingView_ setFrame:output.fullscreenBackingBarFrame];
-    [presentationModeController_
+    [fullscreenToolbarController_
         overlayFrameChanged:output.fullscreenBackingBarFrame];
   }
 
@@ -1031,6 +1047,12 @@ willPositionSheet:(NSWindow*)sheet
                        maxWidth:NSWidth(output.contentAreaFrame)];
 
   exclusiveAccessController_->Layout(output.fullscreenExitButtonMaxY);
+
+  if (fullscreenLowPowerCoordinator_) {
+    fullscreenLowPowerCoordinator_->SetLayoutParameters(
+        output.toolbarFrame, output.infoBarFrame, output.contentAreaFrame,
+        output.downloadShelfFrame);
+  }
 }
 
 - (void)updateSubviewZOrder {
@@ -1140,12 +1162,7 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (BOOL)shouldUseCustomAppKitFullscreenTransition:(BOOL)enterFullScreen {
-  // Custom fullscreen transitions should only be available in OSX 10.10+.
-  if (base::mac::IsOSMountainLionOrEarlier())
-    return NO;
-
-  // Disable the custom exit animation in OSX 10.9:
-  // https://code.google.com/p/chromium/issues/detail?id=526327#c3.
+  // Disable the custom exit animation in OSX 10.9: http://crbug.com/526327#c3.
   if (base::mac::IsOSMavericks() && !enterFullScreen)
     return NO;
 
@@ -1185,11 +1202,32 @@ willPositionSheet:(NSWindow*)sheet
   if (![self shouldUseCustomAppKitFullscreenTransition:YES])
     return nil;
 
+  NSWindow* lowPowerWindow = nil;
+  static const bool fullscreen_low_power_disabled_at_command_line =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableFullscreenLowPowerMode);
+  if (!fullscreen_low_power_disabled_at_command_line) {
+    WebContents* webContents = [self webContents];
+    if (webContents && webContents->GetRenderWidgetHostView()) {
+      fullscreenLowPowerCoordinator_.reset(
+          new FullscreenLowPowerCoordinatorCocoa(
+              [self window], webContents->GetRenderWidgetHostView()
+                                 ->GetAcceleratedWidgetMac()));
+      lowPowerWindow =
+          fullscreenLowPowerCoordinator_->GetFullscreenLowPowerWindow();
+    }
+  }
+
   fullscreenTransition_.reset(
       [[BrowserWindowFullscreenTransition alloc] initEnterWithController:self]);
 
   NSArray* customWindows =
       [fullscreenTransition_ customWindowsForFullScreenTransition];
+  if (customWindows && lowPowerWindow)
+    customWindows = [customWindows arrayByAddingObject:lowPowerWindow];
+  else
+    fullscreenLowPowerCoordinator_.reset();
+
   isUsingCustomAnimation_ = customWindows != nil;
   return customWindows;
 }
@@ -1242,10 +1280,26 @@ willPositionSheet:(NSWindow*)sheet
   return nil;
 }
 
-- (BOOL)isFullscreenForTabContent {
-  return browser_->exclusive_access_manager()
-                 ->fullscreen_controller()
-                 ->IsWindowFullscreenForTabOrPending();
+- (BOOL)isFullscreenForTabContentOrExtension {
+  FullscreenController* controller =
+      browser_->exclusive_access_manager()->fullscreen_controller();
+  return controller->IsWindowFullscreenForTabOrPending() ||
+         controller->IsExtensionFullscreenOrPending();
+}
+
+- (void)windowWillBeginSheet:(NSNotification*)notification {
+  if (fullscreenLowPowerCoordinator_)
+    fullscreenLowPowerCoordinator_->SetHasActiveSheet(true);
+}
+
+- (void)windowDidEndSheet:(NSNotification*)notification {
+  if (fullscreenLowPowerCoordinator_)
+    fullscreenLowPowerCoordinator_->SetHasActiveSheet(false);
+}
+
+- (void)childWindowsDidChange {
+  if (fullscreenLowPowerCoordinator_)
+    fullscreenLowPowerCoordinator_->ChildWindowsChanged();
 }
 
 @end  // @implementation BrowserWindowController(Private)

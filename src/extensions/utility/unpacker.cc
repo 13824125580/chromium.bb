@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include "base/files/file_enumerator.h"
@@ -20,7 +21,6 @@
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "content/public/child/image_decoder_utils.h"
-#include "content/public/common/common_param_traits.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_l10n_util.h"
@@ -115,7 +115,7 @@ Unpacker::Unpacker(const base::FilePath& working_dir,
 Unpacker::~Unpacker() {
 }
 
-scoped_ptr<base::DictionaryValue> Unpacker::ReadManifest() {
+std::unique_ptr<base::DictionaryValue> Unpacker::ReadManifest() {
   base::FilePath manifest_path = extension_dir_.Append(kManifestFilename);
   if (!base::PathExists(manifest_path)) {
     SetError(errors::kInvalidManifest);
@@ -124,7 +124,7 @@ scoped_ptr<base::DictionaryValue> Unpacker::ReadManifest() {
 
   JSONFileValueDeserializer deserializer(manifest_path);
   std::string error;
-  scoped_ptr<base::Value> root = deserializer.Deserialize(NULL, &error);
+  std::unique_ptr<base::Value> root = deserializer.Deserialize(NULL, &error);
   if (!root.get()) {
     SetError(error);
     return NULL;
@@ -248,14 +248,14 @@ bool Unpacker::AddDecodedImage(const base::FilePath& path) {
     return false;
   }
 
-  internal_data_->decoded_images.push_back(base::MakeTuple(image_bitmap, path));
+  internal_data_->decoded_images.push_back(std::make_tuple(image_bitmap, path));
   return true;
 }
 
 bool Unpacker::ReadMessageCatalog(const base::FilePath& message_path) {
   std::string error;
   JSONFileValueDeserializer deserializer(message_path);
-  scoped_ptr<base::DictionaryValue> root =
+  std::unique_ptr<base::DictionaryValue> root =
       base::DictionaryValue::From(deserializer.Deserialize(NULL, &error));
   if (!root.get()) {
     base::string16 messages_file = message_path.LossyDisplayName();

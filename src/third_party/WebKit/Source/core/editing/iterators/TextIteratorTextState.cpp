@@ -26,6 +26,8 @@
 
 #include "core/editing/iterators/TextIteratorTextState.h"
 
+#include "core/layout/LayoutText.h"
+
 namespace blink {
 
 TextIteratorTextState::TextIteratorTextState(bool emitsOriginalText)
@@ -46,8 +48,8 @@ UChar TextIteratorTextState::characterAt(unsigned index) const
         return 0;
 
     if (m_singleCharacterBuffer) {
-        ASSERT(!index);
-        ASSERT(length() == 1);
+        DCHECK_EQ(index, 0u);
+        DCHECK_EQ(length(), 1);
         return m_singleCharacterBuffer;
     }
 
@@ -61,8 +63,8 @@ String TextIteratorTextState::substring(unsigned position, unsigned length) cons
     if (!length)
         return emptyString();
     if (m_singleCharacterBuffer) {
-        ASSERT(!position);
-        ASSERT(length == 1);
+        DCHECK_EQ(position, 0u);
+        DCHECK_EQ(length, 1u);
         return String(&m_singleCharacterBuffer, 1);
     }
     return string().substring(positionStartOffset() + position, length);
@@ -74,7 +76,7 @@ void TextIteratorTextState::appendTextToStringBuilder(StringBuilder& builder, un
     if (!lengthToAppend)
         return;
     if (m_singleCharacterBuffer) {
-        ASSERT(!position);
+        DCHECK_EQ(position, 0u);
         builder.append(m_singleCharacterBuffer);
     } else {
         builder.append(string(), positionStartOffset() + position, lengthToAppend);
@@ -113,7 +115,7 @@ void TextIteratorTextState::flushPositionOffsets() const
 
 void TextIteratorTextState::spliceBuffer(UChar c, Node* textNode, Node* offsetBaseNode, int textStartOffset, int textEndOffset)
 {
-    ASSERT(textNode);
+    DCHECK(textNode);
     m_hasEmitted = true;
 
     // Remember information with which to construct the TextIterator::range().
@@ -125,7 +127,7 @@ void TextIteratorTextState::spliceBuffer(UChar c, Node* textNode, Node* offsetBa
 
     // remember information with which to construct the TextIterator::characters() and length()
     m_singleCharacterBuffer = c;
-    ASSERT(m_singleCharacterBuffer);
+    DCHECK(m_singleCharacterBuffer);
     m_textLength = 1;
 
     // remember some iteration state
@@ -134,12 +136,14 @@ void TextIteratorTextState::spliceBuffer(UChar c, Node* textNode, Node* offsetBa
 
 void TextIteratorTextState::emitText(Node* textNode, LayoutText* layoutObject, int textStartOffset, int textEndOffset)
 {
-    ASSERT(textNode);
+    DCHECK(textNode);
     m_text = m_emitsOriginalText ? layoutObject->originalText() : layoutObject->text();
-    ASSERT(!m_text.isEmpty());
-    ASSERT(0 <= textStartOffset && textStartOffset < static_cast<int>(m_text.length()));
-    ASSERT(0 <= textEndOffset && textEndOffset <= static_cast<int>(m_text.length()));
-    ASSERT(textStartOffset <= textEndOffset);
+    DCHECK(!m_text.isEmpty());
+    DCHECK_LE(0, textStartOffset);
+    DCHECK_LT(textStartOffset, static_cast<int>(m_text.length()));
+    DCHECK_LE(0, textEndOffset);
+    DCHECK_LE(textEndOffset, static_cast<int>(m_text.length()));
+    DCHECK_LE(textStartOffset, textEndOffset);
 
     m_positionNode = textNode;
     m_positionOffsetBaseNode = nullptr;
@@ -159,10 +163,10 @@ void TextIteratorTextState::appendTextTo(ForwardsTextBuffer* output, unsigned po
     ASSERT_WITH_SECURITY_IMPLICATION(position + lengthToAppend >= position);
     if (!lengthToAppend)
         return;
-    ASSERT(output);
+    DCHECK(output);
     if (m_singleCharacterBuffer) {
-        ASSERT(!position);
-        ASSERT(length() == 1);
+        DCHECK_EQ(position, 0u);
+        DCHECK_EQ(length(), 1);
         output->pushCharacters(m_singleCharacterBuffer, 1);
         return;
     }
@@ -175,7 +179,7 @@ void TextIteratorTextState::appendTextTo(ForwardsTextBuffer* output, unsigned po
             output->pushRange(string().characters16() + offset, lengthToAppend);
         return;
     }
-    ASSERT_NOT_REACHED(); // "We shouldn't be attempting to append text that doesn't exist.";
+    NOTREACHED(); // "We shouldn't be attempting to append text that doesn't exist.";
 }
 
 } // namespace blink

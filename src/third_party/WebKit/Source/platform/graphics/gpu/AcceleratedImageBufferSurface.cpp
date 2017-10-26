@@ -30,10 +30,12 @@
 
 #include "platform/graphics/gpu/AcceleratedImageBufferSurface.h"
 
+#include "platform/graphics/skia/SkiaUtils.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebGraphicsContext3DProvider.h"
+#include "skia/ext/texture_handle.h"
 #include "third_party/skia/include/gpu/GrContext.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
@@ -41,7 +43,7 @@ namespace blink {
 AcceleratedImageBufferSurface::AcceleratedImageBufferSurface(const IntSize& size, OpacityMode opacityMode)
     : ImageBufferSurface(size, opacityMode)
 {
-    m_contextProvider = adoptPtr(Platform::current()->createSharedOffscreenGraphicsContext3DProvider());
+    m_contextProvider = wrapUnique(Platform::current()->createSharedOffscreenGraphicsContext3DProvider());
     if (!m_contextProvider)
         return;
     GrContext* grContext = m_contextProvider->grContext();
@@ -51,8 +53,8 @@ AcceleratedImageBufferSurface::AcceleratedImageBufferSurface(const IntSize& size
     SkAlphaType alphaType = (Opaque == opacityMode) ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
     SkImageInfo info = SkImageInfo::MakeN32(size.width(), size.height(), alphaType);
     SkSurfaceProps disableLCDProps(0, kUnknown_SkPixelGeometry);
-    m_surface = adoptPtr(SkSurface::NewRenderTarget(grContext, SkSurface::kYes_Budgeted, info, 0 /* sampleCount */,
-        Opaque == opacityMode ? nullptr : &disableLCDProps));
+    m_surface = SkSurface::MakeRenderTarget(grContext, SkBudgeted::kYes, info, 0 /* sampleCount */,
+        Opaque == opacityMode ? nullptr : &disableLCDProps);
     if (!m_surface.get())
         return;
     clear();
@@ -60,14 +62,14 @@ AcceleratedImageBufferSurface::AcceleratedImageBufferSurface(const IntSize& size
 
 PassRefPtr<SkImage> AcceleratedImageBufferSurface::newImageSnapshot(AccelerationHint, SnapshotReason)
 {
-    return adoptRef(m_surface->newImageSnapshot());
+    return fromSkSp(m_surface->makeImageSnapshot());
 }
 
-Platform3DObject AcceleratedImageBufferSurface::getBackingTextureHandleForOverwrite()
+GLuint AcceleratedImageBufferSurface::getBackingTextureHandleForOverwrite()
 {
     if (!m_surface)
         return 0;
-    return m_surface->getTextureHandle(SkSurface::kDiscardWrite_TextureHandleAccess);
+    return skia::GrBackendObjectToGrGLTextureInfo(m_surface->getTextureHandle(SkSurface::kDiscardWrite_TextureHandleAccess))->fID;
 }
 
 } // namespace blink

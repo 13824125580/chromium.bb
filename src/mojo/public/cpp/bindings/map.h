@@ -10,8 +10,11 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "mojo/public/cpp/bindings/lib/map_internal.h"
-#include "mojo/public/cpp/bindings/lib/value_traits.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/array.h"
+#include "mojo/public/cpp/bindings/lib/map_data_internal.h"
+#include "mojo/public/cpp/bindings/lib/template_util.h"
+#include "mojo/public/cpp/bindings/type_converter.h"
 
 namespace mojo {
 
@@ -24,20 +27,18 @@ namespace mojo {
 //   - There can only be one entry per unique key.
 //   - Values of move-only types will be moved into the Map when they are added
 //     using the insert() method.
-template <typename Key, typename Value>
+template <typename K, typename V>
 class Map {
-  MOJO_MOVE_ONLY_TYPE(Map)
-
  public:
+  using Key = K;
+  using Value = V;
+
   // Map keys cannot be move only classes.
   static_assert(!internal::IsMoveOnlyType<Key>::value,
                 "Map keys cannot be move only types.");
 
+  using Iterator = typename std::map<Key, Value>::iterator;
   using ConstIterator = typename std::map<Key, Value>::const_iterator;
-
-  using Data_ =
-      internal::Map_Data<typename internal::WrapperTraits<Key>::DataType,
-                         typename internal::WrapperTraits<Value>::DataType>;
 
   // Constructs an empty map.
   Map() : is_null_(false) {}
@@ -87,9 +88,14 @@ class Map {
     return TypeConverter<U, Map>::Convert(*this);
   }
 
+  // Indicates whether the map is null (which is distinct from empty).
   bool is_null() const { return is_null_; }
 
-  // Indicates the number of keys in the map.
+  // Indicates whether the map is empty (which is distinct from null).
+  bool empty() const { return map_.empty() && !is_null_; }
+
+  // Indicates the number of keys in the map, which will be zero if the map is
+  // null.
   size_t size() const { return map_.size(); }
 
   // Inserts a key-value pair into the map. Like std::map, this does not insert
@@ -156,8 +162,7 @@ class Map {
   // Removes all contents from the Map and places them into parallel key/value
   // arrays. Each key will be copied from the source to the destination, and
   // values will be copied unless their type is designated move-only, in which
-  // case they will be passed by calling their Pass() method. Either way, the
-  // Map will be left in a null state.
+  // case they will be moved. Either way, the Map will be left in a null state.
   void DecomposeMapTo(mojo::Array<Key>* keys, mojo::Array<Value>* values) {
     std::vector<Key> key_vector;
     key_vector.reserve(map_.size());
@@ -176,25 +181,26 @@ class Map {
     values->Swap(&value_vector);
   }
 
-  // Returns a new Map that contains a copy of the contents of this map.  If the
-  // values are of a type that is designated move-only, they will be cloned
-  // using the Clone() method of the type. Please note that calling this method
-  // will fail compilation if the value type cannot be cloned (which usually
-  // means that it is a Mojo handle type or a type that contains Mojo handles).
+  // Returns a new Map that contains a copy of the contents of this map. If the
+  // key/value type defines a Clone() method, it will be used; otherwise copy
+  // constructor/assignment will be used.
+  //
+  // Please note that calling this method will fail compilation if the key/value
+  // type cannot be cloned (which usually means that it is a Mojo handle type or
+  // a type containing Mojo handles).
   Map Clone() const {
     Map result;
     result.is_null_ = is_null_;
-    Traits::Clone(map_, &result.map_);
+    for (auto it = map_.begin(); it != map_.end(); ++it) {
+      result.map_.insert(std::make_pair(internal::Clone(it->first),
+                                        internal::Clone(it->second)));
+    }
     return result;
   }
 
   // Indicates whether the contents of this map are equal to those of another
-  // Map (including nullness). Keys are compared by the != operator. Values are
-  // compared as follows:
-  //   - Map, Array, Struct, or StructPtr values are compared by their Equals()
-  //     method.
-  //   - ScopedHandleBase-derived types are compared by their handles.
-  //   - Values of other types are compared by their "==" operator.
+  // Map (including nullness). If the key/value type defines an Equals() method,
+  // it will be used; otherwise == operator will be used.
   bool Equals(const Map& other) const {
     if (is_null() != other.is_null())
       return false;
@@ -203,9 +209,9 @@ class Map {
     auto i = begin();
     auto j = other.begin();
     while (i != end()) {
-      if (i->first != j->first)
+      if (!internal::Equals(i->first, j->first))
         return false;
-      if (!internal::ValueTraits<Value>::Equals(i->second, j->second))
+      if (!internal::Equals(i->second, j->second))
         return false;
       ++i;
       ++j;
@@ -216,11 +222,15 @@ class Map {
   // Provide read-only iteration over map members in a way similar to STL
   // collections.
   ConstIterator begin() const { return map_.begin(); }
+  Iterator begin() { return map_.begin(); }
+
   ConstIterator end() const { return map_.end(); }
+  Iterator end() { return map_.end(); }
 
   // Returns the iterator pointing to the entry for |key|, if present, or else
   // returns end().
   ConstIterator find(const Key& key) const { return map_.find(key); }
+  Iterator find(const Key& key) { return map_.find(key); }
 
  private:
   typedef std::map<Key, Value> Map::*Testable;
@@ -232,9 +242,6 @@ class Map {
   operator Testable() const { return is_null_ ? 0 : &Map::map_; }
 
  private:
-  using Traits =
-      internal::MapTraits<Key, Value, internal::IsMoveOnlyType<Value>::value>;
-
   // Forbid the == and != operators explicitly, otherwise Map will be converted
   // to Testable to do == or != comparison.
   template <typename T, typename U>
@@ -249,6 +256,8 @@ class Map {
 
   std::map<Key, Value> map_;
   bool is_null_;
+
+  DISALLOW_COPY_AND_ASSIGN(Map);
 };
 
 // Copies the contents of an std::map to a new Map, optionally changing the

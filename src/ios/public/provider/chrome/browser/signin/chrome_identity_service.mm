@@ -4,6 +4,8 @@
 
 #include "ios/public/provider/chrome/browser/signin/chrome_identity_service.h"
 
+#include "ios/public/provider/chrome/browser/signin/chrome_identity_interaction_manager.h"
+
 namespace ios {
 
 ChromeIdentityService::ChromeIdentityService() {}
@@ -11,6 +13,13 @@ ChromeIdentityService::ChromeIdentityService() {}
 ChromeIdentityService::~ChromeIdentityService() {
   FOR_EACH_OBSERVER(Observer, observer_list_,
                     OnChromeIdentityServiceWillBeDestroyed());
+}
+
+ChromeIdentityInteractionManager*
+ChromeIdentityService::CreateChromeIdentityInteractionManager(
+    ios::ChromeBrowserState* browser_state,
+    id<ChromeIdentityInteractionManagerDelegate> delegate) const {
+  return [[[ChromeIdentityInteractionManager alloc] init] autorelease];
 }
 
 bool ChromeIdentityService::IsValidIdentity(ChromeIdentity* identity) const {
@@ -59,9 +68,6 @@ void ChromeIdentityService::GetAccessToken(
     const std::set<std::string>& scopes,
     const AccessTokenCallback& callback) {}
 
-void ChromeIdentityService::SigninIdentity(ChromeIdentity* identity,
-                                           SigninIdentityCallback callback) {}
-
 void ChromeIdentityService::GetAvatarForIdentity(ChromeIdentity* identity,
                                                  GetAvatarCallback callback) {}
 
@@ -74,9 +80,19 @@ void ChromeIdentityService::GetHostedDomainForIdentity(
     ChromeIdentity* identity,
     GetHostedDomainCallback callback) {}
 
+MDMDeviceStatus ChromeIdentityService::GetMDMDeviceStatus(
+    NSDictionary* user_info) {
+  return 0;
+}
+
 bool ChromeIdentityService::HandleMDMNotification(ChromeIdentity* identity,
                                                   NSDictionary* user_info,
                                                   MDMStatusCallback callback) {
+  return false;
+}
+
+bool ChromeIdentityService::IsMDMError(ChromeIdentity* identity,
+                                       NSError* error) {
   return false;
 }
 

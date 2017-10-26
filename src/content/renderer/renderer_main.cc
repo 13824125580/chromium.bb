@@ -9,11 +9,9 @@
 #include "base/command_line.h"
 #include "base/debug/debugger.h"
 #include "base/debug/leak_annotations.h"
-#include "base/feature_list.h"
 #include "base/i18n/rtl.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/pending_task.h"
 #include "base/strings/string_util.h"
@@ -54,7 +52,7 @@
 #endif
 
 #if defined(ENABLE_WEBRTC)
-#include "third_party/libjingle/overrides/init_webrtc.h"
+#include "third_party/webrtc_overrides/init_webrtc.h"
 #endif
 
 #if defined(USE_OZONE)
@@ -75,8 +73,8 @@ static void HandleRendererErrorTestParameters(
 }
 
 #if defined(USE_OZONE)
-base::LazyInstance<scoped_ptr<ui::ClientNativePixmapFactory>> g_pixmap_factory =
-    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<std::unique_ptr<ui::ClientNativePixmapFactory>>
+    g_pixmap_factory = LAZY_INSTANCE_INITIALIZER;
 #endif
 
 }  // namespace
@@ -92,8 +90,6 @@ int RendererMain(const MainFunctionParams& parameters) {
       kTraceEventRendererProcessSortIndex);
 
   const base::CommandLine& parsed_command_line = parameters.command_line;
-
-  MojoShellConnectionImpl::Create();
 
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool* pool = parameters.autorelease_pool;
@@ -135,12 +131,12 @@ int RendererMain(const MainFunctionParams& parameters) {
   // As long as scrollbars on Mac are painted with Cocoa, the message pump
   // needs to be backed by a Foundation-level loop to process NSTimers. See
   // http://crbug.com/306348#c24 for details.
-  scoped_ptr<base::MessagePump> pump(new base::MessagePumpNSRunLoop());
-  scoped_ptr<base::MessageLoop> main_message_loop(
+  std::unique_ptr<base::MessagePump> pump(new base::MessagePumpNSRunLoop());
+  std::unique_ptr<base::MessageLoop> main_message_loop(
       new base::MessageLoop(std::move(pump)));
 #else
   // The main message loop of the renderer services doesn't have IO or UI tasks.
-  scoped_ptr<base::MessageLoop> main_message_loop(new base::MessageLoop());
+  std::unique_ptr<base::MessageLoop> main_message_loop(new base::MessageLoop());
 #endif
 
   base::PlatformThread::SetName("CrRendererMain");
@@ -151,29 +147,11 @@ int RendererMain(const MainFunctionParams& parameters) {
   base::StatisticsRecorder::Initialize();
 
 #if defined(OS_ANDROID)
-  // If we have a pending chromium android linker histogram, record it.
-  base::android::RecordChromiumAndroidLinkerRendererHistogram();
+  // If we have any pending LibraryLoader histograms, record them.
+  base::android::RecordLibraryLoaderRendererHistograms();
 #endif
 
-  // Initialize statistical testing infrastructure.  We set the entropy provider
-  // to NULL to disallow the renderer process from creating its own one-time
-  // randomized trials; they should be created in the browser process.
-  base::FieldTrialList field_trial_list(NULL);
-  // Ensure any field trials in browser are reflected into renderer.
-  if (parsed_command_line.HasSwitch(switches::kForceFieldTrials)) {
-    bool result = base::FieldTrialList::CreateTrialsFromString(
-        parsed_command_line.GetSwitchValueASCII(switches::kForceFieldTrials),
-        std::set<std::string>());
-    DCHECK(result);
-  }
-
-  scoped_ptr<base::FeatureList> feature_list(new base::FeatureList);
-  feature_list->InitializeFromCommandLine(
-      parsed_command_line.GetSwitchValueASCII(switches::kEnableFeatures),
-      parsed_command_line.GetSwitchValueASCII(switches::kDisableFeatures));
-  base::FeatureList::SetInstance(std::move(feature_list));
-
-  scoped_ptr<scheduler::RendererScheduler> renderer_scheduler(
+  std::unique_ptr<scheduler::RendererScheduler> renderer_scheduler(
       scheduler::RendererScheduler::Create());
 
   // PlatformInitialize uses FieldTrials, so this must happen later.
@@ -219,8 +197,6 @@ int RendererMain(const MainFunctionParams& parameters) {
       base::MessageLoop::current()->Run();
       TRACE_EVENT_ASYNC_END0("toplevel", "RendererMain.START_MSG_LOOP", 0);
     }
-
-    MojoShellConnectionImpl::Destroy();
 
 #if defined(LEAK_SANITIZER)
     // Run leak detection before RenderProcessImpl goes out of scope. This helps

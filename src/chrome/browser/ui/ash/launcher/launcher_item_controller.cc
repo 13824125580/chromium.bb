@@ -4,11 +4,8 @@
 
 #include "chrome/browser/ui/ash/launcher/launcher_item_controller.h"
 
-#include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
-#include "extensions/browser/extension_registry.h"
-#include "extensions/common/extension.h"
+#include "chrome/common/extensions/extension_constants.h"
 
 LauncherItemController::LauncherItemController(
     Type type,
@@ -19,31 +16,14 @@ LauncherItemController::LauncherItemController(
       shelf_id_(0),
       launcher_controller_(launcher_controller),
       locked_(0),
-      image_set_by_controller_(false) {
-}
+      image_set_by_controller_(false) {}
 
-LauncherItemController::~LauncherItemController() {
-}
-
-const std::string& LauncherItemController::app_id() const {
-  return app_id_;
-}
-
-base::string16 LauncherItemController::GetAppTitle() const {
-  base::string16 title;
-  if (app_id_.empty())
-    return title;
-
-  const extensions::Extension* extension =
-      extensions::ExtensionRegistry::Get(
-          launcher_controller_->profile())->GetExtensionById(
-              app_id_, extensions::ExtensionRegistry::EVERYTHING);
-  if (extension)
-    title = base::UTF8ToUTF16(extension->name());
-  return title;
-}
+LauncherItemController::~LauncherItemController() {}
 
 ash::ShelfItemType LauncherItemController::GetShelfItemType() const {
+  if (extension_misc::IsImeMenuExtensionId(app_id_))
+    return ash::TYPE_IME_MENU;
+
   switch (type_) {
     case LauncherItemController::TYPE_SHORTCUT:
     case LauncherItemController::TYPE_WINDOWED_APP:

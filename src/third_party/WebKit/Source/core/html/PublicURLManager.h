@@ -30,7 +30,6 @@
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -41,11 +40,10 @@ class SecurityOrigin;
 class URLRegistry;
 class URLRegistrable;
 
-class PublicURLManager final : public NoBaseWillBeGarbageCollectedFinalized<PublicURLManager>, public ActiveDOMObject {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(PublicURLManager);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(PublicURLManager);
+class PublicURLManager final : public GarbageCollectedFinalized<PublicURLManager>, public ActiveDOMObject {
+    USING_GARBAGE_COLLECTED_MIXIN(PublicURLManager);
 public:
-    static PassOwnPtrWillBeRawPtr<PublicURLManager> create(ExecutionContext*);
+    static PublicURLManager* create(ExecutionContext*);
 
     void registerURL(SecurityOrigin*, const KURL&, URLRegistrable*, const String& uuid = String());
     void revoke(const KURL&);

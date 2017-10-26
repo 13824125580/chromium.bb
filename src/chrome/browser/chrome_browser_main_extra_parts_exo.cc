@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chrome_browser_main_extra_parts_exo.h"
 
+#include "base/memory/ptr_util.h"
+
 #if defined(USE_GLIB)
 #include <glib.h>
 #endif
@@ -16,6 +18,7 @@
 #include "components/exo/display.h"
 #include "components/exo/wayland/server.h"
 #include "content/public/browser/browser_thread.h"
+#include "ui/arc/notification/arc_notification_surface_manager.h"
 
 #if defined(USE_GLIB)
 namespace {
@@ -74,7 +77,7 @@ class ChromeBrowserMainExtraPartsExo::WaylandWatcher {
 
  private:
   // The poll attached to |wayland_source_|.
-  scoped_ptr<GPollFD> wayland_poll_;
+  std::unique_ptr<GPollFD> wayland_poll_;
 
   // The GLib event source for wayland events.
   GLibWaylandSource* wayland_source_;
@@ -108,7 +111,8 @@ class ChromeBrowserMainExtraPartsExo::WaylandWatcher
 #endif
 
 ChromeBrowserMainExtraPartsExo::ChromeBrowserMainExtraPartsExo()
-    : display_(new exo::Display) {}
+    : arc_notification_surface_manager_(new arc::ArcNotificationSurfaceManager),
+      display_(new exo::Display(arc_notification_surface_manager_.get())) {}
 
 ChromeBrowserMainExtraPartsExo::~ChromeBrowserMainExtraPartsExo() {}
 
@@ -120,7 +124,7 @@ void ChromeBrowserMainExtraPartsExo::PreProfileInit() {
           switches::kEnableWaylandServer)) {
     wayland_server_ = exo::wayland::Server::Create(display_.get());
     wayland_watcher_ =
-        make_scoped_ptr(new WaylandWatcher(wayland_server_.get()));
+        base::WrapUnique(new WaylandWatcher(wayland_server_.get()));
   }
 }
 

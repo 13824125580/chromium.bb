@@ -47,10 +47,7 @@ BookmarkPermanentNode* AsMutable(const BookmarkPermanentNode* node) {
 
 // Comparator used when sorting permanent nodes. Nodes that are initially
 // visible are sorted before nodes that are initially hidden.
-class VisibilityComparator
-    : public std::binary_function<const BookmarkPermanentNode*,
-                                  const BookmarkPermanentNode*,
-                                  bool> {
+class VisibilityComparator {
  public:
   explicit VisibilityComparator(BookmarkClient* client) : client_(client) {}
 
@@ -68,9 +65,7 @@ class VisibilityComparator
 
 // Comparator used when sorting bookmarks. Folders are sorted first, then
 // bookmarks.
-class SortComparator : public std::binary_function<const BookmarkNode*,
-                                                   const BookmarkNode*,
-                                                   bool> {
+class SortComparator {
  public:
   explicit SortComparator(icu::Collator* collator) : collator_(collator) {}
 
@@ -103,7 +98,7 @@ class EmptyUndoDelegate : public BookmarkUndoDelegate {
   void OnBookmarkNodeRemoved(BookmarkModel* model,
                              const BookmarkNode* parent,
                              int index,
-                             scoped_ptr<BookmarkNode> node) override {}
+                             std::unique_ptr<BookmarkNode> node) override {}
 
   DISALLOW_COPY_AND_ASSIGN(EmptyUndoDelegate);
 };
@@ -112,7 +107,7 @@ class EmptyUndoDelegate : public BookmarkUndoDelegate {
 
 // BookmarkModel --------------------------------------------------------------
 
-BookmarkModel::BookmarkModel(scoped_ptr<BookmarkClient> client)
+BookmarkModel::BookmarkModel(std::unique_ptr<BookmarkClient> client)
     : client_(std::move(client)),
       loaded_(false),
       root_(GURL()),
@@ -122,7 +117,8 @@ BookmarkModel::BookmarkModel(scoped_ptr<BookmarkClient> client)
       next_node_id_(1),
       observers_(
           base::ObserverList<BookmarkModelObserver>::NOTIFY_EXISTING_ONLY),
-      loaded_signal_(true, false),
+      loaded_signal_(base::WaitableEvent::ResetPolicy::MANUAL,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED),
       extensive_changes_(0),
       undo_delegate_(nullptr),
       empty_undo_delegate_(new EmptyUndoDelegate) {
@@ -152,7 +148,6 @@ void BookmarkModel::Shutdown() {
 
 void BookmarkModel::Load(
     PrefService* pref_service,
-    const std::string& accept_languages,
     const base::FilePath& profile_path,
     const scoped_refptr<base::SequencedTaskRunner>& io_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner) {
@@ -168,7 +163,7 @@ void BookmarkModel::Load(
 
   // Load the bookmarks. BookmarkStorage notifies us when done.
   store_.reset(new BookmarkStorage(this, profile_path, io_task_runner.get()));
-  store_->LoadBookmarks(CreateLoadDetails(accept_languages), ui_task_runner);
+  store_->LoadBookmarks(CreateLoadDetails(), ui_task_runner);
 }
 
 const BookmarkNode* BookmarkModel::GetParentForNewNodes() {
@@ -264,10 +259,8 @@ void BookmarkModel::RemoveAllUserBookmarks() {
   BeginGroupedChanges();
   for (const auto& removed_node_data : removed_node_data_list) {
     undo_delegate()->OnBookmarkNodeRemoved(
-        this,
-        removed_node_data.parent,
-        removed_node_data.index,
-        scoped_ptr<BookmarkNode>(removed_node_data.node));
+        this, removed_node_data.parent, removed_node_data.index,
+        std::unique_ptr<BookmarkNode>(removed_node_data.node));
   }
   EndGroupedChanges();
 }
@@ -664,7 +657,7 @@ void BookmarkModel::SortChildren(const BookmarkNode* parent) {
                     OnWillReorderBookmarkNode(this, parent));
 
   UErrorCode error = U_ZERO_ERROR;
-  scoped_ptr<icu::Collator> collator(icu::Collator::createInstance(error));
+  std::unique_ptr<icu::Collator> collator(icu::Collator::createInstance(error));
   if (U_FAILURE(error))
     collator.reset(NULL);
   BookmarkNode* mutable_parent = AsMutable(parent);
@@ -759,9 +752,10 @@ const BookmarkPermanentNode* BookmarkModel::PermanentNode(
   }
 }
 
-void BookmarkModel::RestoreRemovedNode(const BookmarkNode* parent,
-                                       int index,
-                                       scoped_ptr<BookmarkNode> scoped_node) {
+void BookmarkModel::RestoreRemovedNode(
+    const BookmarkNode* parent,
+    int index,
+    std::unique_ptr<BookmarkNode> scoped_node) {
   BookmarkNode* node = scoped_node.release();
   AddNode(AsMutable(parent), index, node);
 
@@ -804,7 +798,7 @@ void BookmarkModel::RemoveNode(BookmarkNode* node,
     RemoveNode(node->GetChild(i), removed_urls);
 }
 
-void BookmarkModel::DoneLoading(scoped_ptr<BookmarkLoadDetails> details) {
+void BookmarkModel::DoneLoading(std::unique_ptr<BookmarkLoadDetails> details) {
   DCHECK(details);
   if (loaded_) {
     // We should only ever be loaded once.
@@ -896,7 +890,7 @@ void BookmarkModel::DoneLoading(scoped_ptr<BookmarkLoadDetails> details) {
 }
 
 void BookmarkModel::RemoveAndDeleteNode(BookmarkNode* delete_me) {
-  scoped_ptr<BookmarkNode> node(delete_me);
+  std::unique_ptr<BookmarkNode> node(delete_me);
 
   const BookmarkNode* parent = node->parent();
   DCHECK(parent);
@@ -1095,21 +1089,16 @@ int64_t BookmarkModel::generate_next_node_id() {
   return next_node_id_++;
 }
 
-scoped_ptr<BookmarkLoadDetails> BookmarkModel::CreateLoadDetails(
-    const std::string& accept_languages) {
+std::unique_ptr<BookmarkLoadDetails> BookmarkModel::CreateLoadDetails() {
   BookmarkPermanentNode* bb_node =
       CreatePermanentNode(BookmarkNode::BOOKMARK_BAR);
   BookmarkPermanentNode* other_node =
       CreatePermanentNode(BookmarkNode::OTHER_NODE);
   BookmarkPermanentNode* mobile_node =
       CreatePermanentNode(BookmarkNode::MOBILE);
-  return scoped_ptr<BookmarkLoadDetails>(new BookmarkLoadDetails(
-      bb_node,
-      other_node,
-      mobile_node,
-      client_->GetLoadExtraNodesCallback(),
-      new BookmarkIndex(client_.get(), accept_languages),
-      next_node_id_));
+  return std::unique_ptr<BookmarkLoadDetails>(new BookmarkLoadDetails(
+      bb_node, other_node, mobile_node, client_->GetLoadExtraNodesCallback(),
+      new BookmarkIndex(client_.get()), next_node_id_));
 }
 
 void BookmarkModel::SetUndoDelegate(BookmarkUndoDelegate* undo_delegate) {

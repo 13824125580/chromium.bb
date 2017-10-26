@@ -6,18 +6,19 @@
 #define DedicatedWorkerMessagingProxy_h
 
 #include "core/CoreExport.h"
-#include "core/workers/WorkerMessagingProxy.h"
+#include "core/workers/InProcessWorkerMessagingProxy.h"
+#include <memory>
 
 namespace blink {
 
-class CORE_EXPORT DedicatedWorkerMessagingProxy final : public WorkerMessagingProxy {
+class CORE_EXPORT DedicatedWorkerMessagingProxy final : public InProcessWorkerMessagingProxy {
     WTF_MAKE_NONCOPYABLE(DedicatedWorkerMessagingProxy);
-    USING_FAST_MALLOC(WorkerMessagingProxy);
+    USING_FAST_MALLOC(DedicatedWorkerMessagingProxy);
 public:
-    DedicatedWorkerMessagingProxy(InProcessWorkerBase*, PassOwnPtrWillBeRawPtr<WorkerClients>);
+    DedicatedWorkerMessagingProxy(InProcessWorkerBase*, WorkerClients*);
     ~DedicatedWorkerMessagingProxy() override;
 
-    PassRefPtr<WorkerThread> createWorkerThread(double originTime) override;
+    std::unique_ptr<WorkerThread> createWorkerThread(double originTime) override;
 };
 
 } // namespace blink

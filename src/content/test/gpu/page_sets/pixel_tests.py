@@ -36,6 +36,23 @@ class PixelTestsES3SharedPageState(gpu_test_base.GpuSharedPageState):
       ['--enable-unsafe-es3-apis'])
 
 
+class IOSurface2DCanvasSharedPageState(gpu_test_base.GpuSharedPageState):
+  def __init__(self, test, finder_options, story_set):
+    super(IOSurface2DCanvasSharedPageState, self).__init__(
+      test, finder_options, story_set)
+    finder_options.browser_options.AppendExtraBrowserArgs(
+      ['--enable-accelerated-2d-canvas',
+       '--disable-display-list-2d-canvas'])
+
+
+class WebGLNonChromiumImageSharedPageState(gpu_test_base.GpuSharedPageState):
+  def __init__(self, test, finder_options, story_set):
+    super(WebGLNonChromiumImageSharedPageState, self).__init__(
+      test, finder_options, story_set)
+    finder_options.browser_options.AppendExtraBrowserArgs(
+      ['--disable-webgl-image-chromium'])
+
+
 class PixelTestsStorySet(story_set_module.StorySet):
 
   """ Some basic test cases for GPU. """
@@ -51,6 +68,62 @@ class PixelTestsStorySet(story_set_module.StorySet):
       # side-effect of enabling the Core Profile rendering path on Mac
       # OS.
       self._AddAllPages(expectations, base_name, True)
+
+    if sys.platform.startswith('darwin'):
+      # On OS X, test the IOSurface 2D Canvas compositing path.
+      self.AddStory(PixelTestsPage(
+        url='file://../../data/gpu/pixel_canvas2d_accelerated.html',
+        name=base_name + '.IOSurface2DCanvas',
+        test_rect=[0, 0, 400, 400],
+        revision=1,
+        story_set=self,
+        shared_page_state_class=IOSurface2DCanvasSharedPageState,
+        expectations=expectations))
+      self.AddStory(PixelTestsPage(
+        url='file://../../data/gpu/pixel_canvas2d_webgl.html',
+        name=base_name + '.IOSurface2DCanvasWebGL',
+        test_rect=[0, 0, 300, 300],
+        revision=2,
+        story_set=self,
+        shared_page_state_class=IOSurface2DCanvasSharedPageState,
+        expectations=expectations))
+
+      # On OS X, test WebGL non-Chromium Image compositing path.
+      self.AddStory(PixelTestsPage(
+        url='file://../../data/gpu/pixel_webgl_aa_alpha.html',
+        name=base_name + '.WebGLGreenTriangle.NonChromiumImage.AA.Alpha',
+        test_rect=[0, 0, 300, 300],
+        revision=1,
+        story_set=self,
+        shared_page_state_class=WebGLNonChromiumImageSharedPageState,
+        expectations=expectations))
+
+      self.AddStory(PixelTestsPage(
+        url='file://../../data/gpu/pixel_webgl_noaa_alpha.html',
+        name=base_name + '.WebGLGreenTriangle.NonChromiumImage.NoAA.Alpha',
+        test_rect=[0, 0, 300, 300],
+        revision=1,
+        story_set=self,
+        shared_page_state_class=WebGLNonChromiumImageSharedPageState,
+        expectations=expectations))
+
+      self.AddStory(PixelTestsPage(
+        url='file://../../data/gpu/pixel_webgl_aa_noalpha.html',
+        name=base_name + '.WebGLGreenTriangle.NonChromiumImage.AA.NoAlpha',
+        test_rect=[0, 0, 300, 300],
+        revision=1,
+        story_set=self,
+        shared_page_state_class=WebGLNonChromiumImageSharedPageState,
+        expectations=expectations))
+
+      self.AddStory(PixelTestsPage(
+        url='file://../../data/gpu/pixel_webgl_noaa_noalpha.html',
+        name=base_name + '.WebGLGreenTriangle.NonChromiumImage.NoAA.NoAlpha',
+        test_rect=[0, 0, 300, 300],
+        revision=1,
+        story_set=self,
+        shared_page_state_class=WebGLNonChromiumImageSharedPageState,
+        expectations=expectations))
 
   def _AddAllPages(self, expectations, base_name, use_es3):
     if use_es3:
@@ -79,10 +152,37 @@ class PixelTestsStorySet(story_set_module.StorySet):
       expectations=expectations))
 
     self.AddStory(PixelTestsPage(
-      url='file://../../data/gpu/pixel_webgl.html',
-      name=base_name + '.WebGLGreenTriangle' + es3_suffix,
+      url='file://../../data/gpu/pixel_webgl_aa_alpha.html',
+      name=base_name + '.WebGLGreenTriangle.AA.Alpha' + es3_suffix,
       test_rect=[0, 0, 300, 300],
-      revision=12,
+      revision=1,
+      story_set=self,
+      shared_page_state_class=shared_page_state_class,
+      expectations=expectations))
+
+    self.AddStory(PixelTestsPage(
+      url='file://../../data/gpu/pixel_webgl_noaa_alpha.html',
+      name=base_name + '.WebGLGreenTriangle.NoAA.Alpha' + es3_suffix,
+      test_rect=[0, 0, 300, 300],
+      revision=1,
+      story_set=self,
+      shared_page_state_class=shared_page_state_class,
+      expectations=expectations))
+
+    self.AddStory(PixelTestsPage(
+      url='file://../../data/gpu/pixel_webgl_aa_noalpha.html',
+      name=base_name + '.WebGLGreenTriangle.AA.NoAlpha' + es3_suffix,
+      test_rect=[0, 0, 300, 300],
+      revision=1,
+      story_set=self,
+      shared_page_state_class=shared_page_state_class,
+      expectations=expectations))
+
+    self.AddStory(PixelTestsPage(
+      url='file://../../data/gpu/pixel_webgl_noaa_noalpha.html',
+      name=base_name + '.WebGLGreenTriangle.NoAA.NoAlpha' + es3_suffix,
+      test_rect=[0, 0, 300, 300],
+      revision=1,
       story_set=self,
       shared_page_state_class=shared_page_state_class,
       expectations=expectations))
@@ -96,6 +196,24 @@ class PixelTestsStorySet(story_set_module.StorySet):
       shared_page_state_class=shared_page_state_class,
       expectations=expectations,
       expected_colors='../../data/gpu/pixel_scissor_expectations.json'))
+
+    self.AddStory(PixelTestsPage(
+      url='file://../../data/gpu/pixel_canvas2d_webgl.html',
+      name=base_name + '.2DCanvasWebGL' + es3_suffix,
+      test_rect=[0, 0, 300, 300],
+      revision=2,
+      story_set=self,
+      shared_page_state_class=shared_page_state_class,
+      expectations=expectations))
+
+    self.AddStory(PixelTestsPage(
+      url='file://../../data/gpu/pixel_background.html',
+      name=base_name + '.SolidColorBackground' + es3_suffix,
+      test_rect=[500, 500, 100, 100],
+      revision=1,
+      story_set=self,
+      shared_page_state_class=shared_page_state_class,
+      expectations=expectations))
 
   @property
   def allow_mixed_story_states(self):

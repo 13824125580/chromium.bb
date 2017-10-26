@@ -13,9 +13,7 @@
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "components/test_runner/accessibility_controller.h"
 #include "components/test_runner/app_banner_client.h"
-#include "components/test_runner/event_sender.h"
 #include "components/test_runner/gamepad_controller.h"
 #include "components/test_runner/gc_controller.h"
 #include "components/test_runner/test_runner.h"
@@ -29,12 +27,10 @@
 namespace test_runner {
 
 TestInterfaces::TestInterfaces()
-    : accessibility_controller_(new AccessibilityController()),
-      event_sender_(new EventSender(this)),
-      text_input_controller_(new TextInputController()),
-      test_runner_(new TestRunner(this)),
+    : test_runner_(new TestRunner(this)),
       delegate_(nullptr),
-      app_banner_client_(nullptr) {
+      app_banner_client_(nullptr),
+      main_view_(nullptr) {
   blink::setLayoutTestMode(true);
   // NOTE: please don't put feature specific enable flags here,
   // instead add them to RuntimeEnabledFeatures.in
@@ -43,55 +39,38 @@ TestInterfaces::TestInterfaces()
 }
 
 TestInterfaces::~TestInterfaces() {
-  accessibility_controller_->SetWebView(0);
-  event_sender_->SetWebView(0);
   // gamepad_controller_ doesn't depend on WebView.
-  text_input_controller_->SetWebView(NULL);
-  test_runner_->SetWebView(0, 0);
+  test_runner_->SetMainView(nullptr);
 
-  accessibility_controller_->SetDelegate(0);
-  event_sender_->SetDelegate(0);
-  // gamepad_controller_ ignores SetDelegate(0)
-  // text_input_controller_ doesn't depend on WebTestDelegate.
-  test_runner_->SetDelegate(0);
+  // gamepad_controller_ ignores SetDelegate(nullptr)
+  test_runner_->SetDelegate(nullptr);
 }
 
-void TestInterfaces::SetWebView(blink::WebView* web_view,
-                                WebTestProxyBase* proxy) {
-  proxy_ = proxy;
-  accessibility_controller_->SetWebView(web_view);
-  event_sender_->SetWebView(web_view);
+void TestInterfaces::SetMainView(blink::WebView* web_view) {
   // gamepad_controller_ doesn't depend on WebView.
-  text_input_controller_->SetWebView(web_view);
-  test_runner_->SetWebView(web_view, proxy);
+  main_view_ = web_view;
+  test_runner_->SetMainView(web_view);
 }
 
 void TestInterfaces::SetDelegate(WebTestDelegate* delegate) {
-  accessibility_controller_->SetDelegate(delegate);
-  event_sender_->SetDelegate(delegate);
   gamepad_controller_ = GamepadController::Create(delegate);
-  // text_input_controller_ doesn't depend on WebTestDelegate.
   test_runner_->SetDelegate(delegate);
   delegate_ = delegate;
 }
 
 void TestInterfaces::BindTo(blink::WebFrame* frame) {
-  accessibility_controller_->Install(frame);
-  event_sender_->Install(frame);
   if (gamepad_controller_)
     gamepad_controller_->Install(frame);
-  text_input_controller_->Install(frame);
-  test_runner_->Install(frame);
   GCController::Install(frame);
 }
 
 void TestInterfaces::ResetTestHelperControllers() {
-  accessibility_controller_->Reset();
-  event_sender_->Reset();
   if (gamepad_controller_)
     gamepad_controller_->Reset();
-  // text_input_controller_ doesn't have any state to reset.
   blink::WebCache::clear();
+
+  for (WebTestProxyBase* web_test_proxy_base : window_list_)
+    web_test_proxy_base->Reset();
 }
 
 void TestInterfaces::ResetAll() {
@@ -133,6 +112,9 @@ void TestInterfaces::ConfigureForTestWithURL(const blink::WebURL& test_url,
     test_runner_->setShouldGeneratePixelResults(false);
     test_runner_->setShouldDumpAsMarkup(true);
   }
+  if (spec.find("/imported/wpt/") != std::string::npos ||
+      spec.find("/imported/csswg-test/") != std::string::npos)
+    test_runner_->set_is_web_platform_tests_mode();
 }
 
 void TestInterfaces::SetAppBannerClient(AppBannerClient* app_banner_client) {
@@ -151,14 +133,9 @@ void TestInterfaces::WindowClosed(WebTestProxyBase* proxy) {
     return;
   }
   window_list_.erase(pos);
-}
 
-AccessibilityController* TestInterfaces::GetAccessibilityController() {
-  return accessibility_controller_.get();
-}
-
-EventSender* TestInterfaces::GetEventSender() {
-  return event_sender_.get();
+  if (proxy->web_view() == main_view_)
+    SetMainView(nullptr);
 }
 
 TestRunner* TestInterfaces::GetTestRunner() {
@@ -167,10 +144,6 @@ TestRunner* TestInterfaces::GetTestRunner() {
 
 WebTestDelegate* TestInterfaces::GetDelegate() {
   return delegate_;
-}
-
-WebTestProxyBase* TestInterfaces::GetProxy() {
-  return proxy_;
 }
 
 const std::vector<WebTestProxyBase*>& TestInterfaces::GetWindowList() {

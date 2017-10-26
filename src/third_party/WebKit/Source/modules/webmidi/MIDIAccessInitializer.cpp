@@ -43,12 +43,12 @@ void MIDIAccessInitializer::dispose()
     if (m_hasBeenDisposed)
         return;
 
-    if (!executionContext())
+    if (!getExecutionContext())
         return;
 
     if (!m_permissionResolved) {
-        Document* document = toDocument(executionContext());
-        ASSERT(document);
+        Document* document = toDocument(getExecutionContext());
+        DCHECK(document);
         if (MIDIController* controller = MIDIController::from(document->frame()))
             controller->cancelPermissionRequest(this);
         m_permissionResolved = true;
@@ -62,8 +62,8 @@ ScriptPromise MIDIAccessInitializer::start()
     ScriptPromise promise = this->promise();
     m_accessor = MIDIAccessor::create(this);
 
-    Document* document = toDocument(executionContext());
-    ASSERT(document);
+    Document* document = toDocument(getExecutionContext());
+    DCHECK(document);
     if (MIDIController* controller = MIDIController::from(document->frame()))
         controller->requestPermission(this, m_options);
     else
@@ -74,13 +74,13 @@ ScriptPromise MIDIAccessInitializer::start()
 
 void MIDIAccessInitializer::didAddInputPort(const String& id, const String& manufacturer, const String& name, const String& version, PortState state)
 {
-    ASSERT(m_accessor);
+    DCHECK(m_accessor);
     m_portDescriptors.append(PortDescriptor(id, manufacturer, name, MIDIPort::TypeInput, version, state));
 }
 
 void MIDIAccessInitializer::didAddOutputPort(const String& id, const String& manufacturer, const String& name, const String& version, PortState state)
 {
-    ASSERT(m_accessor);
+    DCHECK(m_accessor);
     m_portDescriptors.append(PortDescriptor(id, manufacturer, name, MIDIPort::TypeOutput, version, state));
 }
 
@@ -89,20 +89,20 @@ void MIDIAccessInitializer::didSetInputPortState(unsigned portIndex, PortState s
     // didSetInputPortState() is not allowed to call before didStartSession()
     // is called. Once didStartSession() is called, MIDIAccessorClient methods
     // are delegated to MIDIAccess. See constructor of MIDIAccess.
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
 }
 
 void MIDIAccessInitializer::didSetOutputPortState(unsigned portIndex, PortState state)
 {
     // See comments on didSetInputPortState().
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
 }
 
 void MIDIAccessInitializer::didStartSession(bool success, const String& error, const String& message)
 {
-    ASSERT(m_accessor);
+    DCHECK(m_accessor);
     if (success) {
-        resolve(MIDIAccess::create(m_accessor.release(), m_options.hasSysex() && m_options.sysex(), m_portDescriptors, executionContext()));
+        resolve(MIDIAccess::create(std::move(m_accessor), m_options.hasSysex() && m_options.sysex(), m_portDescriptors, getExecutionContext()));
     } else {
         // The spec says the name is one of
         //  - SecurityError
@@ -134,14 +134,14 @@ void MIDIAccessInitializer::resolvePermission(bool allowed)
         reject(DOMException::create(SecurityError));
 }
 
-SecurityOrigin* MIDIAccessInitializer::securityOrigin() const
+SecurityOrigin* MIDIAccessInitializer::getSecurityOrigin() const
 {
-    return executionContext()->securityOrigin();
+    return getExecutionContext()->getSecurityOrigin();
 }
 
-ExecutionContext* MIDIAccessInitializer::executionContext() const
+ExecutionContext* MIDIAccessInitializer::getExecutionContext() const
 {
-    return scriptState()->executionContext();
+    return getScriptState()->getExecutionContext();
 }
 
 } // namespace blink

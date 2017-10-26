@@ -29,9 +29,10 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
                                     NON_EXPORTED_BASE(LayerTreeHostImplClient),
                                     SchedulerClient {
  public:
-  static scoped_ptr<Proxy> Create(LayerTreeHost* layer_tree_host,
-                                  LayerTreeHostSingleThreadClient* client,
-                                  TaskRunnerProvider* task_runner_provider_);
+  static std::unique_ptr<Proxy> Create(
+      LayerTreeHost* layer_tree_host,
+      LayerTreeHostSingleThreadClient* client,
+      TaskRunnerProvider* task_runner_provider_);
   ~SingleThreadProxy() override;
 
   // Proxy implementation
@@ -41,7 +42,6 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void SetOutputSurface(OutputSurface* output_surface) override;
   void ReleaseOutputSurface() override;
   void SetVisible(bool visible) override;
-  void SetThrottleFrameProduction(bool throttle) override;
   const RendererCapabilities& GetRendererCapabilities() const override;
   void SetNeedsAnimate() override;
   void SetNeedsUpdateLayers() override;
@@ -53,12 +53,12 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   bool CommitRequested() const override;
   bool BeginMainFrameRequested() const override;
   void MainThreadHasStoppedFlinging() override {}
-  void Start(scoped_ptr<BeginFrameSource> external_begin_frame_source) override;
+  void Start(
+      std::unique_ptr<BeginFrameSource> external_begin_frame_source) override;
   void Stop() override;
+  void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   bool SupportsImplScrolling() const override;
   bool MainFrameWillHappenForTesting() override;
-  void SetChildrenNeedBeginFrames(bool children_need_begin_frames) override;
-  void SetAuthoritativeVSyncInterval(const base::TimeDelta& interval) override;
   void UpdateTopControlsState(TopControlsState constraints,
                               TopControlsState current,
                               bool animate) override;
@@ -74,7 +74,6 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void ScheduledActionBeginOutputSurfaceCreation() override;
   void ScheduledActionPrepareTiles() override;
   void ScheduledActionInvalidateOutputSurface() override;
-  void SendBeginFramesToChildren(const BeginFrameArgs& args) override;
   void SendBeginMainFrameNotExpectedSoon() override;
 
   // LayerTreeHostImplClient implementation
@@ -82,6 +81,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void DidLoseOutputSurfaceOnImplThread() override;
   void CommitVSyncParameters(base::TimeTicks timebase,
                              base::TimeDelta interval) override;
+  void SetBeginFrameSource(BeginFrameSource* source) override;
   void SetEstimatedParentDrawTime(base::TimeDelta draw_time) override;
   void DidSwapBuffersOnImplThread() override;
   void DidSwapBuffersCompleteOnImplThread() override;
@@ -95,7 +95,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void SetNeedsCommitOnImplThread() override;
   void SetVideoNeedsBeginFrames(bool needs_begin_frames) override;
   void PostAnimationEventsToMainThreadOnImplThread(
-      scoped_ptr<AnimationEvents> events) override;
+      std::unique_ptr<AnimationEvents> events) override;
   bool IsInsideDraw() override;
   void RenewTreePriority() override {}
   void PostDelayedAnimationTaskOnImplThread(const base::Closure& task,
@@ -105,10 +105,6 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void DidPrepareTiles() override;
   void DidCompletePageScaleAnimationOnImplThread() override;
   void OnDrawForOutputSurface(bool resourceless_software_draw) override;
-  void PostFrameTimingEventsOnImplThread(
-      scoped_ptr<FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<FrameTimingTracker::MainFrameTimingSet> main_frame_events)
-      override;
 
   void RequestNewOutputSurface();
 
@@ -141,14 +137,17 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
 
   // Used on the Thread, but checked on main thread during
   // initialization/shutdown.
-  scoped_ptr<LayerTreeHostImpl> layer_tree_host_impl_;
+  std::unique_ptr<LayerTreeHostImpl> layer_tree_host_impl_;
   RendererCapabilities renderer_capabilities_for_main_thread_;
 
   // Accessed from both threads.
-  scoped_ptr<BeginFrameSource> external_begin_frame_source_;
-  scoped_ptr<Scheduler> scheduler_on_impl_thread_;
+  std::unique_ptr<BeginFrameSource> external_begin_frame_source_;
+  std::unique_ptr<BeginFrameSource> unthrottled_begin_frame_source_;
+  std::unique_ptr<SyntheticBeginFrameSource> synthetic_begin_frame_source_;
+  std::unique_ptr<Scheduler> scheduler_on_impl_thread_;
 
-  scoped_ptr<BlockingTaskRunner::CapturePostTasks> commit_blocking_task_runner_;
+  std::unique_ptr<BlockingTaskRunner::CapturePostTasks>
+      commit_blocking_task_runner_;
   bool next_frame_is_newly_committed_frame_;
 
 #if DCHECK_IS_ON()
@@ -176,13 +175,16 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
 // code is running on the impl thread to satisfy assertion checks.
 class DebugScopedSetImplThread {
  public:
+#if DCHECK_IS_ON()
   explicit DebugScopedSetImplThread(TaskRunnerProvider* task_runner_provider)
       : task_runner_provider_(task_runner_provider) {
-#if DCHECK_IS_ON()
     previous_value_ = task_runner_provider_->impl_thread_is_overridden_;
     task_runner_provider_->SetCurrentThreadIsImplThread(true);
-#endif
   }
+#else
+  explicit DebugScopedSetImplThread(TaskRunnerProvider* task_runner_provider) {}
+#endif
+
   ~DebugScopedSetImplThread() {
 #if DCHECK_IS_ON()
     task_runner_provider_->SetCurrentThreadIsImplThread(previous_value_);
@@ -190,8 +192,10 @@ class DebugScopedSetImplThread {
   }
 
  private:
+#if DCHECK_IS_ON()
   bool previous_value_;
   TaskRunnerProvider* task_runner_provider_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(DebugScopedSetImplThread);
 };
@@ -200,13 +204,16 @@ class DebugScopedSetImplThread {
 // code is running on the main thread to satisfy assertion checks.
 class DebugScopedSetMainThread {
  public:
+#if DCHECK_IS_ON()
   explicit DebugScopedSetMainThread(TaskRunnerProvider* task_runner_provider)
       : task_runner_provider_(task_runner_provider) {
-#if DCHECK_IS_ON()
     previous_value_ = task_runner_provider_->impl_thread_is_overridden_;
     task_runner_provider_->SetCurrentThreadIsImplThread(false);
-#endif
   }
+#else
+  explicit DebugScopedSetMainThread(TaskRunnerProvider* task_runner_provider) {}
+#endif
+
   ~DebugScopedSetMainThread() {
 #if DCHECK_IS_ON()
     task_runner_provider_->SetCurrentThreadIsImplThread(previous_value_);
@@ -214,8 +221,10 @@ class DebugScopedSetMainThread {
   }
 
  private:
+#if DCHECK_IS_ON()
   bool previous_value_;
   TaskRunnerProvider* task_runner_provider_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(DebugScopedSetMainThread);
 };

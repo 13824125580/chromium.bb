@@ -9,12 +9,11 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/browser/webdata/autocomplete_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/sync_driver/data_type_controller_mock.h"
@@ -45,6 +44,7 @@ class NoOpAutofillBackend : public AutofillWebDataBackend {
       autofill::AutofillWebDataServiceObserverOnDBThread* observer) override {}
   void RemoveExpiredFormElements() override {}
   void NotifyOfMultipleAutofillChanges() override {}
+  void NotifyThatSyncHasStarted(syncer::ModelType /* model_type */) override {}
 };
 
 // Fake WebDataService implementation that stubs out the database loading.

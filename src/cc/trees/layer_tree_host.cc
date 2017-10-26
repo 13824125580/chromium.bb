@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <stack>
 #include <string>
 #include <unordered_map>
@@ -18,17 +19,19 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/metrics/histogram.h"
+#include "base/numerics/safe_math.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/animation/animation_events.h"
 #include "cc/animation/animation_host.h"
-#include "cc/animation/animation_registrar.h"
-#include "cc/animation/layer_animation_controller.h"
 #include "cc/base/math_util.h"
+#include "cc/blimp/image_serialization_processor.h"
+#include "cc/blimp/picture_data.h"
+#include "cc/blimp/picture_data_conversions.h"
 #include "cc/debug/devtools_instrumentation.h"
 #include "cc/debug/frame_viewer_instrumentation.h"
 #include "cc/debug/rendering_stats_instrumentation.h"
@@ -39,7 +42,6 @@
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_iterator.h"
 #include "cc/layers/layer_proto_converter.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/layers/painted_scrollbar_layer.h"
 #include "cc/proto/gfx_conversions.h"
 #include "cc/proto/layer_tree_host.pb.h"
@@ -83,6 +85,57 @@ Layer* UpdateAndGetLayer(Layer* current_layer,
   return layer_it->second;
 }
 
+std::unique_ptr<base::trace_event::TracedValue>
+ComputeLayerTreeHostProtoSizeSplitAsValue(proto::LayerTreeHost* proto) {
+  std::unique_ptr<base::trace_event::TracedValue> value(
+      new base::trace_event::TracedValue());
+  base::CheckedNumeric<int> base_layer_properties_size = 0;
+  base::CheckedNumeric<int> picture_layer_properties_size = 0;
+  base::CheckedNumeric<int> display_item_list_size = 0;
+  base::CheckedNumeric<int> drawing_display_items_size = 0;
+
+  const proto::LayerUpdate& layer_update_proto = proto->layer_updates();
+  for (int i = 0; i < layer_update_proto.layers_size(); ++i) {
+    const proto::LayerProperties layer_properties_proto =
+        layer_update_proto.layers(i);
+    base_layer_properties_size += layer_properties_proto.base().ByteSize();
+
+    if (layer_properties_proto.has_picture()) {
+      const proto::PictureLayerProperties& picture_proto =
+          layer_properties_proto.picture();
+      picture_layer_properties_size += picture_proto.ByteSize();
+
+      const proto::RecordingSource& recording_source_proto =
+          picture_proto.recording_source();
+      const proto::DisplayItemList& display_list_proto =
+          recording_source_proto.display_list();
+      display_item_list_size += display_list_proto.ByteSize();
+
+      for (int j = 0; j < display_list_proto.items_size(); ++j) {
+        const proto::DisplayItem& display_item = display_list_proto.items(j);
+        if (display_item.type() == proto::DisplayItem::Type_Drawing)
+          drawing_display_items_size += display_item.ByteSize();
+      }
+    }
+  }
+
+  value->SetInteger("TotalLayerTreeHostProtoSize", proto->ByteSize());
+  value->SetInteger("LayerTreeHierarchySize", proto->root_layer().ByteSize());
+  value->SetInteger("LayerUpdatesSize", proto->layer_updates().ByteSize());
+  value->SetInteger("PropertyTreesSize", proto->property_trees().ByteSize());
+
+  // LayerUpdate size breakdown.
+  value->SetInteger("TotalBasePropertiesSize",
+                    base_layer_properties_size.ValueOrDefault(-1));
+  value->SetInteger("PictureLayerPropertiesSize",
+                    picture_layer_properties_size.ValueOrDefault(-1));
+  value->SetInteger("DisplayItemListSize",
+                    display_item_list_size.ValueOrDefault(-1));
+  value->SetInteger("DrawingDisplayItemsSize",
+                    drawing_display_items_size.ValueOrDefault(-1));
+  return value;
+}
+
 }  // namespace
 
 LayerTreeHost::InitParams::InitParams() {
@@ -91,13 +144,13 @@ LayerTreeHost::InitParams::InitParams() {
 LayerTreeHost::InitParams::~InitParams() {
 }
 
-scoped_ptr<LayerTreeHost> LayerTreeHost::CreateThreaded(
+std::unique_ptr<LayerTreeHost> LayerTreeHost::CreateThreaded(
     scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner,
     InitParams* params) {
   DCHECK(params->main_task_runner.get());
   DCHECK(impl_task_runner.get());
   DCHECK(params->settings);
-  scoped_ptr<LayerTreeHost> layer_tree_host(
+  std::unique_ptr<LayerTreeHost> layer_tree_host(
       new LayerTreeHost(params, CompositorMode::THREADED));
   layer_tree_host->InitializeThreaded(
       params->main_task_runner, impl_task_runner,
@@ -105,11 +158,11 @@ scoped_ptr<LayerTreeHost> LayerTreeHost::CreateThreaded(
   return layer_tree_host;
 }
 
-scoped_ptr<LayerTreeHost> LayerTreeHost::CreateSingleThreaded(
+std::unique_ptr<LayerTreeHost> LayerTreeHost::CreateSingleThreaded(
     LayerTreeHostSingleThreadClient* single_thread_client,
     InitParams* params) {
   DCHECK(params->settings);
-  scoped_ptr<LayerTreeHost> layer_tree_host(
+  std::unique_ptr<LayerTreeHost> layer_tree_host(
       new LayerTreeHost(params, CompositorMode::SINGLE_THREADED));
   layer_tree_host->InitializeSingleThreaded(
       single_thread_client, params->main_task_runner,
@@ -117,12 +170,13 @@ scoped_ptr<LayerTreeHost> LayerTreeHost::CreateSingleThreaded(
   return layer_tree_host;
 }
 
-scoped_ptr<LayerTreeHost> LayerTreeHost::CreateRemoteServer(
+std::unique_ptr<LayerTreeHost> LayerTreeHost::CreateRemoteServer(
     RemoteProtoChannel* remote_proto_channel,
     InitParams* params) {
   DCHECK(params->main_task_runner.get());
   DCHECK(params->settings);
   DCHECK(remote_proto_channel);
+  TRACE_EVENT0("cc.remote", "LayerTreeHost::CreateRemoteServer");
 
   // Using an external begin frame source is not supported on the server in
   // remote mode.
@@ -130,14 +184,14 @@ scoped_ptr<LayerTreeHost> LayerTreeHost::CreateRemoteServer(
   DCHECK(!params->external_begin_frame_source);
   DCHECK(params->image_serialization_processor);
 
-  scoped_ptr<LayerTreeHost> layer_tree_host(
+  std::unique_ptr<LayerTreeHost> layer_tree_host(
       new LayerTreeHost(params, CompositorMode::REMOTE));
   layer_tree_host->InitializeRemoteServer(remote_proto_channel,
                                           params->main_task_runner);
   return layer_tree_host;
 }
 
-scoped_ptr<LayerTreeHost> LayerTreeHost::CreateRemoteClient(
+std::unique_ptr<LayerTreeHost> LayerTreeHost::CreateRemoteClient(
     RemoteProtoChannel* remote_proto_channel,
     scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner,
     InitParams* params) {
@@ -152,7 +206,7 @@ scoped_ptr<LayerTreeHost> LayerTreeHost::CreateRemoteClient(
   DCHECK(!params->external_begin_frame_source);
   DCHECK(params->image_serialization_processor);
 
-  scoped_ptr<LayerTreeHost> layer_tree_host(
+  std::unique_ptr<LayerTreeHost> layer_tree_host(
       new LayerTreeHost(params, CompositorMode::REMOTE));
   layer_tree_host->InitializeRemoteClient(
       remote_proto_channel, params->main_task_runner, impl_task_runner);
@@ -167,7 +221,6 @@ LayerTreeHost::LayerTreeHost(InitParams* params, CompositorMode mode)
       needs_meta_info_recomputation_(true),
       client_(params->client),
       source_frame_number_(0),
-      meta_information_sequence_number_(1),
       rendering_stats_instrumentation_(RenderingStatsInstrumentation::Create()),
       output_surface_lost_(true),
       settings_(*params->settings),
@@ -188,6 +241,7 @@ LayerTreeHost::LayerTreeHost(InitParams* params, CompositorMode mode)
       has_transparent_background_(false),
       have_scroll_event_handlers_(false),
       event_listener_properties_(),
+      animation_host_(std::move(params->animation_host)),
       did_complete_scale_animation_(false),
       in_paint_layer_contents_(false),
       id_(s_layer_tree_host_sequence_number.GetNext() + 1),
@@ -197,17 +251,12 @@ LayerTreeHost::LayerTreeHost(InitParams* params, CompositorMode mode)
       task_graph_runner_(params->task_graph_runner),
       image_serialization_processor_(params->image_serialization_processor),
       surface_id_namespace_(0u),
-      next_surface_sequence_(1u) {
+      next_surface_sequence_(1u),
+      routing_id_(params->routing_id) {
   DCHECK(task_graph_runner_);
 
-  if (settings_.accelerated_animation_enabled) {
-    if (settings_.use_compositor_animation_timelines) {
-      animation_host_ = AnimationHost::Create(ThreadInstance::MAIN);
+  DCHECK(animation_host_);
       animation_host_->SetMutatorHostClient(this);
-    } else {
-      animation_registrar_ = AnimationRegistrar::Create();
-    }
-  }
 
   rendering_stats_instrumentation_->set_record_rendering_stats(
       debug_state_.RecordRenderingStats());
@@ -216,10 +265,10 @@ LayerTreeHost::LayerTreeHost(InitParams* params, CompositorMode mode)
 void LayerTreeHost::InitializeThreaded(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner,
-    scoped_ptr<BeginFrameSource> external_begin_frame_source) {
+    std::unique_ptr<BeginFrameSource> external_begin_frame_source) {
   task_runner_provider_ =
       TaskRunnerProvider::Create(main_task_runner, impl_task_runner);
-  scoped_ptr<ProxyMain> proxy_main =
+  std::unique_ptr<ProxyMain> proxy_main =
       ProxyMain::CreateThreaded(this, task_runner_provider_.get());
   InitializeProxy(std::move(proxy_main),
                   std::move(external_begin_frame_source));
@@ -228,7 +277,7 @@ void LayerTreeHost::InitializeThreaded(
 void LayerTreeHost::InitializeSingleThreaded(
     LayerTreeHostSingleThreadClient* single_thread_client,
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
-    scoped_ptr<BeginFrameSource> external_begin_frame_source) {
+    std::unique_ptr<BeginFrameSource> external_begin_frame_source) {
   task_runner_provider_ = TaskRunnerProvider::Create(main_task_runner, nullptr);
   InitializeProxy(SingleThreadProxy::Create(this, single_thread_client,
                                             task_runner_provider_.get()),
@@ -239,6 +288,11 @@ void LayerTreeHost::InitializeRemoteServer(
     RemoteProtoChannel* remote_proto_channel,
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner) {
   task_runner_provider_ = TaskRunnerProvider::Create(main_task_runner, nullptr);
+
+  if (image_serialization_processor_) {
+    engine_picture_cache_ =
+        image_serialization_processor_->CreateEnginePictureCache();
+  }
 
   // The LayerTreeHost on the server never requests the output surface since
   // it is only needed on the client. Since ProxyMain aborts commits if
@@ -258,6 +312,11 @@ void LayerTreeHost::InitializeRemoteClient(
   task_runner_provider_ =
       TaskRunnerProvider::Create(main_task_runner, impl_task_runner);
 
+  if (image_serialization_processor_) {
+    client_picture_cache_ =
+        image_serialization_processor_->CreateClientPictureCache();
+  }
+
   // For the remote mode, the RemoteChannelImpl implements the Proxy, which is
   // owned by the LayerTreeHost. The RemoteChannelImpl pipes requests which need
   // to handled locally, for instance the Output Surface creation to the
@@ -270,42 +329,50 @@ void LayerTreeHost::InitializeRemoteClient(
 }
 
 void LayerTreeHost::InitializeForTesting(
-    scoped_ptr<TaskRunnerProvider> task_runner_provider,
-    scoped_ptr<Proxy> proxy_for_testing,
-    scoped_ptr<BeginFrameSource> external_begin_frame_source) {
+    std::unique_ptr<TaskRunnerProvider> task_runner_provider,
+    std::unique_ptr<Proxy> proxy_for_testing,
+    std::unique_ptr<BeginFrameSource> external_begin_frame_source) {
   task_runner_provider_ = std::move(task_runner_provider);
+
+  InitializePictureCacheForTesting();
+
   InitializeProxy(std::move(proxy_for_testing),
                   std::move(external_begin_frame_source));
 }
 
+void LayerTreeHost::InitializePictureCacheForTesting() {
+  if (!image_serialization_processor_)
+    return;
+
+  // Initialize both engine and client cache to ensure serialization tests
+  // with a single LayerTreeHost can work correctly.
+  engine_picture_cache_ =
+      image_serialization_processor_->CreateEnginePictureCache();
+  client_picture_cache_ =
+      image_serialization_processor_->CreateClientPictureCache();
+}
+
 void LayerTreeHost::SetTaskRunnerProviderForTesting(
-    scoped_ptr<TaskRunnerProvider> task_runner_provider) {
+    std::unique_ptr<TaskRunnerProvider> task_runner_provider) {
   DCHECK(!task_runner_provider_);
   task_runner_provider_ = std::move(task_runner_provider);
 }
 
 void LayerTreeHost::InitializeProxy(
-    scoped_ptr<Proxy> proxy,
-    scoped_ptr<BeginFrameSource> external_begin_frame_source) {
+    std::unique_ptr<Proxy> proxy,
+    std::unique_ptr<BeginFrameSource> external_begin_frame_source) {
   TRACE_EVENT0("cc", "LayerTreeHost::InitializeForReal");
   DCHECK(task_runner_provider_);
 
   proxy_ = std::move(proxy);
   proxy_->Start(std::move(external_begin_frame_source));
-  if (settings_.accelerated_animation_enabled) {
-    if (animation_host_)
-      animation_host_->SetSupportsScrollAnimations(
-          proxy_->SupportsImplScrolling());
-    else
-      animation_registrar_->set_supports_scroll_animations(
-          proxy_->SupportsImplScrolling());
-  }
+
+  animation_host_->SetSupportsScrollAnimations(proxy_->SupportsImplScrolling());
 }
 
 LayerTreeHost::~LayerTreeHost() {
   TRACE_EVENT0("cc", "LayerTreeHost::~LayerTreeHost");
 
-  if (animation_host_)
     animation_host_->SetMutatorHostClient(nullptr);
 
   if (root_layer_.get())
@@ -328,7 +395,7 @@ LayerTreeHost::~LayerTreeHost() {
 
   if (root_layer_.get()) {
     // The layer tree must be destroyed before the layer tree host. We've
-    // made a contract with our animation controllers that the registrar
+    // made a contract with our animation controllers that the animation_host
     // will outlive them, and we must make good.
     root_layer_ = NULL;
   }
@@ -374,8 +441,8 @@ void LayerTreeHost::FinishCommitOnImplThread(LayerTreeHostImpl* host_impl) {
   if (is_new_trace &&
       frame_viewer_instrumentation::IsTracingLayerTreeSnapshots() &&
       root_layer()) {
-    LayerTreeHostCommon::CallFunctionForSubtree(
-        root_layer(), [](Layer* layer) { layer->DidBeginTracing(); });
+    LayerTreeHostCommon::CallFunctionForEveryLayer(
+        this, [](Layer* layer) { layer->DidBeginTracing(); });
   }
 
   LayerTreeImpl* sync_tree = host_impl->sync_tree();
@@ -387,16 +454,14 @@ void LayerTreeHost::FinishCommitOnImplThread(LayerTreeHostImpl* host_impl) {
 
   sync_tree->set_source_frame_number(source_frame_number());
 
-  if (needs_full_tree_sync_) {
-    sync_tree->SetRootLayer(TreeSynchronizer::SynchronizeTrees(
-        root_layer(), sync_tree->DetachLayerTree(), sync_tree));
-  }
+  if (needs_full_tree_sync_)
+    TreeSynchronizer::SynchronizeTrees(root_layer(), sync_tree);
+
   sync_tree->set_needs_full_tree_sync(needs_full_tree_sync_);
   needs_full_tree_sync_ = false;
 
   if (hud_layer_.get()) {
-    LayerImpl* hud_impl = LayerTreeHostCommon::FindLayerInSubtree(
-        sync_tree->root_layer(), hud_layer_->id());
+    LayerImpl* hud_impl = sync_tree->LayerById(hud_layer_->id());
     sync_tree->set_hud_layer(static_cast<HeadsUpDisplayLayerImpl*>(hud_impl));
   } else {
     sync_tree->set_hud_layer(NULL);
@@ -406,11 +471,14 @@ void LayerTreeHost::FinishCommitOnImplThread(LayerTreeHostImpl* host_impl) {
   sync_tree->set_has_transparent_background(has_transparent_background_);
   sync_tree->set_have_scroll_event_handlers(have_scroll_event_handlers_);
   sync_tree->set_event_listener_properties(
-      EventListenerClass::kTouch,
-      event_listener_properties(EventListenerClass::kTouch));
+      EventListenerClass::kTouchStartOrMove,
+      event_listener_properties(EventListenerClass::kTouchStartOrMove));
   sync_tree->set_event_listener_properties(
       EventListenerClass::kMouseWheel,
       event_listener_properties(EventListenerClass::kMouseWheel));
+  sync_tree->set_event_listener_properties(
+      EventListenerClass::kTouchEndOrCancel,
+      event_listener_properties(EventListenerClass::kTouchEndOrCancel));
 
   if (page_scale_layer_.get() && inner_viewport_scroll_layer_.get()) {
     sync_tree->SetViewportLayersFromIds(
@@ -426,8 +494,20 @@ void LayerTreeHost::FinishCommitOnImplThread(LayerTreeHostImpl* host_impl) {
 
   sync_tree->RegisterSelection(selection_);
 
+  bool property_trees_changed_on_active_tree =
+      sync_tree->IsActiveTree() && sync_tree->property_trees()->changed;
+  // Property trees may store damage status. We preserve the sync tree damage
+  // status by pushing the damage status from sync tree property trees to main
+  // thread property trees or by moving it onto the layers.
+  if (root_layer_ && property_trees_changed_on_active_tree) {
+    if (property_trees_.sequence_number ==
+        sync_tree->property_trees()->sequence_number)
+      sync_tree->property_trees()->PushChangeTrackingTo(&property_trees_);
+    else
+      sync_tree->MoveChangeTrackingToLayers();
+  }
   // Setting property trees must happen before pushing the page scale.
-  sync_tree->SetPropertyTrees(property_trees_);
+  sync_tree->SetPropertyTrees(&property_trees_);
 
   sync_tree->PushPageScaleFromMainThread(
       page_scale_factor_, min_page_scale_factor_, max_page_scale_factor_);
@@ -470,21 +550,27 @@ void LayerTreeHost::FinishCommitOnImplThread(LayerTreeHostImpl* host_impl) {
 
   {
     TRACE_EVENT0("cc", "LayerTreeHost::PushProperties");
-    TreeSynchronizer::PushProperties(root_layer(), sync_tree->root_layer());
 
-    if (animation_host_) {
+    TreeSynchronizer::PushLayerProperties(this, sync_tree);
+
+    // This must happen after synchronizing property trees and after push
+    // properties, which updates property tree indices, but before animation
+    // host pushes properties as animation host push properties can change
+    // Animation::InEffect and we want the old InEffect value for updating
+    // property tree scrolling and animation.
+    sync_tree->UpdatePropertyTreeScrollingAndAnimationFromMainThread();
+
       TRACE_EVENT0("cc", "LayerTreeHost::AnimationHost::PushProperties");
       DCHECK(host_impl->animation_host());
       animation_host_->PushPropertiesTo(host_impl->animation_host());
     }
-  }
 
-  // This must happen after synchronizing property trees and after push
-  // properties, which updates property tree indices.
-  sync_tree->UpdatePropertyTreeScrollingAndAnimationFromMainThread();
+  // This must happen after synchronizing property trees and after pushing
+  // properties, which updates the clobber_active_value flag.
+  sync_tree->UpdatePropertyTreeScrollOffset(&property_trees_);
 
   micro_benchmark_controller_.ScheduleImplBenchmarks(host_impl);
-  property_trees_.transform_tree.ResetChangeTracking();
+  property_trees_.ResetAllChangeTracking();
 }
 
 void LayerTreeHost::WillCommit() {
@@ -495,10 +581,7 @@ void LayerTreeHost::WillCommit() {
 void LayerTreeHost::UpdateHudLayer() {
   if (debug_state_.ShowHudInfo()) {
     if (!hud_layer_.get()) {
-      LayerSettings hud_layer_settings;
-      hud_layer_settings.use_compositor_animation_timelines =
-          settings_.use_compositor_animation_timelines;
-      hud_layer_ = HeadsUpDisplayLayer::Create(hud_layer_settings);
+      hud_layer_ = HeadsUpDisplayLayer::Create();
     }
 
     if (root_layer_.get() && !hud_layer_->parent())
@@ -518,7 +601,7 @@ void LayerTreeHost::CommitComplete() {
   }
 }
 
-void LayerTreeHost::SetOutputSurface(scoped_ptr<OutputSurface> surface) {
+void LayerTreeHost::SetOutputSurface(std::unique_ptr<OutputSurface> surface) {
   TRACE_EVENT0("cc", "LayerTreeHost::SetOutputSurface");
   DCHECK(output_surface_lost_);
   DCHECK(surface);
@@ -528,7 +611,7 @@ void LayerTreeHost::SetOutputSurface(scoped_ptr<OutputSurface> surface) {
   proxy_->SetOutputSurface(new_output_surface_.get());
 }
 
-scoped_ptr<OutputSurface> LayerTreeHost::ReleaseOutputSurface() {
+std::unique_ptr<OutputSurface> LayerTreeHost::ReleaseOutputSurface() {
   DCHECK(!visible_);
   DCHECK(!output_surface_lost_);
 
@@ -559,14 +642,20 @@ void LayerTreeHost::DidFailToInitializeOutputSurface() {
   client_->DidFailToInitializeOutputSurface();
 }
 
-scoped_ptr<LayerTreeHostImpl> LayerTreeHost::CreateLayerTreeHostImpl(
+std::unique_ptr<LayerTreeHostImpl> LayerTreeHost::CreateLayerTreeHostImpl(
     LayerTreeHostImplClient* client) {
   DCHECK(!IsRemoteServer());
   DCHECK(task_runner_provider_->IsImplThread());
-  scoped_ptr<LayerTreeHostImpl> host_impl = LayerTreeHostImpl::Create(
+
+  const bool supports_impl_scrolling = task_runner_provider_->HasImplThread();
+  std::unique_ptr<AnimationHost> animation_host_impl =
+      animation_host_->CreateImplInstance(supports_impl_scrolling);
+
+  std::unique_ptr<LayerTreeHostImpl> host_impl = LayerTreeHostImpl::Create(
       settings_, client, task_runner_provider_.get(),
       rendering_stats_instrumentation_.get(), shared_bitmap_manager_,
-      gpu_memory_buffer_manager_, task_graph_runner_, id_);
+      gpu_memory_buffer_manager_, task_graph_runner_,
+      std::move(animation_host_impl), id_);
   host_impl->SetHasGpuRasterizationTrigger(has_gpu_rasterization_trigger_);
   host_impl->SetContentIsSuitableForGpuRasterization(
       content_is_suitable_for_gpu_rasterization_);
@@ -597,16 +686,8 @@ void LayerTreeHost::SetDeferCommits(bool defer_commits) {
 }
 
 void LayerTreeHost::SetNeedsDisplayOnAllLayers() {
-  std::stack<Layer*> layer_stack;
-  layer_stack.push(root_layer());
-  while (!layer_stack.empty()) {
-    Layer* current_layer = layer_stack.top();
-    layer_stack.pop();
-    current_layer->SetNeedsDisplay();
-    for (unsigned int i = 0; i < current_layer->children().size(); i++) {
-      layer_stack.push(current_layer->child_at(i));
-    }
-  }
+  for (auto* layer : *this)
+    layer->SetNeedsDisplay();
 }
 
 const RendererCapabilities& LayerTreeHost::GetRendererCapabilities() const {
@@ -661,7 +742,6 @@ bool LayerTreeHost::BeginMainFrameRequested() const {
   return proxy_->BeginMainFrameRequested();
 }
 
-
 void LayerTreeHost::SetNextCommitWaitsForActivation() {
   proxy_->SetNextCommitWaitsForActivation();
 }
@@ -671,12 +751,10 @@ void LayerTreeHost::SetNextCommitForcesRedraw() {
   proxy_->SetNeedsUpdateLayers();
 }
 
-void LayerTreeHost::SetAnimationEvents(scoped_ptr<AnimationEvents> events) {
+void LayerTreeHost::SetAnimationEvents(
+    std::unique_ptr<AnimationEvents> events) {
   DCHECK(task_runner_provider_->IsMainThread());
-  if (animation_host_)
     animation_host_->SetAnimationEvents(std::move(events));
-  else
-    animation_registrar_->SetAnimationEvents(std::move(events));
 }
 
 void LayerTreeHost::SetRootLayer(scoped_refptr<Layer> root_layer) {
@@ -787,10 +865,6 @@ void LayerTreeHost::SetVisible(bool visible) {
   proxy_->SetVisible(visible);
 }
 
-void LayerTreeHost::SetThrottleFrameProduction(bool throttle) {
-  proxy_->SetThrottleFrameProduction(throttle);
-}
-
 void LayerTreeHost::StartPageScaleAnimation(const gfx::Vector2d& target_offset,
                                             bool use_anchor,
                                             float scale,
@@ -803,6 +877,10 @@ void LayerTreeHost::StartPageScaleAnimation(const gfx::Vector2d& target_offset,
           duration));
 
   SetNeedsCommit();
+}
+
+bool LayerTreeHost::HasPendingPageScaleAnimation() const {
+  return !!pending_page_scale_animation_.get();
 }
 
 void LayerTreeHost::NotifyInputThrottledUntilCommit() {
@@ -846,24 +924,24 @@ bool LayerTreeHost::UpdateLayers() {
   return result || next_commit_forces_redraw_;
 }
 
-void LayerTreeHost::DidCompletePageScaleAnimation() {
-  did_complete_scale_animation_ = true;
+LayerListIterator<Layer> LayerTreeHost::begin() const {
+  return LayerListIterator<Layer>(root_layer_.get());
 }
 
-static Layer* FindFirstScrollableLayer(Layer* layer) {
-  if (!layer)
-    return NULL;
+LayerListIterator<Layer> LayerTreeHost::end() const {
+  return LayerListIterator<Layer>(nullptr);
+}
 
-  if (layer->scrollable())
-    return layer;
+LayerListReverseIterator<Layer> LayerTreeHost::rbegin() {
+  return LayerListReverseIterator<Layer>(root_layer_.get());
+}
 
-  for (size_t i = 0; i < layer->children().size(); ++i) {
-    Layer* found = FindFirstScrollableLayer(layer->children()[i].get());
-    if (found)
-      return found;
-  }
+LayerListReverseIterator<Layer> LayerTreeHost::rend() {
+  return LayerListReverseIterator<Layer>(nullptr);
+}
 
-  return NULL;
+void LayerTreeHost::DidCompletePageScaleAnimation() {
+  did_complete_scale_animation_ = true;
 }
 
 void LayerTreeHost::RecordGpuRasterizationHistogram() {
@@ -893,7 +971,7 @@ void LayerTreeHost::RecordGpuRasterizationHistogram() {
 }
 
 void LayerTreeHost::BuildPropertyTreesForTesting() {
-  LayerTreeHostCommon::PreCalculateMetaInformationForTesting(root_layer_.get());
+  PropertyTreeBuilder::PreCalculateMetaInformation(root_layer_.get());
   gfx::Transform identity_transform;
   PropertyTreeBuilder::BuildPropertyTrees(
       root_layer_.get(), page_scale_layer_.get(),
@@ -901,6 +979,14 @@ void LayerTreeHost::BuildPropertyTreesForTesting() {
       overscroll_elasticity_layer_.get(), elastic_overscroll_,
       page_scale_factor_, device_scale_factor_,
       gfx::Rect(device_viewport_size_), identity_transform, &property_trees_);
+}
+
+static void SetElementIdForTesting(Layer* layer) {
+  layer->SetElementId(LayerIdToElementIdForTesting(layer->id()));
+}
+
+void LayerTreeHost::SetElementIdsForTesting() {
+  LayerTreeHostCommon::CallFunctionForEveryLayer(this, SetElementIdForTesting);
 }
 
 bool LayerTreeHost::UsingSharedMemoryResources() {
@@ -913,7 +999,8 @@ bool LayerTreeHost::DoUpdateLayers(Layer* root_layer) {
 
   UpdateHudLayer();
 
-  Layer* root_scroll = FindFirstScrollableLayer(root_layer);
+  Layer* root_scroll =
+      PropertyTreeBuilder::FindFirstScrollableLayer(root_layer);
   Layer* page_scale_layer = page_scale_layer_.get();
   if (!page_scale_layer && root_scroll)
     page_scale_layer = root_scroll->parent();
@@ -930,14 +1017,33 @@ bool LayerTreeHost::DoUpdateLayers(Layer* root_layer) {
     TRACE_EVENT0("cc", "LayerTreeHost::UpdateLayers::BuildPropertyTrees");
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug.cdp-perf"),
                  "LayerTreeHostCommon::ComputeVisibleRectsWithPropertyTrees");
-    LayerTreeHostCommon::PreCalculateMetaInformation(root_layer);
+    PropertyTreeBuilder::PreCalculateMetaInformation(root_layer);
     bool can_render_to_separate_surface = true;
-    BuildPropertyTreesAndComputeVisibleRects(
+    if (!settings_.use_layer_lists) {
+      // If use_layer_lists is set, then the property trees should have been
+      // built by the client already.
+      PropertyTreeBuilder::BuildPropertyTrees(
         root_layer, page_scale_layer, inner_viewport_scroll_layer_.get(),
-        outer_viewport_scroll_layer_.get(), overscroll_elasticity_layer_.get(),
-        elastic_overscroll_, page_scale_factor_, device_scale_factor_,
+          outer_viewport_scroll_layer_.get(),
+          overscroll_elasticity_layer_.get(), elastic_overscroll_,
+          page_scale_factor_, device_scale_factor_,
         gfx::Rect(device_viewport_size_), identity_transform,
-        can_render_to_separate_surface, &property_trees_, &update_layer_list);
+          &property_trees_);
+      TRACE_EVENT_INSTANT1("cc",
+                           "LayerTreeHost::UpdateLayers_BuiltPropertyTrees",
+                           TRACE_EVENT_SCOPE_THREAD, "property_trees",
+                           property_trees_.AsTracedValue());
+    } else {
+      TRACE_EVENT_INSTANT1("cc",
+                           "LayerTreeHost::UpdateLayers_ReceivedPropertyTrees",
+                           TRACE_EVENT_SCOPE_THREAD, "property_trees",
+                           property_trees_.AsTracedValue());
+    }
+    draw_property_utils::UpdatePropertyTrees(&property_trees_,
+                                             can_render_to_separate_surface);
+    draw_property_utils::FindLayersThatNeedUpdates(
+        this, property_trees_.transform_tree, property_trees_.effect_tree,
+        &update_layer_list);
   }
 
   for (const auto& layer : update_layer_list)
@@ -968,8 +1074,7 @@ void LayerTreeHost::ApplyScrollAndScale(ScrollAndScaleSet* info) {
 
   if (root_layer_.get()) {
     for (size_t i = 0; i < info->scrolls.size(); ++i) {
-      Layer* layer = LayerTreeHostCommon::FindLayerInSubtree(
-          root_layer_.get(), info->scrolls[i].layer_id);
+      Layer* layer = LayerById(info->scrolls[i].layer_id);
       if (!layer)
         continue;
       if (layer == outer_viewport_scroll_layer_.get()) {
@@ -1044,19 +1149,10 @@ void LayerTreeHost::UpdateTopControlsState(TopControlsState constraints,
 }
 
 void LayerTreeHost::AnimateLayers(base::TimeTicks monotonic_time) {
-  if (!settings_.accelerated_animation_enabled)
-    return;
+  std::unique_ptr<AnimationEvents> events = animation_host_->CreateEvents();
 
-  scoped_ptr<AnimationEvents> events;
-  if (animation_host_) {
-    events = animation_host_->CreateEvents();
     if (animation_host_->AnimateLayers(monotonic_time))
       animation_host_->UpdateAnimationState(true, events.get());
-  } else {
-    events = animation_registrar_->CreateEvents();
-    if (animation_registrar_->AnimateLayers(monotonic_time))
-      animation_registrar_->UpdateAnimationState(true, events.get());
-  }
 
   if (!events->events_.empty())
     property_trees_.needs_rebuild = true;
@@ -1158,14 +1254,15 @@ void LayerTreeHost::SetEventListenerProperties(
 
 int LayerTreeHost::ScheduleMicroBenchmark(
     const std::string& benchmark_name,
-    scoped_ptr<base::Value> value,
+    std::unique_ptr<base::Value> value,
     const MicroBenchmark::DoneCallback& callback) {
   return micro_benchmark_controller_.ScheduleRun(benchmark_name,
                                                  std::move(value), callback);
 }
 
-bool LayerTreeHost::SendMessageToMicroBenchmark(int id,
-                                                scoped_ptr<base::Value> value) {
+bool LayerTreeHost::SendMessageToMicroBenchmark(
+    int id,
+    std::unique_ptr<base::Value> value) {
   return micro_benchmark_controller_.SendMessage(id, std::move(value));
 }
 
@@ -1183,7 +1280,8 @@ void LayerTreeHost::NotifySwapPromiseMonitorsOfSetNeedsCommit() {
     (*it)->OnSetNeedsCommitOnMain();
 }
 
-void LayerTreeHost::QueueSwapPromise(scoped_ptr<SwapPromise> swap_promise) {
+void LayerTreeHost::QueueSwapPromise(
+    std::unique_ptr<SwapPromise> swap_promise) {
   DCHECK(swap_promise);
   swap_promise_list_.push_back(std::move(swap_promise));
 }
@@ -1207,51 +1305,76 @@ SurfaceSequence LayerTreeHost::CreateSurfaceSequence() {
   return SurfaceSequence(surface_id_namespace_, next_surface_sequence_++);
 }
 
-void LayerTreeHost::SetChildrenNeedBeginFrames(
-    bool children_need_begin_frames) const {
-  proxy_->SetChildrenNeedBeginFrames(children_need_begin_frames);
-}
-
-void LayerTreeHost::SendBeginFramesToChildren(
-    const BeginFrameArgs& args) const {
-  client_->SendBeginFramesToChildren(args);
-}
-
-void LayerTreeHost::SetAuthoritativeVSyncInterval(
-    const base::TimeDelta& interval) {
-  proxy_->SetAuthoritativeVSyncInterval(interval);
-}
-
-void LayerTreeHost::RecordFrameTimingEvents(
-    scoped_ptr<FrameTimingTracker::CompositeTimingSet> composite_events,
-    scoped_ptr<FrameTimingTracker::MainFrameTimingSet> main_frame_events) {
-  client_->RecordFrameTimingEvents(std::move(composite_events),
-                                   std::move(main_frame_events));
+void LayerTreeHost::SetLayerTreeMutator(
+    std::unique_ptr<LayerTreeMutator> mutator) {
+  proxy_->SetMutator(std::move(mutator));
 }
 
 Layer* LayerTreeHost::LayerById(int id) const {
   LayerIdMap::const_iterator iter = layer_id_map_.find(id);
-  return iter != layer_id_map_.end() ? iter->second : NULL;
+  return iter != layer_id_map_.end() ? iter->second : nullptr;
+}
+
+Layer* LayerTreeHost::LayerByElementId(ElementId element_id) const {
+  ElementLayersMap::const_iterator iter = element_layers_map_.find(element_id);
+  return iter != element_layers_map_.end() ? iter->second : nullptr;
+}
+
+void LayerTreeHost::AddToElementMap(Layer* layer) {
+  if (!layer->element_id())
+    return;
+
+  element_layers_map_[layer->element_id()] = layer;
+}
+
+void LayerTreeHost::RemoveFromElementMap(Layer* layer) {
+  if (!layer->element_id())
+    return;
+
+  element_layers_map_.erase(layer->element_id());
+}
+
+void LayerTreeHost::AddLayerShouldPushProperties(Layer* layer) {
+  layers_that_should_push_properties_.insert(layer);
+}
+
+void LayerTreeHost::RemoveLayerShouldPushProperties(Layer* layer) {
+  layers_that_should_push_properties_.erase(layer);
+}
+
+std::unordered_set<Layer*>& LayerTreeHost::LayersThatShouldPushProperties() {
+  return layers_that_should_push_properties_;
+}
+
+bool LayerTreeHost::LayerNeedsPushPropertiesForTesting(Layer* layer) {
+  return layers_that_should_push_properties_.find(layer) !=
+         layers_that_should_push_properties_.end();
 }
 
 void LayerTreeHost::RegisterLayer(Layer* layer) {
   DCHECK(!LayerById(layer->id()));
   DCHECK(!in_paint_layer_contents_);
   layer_id_map_[layer->id()] = layer;
-  if (animation_host_)
-    animation_host_->RegisterLayer(layer->id(), LayerTreeType::ACTIVE);
+  if (layer->element_id()) {
+    animation_host_->RegisterElement(layer->element_id(),
+                                     ElementListType::ACTIVE);
+  }
 }
 
 void LayerTreeHost::UnregisterLayer(Layer* layer) {
   DCHECK(LayerById(layer->id()));
   DCHECK(!in_paint_layer_contents_);
-  if (animation_host_)
-    animation_host_->UnregisterLayer(layer->id(), LayerTreeType::ACTIVE);
+  if (layer->element_id()) {
+    animation_host_->UnregisterElement(layer->element_id(),
+                                       ElementListType::ACTIVE);
+  }
+  RemoveLayerShouldPushProperties(layer);
   layer_id_map_.erase(layer->id());
 }
 
-bool LayerTreeHost::IsLayerInTree(int layer_id, LayerTreeType tree_type) const {
-  return tree_type == LayerTreeType::ACTIVE && LayerById(layer_id);
+bool LayerTreeHost::IsElementInList(ElementId element_id,
+                                    ElementListType list_type) const {
+  return list_type == ElementListType::ACTIVE && LayerByElementId(element_id);
 }
 
 void LayerTreeHost::SetMutatorsNeedCommit() {
@@ -1262,153 +1385,164 @@ void LayerTreeHost::SetMutatorsNeedRebuildPropertyTrees() {
   property_trees_.needs_rebuild = true;
 }
 
-void LayerTreeHost::SetLayerFilterMutated(int layer_id,
-                                          LayerTreeType tree_type,
+void LayerTreeHost::SetElementFilterMutated(ElementId element_id,
+                                            ElementListType list_type,
                                           const FilterOperations& filters) {
-  LayerAnimationValueObserver* layer = LayerById(layer_id);
+  Layer* layer = LayerByElementId(element_id);
   DCHECK(layer);
   layer->OnFilterAnimated(filters);
 }
 
-void LayerTreeHost::SetLayerOpacityMutated(int layer_id,
-                                           LayerTreeType tree_type,
+void LayerTreeHost::SetElementOpacityMutated(ElementId element_id,
+                                             ElementListType list_type,
                                            float opacity) {
-  LayerAnimationValueObserver* layer = LayerById(layer_id);
+  Layer* layer = LayerByElementId(element_id);
   DCHECK(layer);
   layer->OnOpacityAnimated(opacity);
 }
 
-void LayerTreeHost::SetLayerTransformMutated(int layer_id,
-                                             LayerTreeType tree_type,
+void LayerTreeHost::SetElementTransformMutated(
+    ElementId element_id,
+    ElementListType list_type,
                                              const gfx::Transform& transform) {
-  LayerAnimationValueObserver* layer = LayerById(layer_id);
+  Layer* layer = LayerByElementId(element_id);
   DCHECK(layer);
   layer->OnTransformAnimated(transform);
 }
 
-void LayerTreeHost::SetLayerScrollOffsetMutated(
-    int layer_id,
-    LayerTreeType tree_type,
+void LayerTreeHost::SetElementScrollOffsetMutated(
+    ElementId element_id,
+    ElementListType list_type,
     const gfx::ScrollOffset& scroll_offset) {
-  LayerAnimationValueObserver* layer = LayerById(layer_id);
+  Layer* layer = LayerByElementId(element_id);
   DCHECK(layer);
   layer->OnScrollOffsetAnimated(scroll_offset);
 }
 
-void LayerTreeHost::LayerTransformIsPotentiallyAnimatingChanged(
-    int layer_id,
-    LayerTreeType tree_type,
+void LayerTreeHost::ElementTransformIsAnimatingChanged(
+    ElementId element_id,
+    ElementListType list_type,
+    AnimationChangeType change_type,
     bool is_animating) {
-  LayerAnimationValueObserver* layer = LayerById(layer_id);
-  DCHECK(layer);
+  Layer* layer = LayerByElementId(element_id);
+  if (layer) {
+    switch (change_type) {
+      case AnimationChangeType::POTENTIAL:
   layer->OnTransformIsPotentiallyAnimatingChanged(is_animating);
+        break;
+      case AnimationChangeType::RUNNING:
+        layer->OnTransformIsCurrentlyAnimatingChanged(is_animating);
+        break;
+      case AnimationChangeType::BOTH:
+        layer->OnTransformIsPotentiallyAnimatingChanged(is_animating);
+        layer->OnTransformIsCurrentlyAnimatingChanged(is_animating);
+        break;
+    }
+  }
+}
+
+void LayerTreeHost::ElementOpacityIsAnimatingChanged(
+    ElementId element_id,
+    ElementListType list_type,
+    AnimationChangeType change_type,
+    bool is_animating) {
+  Layer* layer = LayerByElementId(element_id);
+  if (layer) {
+    switch (change_type) {
+      case AnimationChangeType::POTENTIAL:
+        layer->OnOpacityIsPotentiallyAnimatingChanged(is_animating);
+        break;
+      case AnimationChangeType::RUNNING:
+        layer->OnOpacityIsCurrentlyAnimatingChanged(is_animating);
+        break;
+      case AnimationChangeType::BOTH:
+        layer->OnOpacityIsPotentiallyAnimatingChanged(is_animating);
+        layer->OnOpacityIsCurrentlyAnimatingChanged(is_animating);
+        break;
+    }
+  }
 }
 
 gfx::ScrollOffset LayerTreeHost::GetScrollOffsetForAnimation(
-    int layer_id) const {
-  LayerAnimationValueProvider* layer = LayerById(layer_id);
+    ElementId element_id) const {
+  Layer* layer = LayerByElementId(element_id);
   DCHECK(layer);
   return layer->ScrollOffsetForAnimation();
 }
 
 bool LayerTreeHost::ScrollOffsetAnimationWasInterrupted(
     const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->ScrollOffsetAnimationWasInterrupted(layer->id())
-             : false;
+  return animation_host_->ScrollOffsetAnimationWasInterrupted(
+      layer->element_id());
 }
 
 bool LayerTreeHost::IsAnimatingFilterProperty(const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->IsAnimatingFilterProperty(layer->id(),
-                                                          LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->IsAnimatingFilterProperty(layer->element_id(),
+                                                    ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::IsAnimatingOpacityProperty(const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->IsAnimatingOpacityProperty(
-                   layer->id(), LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->IsAnimatingOpacityProperty(layer->element_id(),
+                                                     ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::IsAnimatingTransformProperty(const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->IsAnimatingTransformProperty(
-                   layer->id(), LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->IsAnimatingTransformProperty(layer->element_id(),
+                                                       ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::HasPotentiallyRunningFilterAnimation(
     const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->HasPotentiallyRunningFilterAnimation(
-                   layer->id(), LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->HasPotentiallyRunningFilterAnimation(
+      layer->element_id(), ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::HasPotentiallyRunningOpacityAnimation(
     const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->HasPotentiallyRunningOpacityAnimation(
-                   layer->id(), LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->HasPotentiallyRunningOpacityAnimation(
+      layer->element_id(), ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::HasPotentiallyRunningTransformAnimation(
     const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->HasPotentiallyRunningTransformAnimation(
-                   layer->id(), LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->HasPotentiallyRunningTransformAnimation(
+      layer->element_id(), ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::HasOnlyTranslationTransforms(const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->HasOnlyTranslationTransforms(
-                   layer->id(), LayerTreeType::ACTIVE)
-             : false;
+  return animation_host_->HasOnlyTranslationTransforms(layer->element_id(),
+                                                       ElementListType::ACTIVE);
 }
 
 bool LayerTreeHost::MaximumTargetScale(const Layer* layer,
                                        float* max_scale) const {
-  return animation_host_
-             ? animation_host_->MaximumTargetScale(
-                   layer->id(), LayerTreeType::ACTIVE, max_scale)
-             : false;
+  return animation_host_->MaximumTargetScale(
+      layer->element_id(), ElementListType::ACTIVE, max_scale);
 }
 
 bool LayerTreeHost::AnimationStartScale(const Layer* layer,
                                         float* start_scale) const {
-  return animation_host_
-             ? animation_host_->AnimationStartScale(
-                   layer->id(), LayerTreeType::ACTIVE, start_scale)
-             : false;
+  return animation_host_->AnimationStartScale(
+      layer->element_id(), ElementListType::ACTIVE, start_scale);
 }
 
 bool LayerTreeHost::HasAnyAnimationTargetingProperty(
     const Layer* layer,
     TargetProperty::Type property) const {
-  return animation_host_
-             ? animation_host_->HasAnyAnimationTargetingProperty(layer->id(),
-                                                                 property)
-             : false;
+  return animation_host_->HasAnyAnimationTargetingProperty(layer->element_id(),
+                                                           property);
 }
 
 bool LayerTreeHost::AnimationsPreserveAxisAlignment(const Layer* layer) const {
-  return animation_host_
-             ? animation_host_->AnimationsPreserveAxisAlignment(layer->id())
-             : true;
+  return animation_host_->AnimationsPreserveAxisAlignment(layer->element_id());
 }
 
 bool LayerTreeHost::HasAnyAnimation(const Layer* layer) const {
-  return animation_host_ ? animation_host_->HasAnyAnimation(layer->id())
-                         : false;
+  return animation_host_->HasAnyAnimation(layer->element_id());
 }
 
-bool LayerTreeHost::HasActiveAnimation(const Layer* layer) const {
-  return animation_host_ ? animation_host_->HasActiveAnimation(layer->id())
-                         : false;
+bool LayerTreeHost::HasActiveAnimationForTesting(const Layer* layer) const {
+  return animation_host_->HasActiveAnimationForTesting(layer->element_id());
 }
 
 bool LayerTreeHost::IsSingleThreaded() const {
@@ -1434,8 +1568,11 @@ bool LayerTreeHost::IsRemoteClient() const {
          task_runner_provider_->HasImplThread();
 }
 
-void LayerTreeHost::ToProtobufForCommit(proto::LayerTreeHost* proto) const {
-  // Not all fields are serialized, as they are eiher not needed for a commit,
+void LayerTreeHost::ToProtobufForCommit(
+    proto::LayerTreeHost* proto,
+    std::vector<std::unique_ptr<SwapPromise>>* swap_promises) {
+  DCHECK(engine_picture_cache_);
+  // Not all fields are serialized, as they are either not needed for a commit,
   // or implementation isn't ready yet.
   // Unsupported items:
   // - animations
@@ -1455,15 +1592,30 @@ void LayerTreeHost::ToProtobufForCommit(proto::LayerTreeHost* proto) const {
   //   will need special handling outside of the serialization of the
   //   LayerTreeHost.
   // TODO(nyquist): Figure out how to support animations. See crbug.com/570376.
+  TRACE_EVENT0("cc.remote", "LayerTreeHost::ToProtobufForCommit");
+  swap_promises->swap(swap_promise_list_);
+  DCHECK(swap_promise_list_.empty());
+
   proto->set_needs_full_tree_sync(needs_full_tree_sync_);
   proto->set_needs_meta_info_recomputation(needs_meta_info_recomputation_);
   proto->set_source_frame_number(source_frame_number_);
-  proto->set_meta_information_sequence_number(
-      meta_information_sequence_number_);
+
   LayerProtoConverter::SerializeLayerHierarchy(root_layer_,
                                                proto->mutable_root_layer());
-  LayerProtoConverter::SerializeLayerProperties(root_layer_.get(),
+
+  // layers_that_should_push_properties_ should be serialized before layer
+  // properties because it is cleared during the properties serialization.
+  for (auto layer : layers_that_should_push_properties_)
+    proto->add_layers_that_should_push_properties(layer->id());
+
+  LayerProtoConverter::SerializeLayerProperties(this,
                                                 proto->mutable_layer_updates());
+
+  std::vector<PictureData> pictures =
+      engine_picture_cache_->CalculateCacheUpdateAndFlush();
+  proto::PictureDataVectorToSkPicturesProto(pictures,
+                                            proto->mutable_pictures());
+
   proto->set_hud_layer_id(hud_layer_ ? hud_layer_->id() : Layer::INVALID_ID);
   debug_state_.ToProtobuf(proto->mutable_debug_state());
   SizeToProto(device_viewport_size_, proto->mutable_device_viewport_size());
@@ -1484,8 +1636,12 @@ void LayerTreeHost::ToProtobufForCommit(proto::LayerTreeHost* proto) const {
   proto->set_have_scroll_event_handlers(have_scroll_event_handlers_);
   proto->set_wheel_event_listener_properties(static_cast<uint32_t>(
       event_listener_properties(EventListenerClass::kMouseWheel)));
-  proto->set_touch_event_listener_properties(static_cast<uint32_t>(
-      event_listener_properties(EventListenerClass::kTouch)));
+  proto->set_touch_start_or_move_event_listener_properties(
+      static_cast<uint32_t>(
+          event_listener_properties(EventListenerClass::kTouchStartOrMove)));
+  proto->set_touch_end_or_cancel_event_listener_properties(
+      static_cast<uint32_t>(
+          event_listener_properties(EventListenerClass::kTouchEndOrCancel)));
   proto->set_in_paint_layer_contents(in_paint_layer_contents_);
   proto->set_id(id_);
   proto->set_next_commit_forces_redraw(next_commit_forces_redraw_);
@@ -1504,36 +1660,47 @@ void LayerTreeHost::ToProtobufForCommit(proto::LayerTreeHost* proto) const {
                                    : Layer::INVALID_ID);
 
   LayerSelectionToProtobuf(selection_, proto->mutable_selection());
+
   property_trees_.ToProtobuf(proto->mutable_property_trees());
+
   proto->set_surface_id_namespace(surface_id_namespace_);
   proto->set_next_surface_sequence(next_surface_sequence_);
+
+  TRACE_EVENT_OBJECT_SNAPSHOT_WITH_ID(
+      "cc.remote", "LayerTreeHostProto", source_frame_number_,
+      ComputeLayerTreeHostProtoSizeSplitAsValue(proto));
 }
 
 void LayerTreeHost::FromProtobufForCommit(const proto::LayerTreeHost& proto) {
+  DCHECK(client_picture_cache_);
+
   needs_full_tree_sync_ = proto.needs_full_tree_sync();
   needs_meta_info_recomputation_ = proto.needs_meta_info_recomputation();
   source_frame_number_ = proto.source_frame_number();
-  meta_information_sequence_number_ = proto.meta_information_sequence_number();
 
   // Layer hierarchy.
   scoped_refptr<Layer> new_root_layer =
       LayerProtoConverter::DeserializeLayerHierarchy(root_layer_,
-                                                     proto.root_layer());
+                                                     proto.root_layer(), this);
   if (root_layer_ != new_root_layer) {
-    if (root_layer_)
-      root_layer_->SetLayerTreeHost(nullptr);
     root_layer_ = new_root_layer;
-    root_layer_->SetLayerTreeHost(this);
   }
 
-  // Populate layer_id_map_ with the new layers.
-  layer_id_map_.clear();
-  LayerTreeHostCommon::CallFunctionForSubtree(
-      root_layer(),
-      [this](Layer* layer) { layer_id_map_[layer->id()] = layer; });
+  for (auto layer_id : proto.layers_that_should_push_properties())
+    layers_that_should_push_properties_.insert(layer_id_map_[layer_id]);
+
+  // Ensure ClientPictureCache contains all the necessary SkPictures before
+  // deserializing the properties.
+  proto::SkPictures proto_pictures = proto.pictures();
+  std::vector<PictureData> pictures =
+      SkPicturesProtoToPictureDataVector(proto_pictures);
+  client_picture_cache_->ApplyCacheUpdate(pictures);
 
   LayerProtoConverter::DeserializeLayerProperties(root_layer_.get(),
                                                   proto.layer_updates());
+
+  // The deserialization is finished, so now clear the cache.
+  client_picture_cache_->Flush();
 
   debug_state_.FromProtobuf(proto.debug_state());
   device_viewport_size_ = ProtoToSize(proto.device_viewport_size());
@@ -1556,9 +1723,14 @@ void LayerTreeHost::FromProtobufForCommit(const proto::LayerTreeHost& proto) {
       EventListenerClass::kMouseWheel)] =
       static_cast<EventListenerProperties>(
           proto.wheel_event_listener_properties());
-  event_listener_properties_[static_cast<size_t>(EventListenerClass::kTouch)] =
+  event_listener_properties_[static_cast<size_t>(
+      EventListenerClass::kTouchStartOrMove)] =
       static_cast<EventListenerProperties>(
-          proto.touch_event_listener_properties());
+          proto.touch_start_or_move_event_listener_properties());
+  event_listener_properties_[static_cast<size_t>(
+      EventListenerClass::kTouchEndOrCancel)] =
+      static_cast<EventListenerProperties>(
+          proto.touch_end_or_cancel_event_listener_properties());
   in_paint_layer_contents_ = proto.in_paint_layer_contents();
   id_ = proto.id();
   next_commit_forces_redraw_ = proto.next_commit_forces_redraw();
@@ -1589,8 +1761,7 @@ void LayerTreeHost::FromProtobufForCommit(const proto::LayerTreeHost& proto) {
   // updated for other reasons. All layers that at this point are part of the
   // layer tree are valid, so it is OK that they have a valid sequence number.
   int seq_num = property_trees_.sequence_number;
-  LayerTreeHostCommon::CallFunctionForSubtree(
-      root_layer(), [seq_num](Layer* layer) {
+  LayerTreeHostCommon::CallFunctionForEveryLayer(this, [seq_num](Layer* layer) {
         layer->set_property_tree_sequence_number(seq_num);
       });
 

@@ -8,18 +8,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/id_map.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "cc/blink/web_compositor_support_impl.h"
 #include "content/child/blink_platform_impl.h"
 #include "content/common/content_export.h"
-#include "content/renderer/origin_trials/trial_token_validator.h"
+#include "content/renderer/origin_trials/web_trial_token_validator_impl.h"
+#include "content/renderer/top_level_blame_context.h"
 #include "content/renderer/webpublicsuffixlist_impl.h"
-#include "device/vibration/vibration_manager.mojom.h"
-#include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBFactory.h"
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationType.h"
 
@@ -48,10 +48,16 @@ class RendererScheduler;
 class WebThreadImplForRendererScheduler;
 }
 
+namespace shell {
+class InterfaceProvider;
+}
+
 namespace content {
+class BlinkServiceRegistryImpl;
 class DeviceLightEventPump;
 class DeviceMotionEventPump;
 class DeviceOrientationEventPump;
+class LocalStorageCachedAreas;
 class PlatformEventObserverBase;
 class QuotaMessageFilter;
 class RendererClipboardDelegate;
@@ -63,8 +69,9 @@ class WebFileSystemImpl;
 
 class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
  public:
-  explicit RendererBlinkPlatformImpl(
-      scheduler::RendererScheduler* renderer_scheduler);
+  RendererBlinkPlatformImpl(
+      scheduler::RendererScheduler* renderer_scheduler,
+      base::WeakPtr<shell::InterfaceProvider> remote_interfaces);
   ~RendererBlinkPlatformImpl() override;
 
   // Shutdown must be called just prior to shutting down blink.
@@ -93,6 +100,13 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
                      int64_t,
                      const char*,
                      size_t) override;
+  void cacheMetadataInCacheStorage(
+      const blink::WebURL&,
+      int64_t,
+      const char*,
+      size_t,
+      const blink::WebSecurityOrigin& cacheStorageOrigin,
+      const blink::WebString& cacheStorageCacheName) override;
   blink::WebString defaultLocale() override;
   void suddenTerminationChanged(bool enabled) override;
   blink::WebStorageNamespace* createLocalStorageNamespace() override;
@@ -105,9 +119,12 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
       const blink::WebString& vfs_file_name) override;
   long long databaseGetFileSize(const blink::WebString& vfs_file_name) override;
   long long databaseGetSpaceAvailableForOrigin(
-      const blink::WebString& origin_identifier) override;
+      const blink::WebSecurityOrigin& origin) override;
   bool databaseSetFileSize(const blink::WebString& vfs_file_name,
                            long long size) override;
+  blink::WebString databaseCreateOriginIdentifier(
+      const blink::WebSecurityOrigin& origin) override;
+
   blink::WebString signedPublicKeyAndChallengeString(
       unsigned key_size_index,
       const blink::WebString& challenge,
@@ -116,12 +133,14 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   void getPluginList(bool refresh,
                      blink::WebPluginListBuilder* builder) override;
   blink::WebPublicSuffixList* publicSuffixList() override;
-  void screenColorProfile(blink::WebVector<char>* to_profile) override;
   blink::WebScrollbarBehavior* scrollbarBehavior() override;
   blink::WebIDBFactory* idbFactory() override;
   blink::WebServiceWorkerCacheStorage* cacheStorage(
-      const blink::WebString& origin_identifier) override;
+      const blink::WebSecurityOrigin& security_origin) override;
   blink::WebFileSystem* fileSystem() override;
+  blink::WebString fileSystemCreateOriginIdentifier(
+      const blink::WebSecurityOrigin& origin) override;
+
   bool canAccelerate2dCanvas() override;
   bool isThreadedCompositingEnabled() override;
   bool isThreadedAnimationEnabled() override;
@@ -161,37 +180,34 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   void createHTMLVideoElementCapturer(
       blink::WebMediaStream* web_media_stream,
       blink::WebMediaPlayer* web_media_player) override;
-  blink::WebGraphicsContext3D* createOffscreenGraphicsContext3D(
-      const blink::WebGraphicsContext3D::Attributes& attributes) override;
-  blink::WebGraphicsContext3D* createOffscreenGraphicsContext3D(
-      const blink::WebGraphicsContext3D::Attributes& attributes,
-      blink::WebGraphicsContext3D* share_context) override;
-  blink::WebGraphicsContext3D* createOffscreenGraphicsContext3D(
-      const blink::WebGraphicsContext3D::Attributes& attributes,
-      blink::WebGraphicsContext3D* share_context,
-      blink::WebGraphicsContext3D::WebGraphicsInfo* gl_info) override;
+  void createHTMLAudioElementCapturer(
+      blink::WebMediaStream* web_media_stream,
+      blink::WebMediaPlayer* web_media_player) override;
+  blink::WebImageCaptureFrameGrabber* createImageCaptureFrameGrabber() override;
+  blink::WebGraphicsContext3DProvider* createOffscreenGraphicsContext3DProvider(
+      const blink::Platform::ContextAttributes& attributes,
+      const blink::WebURL& top_document_web_url,
+      blink::WebGraphicsContext3DProvider* share_provider,
+      blink::Platform::GraphicsInfo* gl_info) override;
   blink::WebGraphicsContext3DProvider*
   createSharedOffscreenGraphicsContext3DProvider() override;
   blink::WebCompositorSupport* compositorSupport() override;
-  blink::WebString convertIDNToUnicode(
-      const blink::WebString& host,
-      const blink::WebString& languages) override;
-  void connectToRemoteService(const char* name,
-                              mojo::ScopedMessagePipeHandle handle) override;
+  blink::WebString convertIDNToUnicode(const blink::WebString& host) override;
+  blink::ServiceRegistry* serviceRegistry() override;
   void startListening(blink::WebPlatformEventType,
                       blink::WebPlatformEventListener*) override;
   void stopListening(blink::WebPlatformEventType) override;
   void queryStorageUsageAndQuota(const blink::WebURL& storage_partition,
                                  blink::WebStorageQuotaType,
                                  blink::WebStorageQuotaCallbacks) override;
-  void vibrate(unsigned int milliseconds) override;
-  void cancelVibration() override;
   blink::WebThread* currentThread() override;
+  blink::BlameContext* topLevelBlameContext() override;
   void recordRappor(const char* metric,
                     const blink::WebString& sample) override;
   void recordRapporURL(const char* metric, const blink::WebURL& url) override;
 
   blink::WebTrialTokenValidator* trialTokenValidator() override;
+  void workerContextCreated(const v8::Local<v8::Context>& worker) override;
 
   // Set the PlatformEventObserverBase in |platform_event_observers_| associated
   // with |type| to |observer|. If there was already an observer associated to
@@ -199,7 +215,7 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   // Note that |observer| will be owned by this object after the call.
   void SetPlatformEventObserverForTesting(
       blink::WebPlatformEventType type,
-      scoped_ptr<PlatformEventObserverBase> observer);
+      std::unique_ptr<PlatformEventObserverBase> observer);
 
   // Disables the WebSandboxSupport implementation for testing.
   // Tests that do not set up a full sandbox environment should call
@@ -237,22 +253,21 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   // Use the data previously set via SetMockDevice...DataForTesting() and send
   // them to the registered listener.
   void SendFakeDeviceEventDataForTesting(blink::WebPlatformEventType type);
-  device::VibrationManagerPtr& GetConnectedVibrationManagerService();
 
-  scoped_ptr<blink::WebThread> main_thread_;
+  std::unique_ptr<blink::WebThread> main_thread_;
 
-  scoped_ptr<RendererClipboardDelegate> clipboard_delegate_;
-  scoped_ptr<WebClipboardImpl> clipboard_;
+  std::unique_ptr<RendererClipboardDelegate> clipboard_delegate_;
+  std::unique_ptr<WebClipboardImpl> clipboard_;
 
   class FileUtilities;
-  scoped_ptr<FileUtilities> file_utilities_;
+  std::unique_ptr<FileUtilities> file_utilities_;
 
   class MimeRegistry;
-  scoped_ptr<MimeRegistry> mime_registry_;
+  std::unique_ptr<MimeRegistry> mime_registry_;
 
 #if !defined(OS_ANDROID) && !defined(OS_WIN)
   class SandboxSupport;
-  scoped_ptr<SandboxSupport> sandbox_support_;
+  std::unique_ptr<SandboxSupport> sandbox_support_;
 #endif
 
   // This counter keeps track of the number of times sudden termination is
@@ -264,15 +279,15 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   // If true, then a GetPlugins call is allowed to rescan the disk.
   bool plugin_refresh_allowed_;
 
-  scoped_ptr<blink::WebIDBFactory> web_idb_factory_;
+  std::unique_ptr<blink::WebIDBFactory> web_idb_factory_;
 
-  scoped_ptr<blink::WebBlobRegistry> blob_registry_;
+  std::unique_ptr<blink::WebBlobRegistry> blob_registry_;
 
   WebPublicSuffixListImpl public_suffix_list_;
 
-  scoped_ptr<DeviceLightEventPump> device_light_event_pump_;
-  scoped_ptr<DeviceMotionEventPump> device_motion_event_pump_;
-  scoped_ptr<DeviceOrientationEventPump> device_orientation_event_pump_;
+  std::unique_ptr<DeviceLightEventPump> device_light_event_pump_;
+  std::unique_ptr<DeviceMotionEventPump> device_motion_event_pump_;
+  std::unique_ptr<DeviceOrientationEventPump> device_orientation_event_pump_;
 
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner_;
@@ -280,20 +295,22 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   scoped_refptr<ThreadSafeSender> thread_safe_sender_;
   scoped_refptr<QuotaMessageFilter> quota_message_filter_;
 
-  scoped_ptr<WebDatabaseObserverImpl> web_database_observer_impl_;
+  std::unique_ptr<WebDatabaseObserverImpl> web_database_observer_impl_;
 
   cc_blink::WebCompositorSupportImpl compositor_support_;
 
-  scoped_ptr<blink::WebScrollbarBehavior> web_scrollbar_behavior_;
-
-  // Handle to the Vibration mojo service.
-  device::VibrationManagerPtr vibration_manager_;
+  std::unique_ptr<blink::WebScrollbarBehavior> web_scrollbar_behavior_;
 
   IDMap<PlatformEventObserverBase, IDMapOwnPointer> platform_event_observers_;
 
   scheduler::RendererScheduler* renderer_scheduler_;  // NOT OWNED
+  TopLevelBlameContext top_level_blame_context_;
 
-  TrialTokenValidator trial_token_validator_;
+  WebTrialTokenValidatorImpl trial_token_validator_;
+
+  std::unique_ptr<LocalStorageCachedAreas> local_storage_cached_areas_;
+
+  std::unique_ptr<BlinkServiceRegistryImpl> blink_service_registry_;
 
   DISALLOW_COPY_AND_ASSIGN(RendererBlinkPlatformImpl);
 };

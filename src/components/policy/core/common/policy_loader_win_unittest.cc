@@ -13,6 +13,7 @@
 #include <cstring>
 #include <functional>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 #include "base/base_paths.h"
@@ -22,6 +23,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string16.h"
@@ -55,7 +57,6 @@ const wchar_t kPathSep[] = L"\\";
 const wchar_t kThirdParty[] = L"3rdparty";
 const wchar_t kMandatory[] = L"policy";
 const wchar_t kRecommended[] = L"recommended";
-const char kSchema[] = "schema";
 const wchar_t kTestPolicyKey[] = L"chrome.policy.key";
 
 // Installs |value| in the given registry |path| and |hive|, under the key
@@ -350,9 +351,9 @@ ConfigurationPolicyProvider* RegistryTestHarness::CreateProvider(
     SchemaRegistry* registry,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   base::win::SetDomainStateForTesting(true);
-  scoped_ptr<AsyncPolicyLoader> loader(
+  std::unique_ptr<AsyncPolicyLoader> loader(
       new PolicyLoaderWin(task_runner, kTestPolicyKey, this));
-  return new AsyncPolicyProvider(registry, loader.Pass());
+  return new AsyncPolicyProvider(registry, std::move(loader));
 }
 
 void RegistryTestHarness::InstallEmptyPolicy() {}
@@ -483,9 +484,9 @@ void PRegTestHarness::SetUp() {
 ConfigurationPolicyProvider* PRegTestHarness::CreateProvider(
     SchemaRegistry* registry,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  scoped_ptr<AsyncPolicyLoader> loader(
+  std::unique_ptr<AsyncPolicyLoader> loader(
       new PolicyLoaderWin(task_runner, kTestPolicyKey, this));
-  return new AsyncPolicyProvider(registry, loader.Pass());
+  return new AsyncPolicyProvider(registry, std::move(loader));
 }
 
 void PRegTestHarness::InstallEmptyPolicy() {}
@@ -748,7 +749,7 @@ class PolicyLoaderWinTest : public PolicyTestBase,
   bool Matches(const PolicyBundle& expected) {
     PolicyLoaderWin loader(loop_.task_runner(), kTestPolicyKey,
                            gpo_list_provider_);
-    scoped_ptr<PolicyBundle> loaded(
+    std::unique_ptr<PolicyBundle> loaded(
         loader.InitialLoad(schema_registry_.schema_map()));
     return loaded->Equals(expected);
   }
@@ -776,7 +777,7 @@ class PolicyLoaderWinTest : public PolicyTestBase,
     expected_policy.SetBoolean(test_keys::kKeyBoolean, true);
     expected_policy.SetString(test_keys::kKeyString, "GPO");
     expected_policy.SetInteger(test_keys::kKeyInteger, 42);
-    scoped_ptr<base::ListValue> list(new base::ListValue());
+    std::unique_ptr<base::ListValue> list(new base::ListValue());
     list->AppendString("GPO 1");
     list->AppendString("GPO 2");
     expected_policy.Set(test_keys::kKeyStringList, list.release());
@@ -809,12 +810,9 @@ TEST_F(PolicyLoaderWinTest, HKLMOverHKCU) {
 
   PolicyBundle expected;
   expected.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
-      .Set(test_keys::kKeyString,
-           POLICY_LEVEL_MANDATORY,
-           POLICY_SCOPE_MACHINE,
+      .Set(test_keys::kKeyString, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
            POLICY_SOURCE_PLATFORM,
-           new base::StringValue("hklm"),
-           NULL);
+           base::WrapUnique(new base::StringValue("hklm")), nullptr);
   EXPECT_TRUE(Matches(expected));
 }
 
@@ -864,30 +862,19 @@ TEST_F(PolicyLoaderWinTest, Merge3rdPartyPolicies) {
 
   PolicyBundle expected;
   PolicyMap& expected_policy = expected.Get(ns);
-  expected_policy.Set("a",
-                      POLICY_LEVEL_MANDATORY,
-                      POLICY_SCOPE_MACHINE,
-                      POLICY_SOURCE_PLATFORM,
-                      new base::StringValue(kMachineMandatory),
-                      NULL);
-  expected_policy.Set("b",
-                      POLICY_LEVEL_MANDATORY,
-                      POLICY_SCOPE_USER,
-                      POLICY_SOURCE_PLATFORM,
-                      new base::StringValue(kUserMandatory),
-                      NULL);
-  expected_policy.Set("c",
-                      POLICY_LEVEL_RECOMMENDED,
-                      POLICY_SCOPE_MACHINE,
-                      POLICY_SOURCE_PLATFORM,
-                      new base::StringValue(kMachineRecommended),
-                      NULL);
-  expected_policy.Set("d",
-                      POLICY_LEVEL_RECOMMENDED,
-                      POLICY_SCOPE_USER,
-                      POLICY_SOURCE_PLATFORM,
-                      new base::StringValue(kUserRecommended),
-                      NULL);
+  expected_policy.Set(
+      "a", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::WrapUnique(new base::StringValue(kMachineMandatory)), nullptr);
+  expected_policy.Set(
+      "b", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::WrapUnique(new base::StringValue(kUserMandatory)), nullptr);
+  expected_policy.Set(
+      "c", POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_PLATFORM,
+      base::WrapUnique(new base::StringValue(kMachineRecommended)), nullptr);
+  expected_policy.Set(
+      "d", POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::WrapUnique(new base::StringValue(kUserRecommended)), nullptr);
   EXPECT_TRUE(Matches(expected));
 }
 
@@ -1200,45 +1187,6 @@ TEST_F(PolicyLoaderWinTest, LoadExtensionPolicyAlternativeSpelling) {
   expected_b.SetInteger("policy 1", 2);
   expected.Get(ns_b).LoadFrom(&expected_b, POLICY_LEVEL_MANDATORY,
                               POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM);
-  EXPECT_TRUE(Matches(expected));
-}
-
-TEST_F(PolicyLoaderWinTest, LBSSupport) {
-  const PolicyNamespace ns(
-      POLICY_DOMAIN_EXTENSIONS, "heildphpnddilhkemkielfhnkaagiabh");
-  schema_registry_.RegisterComponent(ns, Schema());
-
-  const char kIncompleteSchema[] =
-      "{"
-       "  \"type\": \"object\","
-       "  \"properties\": {"
-       "    \"url_list\": { \"type\": \"array\" },"
-       "    \"url_greylist\": { \"type\": \"array\" }"
-       "  }"
-      "}";
-
-  const base::string16 kPathSuffix =
-      kTestPolicyKey + base::ASCIIToUTF16("\\3rdparty\\extensions");
-
-  base::ListValue list;
-  list.AppendString("youtube.com");
-  base::DictionaryValue policy;
-  policy.Set("url_list", list.DeepCopy());
-  policy.SetString("alternative_browser_path", "c:\\legacy\\browser.exe");
-  base::DictionaryValue root;
-  root.Set(base::UTF16ToUTF8(kMandatory), policy.DeepCopy());
-  root.SetString(kSchema, kIncompleteSchema);
-  EXPECT_TRUE(InstallValue(root, HKEY_LOCAL_MACHINE,
-                           kPathSuffix, base::ASCIIToUTF16(ns.component_id)));
-
-  PolicyBundle expected;
-  PolicyMap& expected_policy = expected.Get(ns);
-  expected_policy.Set("alternative_browser_path",
-                      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                      POLICY_SOURCE_PLATFORM,
-                      new base::StringValue("c:\\legacy\\browser.exe"), NULL);
-  expected_policy.Set("url_list", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                      POLICY_SOURCE_PLATFORM, list.DeepCopy(), nullptr);
   EXPECT_TRUE(Matches(expected));
 }
 

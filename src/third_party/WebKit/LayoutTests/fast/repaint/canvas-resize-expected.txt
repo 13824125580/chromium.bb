@@ -1,17 +1,25 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [50, 50, 600, 500],
-        [50, 50, 500, 500]
-      ],
-      "paintInvalidationClients": [
-        "LayoutHTMLCanvas (positioned) CANVAS id='canvas'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutHTMLCanvas (positioned) CANVAS id='canvas'",
+          "rect": [50, 50, 600, 500],
+          "reason": "forced by layout"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutHTMLCanvas (positioned) CANVAS id='canvas'",
+      "reason": "forced by layout"
     }
   ]
 }

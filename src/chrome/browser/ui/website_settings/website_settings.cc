@@ -41,7 +41,6 @@
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/features.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -102,32 +101,36 @@ ContentSettingsType kPermissionType[] = {
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
     CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
-    CONTENT_SETTINGS_TYPE_IMAGES,
-    CONTENT_SETTINGS_TYPE_JAVASCRIPT,
-    CONTENT_SETTINGS_TYPE_POPUPS,
-    CONTENT_SETTINGS_TYPE_FULLSCREEN,
-    CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
-    CONTENT_SETTINGS_TYPE_PLUGINS,
-    CONTENT_SETTINGS_TYPE_MOUSELOCK,
-    CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
 #if defined(OS_ANDROID)
     CONTENT_SETTINGS_TYPE_PUSH_MESSAGING,
 #endif
+    CONTENT_SETTINGS_TYPE_JAVASCRIPT,
+#if !defined(OS_ANDROID)
+    CONTENT_SETTINGS_TYPE_PLUGINS,
+    CONTENT_SETTINGS_TYPE_IMAGES,
+#endif
+    CONTENT_SETTINGS_TYPE_POPUPS,
+    CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC,
     CONTENT_SETTINGS_TYPE_KEYGEN,
+    CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+#if !defined(OS_ANDROID)
+    CONTENT_SETTINGS_TYPE_MOUSELOCK,
+#endif
+    CONTENT_SETTINGS_TYPE_FULLSCREEN,
+    CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
 };
 
 // Determines whether to show permission |type| in the Website Settings UI. Only
 // applies to permissions listed in |kPermissionType|.
 bool ShouldShowPermission(ContentSettingsType type) {
-  // TODO(mgiuca): When simplified-fullscreen-ui is enabled on all platforms,
-  // remove these from kPermissionType, rather than having this check
+  // TODO(mgiuca): When simplified-fullscreen-ui is enabled permanently on
+  // Android, remove these from kPermissionType, rather than having this check
   // (http://crbug.com/577396).
 #if !defined(OS_ANDROID)
-  // Fullscreen and mouselock settings are not shown in simplified fullscreen
-  // mode (always allow).
+  // Fullscreen and mouselock settings are no longer shown (always allow).
   if (type == CONTENT_SETTINGS_TYPE_FULLSCREEN ||
       type == CONTENT_SETTINGS_TYPE_MOUSELOCK) {
-    return !ExclusiveAccessManager::IsSimplifiedFullscreenUIEnabled();
+    return false;
   }
 #endif
 
@@ -186,11 +189,9 @@ WebsiteSettings::SiteIdentityStatus GetSiteIdentityStatusByCTInfo(
   return WebsiteSettings::SITE_IDENTITY_STATUS_CT_ERROR;
 }
 
-base::string16 GetSimpleSiteName(const GURL& url, Profile* profile) {
-  std::string languages;
-  if (profile)
-    languages = profile->GetPrefs()->GetString(prefs::kAcceptLanguages);
-  return url_formatter::FormatUrlForSecurityDisplayOmitScheme(url, languages);
+base::string16 GetSimpleSiteName(const GURL& url) {
+  return url_formatter::FormatUrlForSecurityDisplay(
+      url, url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS);
 }
 
 ChooserContextBase* GetUsbChooserContext(Profile* profile) {
@@ -219,7 +220,9 @@ WebsiteSettings::WebsiteSettings(
     : TabSpecificContentSettings::SiteDataObserver(
           tab_specific_content_settings),
       ui_(ui),
+#if !defined(OS_ANDROID)
       web_contents_(web_contents),
+#endif
       show_info_bar_(false),
       site_url_(url),
       site_identity_status_(SITE_IDENTITY_STATUS_UNKNOWN),
@@ -286,6 +289,8 @@ void WebsiteSettings::OnSitePermissionChanged(ContentSettingsType type,
         "WebsiteSettings.OriginInfo.PermissionChanged.Blocked", histogram_value,
         num_values);
     // Trigger Rappor sampling if it is a permission revoke action.
+    // TODO(tsergeant): Integrate this with the revocation recording performed
+    // in the permissions layer. See crbug.com/469221.
     content::PermissionType permission_type;
     if (PermissionUtil::GetPermissionType(type, &permission_type)) {
       PermissionUmaUtil::PermissionRevoked(permission_type,
@@ -521,7 +526,7 @@ void WebsiteSettings::Init(
   // weakly encrypted connections.
   site_connection_status_ = SITE_CONNECTION_STATUS_UNKNOWN;
 
-  base::string16 subject_name(GetSimpleSiteName(url, profile_));
+  base::string16 subject_name(GetSimpleSiteName(url));
   if (subject_name.empty()) {
     subject_name.assign(
         l10n_util::GetStringUTF16(IDS_PAGE_INFO_SECURITY_TAB_UNKNOWN_PARTY));
@@ -674,9 +679,8 @@ void WebsiteSettings::PresentSitePermissions() {
       continue;
 
     content_settings::SettingInfo info;
-    scoped_ptr<base::Value> value =
-        content_settings_->GetWebsiteSetting(
-            site_url_, site_url_, permission_info.type, std::string(), &info);
+    std::unique_ptr<base::Value> value = content_settings_->GetWebsiteSetting(
+        site_url_, site_url_, permission_info.type, std::string(), &info);
     DCHECK(value.get());
     if (value->GetType() == base::Value::TYPE_INTEGER) {
       permission_info.setting =
@@ -712,7 +716,7 @@ void WebsiteSettings::PresentSitePermissions() {
     ChooserContextBase* context = ui_info.get_context(profile_);
     const GURL origin = site_url_.GetOrigin();
     auto chosen_objects = context->GetGrantedObjects(origin, origin);
-    for (scoped_ptr<base::DictionaryValue>& object : chosen_objects) {
+    for (std::unique_ptr<base::DictionaryValue>& object : chosen_objects) {
       chosen_object_info_list.push_back(
           new WebsiteSettingsUI::ChosenObjectInfo(ui_info, std::move(object)));
     }
@@ -730,16 +734,12 @@ void WebsiteSettings::PresentSiteData() {
 
   // Add first party cookie and site data counts.
   WebsiteSettingsUI::CookieInfo cookie_info;
-  cookie_info.cookie_source =
-      l10n_util::GetStringUTF8(IDS_WEBSITE_SETTINGS_FIRST_PARTY_SITE_DATA);
   cookie_info.allowed = allowed_objects.GetObjectCountForDomain(site_url_);
   cookie_info.blocked = blocked_objects.GetObjectCountForDomain(site_url_);
   cookie_info.is_first_party = true;
   cookie_info_list.push_back(cookie_info);
 
   // Add third party cookie counts.
-  cookie_info.cookie_source = l10n_util::GetStringUTF8(
-     IDS_WEBSITE_SETTINGS_THIRD_PARTY_SITE_DATA);
   cookie_info.allowed = allowed_objects.GetObjectCount() - cookie_info.allowed;
   cookie_info.blocked = blocked_objects.GetObjectCount() - cookie_info.blocked;
   cookie_info.is_first_party = false;
@@ -757,7 +757,7 @@ void WebsiteSettings::PresentSiteIdentity() {
   if (site_identity_status_ == SITE_IDENTITY_STATUS_EV_CERT)
     info.site_identity = UTF16ToUTF8(organization_name());
   else
-    info.site_identity = UTF16ToUTF8(GetSimpleSiteName(site_url_, profile_));
+    info.site_identity = UTF16ToUTF8(GetSimpleSiteName(site_url_));
 
   info.connection_status = site_connection_status_;
   info.connection_status_description =

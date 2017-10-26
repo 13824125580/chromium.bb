@@ -6,12 +6,9 @@
 
 namespace skia {
 
-CGContextRef PlatformDevice::BeginPlatformPaint() {
-  return GetBitmapContext();
-}
-
-void PlatformDevice::EndPlatformPaint() {
-  // Flushing will be done in onAccessBitmap.
+CGContextRef PlatformDevice::BeginPlatformPaint(const SkMatrix& transform,
+                                                const SkIRect& clip_bounds) {
+  return GetBitmapContext(transform, clip_bounds);
 }
 
 }  // namespace skia

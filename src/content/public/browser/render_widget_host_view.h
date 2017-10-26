@@ -5,25 +5,26 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_VIEW_H_
 #define CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_VIEW_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkRegion.h"
 #include "ui/gfx/native_widget_types.h"
 
 class GURL;
 
 namespace gfx {
+class Point;
 class Rect;
 class Size;
 }
 
 namespace ui {
 class TextInputClient;
+class AcceleratedWidgetMac;
 }
 
 namespace content {
@@ -81,7 +82,6 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // Retrieves the native view used to contain plugins and identify the
   // renderer in IPC messages.
   virtual gfx::NativeView GetNativeView() const = 0;
-  virtual gfx::NativeViewId GetNativeViewId() const = 0;
   virtual gfx::NativeViewAccessible GetNativeViewAccessible() = 0;
 
   // Returns a ui::TextInputClient to support text input or nullptr if this RWHV
@@ -159,26 +159,27 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // |subscriber| is now owned by this object, it will be called only on the
   // UI thread.
   virtual void BeginFrameSubscription(
-      scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) = 0;
+      std::unique_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) = 0;
 
   // End subscribing for frame presentation events. FrameSubscriber will be
   // deleted after this call.
   virtual void EndFrameSubscription() = 0;
 
+  // Notification that a node was touched.
+  // The |location_dips_screen| parameter contains the location where the touch
+  // occurred in DIPs in screen coordinates.
+  // The |editable| parameter indicates if the node is editable, for e.g.
+  // an input field, etc.
+  virtual void FocusedNodeTouched(const gfx::Point& location_dips_screen,
+                                  bool editable) = 0;
+
 #if defined(OS_MACOSX)
+  // Return the accelerated widget which hosts the CALayers that draw the
+  // content of the view in GetNativeView. This may be null.
+  virtual ui::AcceleratedWidgetMac* GetAcceleratedWidgetMac() const = 0;
+
   // Set the view's active state (i.e., tint state of controls).
   virtual void SetActive(bool active) = 0;
-
-  // Notifies the view that its enclosing window has changed visibility
-  // (minimized/unminimized, app hidden/unhidden, etc).
-  // TODO(stuartmorgan): This is a temporary plugin-specific workaround for
-  // <http://crbug.com/34266>. Once that is fixed, this (and the corresponding
-  // message and renderer-side handling) can be removed in favor of using
-  // WasHidden/WasShown.
-  virtual void SetWindowVisibility(bool visible) = 0;
-
-  // Informs the view that its containing window's frame changed.
-  virtual void WindowFrameChanged() = 0;
 
   // Brings up the dictionary showing a definition for the selected text.
   virtual void ShowDefinitionForSelection() = 0;

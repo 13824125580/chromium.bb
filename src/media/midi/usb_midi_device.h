@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
@@ -35,7 +36,7 @@ class USB_MIDI_EXPORT UsbMidiDeviceDelegate {
                                   base::TimeTicks time) = 0;
 
   // Called when a USB-MIDI device is attached.
-  virtual void OnDeviceAttached(scoped_ptr<UsbMidiDevice> device) = 0;
+  virtual void OnDeviceAttached(std::unique_ptr<UsbMidiDevice> device) = 0;
   // Called when a USB-MIDI device is detached.
   virtual void OnDeviceDetached(size_t index) = 0;
 };

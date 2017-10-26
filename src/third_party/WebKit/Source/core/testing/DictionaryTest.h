@@ -5,11 +5,11 @@
 #ifndef DictionaryTest_h
 #define DictionaryTest_h
 
+#include "bindings/core/v8/DoubleOrString.h"
 #include "bindings/core/v8/Nullable.h"
 #include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/UnionTypesCore.h"
 #include "core/dom/Element.h"
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
@@ -74,13 +74,13 @@ private:
     String m_enumMemberWithDefault;
     String m_enumOrNullMember;
     Nullable<Vector<String>> m_enumArrayMember;
-    RefPtrWillBeMember<Element> m_elementMember;
-    RefPtrWillBeMember<Element> m_elementOrNullMember;
+    Member<Element> m_elementMember;
+    Member<Element> m_elementOrNullMember;
     ScriptValue m_objectMember;
     ScriptValue m_objectOrNullMemberWithDefault;
     DoubleOrString m_doubleOrStringMember;
     Nullable<HeapVector<DoubleOrString>> m_doubleOrStringSequenceMember;
-    RefPtrWillBeMember<EventTarget> m_eventTargetOrNullMember;
+    Member<EventTarget> m_eventTargetOrNullMember;
     String m_derivedStringMember;
     String m_derivedStringMemberWithDefault;
     bool m_requiredBooleanMember;
