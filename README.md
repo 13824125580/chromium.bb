@@ -47,7 +47,7 @@ included in the next release.
 
 ## Build Instructions
 
-**Bloomberg Employees:** [http://bburl/Lj5t6](http://bburl/Lj5t6)
+**Bloomberg Employees:** [Build steps](https://cms.prod.bloomberg.com/team/display/rfwk/WTK.howto.gn.build.blpwtk2)
 
 If you are **not** a Bloomberg employee, the following instructions should still
 work:
