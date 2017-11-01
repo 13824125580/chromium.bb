@@ -66,7 +66,7 @@ OpenedFileMap::mapped_type& GetOpenedFile(const char* file) {
   return opened_files[file];
 }
 
-const char kNativesFileName[] = "natives_blob.bin";
+const char kNativesFileName[] = BLPV8_NATIVES_BLOB_NAME;
 
 #if defined(OS_ANDROID)
 const char kSnapshotFileName64[] = "snapshot_blob_64.bin";
