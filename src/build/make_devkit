@@ -176,33 +176,33 @@ def copyGnBin(destDir, version):
   productAppend = '.' + version
 
   products = [
-    [ 'blpwtk2_shell.exe',                                  'blpwtk2_shell.exe'],
-    [ 'blpwtk2_subprocess' + productAppend + '.exe',        'blpwtk2_subprocess' + productAppend + '.exe'],
-    [ 'content_shell.exe',                                  'content_shell.exe'],
-    [ 'd8.exe',                                             'd8.exe'],
-    [ 'blpv8' + productAppend + '.dll',                     'blpv8' + productAppend + '.dll'],
-    [ 'natives_blob' + productAppend + '.bin',              'natives_blob' + productAppend + '.bin'],
-    [ 'snapshot_blob' + productAppend + '.bin',             'snapshot_blob' + productAppend + '.bin'],
-    [ 'blpwtk2' + productAppend + '.dll',                   'blpwtk2' + productAppend + '.dll'],
-    [ 'blpcr_egl' + productAppend + '.dll',                 'blpcr_egl' + productAppend + '.dll'],
-    [ 'blpcr_glesv2' + productAppend + '.dll',              'blpcr_glesv2' + productAppend + '.dll'],
-    [ 'blppdfutil' + productAppend + '.dll',                'blppdfutil' + productAppend + '.dll'],
-    [ 'd3dcompiler_47.dll',                                 'd3dcompiler_47.dll'],
-    [ 'icudtl' + productAppend + '.dat',                    'icudtl' + productAppend + '.dat'],
-    [ 'blpwtk2_devtools' + productAppend + '.pak',          'blpwtk2_devtools' + productAppend + '.pak'],
-    [ 'content_shell.pak',                                  'content_shell.pak'],
-    [ 'blpv8' + productAppend + '.dll.pdb',                 'blpv8' + productAppend + '.pdb'],
-    [ 'blpv8' + productAppend + '.map',                     'blpv8' + productAppend + '.map'],
-    [ 'blpwtk2' + productAppend + '.dll.pdb',               'blpwtk2' + productAppend + '.pdb'],
-    [ 'blpwtk2' + productAppend + '.map',                   'blpwtk2' + productAppend + '.map'],
-    [ 'blpcr_egl' + productAppend + '.dll.pdb',             'blpcr_egl' + productAppend + '.pdb'],
-    [ 'blpcr_egl' + productAppend + '.map',                 'blpcr_egl' + productAppend + '.map'],
-    [ 'blpcr_glesv2' + productAppend + '.dll.pdb',          'blpcr_glesv2' + productAppend + '.pdb'],
-    [ 'blpcr_glesv2' + productAppend + '.map',              'blpcr_glesv2' + productAppend + '.map'],
-    [ 'blppdfutil' + productAppend + '.dll.pdb',            'blppdfutil' + productAppend + '.pdb'],
-    [ 'blppdfutil' + productAppend + '.map',                'blppdfutil' + productAppend + '.map'],
-    [ 'blpwtk2_subprocess' + productAppend + '.exe.pdb',    'blpwtk2_subprocess' + productAppend + '.pdb'],
-    [ 'blpwtk2_subprocess' + productAppend + '.map',        'blpwtk2_subprocess' + productAppend + '.map']
+    'blpwtk2_shell.exe',
+    'blpwtk2_subprocess' + productAppend + '.exe',
+    'content_shell.exe',
+    'd8.exe',
+    'blpv8' + productAppend + '.dll',
+    'natives_blob' + productAppend + '.bin',
+    'snapshot_blob' + productAppend + '.bin',
+    'blpwtk2' + productAppend + '.dll',
+    'blpcr_egl' + productAppend + '.dll',
+    'blpcr_glesv2' + productAppend + '.dll',
+    'blppdfutil' + productAppend + '.dll',
+    'd3dcompiler_47.dll',
+    'icudtl' + productAppend + '.dat',
+    'blpwtk2_devtools' + productAppend + '.pak',
+    'content_shell.pak',
+    'blpv8' + productAppend + '.dll.pdb',
+    'blpv8' + productAppend + '.map',
+    'blpwtk2' + productAppend + '.dll.pdb',
+    'blpwtk2' + productAppend + '.map',
+    'blpcr_egl' + productAppend + '.dll.pdb',
+    'blpcr_egl' + productAppend + '.map',
+    'blpcr_glesv2' + productAppend + '.dll.pdb',
+    'blpcr_glesv2' + productAppend + '.map',
+    'blppdfutil' + productAppend + '.dll.pdb',
+    'blppdfutil' + productAppend + '.map',
+    'blpwtk2_subprocess' + productAppend + '.exe.pdb',
+    'blpwtk2_subprocess' + productAppend + '.map',
   ]
 
   configs = ['Debug', 'Release']
@@ -210,8 +210,8 @@ def copyGnBin(destDir, version):
     destBinDir = os.path.join(destDir, 'bin', config)
     srcBinDir = os.path.join(srcDir, 'out', 'gn_static', config)
     for p in products:
-      destFile = os.path.join(destBinDir, p[1])
-      srcFile = os.path.join(srcBinDir, p[0])
+      destFile = os.path.join(destBinDir, p)
+      srcFile = os.path.join(srcBinDir, p)
       shutil.copy(srcFile, destFile)
 
 
