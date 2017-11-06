@@ -115,6 +115,8 @@ void V8WrapperInstantiationScope::securityCheck(v8::Isolate* isolate, v8::Local<
         DOMWindow* targetWindow = toDOMWindow(contextForWrapper);
         if (callingWindow && callingWindow->document()->getSecurityOrigin()->canAccessCheckSuborigins(targetWindow->document()->getSecurityOrigin()))
             return;
+        if (!targetWindow || targetWindow->document()->getSecurityOrigin()->hasUniversalAccess())
+            return;
 
         // TODO(jochen): Currently, Location is the only object for which we can reach this code path. Should be generalized.
         ExceptionState exceptionState(ExceptionState::ConstructionContext, "Location", contextForWrapper->Global(), isolate);
