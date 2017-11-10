@@ -253,9 +253,10 @@ void URLRequestContextGetterImpl::updateProxyConfig(
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
     std::unique_ptr<net::ProxyConfigService> proxyConfigService_(proxyConfigService);
 
-
-    if (d_proxyService) {
-        d_proxyService->ResetConfigService(std::move(proxyConfigService_));
+    if (d_urlRequestContext) {
+        net::ProxyService* proxyService = d_urlRequestContext->proxy_service();
+        DCHECK(proxyService);
+        proxyService->ResetConfigService(std::move(proxyConfigService_));
         return;
     }
 

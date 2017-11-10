@@ -1182,6 +1182,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
     g_url = "http://www.google.com";
     std::string hostChannel = "";
     bool isHost = false;
+    int proxyPort = 0;
 
     {
         int argc;
@@ -1232,6 +1233,11 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
             }
             else if (0 == wcscmp(L"--custom-tooltip", argv[i])) {
                 g_custom_tooltip = true;
+            }
+            else if (0 == wcscmp(L"--local-proxy=", argv[i]), 14) {
+                char buf[1024];
+                sprintf_s(buf, sizeof(buf), "%S", argv[i]+14);
+                proxyPort = atoi(buf);
             }
             else if (argv[i][0] != '-') {
                 char buf[1024];
@@ -1298,6 +1304,19 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
     if (g_no_disk_cookies)
         profileParams.setCookiePersistenceEnabled(false);
     g_profile = g_toolkit->createProfile(profileParams);
+
+    if (proxyPort != -1) {
+        blpwtk2::StringRef hostname = "127.0.0.1";
+        blpwtk2::ProxyConfig::ProxyType type = blpwtk2::ProxyConfig::HTTP;
+
+        blpwtk2::ProxyConfig proxyConfig;
+        proxyConfig.addHttpProxy(type, hostname, proxyPort);
+        proxyConfig.addHttpsProxy(type, hostname, proxyPort);
+        proxyConfig.addFtpProxy(type, hostname, proxyPort);
+        proxyConfig.addFallbackProxy(type, hostname, proxyPort);
+
+        g_profile->setProxyConfig(proxyConfig);
+    }
 
     g_spellCheckEnabled = true;
     g_languages.insert(LANGUAGE_EN_US);
