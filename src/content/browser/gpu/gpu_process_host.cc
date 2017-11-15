@@ -581,6 +581,7 @@ bool GpuProcessHost::Init() {
     options.priority = base::ThreadPriority::DISPLAY;
 #endif
     in_process_gpu_thread_->StartWithOptions(options);
+    in_process_gpu_thread_->WaitUntilThreadStarted();
 
     OnProcessLaunched();  // Fake a callback that the process is ready.
   } else if (!LaunchGpuProcess(channel_id, &gpu_preferences)) {
