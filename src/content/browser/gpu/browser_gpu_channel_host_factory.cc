@@ -212,8 +212,7 @@ void BrowserGpuChannelHostFactory::Initialize(bool establish_gpu_channel) {
   DCHECK(!instance_);
   instance_ = new BrowserGpuChannelHostFactory();
   if (establish_gpu_channel) {
-    instance_->EstablishGpuChannel(CAUSE_FOR_GPU_LAUNCH_BROWSER_STARTUP,
-                                   base::Closure());
+    instance_->EstablishGpuChannelSync(CAUSE_FOR_GPU_LAUNCH_BROWSER_STARTUP);
   }
 }
 
