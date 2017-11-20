@@ -242,12 +242,6 @@ int GpuMain(const MainFunctionParams& parameters) {
     base::Thread::Options options;
     options.timer_slack = base::TIMER_SLACK_MAXIMUM;
     watchdog_thread->StartWithOptions(options);
-#if defined(OS_WIN)
-    // See:
-    // https://bugs.chromium.org/p/chromium/issues/detail?id=718388
-    // https://chromium.googlesource.com/chromium/src.git/+/abecaf4066bdffab7af3e26102d2e2644835d8a9
-    watchdog_thread->WaitUntilThreadStarted();
-#endif
   }
 
   // Initializes StatisticsRecorder which tracks UMA histograms.
