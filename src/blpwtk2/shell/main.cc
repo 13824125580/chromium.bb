@@ -1182,7 +1182,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
     g_url = "http://www.google.com";
     std::string hostChannel = "";
     bool isHost = false;
-    int proxyPort = 0;
+    int proxyPort = -1;
 
     {
         int argc;
@@ -1234,7 +1234,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
             else if (0 == wcscmp(L"--custom-tooltip", argv[i])) {
                 g_custom_tooltip = true;
             }
-            else if (0 == wcscmp(L"--local-proxy=", argv[i]), 14) {
+            else if (0 == wcsncmp(L"--local-proxy=", argv[i], 14)) {
                 char buf[1024];
                 sprintf_s(buf, sizeof(buf), "%S", argv[i]+14);
                 proxyPort = atoi(buf);
