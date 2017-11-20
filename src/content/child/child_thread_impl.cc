@@ -499,13 +499,6 @@ void ChildThreadImpl::Init(const Options& options) {
     channel_->AddFilter(startup_filter);
   }
 
-  if (!channel_name_.empty())
-    InitChannel();
-
-  InitManagers();
-}
-
-void ChildThreadImpl::InitChannel() {
   if (!IsInBrowserProcess()) {
     IPC::AttachmentBroker::GetGlobal()->RegisterBrokerCommunicationChannel(channel_.get());
   }
@@ -530,9 +523,7 @@ void ChildThreadImpl::InitChannel() {
 #if defined(OS_ANDROID)
   g_quit_closure.Get().BindToMainThread();
 #endif
-}
 
-void ChildThreadImpl::InitManagers() {
   shared_bitmap_manager_.reset(
       new ChildSharedBitmapManager(thread_safe_sender()));
 
@@ -593,8 +584,6 @@ void ChildThreadImpl::OnChannelError() {
 
 bool ChildThreadImpl::Send(IPC::Message* msg) {
   DCHECK(base::MessageLoop::current() == message_loop());
-  DCHECK(!channel_name_.empty());  // Trying to send a message before setting
-                                   // the channel name is a very bad thing.
   if (!channel_) {
     delete msg;
     return false;
@@ -612,13 +601,6 @@ void ChildThreadImpl::ReleaseCachedFonts() {
   Send(new ChildProcessHostMsg_ReleaseCachedFonts());
 }
 #endif
-
-void ChildThreadImpl::SetChannelName(const std::string& channel_name) {
-  //DCHECK(!channel_name.empty());
-  //DCHECK(channel_name_.empty());
-  channel_name_ = channel_name;
-  InitChannel();
-}
 
 void ChildThreadImpl::RecordAction(const base::UserMetricsAction& action) {
     NOTREACHED();

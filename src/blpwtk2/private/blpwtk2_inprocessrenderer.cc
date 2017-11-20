@@ -158,20 +158,4 @@ scoped_refptr<base::SingleThreadTaskRunner> InProcessRenderer::ioTaskRunner()
     return content::RenderThread::IOTaskRunner();
 }
 
-// static
-void InProcessRenderer::setChannelName(const std::string& channelName)
-{
-    DCHECK(Statics::isInApplicationMainThread());
-    if (Statics::isOriginalThreadMode()) {
-        DCHECK(Statics::rendererMessageLoop);
-        Statics::rendererMessageLoop->PostTask(
-            FROM_HERE,
-            base::Bind(&content::RenderThread::SetInProcessRendererChannelName,
-                       channelName));
-    }
-    else {
-        content::RenderThread::SetInProcessRendererChannelName(channelName);
-    }
-}
-
 }  // close namespace blpwtk2

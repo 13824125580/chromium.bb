@@ -62,11 +62,6 @@ class InProcessRenderer {
     // Return the task runner for the renderer's IO thread.  This can only be
     // called between calls to 'init()' and 'cleanup()'.
     static scoped_refptr<base::SingleThreadTaskRunner> ioTaskRunner();
-
-    // Set the channel name that will be used by the render-process-host to
-    // communicate with the in-process renderer.  This can only be called once
-    // and between calls to 'init()' and 'cleanup()'.
-    static void setChannelName(const std::string& channelName);
 };
 
 }  // close namespace blpwtk2
