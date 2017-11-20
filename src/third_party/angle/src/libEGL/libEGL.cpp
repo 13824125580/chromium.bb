@@ -358,4 +358,22 @@ EGLBoolean EGLAPIENTRY eglStreamPostD3DTextureNV12ANGLE(EGLDisplay dpy,
 {
     return egl::StreamPostD3DTextureNV12ANGLE(dpy, stream, texture, attrib_list);
 }
+
+#ifdef ANGLE_PLATFORM_WINDOWS
+extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
+
+extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
+{
+    switch (reason)
+    {
+      case DLL_PROCESS_ATTACH:
+        __acrt_eagerly_load_locale_apis();
+
+        break;
+    }
+
+    return TRUE;
+}
+#endif
+
 }

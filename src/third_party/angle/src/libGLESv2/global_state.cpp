@@ -72,6 +72,8 @@ Current *GetCurrentData()
 
 #ifdef ANGLE_PLATFORM_WINDOWS
 
+extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
+
 void DeallocateCurrent()
 {
     Current *current = reinterpret_cast<Current*>(GetTLSValue(currentTLS));
@@ -84,6 +86,8 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
     switch (reason)
     {
       case DLL_PROCESS_ATTACH:
+        __acrt_eagerly_load_locale_apis();
+
         currentTLS = CreateTLSIndex();
         if (currentTLS == TLS_INVALID_INDEX)
         {

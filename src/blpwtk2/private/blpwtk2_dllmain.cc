@@ -27,6 +27,8 @@
 
 #include <base/logging.h>  // for DCHECK
 
+extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
+
 HANDLE g_instDLL;
 
 extern "C" {
@@ -34,6 +36,10 @@ BOOL WINAPI DllMain(HANDLE hinstDLL,
                     DWORD dwReason,
                     LPVOID lpvReserved) {
     g_instDLL = hinstDLL;
+
+    if (DLL_PROCESS_ATTACH == dwReason) {
+        __acrt_eagerly_load_locale_apis();
+    }
 
     if (DLL_PROCESS_DETACH == dwReason) {
         DCHECK(!blpwtk2::ToolkitImpl::instance())

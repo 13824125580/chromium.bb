@@ -10,11 +10,16 @@
 #if V8_OS_WIN
 #include "src/base/win32-headers.h"
 
+extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
+
 extern "C" {
 BOOL WINAPI DllMain(HANDLE hinstDLL,
                     DWORD dwReason,
                     LPVOID lpvReserved) {
-  // Do nothing.
+  if (dwReason == DLL_PROCESS_ATTACH) {
+      __acrt_eagerly_load_locale_apis();
+  }
+
   return TRUE;
 }
 }
