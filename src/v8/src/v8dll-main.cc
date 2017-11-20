@@ -8,16 +8,16 @@
 #include "include/v8.h"
 
 #if V8_OS_WIN
-#include "src/base/win32-headers.h"
+#include <locale.h>
 
-extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
+#include "src/base/win32-headers.h"
 
 extern "C" {
 BOOL WINAPI DllMain(HANDLE hinstDLL,
                     DWORD dwReason,
                     LPVOID lpvReserved) {
   if (dwReason == DLL_PROCESS_ATTACH) {
-      __acrt_eagerly_load_locale_apis();
+      setlocale(LC_ALL, NULL);
   }
 
   return TRUE;

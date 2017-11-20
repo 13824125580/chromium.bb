@@ -6,6 +6,8 @@
 
 // global_state.cpp : Implements functions for querying the thread-local GL and EGL state.
 
+#include <locale.h>
+
 #include "libGLESv2/global_state.h"
 
 #include "libANGLE/Context.h"
@@ -72,8 +74,6 @@ Current *GetCurrentData()
 
 #ifdef ANGLE_PLATFORM_WINDOWS
 
-extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
-
 void DeallocateCurrent()
 {
     Current *current = reinterpret_cast<Current*>(GetTLSValue(currentTLS));
@@ -86,7 +86,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
     switch (reason)
     {
       case DLL_PROCESS_ATTACH:
-        __acrt_eagerly_load_locale_apis();
+        setlocale(LC_ALL, NULL);
 
         currentTLS = CreateTLSIndex();
         if (currentTLS == TLS_INVALID_INDEX)

@@ -20,14 +20,13 @@
  * IN THE SOFTWARE.
  */
 
+#include <locale.h>
 #include <windows.h>  // NOLINT
 
 #include <blpwtk2_config.h>
 #include <blpwtk2_toolkitimpl.h>
 
 #include <base/logging.h>  // for DCHECK
-
-extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
 
 HANDLE g_instDLL;
 
@@ -38,7 +37,7 @@ BOOL WINAPI DllMain(HANDLE hinstDLL,
     g_instDLL = hinstDLL;
 
     if (DLL_PROCESS_ATTACH == dwReason) {
-        __acrt_eagerly_load_locale_apis();
+        setlocale(LC_ALL, NULL);
     }
 
     if (DLL_PROCESS_DETACH == dwReason) {

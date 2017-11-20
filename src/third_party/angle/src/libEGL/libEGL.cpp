@@ -6,6 +6,8 @@
 
 // libEGL.cpp: Implements the exported EGL functions.
 
+#include <locale.h>
+
 #include "libGLESv2/entry_points_egl.h"
 #include "libGLESv2/entry_points_egl_ext.h"
 
@@ -360,14 +362,13 @@ EGLBoolean EGLAPIENTRY eglStreamPostD3DTextureNV12ANGLE(EGLDisplay dpy,
 }
 
 #ifdef ANGLE_PLATFORM_WINDOWS
-extern "C" void __cdecl __acrt_eagerly_load_locale_apis(void);
 
 extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
 {
     switch (reason)
     {
       case DLL_PROCESS_ATTACH:
-        __acrt_eagerly_load_locale_apis();
+        setlocale(LC_ALL, NULL);
 
         break;
     }
