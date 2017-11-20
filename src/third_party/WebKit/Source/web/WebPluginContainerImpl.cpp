@@ -435,6 +435,10 @@ void WebPluginContainerImpl::enqueueMessageEvent(const WebDOMMessageEvent& event
 
 void WebPluginContainerImpl::enqueueEvent(const WebDOMEvent& event)
 {
+    if (!m_element->document().isActive()) {
+        return;
+    }
+
     static_cast<Event*>(event)->setTarget(m_element);
     m_element->getExecutionContext()->getEventQueue()->enqueueEvent(event);
 }

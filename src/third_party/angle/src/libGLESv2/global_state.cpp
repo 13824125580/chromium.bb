@@ -6,6 +6,8 @@
 
 // global_state.cpp : Implements functions for querying the thread-local GL and EGL state.
 
+#include <locale.h>
+
 #include "libGLESv2/global_state.h"
 
 #include "libANGLE/Context.h"
@@ -84,6 +86,8 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
     switch (reason)
     {
       case DLL_PROCESS_ATTACH:
+        setlocale(LC_ALL, NULL);
+
         currentTLS = CreateTLSIndex();
         if (currentTLS == TLS_INVALID_INDEX)
         {

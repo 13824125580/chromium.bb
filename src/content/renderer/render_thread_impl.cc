@@ -484,13 +484,6 @@ void RenderThread::InitInProcessRenderer(const InProcessChildThreadParams& param
 }
 
 // static
-void RenderThread::SetInProcessRendererChannelName(const std::string& channel_id)
-{
-  RenderThreadImpl* thread = RenderThreadImpl::current();
-  thread->SetChannelName(channel_id);  // This will create the channel.
-}
-
-// static
 scoped_refptr<base::SingleThreadTaskRunner> RenderThread::IOTaskRunner()
 {
   RenderThreadImpl* thread = RenderThreadImpl::current();

@@ -267,7 +267,6 @@ void ToolkitImpl::startupThreads()
             ipcToken,
             serviceToken,
             clientFileDescriptor);
-        InProcessRenderer::setChannelName("abc");
     }
 
     d_threadsStarted = true;

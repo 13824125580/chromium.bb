@@ -68,7 +68,6 @@ bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
 
     // Send the rest of the pages with an invalid metafile handle.
     if (printed_page_params.metafile_data_handle.IsValid()) {
-      printed_page_params.metafile_data_handle.Close();
       printed_page_params.metafile_data_handle = base::SharedMemoryHandle();
     }
   }

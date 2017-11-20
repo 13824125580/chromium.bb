@@ -20,6 +20,7 @@
  * IN THE SOFTWARE.
  */
 
+#include <locale.h>
 #include <windows.h>  // NOLINT
 
 #include <blpwtk2_config.h>
@@ -34,6 +35,10 @@ BOOL WINAPI DllMain(HANDLE hinstDLL,
                     DWORD dwReason,
                     LPVOID lpvReserved) {
     g_instDLL = hinstDLL;
+
+    if (DLL_PROCESS_ATTACH == dwReason) {
+        setlocale(LC_ALL, NULL);
+    }
 
     if (DLL_PROCESS_DETACH == dwReason) {
         DCHECK(!blpwtk2::ToolkitImpl::instance())
