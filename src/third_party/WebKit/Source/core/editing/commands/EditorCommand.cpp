@@ -1721,6 +1721,7 @@ static const EditorInternalCommand* internalCommand(const String& commandName)
         { WebEditingCommandType::Yank, executeYank, supportedFromMenuOrKeyBinding, enabledInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled },
         { WebEditingCommandType::YankAndSelect, executeYankAndSelect, supportedFromMenuOrKeyBinding, enabledInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled },
         { WebEditingCommandType::AlignCenter, executeJustifyCenter, supportedFromMenuOrKeyBinding, enabledInRichlyEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled },
+        { WebEditingCommandType::InsertHTMLNested, executeInsertHTMLNested, supported, enabledInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled },
     };
     // Handles all commands except WebEditingCommandType::Invalid.
     static_assert(arraysize(kEditorCommands) + 1 == static_cast<size_t>(WebEditingCommandType::NumberOfCommandTypes), "must handle all valid WebEditingCommandType");
