@@ -652,6 +652,9 @@ ALWAYS_INLINE bool BreakingContext::rewindToMidWordBreak(LineLayoutText text,
         if (!end)
             return false;
         len = end - start;
+
+        if (!len)
+            return rewindToFirstMidWordBreak(text, style, font, breakAll, wordMeasurement);
     }
     FloatRect rect = font.selectionRectForText(run, FloatPoint(), 0, 0, len);
     DCHECK(m_width.fitsOnLine(rect.width() - 1)); // avoid failure when rect is rounded up.

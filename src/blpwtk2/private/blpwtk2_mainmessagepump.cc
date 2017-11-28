@@ -85,7 +85,7 @@ MainMessagePump::MainMessagePump()
   // by the embedder.
   should_process_pump_replacement_ = false;
 
-  if (Statics::isSingleThreadMode()) {
+  if (!Statics::isInProcessRendererDisabled) {
     // Timer messages can easily be starved when the renderer runs in the
     // browser main thread.  In this mode, we reduce the maximum allowable
     // time to wait for the timer message to fire before resorting to schedule
