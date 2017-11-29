@@ -31,6 +31,7 @@
 namespace blpwtk2 {
 namespace {
 
+const int kMsgHaveWork = WM_USER + 1;
 const int kPumpMessage = WM_USER + 2;
 
 inline
@@ -67,6 +68,7 @@ MainMessagePump::MainMessagePump()
     , d_maxTimer(USER_TIMER_MAXIMUM)
     , d_maxPumpCountInsideModalLoop(1)
     , d_traceThreshold(0)
+    , d_nestLevel(0)
 {
   d_window = ::CreateWindowW(getClassName(),   // lpClassName
                              0,                // lpWindowName
@@ -85,23 +87,21 @@ MainMessagePump::MainMessagePump()
   // by the embedder.
   should_process_pump_replacement_ = false;
 
-  if (!Statics::isInProcessRendererDisabled) {
-    // Timer messages can easily be starved when the renderer runs in the
-    // browser main thread.  In this mode, we reduce the maximum allowable
-    // time to wait for the timer message to fire before resorting to schedule
-    // a pump from within the message filter hook.
-    d_maxTimer = 4 * d_minTimer;
+  // Timer messages can be easily starved when the browser main thread is
+  // flooded with input or posted messages.  We set a maximum allowable time
+  // to wait for the timer message to fire before resorting to schedule a pump
+  // from within the message filter hook.
+  d_maxTimer = 4 * d_minTimer;
 
-    // Even with a reduced maximum wait time before scheduling a pump, the
-    // large number of window messages in the main thread can starve our pump
-    // message.  When the program counter is inside of the modal loop, this
-    // starvation can be observed when resizing the window and it manifests
-    // itself as a very noticable lag.  To compensate for this starvation, we
-    // perform multiple flushes under a very specific condition: the renderer
-    // is running inside of the browser main thread and the program counter is
-    // inside an OS modal loop.
-    d_maxPumpCountInsideModalLoop = 16;
-  }
+  // Even with a reduced maximum wait time before scheduling a pump, the large
+  // number of window messages in the main thread can starve our pump message.
+  // When the program counter is inside of the modal loop, this starvation can
+  // be observed when resizing the window and it manifests itself as a very
+  // noticable lag.  To compensate for this starvation, we perform multiple
+  // flushes under a very specific condition: the renderer is running inside
+  // of the browser main thread and the program counter is inside an OS modal
+  // loop.
+  d_maxPumpCountInsideModalLoop = 16;
 }
 
 MainMessagePump::~MainMessagePump()
@@ -345,6 +345,13 @@ LRESULT CALLBACK MainMessagePump::windowProcedureHook(int code,
     DebugWithTime("HOOK EXIT MENU\n");
     pump->modalLoop(false);
     break;
+  case kMsgHaveWork:
+    break;
+  default:
+    if (pump->d_nestLevel > 0) {
+      DebugWithTime("DETECTED INNER PUMP\n");
+      pump->modalLoop(true);
+    }
   }
 
   DWORD needRepost = pump->d_needRepost;
@@ -404,7 +411,8 @@ void MainMessagePump::schedulePump()
 
 void MainMessagePump::doWork()
 {
-  const int kMsgHaveWork = WM_USER + 1;
+  DCHECK(d_nestLevel >= 0);
+  ++d_nestLevel;
 
   int wasPumped = ::InterlockedExchange(&d_isPumped, 0);
   DCHECK_EQ(1, wasPumped);
@@ -462,6 +470,8 @@ void MainMessagePump::doWork()
     LOG(WARNING) << "blpwtk2::MainMessagePump::doWork:  MainMessagePumpForUI::HandleWorkMessage took "
                  << (endTime1 - startTime1) << " ms to run";
   }
+
+  --d_nestLevel;
 }
 
 void MainMessagePump::modalLoop(bool enabled)
