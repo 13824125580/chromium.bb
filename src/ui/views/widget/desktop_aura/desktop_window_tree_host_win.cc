@@ -153,6 +153,7 @@ void DesktopWindowTreeHostWin::Init(aura::Window* content_window,
               kForceSoftwareCompositor,
               reinterpret_cast<HANDLE>(true));
   }
+  message_handler_->set_reroute_mouse_wheel_to_any_related_window(params.reroute_mouse_wheel_to_any_related_window);
   CreateCompositor();
   OnAcceleratedWidgetAvailable();
 }
