@@ -89,6 +89,7 @@ class MainMessagePump final : public base::MessagePumpForUI {
     unsigned int d_maxTimer;
     unsigned int d_maxPumpCountInsideModalLoop;
     unsigned int d_traceThreshold;
+    int d_nestLevel;
 
     DISALLOW_COPY_AND_ASSIGN(MainMessagePump);
 };
