@@ -338,7 +338,7 @@ void InlineTextBoxPainter::paintDocumentMarkers(const PaintInfo& paintInfo, cons
             }
             break;
         case DocumentMarker::Highlight:
-            if (LineLayoutAPIShim::constLayoutObjectFrom(m_inlineTextBox.getLineLayoutItem())->isSelectable()) {
+            if (marker->includeNonSelectableText() || LineLayoutAPIShim::constLayoutObjectFrom(m_inlineTextBox.getLineLayoutItem())->isSelectable()) {
                 if (markerPaintPhase == DocumentMarkerPaintPhase::Background)
                     paintHighlightMarkerBackground(paintInfo, boxOrigin, marker, style, font);
                 else 
