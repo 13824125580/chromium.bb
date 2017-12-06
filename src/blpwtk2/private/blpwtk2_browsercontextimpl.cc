@@ -358,7 +358,7 @@ net::URLRequestContextGetter* BrowserContextImpl::CreateRequestContextForStorage
 
 net::URLRequestContextGetter* BrowserContextImpl::CreateMediaRequestContext()
 {
-    return nullptr;
+	return requestContextGetter();
 }
 
 net::URLRequestContextGetter* BrowserContextImpl::CreateMediaRequestContextForStoragePartition(
