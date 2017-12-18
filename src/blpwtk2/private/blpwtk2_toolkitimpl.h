@@ -86,6 +86,7 @@ class ToolkitImpl : public Toolkit {
     void clearWebCache() override;
     void setTimerHiddenPageAlignmentInterval(double) override;
     v8::Local<v8::Context> createWebScriptContext() override;
+    void disposeWebScriptContext(v8::Local<v8::Context> context) override;
     String registerNativeViewForStreaming(NativeView view) override;
     void dumpDiagnosticInfo(DiagnosticInfoType type,
                             const blpwtk2::StringRef& filepath) override;
