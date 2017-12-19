@@ -130,10 +130,10 @@ void DocumentMarkerController::addCompositionMarker(const Position& start, const
         addMarker(markedText.currentContainer(), DocumentMarker(markedText.startOffsetInCurrentContainer(), markedText.endOffsetInCurrentContainer(), underlineColor, thick, backgroundColor));
 }
 
-void DocumentMarkerController::addHighlightMarker(const Position& start, const Position& end, Color foregroundColor, Color backgroundColor)
+void DocumentMarkerController::addHighlightMarker(const Position& start, const Position& end, Color foregroundColor, Color backgroundColor, bool includeNonSelectableText)
 {
     for (TextIterator markedText(start, end); !markedText.atEnd(); markedText.advance())
-        addMarker(markedText.currentContainer(), DocumentMarker(markedText.startOffsetInCurrentContainer(), markedText.endOffsetInCurrentContainer(), foregroundColor, backgroundColor));    
+        addMarker(markedText.currentContainer(), DocumentMarker(markedText.startOffsetInCurrentContainer(), markedText.endOffsetInCurrentContainer(), foregroundColor, backgroundColor, includeNonSelectableText));    
 }
 
 void DocumentMarkerController::prepareForDestruction()

@@ -226,6 +226,11 @@ class WebViewImpl : public WebView,
         const content::MediaStreamRequest& request,
         const content::MediaResponseCallback& callback) override;
 
+    bool CheckMediaAccessPermission(
+        content::WebContents* web_contents,
+        const GURL& security_origin,
+        content::MediaStreamType type) override;
+
     // Return true if the RWHV should take focus on mouse-down.
     bool ShouldSetKeyboardFocusOnMouseDown() override;
     bool ShouldSetLogicalFocusOnMouseDown() override;

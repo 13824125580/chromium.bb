@@ -1102,6 +1102,18 @@ void WebViewImpl::RequestMediaAccessPermission(
     callback.Run(devices, content::MEDIA_DEVICE_OK, std::move(ui));
 }
 
+bool WebViewImpl::CheckMediaAccessPermission(
+    content::WebContents* web_contents,
+    const GURL& security_origin,
+    content::MediaStreamType type)
+{
+    if (d_delegate) {
+        return d_delegate->checkMediaAccessPermission(this, (int) type);
+    }
+
+    return true;
+}
+
 bool WebViewImpl::OnNCHitTest(int* result)
 {
     if (d_ncHitTestEnabled && d_delegate) {

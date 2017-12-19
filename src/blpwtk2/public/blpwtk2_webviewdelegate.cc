@@ -43,5 +43,12 @@ void WebViewDelegate::destroyView(WebView* source)
     source->destroy();
 }
 
+bool WebViewDelegate::checkMediaAccessPermission(WebView* source, 
+                                                 int      type)
+{
+	return true;
+}
+
+
 }  // close namespace blpwtk2
 

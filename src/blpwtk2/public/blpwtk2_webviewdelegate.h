@@ -179,6 +179,14 @@ class BLPWTK2_EXPORT WebViewDelegate {
     // undefined unless there was a corresponding 'startTiming' call that
     // preceded this call.
     virtual void stopPerformanceTiming() {}
+
+    // When return true, user will be able to access MediaDeviceInfo.label
+    // (for example "External USB Webcam"), while enumerating media devices
+    // https://developer.mozilla.org/en-US/docs/Web/API/MediaDeviceInfo
+    // Also user will be allowed to set the audio output device to a 
+    // HTMLMediaElement
+    // https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/setSinkId
+    virtual bool checkMediaAccessPermission(WebView* source, int type);
 };
 
 }  // close namespace blpwtk2

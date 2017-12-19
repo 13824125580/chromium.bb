@@ -183,6 +183,9 @@ class Toolkit {
     // Creates a V8 context that can access the DOM.
     virtual v8::Local<v8::Context> createWebScriptContext() = 0;
 
+    // Disposes of per-context data for a context created with 'createWebScriptContext():
+    virtual void disposeWebScriptContext(v8::Local<v8::Context> context) = 0;
+
     virtual String registerNativeViewForStreaming(NativeView view) = 0;
 
     // Write diagnostic information of the specified 'type' onto the

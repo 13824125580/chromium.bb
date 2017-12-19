@@ -101,7 +101,7 @@ public:
     DocumentMarker(MarkerType, unsigned startOffset, unsigned endOffset, const String& description, uint32_t hash);
     DocumentMarker(unsigned startOffset, unsigned endOffset, bool activeMatch);
     DocumentMarker(unsigned startOffset, unsigned endOffset, Color underlineColor, bool thick, Color backgroundColor);
-    DocumentMarker(unsigned startOffset, unsigned endOffset, Color foregroundColor, Color backgroundColor);
+    DocumentMarker(unsigned startOffset, unsigned endOffset, Color foregroundColor, Color backgroundColor, bool includeNonSelectableText);
 
     DocumentMarker(const DocumentMarker&);
 
@@ -116,6 +116,7 @@ public:
     bool thick() const;
     Color backgroundColor() const;
     Color foregroundColor() const;
+    bool includeNonSelectableText() const;
     DocumentMarkerDetails* details() const;
 
     void setActiveMatch(bool);

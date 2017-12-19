@@ -586,6 +586,11 @@ v8::Local<v8::Context> ToolkitImpl::createWebScriptContext()
     return blink::WebScriptBindings::createWebScriptContext();
 }
 
+void ToolkitImpl::disposeWebScriptContext(v8::Local<v8::Context> context)
+{
+    blink::WebScriptBindings::disposeWebScriptContext(context);
+}
+
 String ToolkitImpl::registerNativeViewForStreaming(NativeView view)
 {
     std::string result;
