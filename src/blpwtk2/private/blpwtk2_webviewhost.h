@@ -161,6 +161,7 @@ class WebViewHost : public ProcessHostListener,
                      const POINT& startPoint) override;
     void ncDragMove(WebView* source, const POINT& movePoint) override;
     void ncDragEnd(WebView* source, const POINT& endPoint) override;
+    void ncDoubleClick(WebView* source, const POINT& endPoint) override;
     void showTooltip(WebView* source,
                      const StringRef& tooltipText,
                      TextDirection::Value direction) override;
