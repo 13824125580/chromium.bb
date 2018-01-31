@@ -178,6 +178,7 @@ class WebViewProxy : public WebView,
     void onNCDragBegin(int hitTestCode, const gfx::Point& startPoint);
     void onNCDragMove();
     void onNCDragEnd(const gfx::Point& endPoint);
+    void onNCDoubleClick(const gfx::Point& endPoint);
     void onShowTooltip(const std::string& tooltipText, TextDirection::Value direction);
     void onFindState(int reqId,
                      int numberOfMatches,

@@ -159,6 +159,8 @@ class BLPWTK2_EXPORT WebViewDelegate {
     // mouse position where the drag ended, in screen coordinates.
     virtual void ncDragEnd(WebView* source, const POINT& endPoint) {}
 
+    virtual void ncDoubleClick(WebView* source, const POINT& endPoint) {}
+
     // Show custom tooltip.
     virtual void showTooltip(WebView* source,
                              const StringRef& tooltipText,

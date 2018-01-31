@@ -180,6 +180,8 @@ class VIEWS_EXPORT WidgetDelegate {
   // only called if the previous OnNCDragBegin returned true.
   virtual void OnNCDragEnd() {}
 
+  virtual void OnNCDoubleClick() {}
+
   // Called to get the default activation window.  Returning NULL will use
   // the widget's root view's window.
   virtual aura::Window* GetDefaultActivationWindow();

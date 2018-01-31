@@ -66,6 +66,7 @@ class NativeViewWidget : private views::WidgetDelegateView {
     bool OnNCDragBegin(int hit_test_code) override;
     void OnNCDragMove() override;
     void OnNCDragEnd() override;
+    void OnNCDoubleClick() override;
     aura::Window* GetDefaultActivationWindow() override;
 
   private:
