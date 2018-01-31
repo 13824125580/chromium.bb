@@ -592,6 +592,13 @@ void WebViewHost::ncDragEnd(WebView* source, const POINT& endPoint)
     Send(new BlpWebViewMsg_NCDragEnd(d_routingId, gfx::Point(endPoint)));
 }
 
+void WebViewHost::ncDoubleClick(WebView* source, const POINT& point)
+{
+    DCHECK(source == d_webView);
+    
+    Send(new BlpWebViewMsg_NCDoubleClick(d_routingId, gfx::Point(point)));
+}
+
 void WebViewHost::showTooltip(WebView* source,
                               const StringRef& tooltipText,
                               TextDirection::Value direction)

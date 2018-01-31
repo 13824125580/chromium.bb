@@ -844,6 +844,7 @@ bool WebViewProxy::OnMessageReceived(const IPC::Message& message)
         IPC_MESSAGE_HANDLER(BlpWebViewMsg_NCDragBegin, onNCDragBegin)
         IPC_MESSAGE_HANDLER(BlpWebViewMsg_NCDragMove, onNCDragMove)
         IPC_MESSAGE_HANDLER(BlpWebViewMsg_NCDragEnd, onNCDragEnd)
+        IPC_MESSAGE_HANDLER(BlpWebViewMsg_NCDoubleClick, onNCDoubleClick)
         IPC_MESSAGE_HANDLER(BlpWebViewMsg_ShowTooltip, onShowTooltip)
         IPC_MESSAGE_HANDLER(BlpWebViewMsg_FindState, onFindState)
         IPC_MESSAGE_HANDLER(BlpWebViewMsg_MoveAck, onMoveAck)
@@ -1029,6 +1030,13 @@ void WebViewProxy::onNCDragEnd(const gfx::Point& endPoint)
     }
     if (d_ncDragNeedsAck) {
         Send(new BlpWebViewHostMsg_NCDragEndAck(d_routingId));
+    }
+}
+
+void WebViewProxy::onNCDoubleClick(const gfx::Point& point)
+{
+    if (d_delegate) {
+        d_delegate->ncDoubleClick(this, point.ToPOINT());
     }
 }
 

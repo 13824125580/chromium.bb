@@ -189,6 +189,12 @@ void NativeViewWidget::OnNCDragEnd()
         d_delegate->OnNCDragEnd();
 }
 
+void NativeViewWidget::OnNCDoubleClick()
+{
+    if (d_delegate)
+        d_delegate->OnNCDoubleClick();
+}
+
 aura::Window* NativeViewWidget::GetDefaultActivationWindow()
 {
     if (d_delegate)

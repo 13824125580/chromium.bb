@@ -166,6 +166,8 @@ IPC_MESSAGE_ROUTED2(BlpWebViewMsg_NCDragBegin,
 IPC_MESSAGE_ROUTED0(BlpWebViewMsg_NCDragMove)
 IPC_MESSAGE_ROUTED1(BlpWebViewMsg_NCDragEnd,
                     gfx::Point /* endPoint */)
+IPC_MESSAGE_ROUTED1(BlpWebViewMsg_NCDoubleClick,
+                    gfx::Point /* endPoint */)
 IPC_MESSAGE_ROUTED2(BlpWebViewMsg_ShowTooltip,
                     std::string /* tooltipText */,
                     blpwtk2::TextDirection::Value /* direction */)
