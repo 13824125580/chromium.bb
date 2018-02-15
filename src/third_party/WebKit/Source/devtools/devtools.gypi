@@ -405,6 +405,16 @@
             'front_end/audits/AuditRules.js',
             'front_end/audits/AuditsPanel.js',
         ],
+        'devtools_widgetinspector_js_files':[
+            'front_end/widget_inspector/WidgetInspectorPanel.js',
+            'front_end/widget_inspector/mainViewWidgetInspector.css',
+            'front_end/widget_inspector/widgetTreeOutline.css',
+            'front_end/widget_inspector/WidgetTreeElement.js',
+            'front_end/widget_inspector/WidgetTreeOutline.js',
+            'front_end/widget_inspector/WidgetTreeElementHighlighter.js',
+            'front_end/widget_inspector/WidgetPropertiesWidget.js',
+            'front_end/widget_inspector/WidgetMethodsWidget.js'
+        ],
         'devtools_cm_modes_js_files': [
             'front_end/cm_modes/clike.js',
             'front_end/cm_modes/coffeescript.js',
@@ -796,6 +806,7 @@
             '<@(devtools_accessibility_js_files)',
             '<@(devtools_animation_js_files)',
             '<@(devtools_audits_js_files)',
+            '<@(devtools_widgetinspector_js_files)',
             '<@(devtools_cm_modes_js_files)',
             '<@(devtools_components_lazy_js_files)',
             '<@(devtools_console_js_files)',

@@ -64,3 +64,19 @@
 .object-properties-section-root-element.expanded::before {
     -webkit-mask-position: -20px -97px !important;
 }
+
+.hide-children > .object-properties-section-root-element {
+    display:none !important;
+}
+
+.hide-children > .children.expanded {
+    display: inline-table;
+}
+
+.hide-children > .children.expanded > .parent:not(.show-child) {
+    display:none;
+}
+
+.widget-prop-not-obj::before {
+    display:none;
+}

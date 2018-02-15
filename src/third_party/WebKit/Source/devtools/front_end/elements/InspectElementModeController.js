@@ -114,8 +114,9 @@ WebInspector.InspectElementModeController.prototype = {
     _setMode: function(mode)
     {
         this._mode = mode;
-        for (var domModel of WebInspector.DOMModel.instances())
+        for (var domModel of WebInspector.DOMModel.instances()) {
             domModel.setInspectMode(mode);
+        }
 
         if (this._layoutEditorButton) {
             this._layoutEditorButton.setEnabled(!this.isInInspectElementMode());

@@ -125,3 +125,11 @@ ol.tree-outline:focus li.selected * {
 .tree-outline ol.children.expanded {
     display: block;
 }
+
+.tree-outline.hide-children ol.children.expanded {
+    display: list-item;
+}
+
+.tree-outline.hide-children li {
+    display: list-item;
+}

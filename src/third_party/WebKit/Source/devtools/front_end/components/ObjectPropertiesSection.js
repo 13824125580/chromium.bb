@@ -33,14 +33,14 @@
  * @param {boolean=} ignoreHasOwnProperty
  * @param {!Array.<!WebInspector.RemoteObjectProperty>=} extraProperties
  */
-WebInspector.ObjectPropertiesSection = function(object, title, emptyPlaceholder, ignoreHasOwnProperty, extraProperties)
+WebInspector.ObjectPropertiesSection = function(object, title, emptyPlaceholder, ignoreHasOwnProperty, extraProperties, hideOriginalProperties)
 {
     this._object = object;
     this._editable = true;
     TreeOutlineInShadow.call(this);
     this.hideOverflow();
     this.setFocusable(false);
-    this._objectTreeElement = new WebInspector.ObjectPropertiesSection.RootElement(object, emptyPlaceholder, ignoreHasOwnProperty, extraProperties);
+    this._objectTreeElement = new WebInspector.ObjectPropertiesSection.RootElement(object, emptyPlaceholder, ignoreHasOwnProperty, extraProperties, hideOriginalProperties);
     this.appendChild(this._objectTreeElement);
     if (typeof title === "string" || !title)
         this.element.createChild("span").textContent = title || "";
@@ -51,6 +51,13 @@ WebInspector.ObjectPropertiesSection = function(object, title, emptyPlaceholder,
     this.registerRequiredCSS("components/objectValue.css");
     this.registerRequiredCSS("components/objectPropertiesSection.css");
     this.rootElement().childrenListElement.classList.add("source-code", "object-properties-section");
+
+    //WidgetInspector-specific
+    if(hideOriginalProperties === true){
+        this.rootElement().childrenListElement.classList.add("hide-children");
+        this.rootElement().treeOutline.element.classList.add("hide-children");
+    }
+
 }
 
 /** @const */
@@ -311,6 +318,17 @@ WebInspector.ObjectPropertyTreeElement.prototype = {
         if (this.property.value) {
             this.valueElement = WebInspector.ObjectPropertiesSection.createValueElementWithCustomSupport(this.property.value, this.property.wasThrown, this.listItemElement);
             this.valueElement.addEventListener("contextmenu", this._contextMenuFired.bind(this, this.property), false);
+
+            //WidgetInspector-specific
+            // Check for WidgetInspector's EditProperties tab
+            // property.newProp set in WidgetPropertiesWidget.js
+            if(this.property.newProp){
+                this.listItemElement.classList.add("show-child");
+                if (this.property.value.type.toLowerCase() !== "object") {
+                    this.listItemElement.classList.add("widget-prop-not-obj");
+                }
+            }
+
         } else if (this.property.getter) {
             this.valueElement = WebInspector.ObjectPropertyTreeElement.createRemoteObjectAccessorPropertySpan(this.property.parentObject, [this.property.name], this._onInvokeGetterClick.bind(this));
         } else {
@@ -439,10 +457,28 @@ WebInspector.ObjectPropertyTreeElement.prototype = {
     {
         var property = WebInspector.RemoteObject.toCallArgument(this.property.symbol || this.property.name);
         expression = expression.trim();
-        if (expression)
-            this.property.parentObject.setPropertyValue(property, expression, callback.bind(this));
-        else
+        if (expression) {
+            //WidgetInspector-specific
+            // checks if this is a property in the WidgetInspector's EditProperties tab, and if so, use a different function
+            var inspectorMap = WebInspector.WidgetInspectorPanel.instance()._widgetInspectorMap;
+            var editableLayoutProp = false;
+            inspectorMap.callFunction("function() { return this.editableLayoutProp('" + property.value.split(" ")[0] + "'); }", [{}],
+                function (result, wasThrown) {
+                    var isEditable = (result.description !== "null");
+                    if (this.property.newProp && this.property.widgetElement) {
+                        WebInspector.WidgetPropertiesWidget.setPropertyValue(this.property.widgetElement, property, expression, callback.bind(this));
+                    }
+                    else if (isEditable) {
+                        WebInspector.WidgetPropertiesWidget.setPropertyValue(this.property.widgetElement, property, expression, callback.bind(this));
+                    }
+                    else {
+                        this.property.parentObject.setPropertyValue(property, expression, callback.bind(this));
+                    }
+            }.bind(this));
+        }
+        else {
             this.property.parentObject.deleteProperty(property, callback.bind(this));
+        }
 
         /**
          * @param {?Protocol.Error} error
@@ -454,7 +490,6 @@ WebInspector.ObjectPropertyTreeElement.prototype = {
                 this.update();
                 return;
             }
-
             if (!expression) {
                 // The property was deleted, so remove this tree element.
                 this.parent.removeChild(this);
