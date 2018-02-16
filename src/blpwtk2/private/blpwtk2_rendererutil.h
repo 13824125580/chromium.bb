@@ -26,6 +26,7 @@
 #include <blpwtk2_config.h>
 #include <blpwtk2_webview.h>
 #include <blpwtk2_string.h>
+#include <content/public/renderer/render_view.h>
 
 namespace content {
 
@@ -48,6 +49,9 @@ struct RendererUtil
 
     static void setLCDTextShouldBlendWithCSSBackgroundColor(int  renderViewRoutingId,
                                                             bool enable);
+
+    static String printToPDF(
+        content::RenderView* renderView, const char* propOnIFrame);
 };
 
 }  // close namespace blpwtk2

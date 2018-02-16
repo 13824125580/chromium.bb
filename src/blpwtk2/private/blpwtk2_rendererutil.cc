@@ -19,6 +19,7 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
+#include <vector>
 
 #include <blpwtk2_rendererutil.h>
 #include <blpwtk2_blob.h>
@@ -32,7 +33,6 @@
 #include <third_party/WebKit/public/web/WebInputEvent.h>
 #include <ui/events/event.h>
 
- #include <content/public/renderer/render_view.h>
 #include <third_party/WebKit/public/web/WebView.h>
 #include <third_party/WebKit/public/web/WebFrame.h>
 #include <skia/ext/platform_canvas.h>
@@ -40,6 +40,9 @@
 #include <third_party/skia/include/core/SkStream.h>
 #include <pdf/pdf.h>
 #include <ui/gfx/geometry/size.h>
+#include <components/printing/renderer/print_web_view_helper.h>
+
+#include <v8.h>
 
 namespace blpwtk2 {
 
@@ -184,5 +187,34 @@ void RendererUtil::setLCDTextShouldBlendWithCSSBackgroundColor(int renderViewRou
     content::RenderView* rv = content::RenderView::FromRoutingID(renderViewRoutingId);
     rv->GetWebView()->setLCDTextShouldBlendWithCSSBackgroundColor(enable);
 }
+
+
+String RendererUtil::printToPDF(
+    content::RenderView* renderView, const char* propOnIFrame)
+{
+    blpwtk2::String returnVal;
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    v8::HandleScope handleScope(isolate);
+
+    for (auto* frame = renderView->GetWebView()->mainFrame();
+         frame;
+         frame = frame->traverseNext(false)) {
+
+        v8::Local<v8::Context> jsContext = frame->mainWorldScriptContext();
+        v8::Local<v8::Object> winObject = jsContext->Global();
+
+        if (winObject->Has(v8::String::NewFromUtf8(isolate, propOnIFrame))) {
+            std::vector<char> buffer =
+                printing::PrintWebViewHelper::Get(renderView)->PrintToPDF(
+                    frame->toWebLocalFrame());
+
+            returnVal.assign(buffer.data(), buffer.size());
+            break;
+        }
+    }
+
+    return returnVal;
+}
+
 
 }  // close namespace blpwtk2

@@ -38,19 +38,11 @@
 #include <base/bind.h>
 #include <base/message_loop/message_loop.h>
 #include <cc/trees/proxy_main.h>
-#include <content/browser/renderer_host/web_input_event_aura.h>
-#include <content/public/browser/native_web_keyboard_event.h>
 #include <content/public/renderer/render_view.h>
 #include <content/renderer/render_view_impl.h>
 #include <third_party/WebKit/public/web/WebView.h>
 #include <third_party/WebKit/public/web/WebFrame.h>
-#include <third_party/WebKit/public/web/WebInputEvent.h>
-#include <skia/ext/platform_canvas.h>
-#include <third_party/skia/include/core/SkDocument.h>
-#include <third_party/skia/include/core/SkStream.h>
-#include <pdf/pdf.h>
 #include <ui/events/event.h>
-#include <ui/gfx/geometry/size.h>
 
 #include <dwmapi.h>
 #include <windows.h>
@@ -370,9 +362,9 @@ void WebViewProxy::print()
 }
 
 String WebViewProxy::printToPDF(const char *propertyNameOnIframeToPrint)
-{   
-    // NOT YET IMPLEMENTED
-    return String();
+{
+    auto* renderView = content::RenderView::FromRoutingID(d_renderViewRoutingId);
+    return RendererUtil::printToPDF(renderView, propertyNameOnIframeToPrint);
 }
 
 static inline SkScalar distance(SkScalar x, SkScalar y)
