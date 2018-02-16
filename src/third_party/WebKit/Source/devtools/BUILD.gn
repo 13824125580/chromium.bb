@@ -55,7 +55,8 @@ devtools_modules_js_files =
     gypi_values.devtools_temp_storage_shared_worker_js_files +
     gypi_values.devtools_timeline_model_js_files +
     gypi_values.devtools_timeline_js_files +
-    gypi_values.devtools_ui_lazy_js_files
+    gypi_values.devtools_ui_lazy_js_files +
+    gypi_values.devtools_widgetinspector_js_files
 
 all_devtools_files =
     gypi_values.devtools_cm_css_files + gypi_values.devtools_cm_js_files +
@@ -165,6 +166,7 @@ action("generate_devtools_grd") {
       resources_out_dir + "timeline_module.js",
       resources_out_dir + "ui_lazy_module.js",
       resources_out_dir + "devtools_extension_api.js",
+      resources_out_dir + "widget_inspector_module.js"
     ]
     static_files_args = []  # Nothing needed for this
   }
@@ -300,6 +302,7 @@ action("build_applications") {
       resources_out_dir + "timeline_model_module.js",
       resources_out_dir + "timeline_module.js",
       resources_out_dir + "ui_lazy_module.js",
+      resources_out_dir + "widget_inspector_module.js"
     ]
 
     debug_mode = "0"

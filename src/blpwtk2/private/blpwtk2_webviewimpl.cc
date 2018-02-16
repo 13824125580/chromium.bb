@@ -388,30 +388,9 @@ void WebViewImpl::print()
 }
 
 String WebViewImpl::printToPDF(const char *propertyNameOnIframeToPrint)
-{    
-    String returnVal;
-    content::RenderView* rv = content::RenderView::FromRoutingID(d_renderViewRoutingId);
-    v8::Isolate* isolate = v8::Isolate::GetCurrent();
-    v8::HandleScope handleScope(isolate);
-
-    for (auto *frame = rv->GetWebView()->mainFrame();
-         frame;
-         frame = frame->traverseNext(false)) {
-
-        v8::Local<v8::Context> jsContext = frame->mainWorldScriptContext();
-        v8::Local<v8::Object> winObject = jsContext->Global();
-
-        if (winObject->Has(v8::String::NewFromUtf8(isolate, propertyNameOnIframeToPrint))) {
-            std::vector<char> buffer =
-                printing::PrintWebViewHelper::Get(rv)->PrintToPDF(
-                    frame->toWebLocalFrame());
-
-            returnVal.assign(buffer.data(), buffer.size());
-            break;
-        }
-    }
-
-    return returnVal;
+{
+    auto* renderView = content::RenderView::FromRoutingID(d_renderViewRoutingId);
+    return RendererUtil::printToPDF(renderView, propertyNameOnIframeToPrint);
 }
 
 void WebViewImpl::drawContentsToBlob(Blob *blob, const DrawParams& params)

@@ -273,7 +273,7 @@ def addGenFiles(doGnBuild):
 
 
 def main(args):
-  version = "bb1402"   # SET BB VERSION NUMBER HERE
+  version = "bb1501"   # SET BB VERSION NUMBER HERE
 
   outDir = None
   doClean = True

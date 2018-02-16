@@ -1,0 +1,409 @@
+/*
+ * Copyright (C) 2017 Bloomberg Finance L.P.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
+ */
+
+.widget-disclosure {
+    width: 100%;
+    display: inline-block;
+    line-height: normal;
+}
+
+.widget-disclosure li {
+    /** Keep margin-left & padding-left in sync with ElementsTreeElements.updateDecorators **/
+    padding: 0 0 0 14px;
+    margin-top: 1px;
+    margin-left: -2px;
+    word-wrap: break-word;
+    position: relative;
+    min-height: 14px;
+}
+
+.widget-disclosure li.parent {
+    /** Keep it in sync with ElementsTreeElements.updateDecorators **/
+    margin-left: -13px;
+}
+
+.widget-disclosure li.selected:after {
+    font-style: italic;
+    content: " == $0";
+    color: black;
+    opacity: 0.6;
+    position: absolute;
+}
+
+.widget-disclosure ol:focus li.selected:after {
+    color: white;
+}
+
+.widget-disclosure li.parent::before {
+    box-sizing: border-box;
+}
+
+.widget-disclosure li.parent::before {
+    -webkit-user-select: none;
+    -webkit-mask-image: url(Images/toolbarButtonGlyphs.png);
+    -webkit-mask-size: 352px 168px;
+    content: "aa";
+    color: transparent;
+    text-shadow: none;
+    margin-right: -3px;
+}
+
+.widget-disclosure li.always-parent::before {
+    visibility: hidden;
+}
+
+@media (-webkit-min-device-pixel-ratio: 1.5) {
+.widget-disclosure li.parent::before {
+    -webkit-mask-image: url(Images/toolbarButtonGlyphs_2x.png);
+}
+} /* media */
+
+.widget-disclosure li.parent::before {
+    -webkit-mask-position: -4px -96px;
+    background-color: rgb(110, 110, 110);
+}
+
+.widget-disclosure li .selection {
+    display: none;
+    z-index: -1;
+    margin-left: -10000px;
+}
+
+.widget-disclosure li.hovered:not(.selected) .selection {
+    display: block;
+    left: 3px;
+    right: 3px;
+    background-color: rgba(56, 121, 217, 0.1);
+    border-radius: 5px;
+}
+
+.widget-disclosure li.parent.expanded::before {
+    -webkit-mask-position: -20px -96px;
+}
+
+.widget-disclosure li.selected .selection {
+    display: block;
+    background-color: #dadada;
+}
+
+.widget-disclosure ol {
+    list-style-type: none;
+    /** Keep it in sync with ElementsTreeElements.updateDecorators **/
+    -webkit-padding-start: 12px;
+    margin: 0;
+}
+
+.widget-disclosure ol.children {
+    display: none;
+}
+
+.widget-disclosure ol.children.expanded {
+    display: block;
+}
+
+.widget-disclosure li .webkit-html-tag.close {
+    margin-left: -12px;
+}
+
+.widget-disclosure > ol {
+    position: relative;
+    margin: 0;
+    cursor: default;
+    min-width: 100%;
+    min-height: 100%;
+    -webkit-transform: translateZ(0);
+    padding-left: 2px;
+}
+
+.widget-disclosure ol:focus li.selected {
+    color: white;
+}
+
+.widget-disclosure ol:focus li.parent.selected::before {
+    background-color: white;
+}
+
+.widget-disclosure ol:focus li.selected * {
+    color: inherit;
+}
+
+.widget-disclosure ol:focus li.selected .selection {
+    background-color: rgb(56, 121, 217);
+}
+
+.widget-tree-disclosure ol.shadow-root {
+    margin-left: 5px;
+    padding-left: 5px;
+    border-left: 1px solid rgb(190, 190, 190);
+}
+
+.widget-tree-disclosure ol.shadow-root-depth-4 {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.widget-tree-disclosure ol.shadow-root-depth-3 {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+.widget-tree-disclosure ol.shadow-root-depth-2 {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.widget-tree-disclosure ol.shadow-root-depth-1 {
+    background-color: rgba(0, 0, 0, 0.01);
+}
+
+.widget-tree-disclosure ol.shadow-root-deep {
+    background-color: transparent;
+}
+
+.elements-tree-editor {
+    -webkit-user-select: text;
+    -webkit-user-modify: read-write-plaintext-only;
+}
+
+.widget-disclosure li.elements-drag-over .selection {
+    display: block;
+    margin-top: -2px;
+    border-top: 2px solid rgb(56, 121, 217);
+}
+
+.widget-disclosure li.in-clipboard .highlight {
+    outline: 1px dotted darkgrey;
+}
+
+.CodeMirror {
+    box-shadow: rgba(0, 0, 0, .5) 3px 3px 4px;
+    outline: 1px solid rgb(66%, 66%, 66%) !important;
+    background-color: white;
+}
+
+.CodeMirror-lines {
+    padding: 0;
+}
+
+.CodeMirror pre {
+    padding: 0;
+}
+
+button, input, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.editing {
+    -webkit-user-select: text;
+    box-shadow: rgba(0, 0, 0, .5) 3px 3px 4px;
+    outline: 1px solid rgb(66%, 66%, 66%) !important;
+    background-color: white;
+    -webkit-user-modify: read-write-plaintext-only;
+    text-overflow: clip !important;
+    padding-left: 2px;
+    margin-left: -2px;
+    padding-right: 2px;
+    margin-right: -2px;
+    margin-bottom: -1px;
+    padding-bottom: 1px;
+    opacity: 1.0 !important;
+}
+
+.editing,
+.editing * {
+    color: #222 !important;
+    text-decoration: none !important;
+}
+
+.editing br {
+    display: none;
+}
+
+.elements-gutter-decoration {
+    position: absolute;
+    left: 2px;
+    margin-top: 2px;
+    height: 9px;
+    width: 9px;
+    border-radius: 5px;
+    border: 1px solid orange;
+    background-color: orange;
+    cursor: pointer;
+}
+
+.elements-gutter-decoration.elements-has-decorated-children {
+    opacity: 0.5;
+}
+
+.add-attribute {
+    margin-left: 1px;
+    margin-right: 1px;
+    white-space: nowrap;
+}
+
+.webkit-html-attribute-value a {
+    cursor: default !important;
+}
+
+.elements-tree-nowrap, .elements-tree-nowrap .li {
+    white-space: pre !important;
+}
+
+.widget-disclosure .elements-tree-nowrap li {
+    word-wrap: normal;
+}
+
+/* DOM update highlight */
+@-webkit-keyframes dom-update-highlight-animation {
+    from {
+        background-color: rgb(158, 54, 153);
+        color: white;
+    }
+    80% {
+        background-color: rgb(245, 219, 244);
+        color: inherit;
+    }
+    to {
+        background-color: inherit;
+    }
+}
+
+@-webkit-keyframes dom-update-highlight-animation-dark {
+    from {
+        background-color: rgb(158, 54, 153);
+        color: white;
+    }
+    80% {
+        background-color: #333;
+        color: inherit;
+    }
+    to {
+        background-color: inherit;
+    }
+}
+
+.dom-update-highlight {
+    -webkit-animation: dom-update-highlight-animation 1.4s 1 cubic-bezier(0, 0, 0.2, 1);
+    border-radius: 2px;
+}
+
+:host-context(.-theme-with-dark-background) .dom-update-highlight {
+    -webkit-animation: dom-update-highlight-animation-dark 1.4s 1 cubic-bezier(0, 0, 0.2, 1);
+}
+
+.widget-disclosure.single-node li {
+    padding-left: 2px;
+}
+
+.elements-tree-shortcut-title {
+    color: rgb(87, 87, 87);
+}
+
+ol:hover > li > .elements-tree-shortcut-link {
+    display: initial;
+}
+
+.elements-tree-shortcut-link {
+    color: rgb(87, 87, 87);
+    display: none;
+}
+
+ol:focus li.selected .webkit-html-tag {
+    color: #a5a5a5;
+}
+
+ol:focus li.selected .webkit-html-tag-name,
+ol:focus li.selected .webkit-html-close-tag-name,
+ol:focus li.selected .webkit-html-attribute-value,
+ol:focus li.selected .webkit-html-external-link,
+ol:focus li.selected .webkit-html-resource-link {
+    color: white;
+}
+
+ol:focus li.selected .webkit-html-attribute-name {
+    color: #ccc;
+}
+
+.widget-disclosure .gutter-container {
+    position: absolute;
+    top: 0;
+}
+
+.widget-disclosure li.selected .gutter-container:not(.has-decorations) {
+    left: 0px;
+    width: 16.25px;
+    height: 18px;
+    transform: rotate(-90deg) translateX(-13px) scale(0.8);
+    transform-origin: 0% 0%;
+    -webkit-mask-image: url(Images/toolbarButtonGlyphs.png);
+    -webkit-mask-position: -201px -27px;
+    -webkit-mask-size: 352px 168px;
+    background-color: white;
+    cursor: pointer;
+}
+
+@media (-webkit-min-device-pixel-ratio: 1.5) {
+.widget-disclosure li.selected .gutter-container:not(.has-decorations) {
+    -webkit-mask-image: url(Images/toolbarButtonGlyphs_2x.png);
+}
+} /* media */
+
+
+
+/*WidgetInspector-specific */
+
+.closing-tag {
+    display: none;
+}
+
+.widget-disclosure li:not(.widget){
+    display:none;
+}
+
+li:not(.widget) + ol.children.expanded {
+    display: list-item;
+    left: 0;
+    margin-left: 0;
+    padding-left: 0;
+    -webkit-padding-start: 0;
+}
+
+.widget-disclosure li.not-widget {
+    display:none;
+}
+
+.widget-disclosure li.not-widget + ol.children.expanded {
+    display: list-item;
+    left: 0;
+    margin-left: 0;
+    padding-left: 0;
+    -webkit-padding-start: 0;
+}
+
+.widget-disclosure li.widget.sizeViolation {
+    background-color: #b19cd9;
+}
+
+/*unneeded*/
+.widget-disclosure li.widget {
+    visibility: visible;
+}
+
+

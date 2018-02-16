@@ -511,6 +511,18 @@ TreeElement.prototype = {
         this.setExpandable(true);
         child.parent = this;
 
+        // update child layout properties for editing
+        var propsFound = {};
+        if (this.property && this.property.widgetElement && child.property && !propsFound[child.property.name]) {
+            child.property.widgetElement = this.property.widgetElement; // propogate the widgetElement to properties
+            propsFound[child.property.name] = true;
+            var inspectorMap = WebInspector.WidgetInspectorPanel.instance()._widgetInspectorMap;
+            inspectorMap.callFunction("function() { return this.clientPropertyToServerProperty('', " + child.property.name + "); }", [{}],
+                function (result, wasThrown) {
+                    child.property.name = child.property.name + " (" + result.description + ")";
+                });
+        }
+
         if (this.treeOutline)
             this.treeOutline._bindTreeElement(child);
         for (var current = child.firstChild(); this.treeOutline && current; current = current.traverseNextTreeElement(false, child, true))
